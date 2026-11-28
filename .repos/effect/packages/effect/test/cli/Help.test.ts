@@ -1,4 +1,4 @@
-import { assert, describe, expect, it } from "@effect/vitest"
+import { assert, describe, expect, it, vi } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Path, Stdio } from "effect"
 import { Argument, CliOutput, Command, Flag, GlobalFlag } from "effect/cli"
 import { toImpl } from "effect/cli/internal/command"
@@ -49,7 +49,22 @@ const runSharedFlagsApp = Command.runWith(
 const withFormatter = (options: Parameters<typeof CliOutput.defaultFormatter>[0]) =>
   Effect.provide(Layer.merge(TestLayer, CliOutput.layer(CliOutput.defaultFormatter({ colors: false, ...options }))))
 
-describe("CliOutput.displayWidth", () => {
+describe("CliOutput.displayWidth", { concurrent: false }, () => {
+  it("constructs the segmenter only on the first width calculation", async () => {
+    vi.resetModules()
+    const segmenter = vi.spyOn(Intl, "Segmenter")
+    try {
+      const { displayWidth } = await import("effect/cli/CliOutput")
+      assert.strictEqual(segmenter.mock.calls.length, 0)
+      displayWidth("ファイル")
+      assert.strictEqual(segmenter.mock.calls.length, 1)
+      displayWidth("1️⃣")
+      assert.strictEqual(segmenter.mock.calls.length, 1)
+    } finally {
+      segmenter.mockRestore()
+    }
+  })
+
   it("measures terminal cells", () => {
     assert.strictEqual(CliOutput.displayWidth(""), 0)
     assert.strictEqual(CliOutput.displayWidth("file"), 4)

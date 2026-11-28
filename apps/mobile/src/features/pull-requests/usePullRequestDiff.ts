@@ -6,7 +6,8 @@ import {
   type PullRequestSummary,
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
+import { Atom, type AsyncResult } from "effect/reactivity";
+import { useLocale, useMessages } from "gt-react-native";
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
 
 import { composerPullRequests } from "../../state/pull-requests";
@@ -32,6 +33,20 @@ export type PullRequestParams = {
 };
 
 export type PullRequestDiffParams = PullRequestParams & { readonly commit?: string };
+
+/** The pull request a route names, without whatever else arrived on that route. */
+export function pullRequestParams(params: PullRequestParams): PullRequestParams {
+  return {
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    repository: params.repository,
+    number: params.number,
+    ...(params.host === undefined ? {} : { host: params.host }),
+    ...(params.navigationUrl === undefined ? {} : { navigationUrl: params.navigationUrl }),
+    ...(params.navigationId === undefined ? {} : { navigationId: params.navigationId }),
+    ...(params.initialSummary === undefined ? {} : { initialSummary: params.initialSummary }),
+  };
+}
 
 export function pullRequestTarget(params: PullRequestParams) {
   return {
@@ -118,26 +133,33 @@ export function usePullRequestDiff(
     input: { ...reference.input, ...(params.commit ? { commit: params.commit } : {}) },
   };
   const key = JSON.stringify(target);
+  const messages = useMessages();
+  const locale = useLocale();
   const firstPageAtom = composerPullRequests.diff(target);
+  const firstPage = useAtomValue(firstPageAtom);
   const refreshFirstPage = useAtomRefresh(firstPageAtom);
+  const registry = useContext(RegistryContext);
   const { refreshing, onRefresh } = usePullToRefresh(firstPageAtom);
   const [state, setState] = useState<{
     key: string;
     cursor: string | null;
     pages: readonly PullRequestDiffPage[];
+    /** The first page as it stood when a reload was asked for; unset until one is. */
+    reloadedFrom?: AsyncResult.AsyncResult<unknown, unknown>;
   }>({ key, cursor: null, pages: NO_PAGES });
   const cursor = state.key === key ? state.cursor : null;
-  const query = useEnvironmentQuery(
+  const reloadedFrom = state.key === key ? state.reloadedFrom : undefined;
+  const pageAtom = (pageCursor: string | null) =>
     composerPullRequests.diff({
       ...target,
-      input: { ...target.input, ...(cursor ? { cursor } : {}) },
-    }),
-  );
+      input: { ...target.input, ...(pageCursor ? { cursor: pageCursor } : {}) },
+    });
+  const query = useEnvironmentQuery(pageAtom(cursor));
   const pages = useMemo(() => {
     const loaded = state.key === key ? state.pages : NO_PAGES;
     return query.data ? retainPullRequestDiffPage(loaded, cursor, query.data) : loaded;
   }, [cursor, key, query.data, state.key, state.pages]);
-  if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
+  if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages, reloadedFrom });
 
   const [withheldLoads, setWithheldLoads] = useState<{
     readonly key: string;
@@ -147,7 +169,6 @@ export function usePullRequestDiff(
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(JSON.stringify({ targetKey: key, paths: withheldPaths })),
   );
-  const registry = useContext(RegistryContext);
   const refreshWithheldFiles = () => {
     for (const path of withheldPaths) registry.refresh(withheldFileDiff(key, path));
   };
@@ -173,38 +194,46 @@ export function usePullRequestDiff(
     );
   });
   const pagesParsed = useMemo(
-    () => getCachedPullRequestDiffPages(pages, key, terminology),
-    [key, pages, terminology],
+    () => getCachedPullRequestDiffPages(pages, key, terminology, messages, locale),
+    [key, pages, terminology, messages, locale],
   );
   // The server says whether a withheld file can be read alone; GitHub may refuse the whole diff.
   const withheldFilesReadable = pages[0]?.result.withheldFilesReadable === true;
-  const parsed = withWithheldFiles(pagesParsed, loads, withheldFilesReadable, key);
+  const parsed = withWithheldFiles(
+    pagesParsed,
+    loads,
+    withheldFilesReadable,
+    key,
+    messages,
+    locale,
+  );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;
+  // Pull to refresh starts its refetch a tick later; until then the first page's cursor is the old one.
+  const reloadStarting = reloadedFrom !== undefined && firstPage === reloadedFrom;
   const canLoadMore =
-    nextCursor !== null && nextCursor !== cursor && !query.isPending && query.error === null;
+    nextCursor !== null &&
+    nextCursor !== cursor &&
+    !query.isPending &&
+    query.error === null &&
+    !reloadStarting;
   const loadMore = () => {
     if (!canLoadMore) return;
-    setState({ key, cursor: nextCursor, pages });
+    // Cursors are page numbers, so a page cached before the reload may hold an older head's lines.
+    if (reloadedFrom !== undefined) registry.refresh(pageAtom(nextCursor));
+    setState({ key, cursor: nextCursor, pages, reloadedFrom });
   };
-  const { error, refresh: refreshPage } = query;
-  const refresh = () => {
-    if (cursor !== null && error !== null) {
-      refreshPage();
-      return;
-    }
-    setState({ key, cursor: null, pages: NO_PAGES });
-    refreshFirstPage();
-    refreshWithheldFiles();
-  };
-  const onPullRefresh = () => {
-    setState({ key, cursor: null, pages: NO_PAGES });
-    onRefresh();
+  const reload = (refreshFirst: () => void) => {
+    setState({ key, cursor: null, pages: NO_PAGES, reloadedFrom: firstPage });
+    refreshFirst();
     refreshWithheldFiles();
   };
   return {
     ...query,
-    refresh,
+    /** Reads the whole diff again from page one, whichever page was showing or had failed. */
+    refresh: () => reload(refreshFirstPage),
+    /** Reads only the page that failed again, keeping the files already loaded. */
+    retry: query.refresh,
     parsed,
     loadWithheldFile,
     withheldRefetching,
@@ -213,6 +242,6 @@ export function usePullRequestDiff(
     canLoadMore,
     loadMore,
     refreshing,
-    onPullRefresh,
+    onPullRefresh: () => reload(onRefresh),
   };
 }

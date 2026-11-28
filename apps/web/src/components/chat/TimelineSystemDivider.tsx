@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export function TimelineSystemDivider(props: {
   readonly label: string;
@@ -51,24 +51,22 @@ export function TimelineSystemDivider(props: {
     >
       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
       {props.onAction ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={props.actionLabel}
-                onClick={props.onAction}
-                className={cn(
-                  "min-w-0 cursor-pointer rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-                  props.wrapDetail ? "text-center" : "flex items-center gap-1.5",
-                )}
-              />
-            }
-          >
-            {content}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={props.actionLabel}
+              onClick={props.onAction}
+              className={cn(
+                "min-w-0 cursor-pointer rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+                props.wrapDetail ? "text-center" : "flex items-center gap-1.5",
+              )}
+            />
+          }
+          label={props.actionLabel}
+        >
+          {content}
+        </SharedTooltipTrigger>
       ) : (
         <span
           className={cn(

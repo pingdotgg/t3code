@@ -36,6 +36,11 @@ function normalizeAppState(
   return "unknown";
 }
 
+// Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
+function isForeground(state: string | null | undefined): boolean {
+  return state === "active" || state === "inactive";
+}
+
 export const layerObserver = Layer.succeed(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
@@ -57,7 +62,7 @@ export const layerReporter = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
-      const active = appState === "active";
+      const foreground = isForeground(appState);
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -69,9 +74,9 @@ export const layerReporter = Layer.effectDiscard(
                 environmentId: environmentId as EnvironmentId,
                 clientId,
                 clientKind: "mobile",
-                visible: active,
-                focused: active,
-                recentlyInteracted: active,
+                visible: foreground,
+                focused: foreground,
+                recentlyInteracted: foreground,
                 appState: normalizeAppState(appState),
                 scopes: [
                   ...BASELINE_SCOPES,
@@ -93,8 +98,9 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
+          const changed = isForeground(appState) !== isForeground(nextState);
           appState = nextState;
-          requestReport();
+          if (changed) requestReport();
         });
         return { removeScopeListener, subscription };
       }),
@@ -113,9 +119,8 @@ export const layerReporter = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
-      Effect.forkScoped,
-    );
+    yield* Effect.sync(() => {
+      if (isForeground(appState)) requestReport();
+    }).pipe(Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)), Effect.forkScoped);
   }),
 );

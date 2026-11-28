@@ -44,3 +44,11 @@ export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime
       Effect.flatMap((onboarding) => onboarding.updateBearer(input)),
     ),
 });
+
+export const reachesEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:reaches-environment",
+  execute: (input: { readonly host: string; readonly environmentId: EnvironmentId }) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.reaches(input)),
+    ),
+});

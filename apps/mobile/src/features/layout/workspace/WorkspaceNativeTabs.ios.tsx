@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import {
   WORKSPACE_TAB_LABELS,
   NAVIGATION_TAB_ICONS,
@@ -12,13 +13,8 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
-import {
-  Tabs,
-  type TabSelectedEvent,
-  type TabSelectionPreventedEvent,
-  type TabSelectionRejectedEvent,
-} from "react-native-screens";
+import { View, type NativeSyntheticEvent } from "react-native";
+import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { NavigationTab } from "./navigation-tab-order";
@@ -33,29 +29,26 @@ import {
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
 import type { NativeLayoutMetrics } from "../../../lib/reserved-regions";
-import {
-  useCompactWorkspaceTabs,
-  useFloatingWorkspaceTabs,
-  useSystemWorkspaceTabBar,
-} from "./useSystemWorkspaceTabBar";
+import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
+const ISSUE_ICON = require("../../../../assets/icons/issue.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
   readonly slot: string;
   readonly tab: NavigationTab;
   readonly active: boolean;
-  /** Mount the header of a slot that hasn't been shown yet. */
+  /** Render a slot that hasn't been shown yet: its header, and the page it opens with. */
   readonly prewarm: boolean;
   readonly setMountedSlots: Dispatch<SetStateAction<ReadonlySet<string>>>;
   readonly setPrewarmRequests: Dispatch<SetStateAction<ReadonlyMap<string, number>>>;
-  readonly children: (workspace: SlotWorkspace) => ReactNode;
+  readonly children: (workspace: SlotWorkspace, headerOnly: boolean) => ReactNode;
 }) {
   const workspace = useWorkspaceTabs()!;
   // Whether this slot is the visible one, read by cleanups after the switch has committed.
@@ -66,12 +59,17 @@ function RetainedWorkspaceTab(props: {
   }, [props.active]);
   const isActive = () => activeRef.current;
   const [content, setContent] = useState(
-    props.active ? { workspace, children: props.children, headerOnly: false } : null,
+    props.active
+      ? { source: workspace, workspace, children: props.children, headerOnly: false }
+      : null,
   );
-  if (props.active && (content?.workspace !== workspace || content?.children !== props.children))
-    setContent({ workspace, children: props.children, headerOnly: false });
-  else if (!props.active && props.prewarm && content === null)
+  const stale = content?.source !== workspace || content?.children !== props.children;
+  if (props.active && (content?.headerOnly !== false || stale))
+    setContent({ source: workspace, workspace, children: props.children, headerOnly: false });
+  // A slot not shown yet follows the workspace, so the page it opens with stays current.
+  else if (!props.active && props.prewarm && (content === null || (content.headerOnly && stale)))
     setContent({
+      source: workspace,
       workspace: {
         ...workspace,
         settingsOpen: props.slot === "settings",
@@ -95,24 +93,28 @@ function RetainedWorkspaceTab(props: {
   const mounted = content !== null && !content.headerOnly;
   const headerOnly = content?.headerOnly === true;
   const { slot, setMountedSlots, setPrewarmRequests } = props;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which holds the switch until then
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's mount to the host, which uncovers the tab then
   useEffect(() => {
     if (!mounted) return;
-    // The header options this mount wrote reach UIKit in the commit after it.
+    // Each header write commits in the render after it; the slot is ready once a frame passes
+    // without one, which is when its native header and content are in place.
     const frame = requestAnimationFrame(() =>
       setMountedSlots((current) => (current.has(slot) ? current : new Set(current).add(slot))),
     );
-    return () => {
-      cancelAnimationFrame(frame);
-      // A replacement slot (e.g. a re-enabled fourth tab) must report its own mount.
+    return () => cancelAnimationFrame(frame);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each header write re-arms the frame
+  }, [mounted, optionsByRoute, slot, setMountedSlots]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a replacement slot (e.g. a re-enabled fourth tab) must report its own mount
+  useEffect(
+    () => () =>
       setMountedSlots((current) => {
         if (!current.has(slot)) return current;
         const next = new Set(current);
         next.delete(slot);
         return next;
-      });
-    };
-  }, [mounted, slot, setMountedSlots]);
+      }),
+    [slot, setMountedSlots],
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks UIKit to prewarm a hidden header after each write, since bar items it rebuilds fade in on their own first entry
   useEffect(() => {
     if (!headerOnly || optionsByRoute.size === 0) return;
@@ -121,12 +123,12 @@ function RetainedWorkspaceTab(props: {
     );
     return () => cancelAnimationFrame(frame);
   }, [headerOnly, optionsByRoute, slot, setPrewarmRequests]);
+  // Built apart from the providers: a header option write re-renders their readers, not the tab.
+  const body = content ? content.children(content.workspace, content.headerOnly) : null;
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
       <WorkspaceSlotOptionsContext value={slotOptions}>
-        <WorkspaceTabsContext value={content.workspace}>
-          {content.children(content.workspace)}
-        </WorkspaceTabsContext>
+        <WorkspaceTabsContext value={content.workspace}>{body}</WorkspaceTabsContext>
       </WorkspaceSlotOptionsContext>
     </NativeWorkspaceTabActivityContext>
   ) : null;
@@ -136,13 +138,13 @@ type SlotWorkspace = NonNullable<ReturnType<typeof useWorkspaceTabs>>;
 
 export function WorkspaceNativeTabs(props: {
   /** Renders a slot's tree for its own tab, which can lay out differently from the shown one. */
-  readonly children: (workspace: SlotWorkspace) => ReactNode;
+  readonly children: (workspace: SlotWorkspace, headerOnly: boolean) => ReactNode;
   readonly hidden: boolean;
   /** The sidebar column draws the tabs itself, so they leave with it. */
   readonly tabsInSidebarColumn?: boolean;
-  /** Every slot renders the pushed routes too, so prewarming waits until none are. */
-  readonly detailOpen: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
   const primaryTabs = order.slice(0, 4);
@@ -160,19 +162,14 @@ export function WorkspaceNativeTabs(props: {
     layout.usesSplitView &&
     workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
     !panes.primarySidebarVisible;
-  const floatingTabs = useFloatingWorkspaceTabs();
-  const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const selectedScreenKey =
     selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!;
-  // A slot mounts its content the first time it's selected. Showing it in that same commit
-  // shows a blank controller, then its header animates in, so the switch waits for the mount.
+  // A slot renders its body the first time it's selected. Until it has, UIKit keeps the last
+  // tab's snapshot over it, so the switch never shows a half-built tab.
   const [mountedSlots, setMountedSlots] = useState<ReadonlySet<string>>(() => new Set());
-  const [shownScreenKey, setShownScreenKey] = useState(selectedScreenKey);
-  if (shownScreenKey !== selectedScreenKey && mountedSlots.has(selectedScreenKey))
-    setShownScreenKey(selectedScreenKey);
   // Once the first tab is up, the others mount their headers for UIKit to put in the window
   // once: iOS 26 fades bar items in the first time they enter it, which a first visit would show.
   const [prewarm, setPrewarm] = useState(false);
@@ -191,14 +188,14 @@ export function WorkspaceNativeTabs(props: {
   const [prewarmRequests, setPrewarmRequests] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
-  const prewarmReady = mountedSlots.size > 0 && !props.detailOpen;
+  const prewarmReady = mountedSlots.size > 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- waits for the JS thread to go idle after the first tab mounts
   useEffect(() => {
     if (!prewarmReady || prewarm) return;
     const handle = requestIdleCallback(() => setPrewarm(true), { timeout: 2_000 });
     return () => cancelIdleCallback(handle);
   }, [prewarmReady, prewarm]);
-  const request = { selectedScreenKey: shownScreenKey, baseProvenance: provenance };
+  const request = { selectedScreenKey, baseProvenance: provenance };
   return (
     <View style={{ flex: 1 }}>
       <WorkspaceColumnMetricsContext value={sharedColumnMetrics}>
@@ -215,15 +212,9 @@ export function WorkspaceNativeTabs(props: {
           }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
             setProvenance(nativeEvent.provenance)
           }
-          onTabSelectionPrevented={({
-            nativeEvent,
-          }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-            const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.preventedScreenKey);
-            if (tab) selectTab(tab);
-          }}
           onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
             setProvenance(nativeEvent.provenance);
-            if (nativeEvent.actionOrigin === "programmatic-js") return;
+            if (nativeEvent.actionOrigin === "programmaticJs") return;
             const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
             if (tab) selectTab(tab);
           }}
@@ -237,17 +228,28 @@ export function WorkspaceNativeTabs(props: {
                 // Stable slot controllers keep UIKit's stacks attached when a section moves into Settings.
                 key={slot}
                 screenKey={slot}
-                // Taps on an unmounted slot select it from JS, which shows it once it has mounted.
-                preventNativeSelection={!mountedSlots.has(slot) && slot !== shownScreenKey}
                 title=""
-                tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+                tabBarItemAccessibilityLabel={
+                  settings ? gt("Settings") : m(WORKSPACE_TAB_LABELS[tab])
+                }
                 ios={{
                   prewarmRequest: prewarmRequests.get(slot) ?? 0,
+                  contentReady: mountedSlots.has(slot),
                   icon: settings
                     ? { type: "sfSymbol", name: "gearshape" }
                     : tab === "pullRequests"
-                      ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
-                      : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
+                      ? {
+                          type: "imageSource",
+                          imageSource: PULL_REQUEST_ICON,
+                          renderingMode: "template",
+                        }
+                      : tab === "issues"
+                        ? {
+                            type: "imageSource",
+                            imageSource: ISSUE_ICON,
+                            renderingMode: "template",
+                          }
+                        : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
                   selectedIcon:
                     !settings && tab === "threads"
                       ? { type: "sfSymbol", name: "text.bubble.fill" }
@@ -277,41 +279,8 @@ export function WorkspaceNativeTabs(props: {
       !props.hidden &&
       !props.tabsInSidebarColumn &&
       !hiddenWithSidebar ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
-            width:
-              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
-                ? Math.min(280, layout.listPaneWidth ?? width, width)
-                : (layout.listPaneWidth ?? width),
-            height: 128,
-          }}
-        >
-          <WorkspaceSidebarTabsFooter />
-        </View>
+        <WorkspaceTabDock placement="window" />
       ) : null}
     </View>
-  );
-}
-
-/** The workspace tabs at the foot of the sidebar. */
-export function WorkspaceSidebarTabsFooter() {
-  const workspace = useWorkspaceTabs()!;
-  const { startNewTask } = useAdaptiveWorkspaceLayout();
-  const compact = useFloatingWorkspaceTabs();
-  return (
-    <WorkspaceSidebarTabs
-      compact={compact}
-      reserveComposeSpace={compact}
-      onNewTask={
-        compact && !workspace.settingsOpen && workspace.state.selectedTab === "threads"
-          ? startNewTask
-          : undefined
-      }
-    />
   );
 }

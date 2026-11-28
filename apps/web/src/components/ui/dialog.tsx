@@ -1,5 +1,6 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
+import { useGT } from "gt-react";
 import { XIcon } from "lucide-react";
 import {
   type ComponentProps,
@@ -12,7 +13,7 @@ import {
 } from "react";
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
-import { Button, type ButtonVariant } from "~/components/ui/button";
+import { Button, type ButtonSize, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -110,16 +111,19 @@ function DialogPopup({
   className,
   children,
   showCloseButton = true,
+  closeButtonSize = "icon",
   bottomStickOnMobile = true,
   variant = "default",
   mediaControlsPlacement = "outside",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  closeButtonSize?: ButtonSize;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
   mediaControlsPlacement?: "inside" | "outside";
 }) {
+  const gt = useGT();
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -140,9 +144,9 @@ function DialogPopup({
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
-            aria-label="Close"
+            aria-label={gt("Close", { $context: "button, closes the dialog" })}
             className="absolute end-2 top-2"
-            render={<Button size="icon" variant="ghost" />}
+            render={<Button size={closeButtonSize} variant="ghost" />}
           >
             <XIcon />
           </DialogPrimitive.Close>
@@ -208,7 +212,7 @@ function DialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
+        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:flex-wrap sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
         variant === "default" && "border-t bg-muted/72 py-4",
         variant === "bare" && "py-4",
         className,

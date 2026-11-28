@@ -1,33 +1,32 @@
-# Terminal history
+# Terminal
 
-Each terminal keeps up to 5,000 lines and 8 MiB of scrollback on its environment
-server. T3 Code removes the oldest output when either limit is reached. A long
-line can be shortened at the start. New terminal output is not truncated.
+T3 Code includes integrated terminals running on the environment's host machine, with persistent scrollback across reconnects.
 
-These limits apply when you reconnect and when T3 Code restores saved terminal
-history. A client can show less scrollback than the server keeps.
+## Choose a shell
 
-On web and desktop, use Shift+PageUp and Shift+PageDown to read scrollback
-without leaving terminal input. Ctrl+Shift+Home and Ctrl+Shift+End jump to the
-start and latest output; use Cmd instead of Ctrl on macOS. Full-screen terminal
-programs keep these navigation keys.
+Set `T3CODE_TERMINAL_SHELL` in the T3 server's environment to an executable name or full path (no quotes or arguments) to override the platform default shell for new terminals. This does not affect agent commands or project setup/settle scripts.
 
-To copy all retained output, choose Select all in the terminal's context menu,
-then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
-Ctrl+A still moves to the beginning of shell input on Windows and Linux.
-Jump to latest in the context menu returns to the current output.
+Example for Git Bash on Windows (PowerShell, then fully quit and reopen T3 Code):
 
-On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
-Select Text shows the visible output, where you can copy text or tap a link.
+```powershell
+[Environment]::SetEnvironmentVariable('T3CODE_TERMINAL_SHELL', 'C:\Program Files\Git\bin\bash.exe', 'User')
+```
 
-## fish
+> Note: Use `bin\bash.exe`, not `git-bash.exe`. Remove with `$null` to restore the default.
 
-T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
-replies. This disables optional fish features that depend on those replies.
-T3 Code's exported `fish_features` also hides any universal flags you set with
-`set -U fish_features`.
+## Scrollback and navigation
 
-To preserve those flags or enable queries with `query-term`, include them in
-`fish_features` in the environment that launches T3 Code. A shell export applies
-when you launch T3 Code from that shell; it does not configure a desktop app
-launched from the Dock or Finder. Enabling queries can restore the startup wait.
+Each terminal retains up to **5,000 lines** and **8 MiB** of scrollback on the server.
+
+| Action                     | macOS                              | Windows / Linux                            |
+| -------------------------- | ---------------------------------- | ------------------------------------------ |
+| Scroll page up/down        | `Shift+PageUp` / `Shift+PageDown`  | `Shift+PageUp` / `Shift+PageDown`          |
+| Jump to start / latest     | `Cmd+Shift+Home` / `Cmd+Shift+End` | `Ctrl+Shift+Home` / `Ctrl+Shift+End`       |
+| Select all retained output | `Cmd+A`                            | `Ctrl+Shift+A` (`Ctrl+A` stays shell home) |
+| Next / previous terminal   | `Cmd+Shift+]` / `Cmd+Shift+[`      | `Ctrl+Alt+]` / `Ctrl+Alt+[`                |
+
+On iOS/iPadOS, long-press the terminal to paste or choose **Select Text**.
+
+## fish shell
+
+T3 Code launches `fish` with `no-query-term` to avoid startup delays, which overrides universal `fish_features`. To keep custom flags or re-enable `query-term`, export `fish_features` in the environment that launches T3 Code.

@@ -12,6 +12,7 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PreviewTabId,
+  ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -20,12 +21,14 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import { TestClock } from "effect/testing";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -46,6 +49,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
@@ -55,10 +59,16 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
+import * as Feedback from "../feedback/FeedbackService.ts";
+import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
+import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -108,8 +118,10 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(ProjectService.ProjectService)({}),
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
       Layer.mock(PullRequestService.PullRequestService)({}),
+      Layer.mock(GitManager.GitManager)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+      ServerSettings.layerTest(),
       NodeServices.layer,
       NodeCrypto.layer,
     ),
@@ -121,7 +133,6 @@ const snapshotResult = {
   title: "Example",
   loading: false,
   visibleText: "Example",
-  interactiveElements: [],
   accessibilityTree: {},
   consoleEntries: [],
   networkEntries: [],
@@ -418,18 +429,6 @@ it.effect.each([
         url: "http://example.test/",
         loading: false,
         visibleText: "Save your changes",
-        interactiveElements: [
-          {
-            tag: "button",
-            role: "button",
-            name: "Save",
-            selector: "#save",
-            x: 0,
-            y: 0,
-            width: 20,
-            height: 10,
-          },
-        ],
         accessibilityTree: { role: "document", name: "Example" },
         consoleEntries: [],
         networkEntries: [],
@@ -479,7 +478,7 @@ it.effect.each([
         expect(snapshot.isError).toBe(false);
         expect(snapshot.structuredContent).toEqual({
           ...boundedMetadata,
-          omitted: ["accessibilityTree (use interactiveElements locators or preview_evaluate)"],
+          omitted: ["accessibilityTree (use preview_evaluate)"],
         });
         const [identity, text, ...rest] = snapshot.content;
         expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
@@ -489,7 +488,7 @@ it.effect.each([
         expect(rest).toEqual([
           {
             type: "text",
-            text: "Snapshot text was bounded. Omitted: accessibilityTree (use interactiveElements locators or preview_evaluate).",
+            text: "Snapshot text was bounded. Omitted: accessibilityTree (use preview_evaluate).",
           },
           ...(images
             ? [
@@ -569,6 +568,34 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
       });
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps screenshot results only for provider instances that recover them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const png =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+      yield* serveSnapshots("mcp-capture-client", {
+        ...snapshotResult,
+        screenshot: { mimeType: "image/png", data: png, width: 1, height: 1 },
+      });
+      const args = { tabId: alternateTabId, includeImage: true };
+
+      yield* callSnapshot(args);
+      expect(yield* sessions.takeToolResult(threadId, "preview_snapshot", args)).toBeUndefined();
+
+      yield* sessions.recoversToolResultImages(invocation.thread.providerInstanceId);
+      yield* callSnapshot(args);
+      expect(yield* sessions.takeToolResult(threadId, "preview_snapshot", args)).toMatchObject({
+        content: [{ type: "image", mimeType: "image/png", data: png }],
+        structuredContent: {
+          url: snapshotResult.url,
+          screenshot: { mimeType: "image/png", width: 1, height: 1 },
+        },
+      });
+    }),
+  ).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(McpProviderSessions.layer)))),
 );
 
 it.effect("names the screenshot destination when saving it fails", () =>
@@ -677,6 +704,34 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
     expect(calls[1]).toEqual(calls[0]);
     expect(calls[3]).toEqual(calls[2]);
     expect(calls[4]).toStrictEqual({ projectId: "project-1", projectIcon: null });
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("decodes a JSON-stringified delegate target as the same object", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const task = "Inspect";
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: { reasoningEffort: "medium" },
+    };
+    yield* callTool("delegate_task", { task, target });
+    yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
+
+    for (const invalidTarget of ["{model:", '{"model":42}']) {
+      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
+      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+    }
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      task,
+      target: {
+        ...target,
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
+    expect(calls[1]).toEqual(calls[0]);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
@@ -859,25 +914,9 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const pageText = "/Users/theo/Code/project\nClaude, Codex · 79 threads\n".repeat(600);
-      const element = (name: string, index: number) => ({
-        tag: "div",
-        role: "presentation",
-        name,
-        selector: `div:nth-of-type(${index})`,
-        x: 0,
-        y: 0,
-        width: 10,
-        height: 10,
-      });
       const oversized = {
         ...snapshotResult,
         visibleText: pageText,
-        interactiveElements: [
-          element(pageText, 1),
-          element(pageText, 2),
-          element(pageText, 3),
-          element("Continue", 4),
-        ],
         accessibilityTree: { nodes: Array.from({ length: 2_000 }, (_, i) => ({ nodeId: `${i}` })) },
         consoleEntries: Array.from({ length: 100 }, (_, i) => ({
           level: "log",
@@ -902,14 +941,10 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       const parsed = decodeJsonText(body) as {
         readonly accessibilityTree?: unknown;
         readonly visibleText: string;
-        readonly interactiveElements: ReadonlyArray<{ readonly name: string }>;
         readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
       };
       expect(parsed.accessibilityTree).toBeUndefined();
       expect(parsed.visibleText.length).toBeLessThanOrEqual(8_001);
-      expect(parsed.interactiveElements).toHaveLength(4);
-      expect(parsed.interactiveElements[0]?.name.length).toBeLessThanOrEqual(201);
-      expect(parsed.interactiveElements[3]?.name).toBe("Continue");
       expect(parsed.consoleEntries).toHaveLength(40);
       expect(parsed.consoleEntries[0]?.text).toBe("entry 60");
       expect(notice?.type === "text" ? notice.text : "").toContain("accessibilityTree");
@@ -929,7 +964,6 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       const oversized = {
         ...snapshotResult,
         title: `t${"😀".repeat(35_000)}`,
-        interactiveElements: [],
         consoleEntries: [{ level: "log", text: `x${"😀".repeat(35_000)}`, timestamp: "t" }],
       };
       yield* serveSnapshots("mcp-bounded-logs-client", oversized);
@@ -961,19 +995,14 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 it.effect("bounds page text made of wide characters before dropping locators", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const accessibilityTree = Array.from(
+        { length: 20 },
+        (_, i) => `- button "Button ${i}" [ref=t3-1-e${i}]`,
+      ).join("\n");
       yield* serveSnapshots("mcp-wide-text-client", {
         ...snapshotResult,
         visibleText: "界".repeat(9_000),
-        interactiveElements: Array.from({ length: 20 }, (_, i) => ({
-          tag: "button",
-          role: "button",
-          name: `Button ${i}`,
-          selector: `#button-${i}`,
-          x: 0,
-          y: 0,
-          width: 10,
-          height: 10,
-        })),
+        accessibilityTree,
       });
 
       const snapshot = yield* callSnapshot({ includeImage: false });
@@ -985,10 +1014,10 @@ it.effect("bounds page text made of wide characters before dropping locators", (
       );
       const parsed = decodeJsonText(body) as {
         readonly visibleText: string;
-        readonly interactiveElements: ReadonlyArray<unknown>;
+        readonly accessibilityTree: string;
       };
       expect(parsed.visibleText).toMatch(/^界+…$/);
-      expect(parsed.interactiveElements).toHaveLength(20);
+      expect(parsed.accessibilityTree).toBe(accessibilityTree);
       expect(notice?.type === "text" ? notice.text : "").toContain(
         "visibleText after 4000 characters",
       );
@@ -1070,6 +1099,138 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a tool asks a sessionless client for approval and reads the answer on the next call",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const token = "providerTokenWithoutDots";
+        const scope: McpInvocationContext.McpInvocationScope = {
+          environmentId,
+          requestNamespace: "provider-session",
+          thread: {
+            threadId: ThreadId.make("thread-provider"),
+            providerSessionId: "provider-session",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+        const AskToolkit = Toolkit.make(
+          Tool.make("ask", {
+            description: "Asks for approval.",
+            success: Schema.Struct({ answer: Schema.String }),
+          }),
+        );
+        let runs = 0;
+        const layerServer = McpHttpServer.layerMcpTransport(
+          McpHttpServer.toolkitRegistration(
+            AskToolkit,
+            McpToolAccess.toLayer(AskToolkit, {
+              ask: McpToolAccess.reads(() =>
+                Effect.sync(() => runs++).pipe(
+                  Effect.andThen(
+                    McpClientInput.askApproval({
+                      key: "go",
+                      state: "state-1",
+                      message: "Run it?",
+                    }),
+                  ),
+                  Effect.map((answer) => ({ answer })),
+                ),
+              ),
+            }),
+          ),
+        ).pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (presented) =>
+                Effect.succeed(
+                  presented === token
+                    ? (scope as McpInvocationContext.McpThreadInvocationScope)
+                    : undefined,
+                ),
+            }),
+          ),
+        );
+        yield* HttpRouter.serve(layerServer, {
+          disableListenLog: true,
+          disableLogger: true,
+        }).pipe(Layer.build);
+        const httpClient = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+        );
+        const call = (clientCapabilities: object, continuation: object = {}) =>
+          httpClient
+            .post("/mcp", {
+              headers: {
+                accept: "application/json, text/event-stream",
+                "mcp-method": "tools/call",
+                "mcp-name": "ask",
+                "mcp-protocol-version": "2026-07-28",
+              },
+              body: HttpBody.text(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: {
+                    name: "ask",
+                    arguments: {},
+                    ...continuation,
+                    _meta: {
+                      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                      "io.modelcontextprotocol/clientCapabilities": clientCapabilities,
+                      "io.modelcontextprotocol/clientInfo": { name: "mcp-test", version: "1.0.0" },
+                    },
+                  },
+                }),
+                "application/json",
+              ),
+            })
+            .pipe(
+              Effect.flatMap((response) => response.json),
+              Effect.map((body) => (body as { readonly result: Record<string, unknown> }).result),
+            );
+        const canAsk = { elicitation: { form: {} } };
+
+        const asked = yield* call(canAsk);
+        expect(asked).toMatchObject({
+          resultType: "input_required",
+          requestState: "state-1",
+          inputRequests: {
+            go: {
+              method: "elicitation/create",
+              params: {
+                mode: "form",
+                message: "Run it?",
+                requestedSchema: { type: "object", properties: {} },
+              },
+            },
+          },
+        });
+        const answer = (action: string, requestState: string) =>
+          call(canAsk, { inputResponses: { go: { action } }, requestState });
+        expect(yield* answer("accept", "state-1")).toMatchObject({
+          structuredContent: { answer: "accepted" },
+        });
+        expect(yield* answer("decline", "state-1")).toMatchObject({
+          structuredContent: { answer: "declined" },
+        });
+        // An answer given for another state is not an answer to this question.
+        expect(yield* answer("accept", "state-0")).toMatchObject({ resultType: "input_required" });
+        expect(yield* call({})).toMatchObject({ structuredContent: { answer: "unavailable" } });
+        // A client that takes only URL requests cannot show this one.
+        expect(yield* call({ elicitation: { url: {} } })).toMatchObject({
+          structuredContent: { answer: "unavailable" },
+        });
+        expect(runs).toBe(6);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize fallback", () =>
@@ -1171,6 +1332,38 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
       expect(tools.error).toBeUndefined();
       expect(tools.result.tools).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "probe" })]),
+      );
+
+      // The Go MCP SDK sends this without request metadata, though 2026-07-28 does not define it.
+      const rootsChanged = (
+        client: HttpClient.HttpClient,
+        message: object = {},
+        headers: Record<string, string> = {},
+      ) =>
+        client.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-method": "notifications/roots/list_changed",
+            "mcp-protocol-version": "2026-07-28",
+            ...headers,
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/roots/list_changed",
+              params: {},
+              ...message,
+            }),
+            "application/json",
+          ),
+        });
+      const acknowledged = yield* rootsChanged(httpClient);
+      expect(acknowledged.status).toBe(202);
+      expect(yield* acknowledged.text).toBe("");
+      expect((yield* rootsChanged(yield* HttpClient.HttpClient)).status).toBe(401);
+      expect((yield* rootsChanged(httpClient, { id: 7 })).status).toBe(400);
+      expect((yield* rootsChanged(httpClient, {}, { origin: "https://example.com" })).status).toBe(
+        403,
       );
 
       const initializeResponse = yield* httpClient.post("/mcp", {
@@ -1695,56 +1888,60 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
+it.effect("offers agent feedback tools only while the setting is on, to every client", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const scopeFor = (
-        token: string,
-        subagent: boolean,
-      ): McpInvocationContext.McpThreadInvocationScope => ({
+      const agentScope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
-        requestNamespace: token,
+        requestNamespace: "agentToken",
         thread: {
-          threadId: ThreadId.make(`thread-${token}`),
-          providerSessionId: token,
+          threadId: ThreadId.make("thread-feedback"),
+          providerSessionId: "agentToken",
           providerInstanceId: ProviderInstanceId.make("codex"),
-          subagent,
         },
         client: undefined,
-        capabilities: new Set(["pull-requests"]),
+        capabilities: new Set(["orchestration"]),
         issuedAt: 1,
-      });
-      const scopes = new Map([
-        ["parentToken", scopeFor("parentToken", false)],
-        ["childToken", scopeFor("childToken", true)],
-      ]);
+      };
+      // Any OAuth client can register under the label `t3 feedback` signs in with.
+      const cliScope: McpInvocationContext.McpInvocationScope = {
+        environmentId,
+        requestNamespace: "cliToken",
+        thread: undefined,
+        client: { sessionId: "cli", label: FEEDBACK_CLI_CLIENT_LABEL, access: "full-access" },
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const settingsContext = yield* Layer.build(ServerSettings.layerTest());
+      const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
       const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.layerPullRequestsToolkit,
+        Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(FeedbackToolkit, FeedbackHandlers.layer),
+          McpHttpServer.layerToolSearch,
+        ),
       ).pipe(
-        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.succeedContext(settingsContext)),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(Layer.mock(Feedback.FeedbackService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-            resolve: (token) => Effect.succeed(scopes.get(token)),
+            resolve: (token) => Effect.succeed(token === "agentToken" ? agentScope : undefined),
           }),
         ),
         Layer.provide(
-          Layer.mergeAll(
-            McpToolAccessTestkit.liveThreadsLayer,
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-            Layer.mock(PullRequestService.PullRequestService)({}),
-            Layer.mock(Orchestrator.OrchestratorV2)({}),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+          Layer.succeed(McpHttpServer.McpClientAuthenticator)({
+            authenticate: (request) =>
+              Effect.succeed(
+                request.headers.authorization === "Bearer cliToken" ? cliScope : undefined,
+              ),
+          }),
         ),
       );
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const listedTools = (token: string) =>
+      const rpc = (token: string, method: string, params: object) =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
@@ -1757,31 +1954,259 @@ it.effect("lists pull request watch tools only to threads that are not delegated
               "application/json",
             ),
           });
-          const listed = yield* httpClient.post("/mcp", {
+          const response = yield* httpClient.post("/mcp", {
             headers: {
               ...headers,
               "mcp-session-id": initialize.headers["mcp-session-id"]!,
               "mcp-protocol-version": "2025-06-18",
             },
             body: HttpBody.text(
-              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
               "application/json",
             ),
           });
-          const body = (yield* listed.json) as {
-            readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+          // tool_search answers as a stream, its result after the list_changed notice.
+          const text = yield* response.text;
+          const messages = text.startsWith("data:")
+            ? text
+                .split("\n")
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => JSON.parse(line.slice(5)) as { readonly id?: number })
+            : [JSON.parse(text) as { readonly id?: number }];
+          return messages.find((message) => message.id === 2) as {
+            readonly result?: {
+              readonly tools?: ReadonlyArray<{ readonly name: string }>;
+              readonly structuredContent?: { readonly tools?: ReadonlyArray<{ name: string }> };
+              readonly content?: ReadonlyArray<{ readonly text: string }>;
+            };
+            readonly error?: unknown;
           };
-          return body.result.tools.map((tool) => tool.name);
+        });
+      const listed = (token: string) =>
+        rpc(token, "tools/list", {}).pipe(
+          Effect.map((body) => body.result?.tools?.map((tool) => tool.name)),
+        );
+      // Only provider sessions can search.
+      const found = rpc("agentToken", "tools/call", {
+        name: "tool_search",
+        arguments: { query: "t3_feedback feedback report" },
+      }).pipe(
+        Effect.map((body) => body.result?.structuredContent?.tools?.map((tool) => tool.name)),
+      );
+      const report = (token: string) =>
+        rpc(token, "tools/call", {
+          name: "t3_feedback",
+          arguments: { kind: "bug", subject: "", expected: "a", actual: "b", workaround: "" },
         });
 
-      const parentTools = yield* listedTools("parentToken");
-      const childTools = yield* listedTools("childToken");
-      expect(parentTools).toEqual(
-        expect.arrayContaining(["link_pull_request", "watch_pull_request", "unwatch_pull_request"]),
+      expect(yield* found).toEqual([]);
+      for (const token of ["agentToken", "cliToken"]) {
+        expect(yield* listed(token)).toEqual([]);
+        // `t3 feedback` turns exactly this answer into the Labs message.
+        expect(yield* report(token)).toMatchObject({
+          error: { code: -32602, message: "Tool 't3_feedback' not found" },
+        });
+      }
+
+      yield* settings.updateSettings({ agentFeedback: { mode: "on-request" } });
+      expect(yield* found).toEqual(expect.arrayContaining(["t3_feedback"]));
+      for (const token of ["agentToken", "cliToken"]) {
+        expect(yield* listed(token)).toEqual(["t3_feedback"]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "lists watch tools only to threads that are not delegated children, and forge tools only where the project has a forge",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scopeFor = (
+          token: string,
+          subagent: boolean,
+        ): McpInvocationContext.McpThreadInvocationScope => ({
+          environmentId,
+          requestNamespace: token,
+          thread: {
+            threadId: ThreadId.make(`thread-${token}`),
+            providerSessionId: token,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            subagent,
+          },
+          client: undefined,
+          capabilities: new Set(["pull-requests"]),
+          issuedAt: 1,
+        });
+        const scopes = new Map([
+          ["parentToken", scopeFor("parentToken", false)],
+          ["childToken", scopeFor("childToken", true)],
+          ["noForgeToken", scopeFor("noForgeToken", false)],
+        ]);
+        const serverLayer = McpHttpServer.layerMcpTransport(
+          McpHttpServer.layerPullRequestsToolkit,
+        ).pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (token) => Effect.succeed(scopes.get(token)),
+            }),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              McpToolAccessTestkit.liveThreadsLayer,
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+              Layer.mock(PullRequestService.PullRequestService)({
+                servesProject: (projectId) => Effect.succeed(projectId !== "project-noForgeToken"),
+              }),
+              Layer.mock(GitManager.GitManager)({}),
+              Layer.mock(Orchestrator.OrchestratorV2)({}),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadShell: (threadId) =>
+                  Effect.succeed({
+                    projectId: ProjectId.make(threadId.replace("thread-", "project-")),
+                  } as never),
+              }),
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        );
+        yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const httpClient = yield* HttpClient.HttpClient;
+        const listedTools = (token: string) =>
+          Effect.gen(function* () {
+            const headers = {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+            };
+            const initialize = yield* httpClient.post("/mcp", {
+              headers,
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+                "application/json",
+              ),
+            });
+            const listed = yield* httpClient.post("/mcp", {
+              headers: {
+                ...headers,
+                "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                "mcp-protocol-version": "2025-06-18",
+              },
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+                "application/json",
+              ),
+            });
+            const body = (yield* listed.json) as {
+              readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+            };
+            return body.result.tools.map((tool) => tool.name);
+          });
+
+        const parentTools = yield* listedTools("parentToken");
+        const childTools = yield* listedTools("childToken");
+        expect(parentTools).toEqual(
+          expect.arrayContaining([
+            "link_pull_request",
+            "watch_pull_request",
+            "unwatch_pull_request",
+          ]),
+        );
+        expect(childTools).toContain("link_pull_request");
+        expect(childTools).not.toContain("watch_pull_request");
+        expect(childTools).not.toContain("unwatch_pull_request");
+        expect(parentTools).toEqual(
+          expect.arrayContaining([
+            "pull_request_read",
+            "pull_request_review",
+            "pull_request_merge",
+            "ci_logs",
+            "ci_rerun",
+          ]),
+        );
+        const noForgeTools = yield* listedTools("noForgeToken");
+        expect(noForgeTools).toEqual(
+          expect.arrayContaining(["link_pull_request", "watch_pull_request"]),
+        );
+        expect(
+          noForgeTools.filter((name) => name.startsWith("pull_request_") || name.startsWith("ci_")),
+        ).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+// Claude retries an MCP request after 5 seconds and gives up on the server after 30.
+it.effect("admits an MCP request while the thread's forge lookup has not answered", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: "hungForgeToken",
+        thread: {
+          threadId: ThreadId.make("thread-hungForge"),
+          providerSessionId: "hungForgeToken",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          subagent: false,
+        },
+        client: undefined,
+        capabilities: new Set(["pull-requests"]),
+        issuedAt: 1,
+      };
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.layerPullRequestsToolkit,
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(token === "hungForgeToken" ? scope : undefined),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            McpToolAccessTestkit.liveThreadsLayer,
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+            // A `gh auth token` stuck on the secret service never hands back an answer in time.
+            Layer.mock(PullRequestService.PullRequestService)({
+              servesProject: () =>
+                Deferred.succeed(lookupStarted, undefined).pipe(Effect.andThen(Effect.never)),
+            }),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(Orchestrator.OrchestratorV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () =>
+                Effect.succeed({ projectId: ProjectId.make("project-1") } as never),
+            }),
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
       );
-      expect(childTools).toContain("link_pull_request");
-      expect(childTools).not.toContain("watch_pull_request");
-      expect(childTools).not.toContain("unwatch_pull_request");
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const initialize = yield* httpClient
+        .post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization: "Bearer hungForgeToken",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(lookupStarted);
+      yield* TestClock.adjust("1 second");
+      const response = yield* Fiber.join(initialize);
+      expect(response.status).toBe(200);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -1943,26 +2368,56 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           providerInstanceId: ProviderInstanceId.make("copilot"),
         },
         client: undefined,
-        capabilities: new Set(["orchestration"]),
+        capabilities: new Set(["orchestration", "device"]),
         issuedAt: 1,
       });
       const scopes = new Map([
         ["deferringToken", scopeFor("deferringToken")],
+        ["proxyToken", scopeFor("proxyToken")],
         ["otherToken", scopeFor("otherToken")],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
           description,
-          success: Schema.Struct({}),
+          parameters: Schema.Struct({ url: Schema.optional(Schema.String) }),
+          success: Schema.Struct({ ok: Schema.Boolean }),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
         });
+      const disabledTool = Tool.make("disabled_secret", {
+        description: "Hidden browser tool.",
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      }).annotate(McpSchema.EnabledWhen, () => false);
+      const oversizedTool = Tool.make("oversized_budget_tool", {
+        description: "Budget boundary test tool with a giant schema.",
+        parameters: Schema.Struct({
+          payload: Schema.String.annotate({ description: "x".repeat(8_500) }),
+        }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
+      const smallBudgetTool = Tool.make("small_budget_tool", {
+        description: "Budget boundary test tool with a small schema.",
+        parameters: Schema.Struct({ flag: Schema.optional(Schema.Boolean) }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        oversizedTool,
+        smallBudgetTool,
+        disabledTool,
       );
-      const reads = McpToolAccess.reads(() => Effect.succeed({}));
+      const reads = McpToolAccess.reads(() => Effect.succeed({ ok: true }));
+      const pngBytes = new Uint8Array([
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+      ]);
       const serverLayer = McpHttpServer.layerMcpTransport(
         Layer.mergeAll(
           McpHttpServer.toolkitRegistration(
@@ -1971,13 +2426,47 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              oversized_budget_tool: reads,
+              small_budget_tool: reads,
+              disabled_secret: reads,
             }),
           ),
+          McpHttpServer.layerDeviceToolkit,
           McpHttpServer.layerToolSearch,
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(DeviceService.DeviceService)({
+            locateSession: () => Effect.succeedNone,
+            sessionsForThread: (tid) =>
+              Effect.succeed([
+                {
+                  threadId: tid,
+                  hostId: "local",
+                  deviceId: DeviceId.make("phone"),
+                  platform: "ios",
+                  openedAt: "2026-10-23T00:00:00Z",
+                },
+              ]),
+            screenshot: () =>
+              Effect.succeed({
+                device: {
+                  hostId: "local",
+                  id: DeviceId.make("phone"),
+                  platform: "ios" as const,
+                  name: "iPhone",
+                  version: "18.0",
+                  booted: true,
+                  physical: false,
+                },
+                png: pngBytes,
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-proxy-test-" })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -1988,12 +2477,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const session = (token: string, deferred: boolean) =>
+      const session = (token: string, exposure?: "deferred" | "deferred-proxy") =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
             authorization: `Bearer ${token}`,
-            ...(deferred ? { "t3-tool-exposure": "deferred" } : {}),
+            ...(exposure === undefined ? {} : { "t3-tool-exposure": exposure }),
           };
           const initialize = yield* httpClient.post("/mcp", {
             headers,
@@ -2002,7 +2491,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               "application/json",
             ),
           });
-          const rpc = (method: string, params: object) =>
+          const rpcRaw = (method: string, params: object) =>
             httpClient
               .post("/mcp", {
                 headers: {
@@ -2015,17 +2504,18 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   "application/json",
                 ),
               })
-              .pipe(
-                Effect.flatMap((response) => response.text),
-                // tool_search answers over SSE, after its list_changed notification.
-                Effect.map((text): unknown =>
-                  text
-                    .split("\n")
-                    .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
-                    .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
-                    .find((message) => message.id === 2),
-                ),
-              );
+              .pipe(Effect.flatMap((response) => response.text));
+          const rpc = (method: string, params: object) =>
+            rpcRaw(method, params).pipe(
+              // tool_search answers over SSE, after its list_changed notification.
+              Effect.map((text): unknown =>
+                text
+                  .split("\n")
+                  .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+                  .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
+                  .find((message) => message.id === 2),
+              ),
+            );
           return {
             listed: rpc("tools/list", {}).pipe(
               Effect.map((body) =>
@@ -2034,25 +2524,147 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   .sort(),
               ),
             ),
+            callRaw: (name: string, args: object) =>
+              rpcRaw("tools/call", { name, arguments: args }),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
-                Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
+                Effect.map(
+                  (body) =>
+                    body as {
+                      readonly result?: {
+                        readonly isError?: boolean;
+                        readonly structuredContent?: unknown;
+                        readonly content?: ReadonlyArray<{
+                          readonly type: string;
+                          readonly text?: string;
+                          readonly mimeType?: string;
+                        }>;
+                      };
+                      readonly error?: { readonly message: string };
+                    },
+                ),
               ),
           };
         });
 
-      const deferring = yield* session("deferringToken", true);
-      const other = yield* session("otherToken", false);
+      const deferring = yield* session("deferringToken", "deferred");
+      const proxying = yield* session("proxyToken", "deferred-proxy");
+      const other = yield* session("otherToken");
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
+      expect(yield* other.listed).toEqual([
+        "delegate_task",
+        "device_close",
+        "device_list",
+        "device_open",
+        "device_screenshot",
+        "oversized_budget_tool",
+        "preview_open",
+        "schedule_task",
+        "small_budget_tool",
+      ]);
       // Unlisted tools stay callable.
-      expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
+      expect((yield* deferring.call("schedule_task", {})).result?.structuredContent).toEqual({
+        ok: true,
+      });
 
+      // Dynamic deferred mode (Copilot): omits inputSchema and adds matches to tools/list.
       expect(
-        (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
+        (yield* deferring.call("tool_search", { query: "browser" })).result?.structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+
+      // Proxy deferred mode (Antigravity): returns inputSchema, skips disabled tools and list_changed, keeps fixed list.
+      const proxySearchRaw = yield* proxying.callRaw("tool_search", { query: "browser" });
+      expect(proxySearchRaw).not.toContain("notifications/tools/list_changed");
+      const proxySearch = yield* proxying.call("tool_search", { query: "browser" });
+      expect(proxySearch.result?.structuredContent).toEqual({
+        tools: [
+          {
+            name: "preview_open",
+            description: "Opens a browser preview.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
+      expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
+
+      expect(
+        (yield* proxying.call("tool_search", { query: "remind me tomorrow" })).result
+          ?.structuredContent,
+      ).toEqual({
+        tools: [
+          {
+            name: "schedule_task",
+            description: "Schedules a task.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
+
+      // An oversized schema falls back to name + description so the whole response stays <= 8 KB, while small matches keep schemas.
+      const budgetSearch = yield* proxying.call("tool_search", { query: "budget" });
+      const budgetPayload = budgetSearch.result?.structuredContent as {
+        readonly tools: ReadonlyArray<{
+          readonly name: string;
+          readonly description: string;
+          readonly inputSchema?: unknown;
+        }>;
+      };
+      expect(Buffer.byteLength(JSON.stringify(budgetPayload), "utf8")).toBeLessThanOrEqual(8_000);
+      expect(budgetPayload.tools).toEqual([
+        {
+          name: "oversized_budget_tool",
+          description: "Budget boundary test tool with a giant schema.",
+        },
+        {
+          name: "small_budget_tool",
+          description: "Budget boundary test tool with a small schema.",
+          inputSchema: expect.objectContaining({ type: "object" }),
+        },
+      ]);
+
+      // tool_call invokes optional tools, preserves image content, blocks disabled/meta tools, and returns schema on bad args.
+      expect(
+        (yield* proxying.call("tool_call", { name: "schedule_task", arguments: {} })).result
+          ?.structuredContent,
+      ).toEqual({ ok: true });
+      // Core tools such as delegate_task also work through tool_call if the agent evicts them.
+      expect(
+        (yield* proxying.call("tool_call", { name: "delegate_task", arguments: {} })).result
+          ?.structuredContent,
+      ).toEqual({ ok: true });
+      const imageCall = yield* proxying.call("tool_call", {
+        name: "device_screenshot",
+        arguments: {},
+      });
+      expect(imageCall.result?.content).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/png" })]),
+      );
+      const blockedMeta = yield* proxying.call("tool_call", { name: "tool_call", arguments: {} });
+      expect(blockedMeta.error?.message).toContain("Cannot invoke 'tool_call'");
+      const blockedDisabled = yield* proxying.call("tool_call", {
+        name: "disabled_secret",
+        arguments: {},
+      });
+      expect(blockedDisabled.error?.message).toContain("Tool 'disabled_secret' not found");
+      const badArgs = yield* proxying.call("tool_call", {
+        name: "preview_open",
+        arguments: { url: 123 },
+      });
+      expect(badArgs.result?.isError).toBe(true);
+      expect(badArgs.result?.content?.[0]?.text).toContain("Expected inputSchema:");
+      expect(yield* other.listed).toEqual([
+        "delegate_task",
+        "device_close",
+        "device_list",
+        "device_open",
+        "device_screenshot",
+        "oversized_budget_tool",
+        "preview_open",
+        "schedule_task",
+        "small_budget_tool",
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

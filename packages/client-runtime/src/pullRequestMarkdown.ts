@@ -1,9 +1,8 @@
-import type { Root, RootContent } from "mdast";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
-
-import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
+import { markdownLinkDestinationScanner } from "@t3tools/shared/markdownLinks";
+import * as Effect from "effect/Effect";
+import { Atom } from "effect/reactivity";
+import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
@@ -22,6 +21,7 @@ export type PullRequestBodySegment =
       readonly kind: "attachment";
       readonly url: string;
       readonly media: "video" | "image" | "unknown";
+      readonly label?: string;
     }
   | {
       readonly id: string;
@@ -35,7 +35,18 @@ type PullRequestBodyTableCell = {
 };
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
+// The marker is the whole run, so a line that is no fence is given up on in one pass.
+// A fence may open right after a list marker: `- ```ts` starts code inside the item.
+const FENCE_PATTERN = /^\s{0,3}(?:(?:[-+*]|\d{1,9}[.)]) {1,4})?(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
+const LIST_ITEM_PATTERN = /^\s{0,3}(?:[-+*]|\d{1,9}[.)]) /u;
+
+/** Tabs advance to the next multiple of four, as Markdown measures indentation. */
+function indentColumns(line: string): number {
+  let column = 0;
+  for (const char of /^[ \t]*/u.exec(line)![0]) column += char === "\t" ? 4 - (column % 4) : 1;
+  return column;
+}
+
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -44,15 +55,34 @@ const VIDEO_TAG_MAX_LINES = 8;
 
 // A tab after up to three spaces still reaches the fourth column.
 const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
+const HTML_COMMENT_START_PATTERN = /^ {0,3}<!--/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
-const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$|[?#])/iu;
-const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
-const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
+const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
+// A destination unescapes backslashed ASCII punctuation and decodes character references
+// (`&amp;`); a link with a reference stays Markdown so its parser decodes it.
+const MARKDOWN_DESTINATION_TOKEN_PATTERN =
+  /\\([!-/:-@[-`{-~])|&(?:#\d{1,7}|#[xX][\da-fA-F]{1,6}|[A-Za-z][A-Za-z\d]{1,31});/gu;
+const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+// Stops at the next `<`, so matching stays linear in the length of the line.
+const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+const HTML_AMPERSAND_REFERENCE_PATTERN = /&(?:amp|AMP|#0*38|#[xX]0*26);/gu;
+
+function videoTagSource(html: string): string | undefined {
+  for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
+    for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+      if (attribute[1]!.toLowerCase() !== "src") continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value) return value.replace(HTML_AMPERSAND_REFERENCE_PATTERN, "&");
+    }
+  }
+  return undefined;
+}
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+const VIDEO_TAG_CLOSE_PATTERN = /<\/video>/iu;
 
 /** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
 const TABLE_MAX_LINES = 64;
@@ -69,26 +99,101 @@ const TABLE_STRUCTURE_TAG_PATTERN =
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
-function isWebUrl(url: string): boolean {
+function webUrl(url: string): URL | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Index just past the code span opened at `start`, or past the backtick run when none closes it. */
+function codeSpanEnd(text: string, start: number): number {
+  let open = start;
+  while (text[open] === "`") open += 1;
+  for (let index = open; index < text.length;) {
+    if (text[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let close = index;
+    while (text[close] === "`") close += 1;
+    if (close - index === open - start) return close;
+    index = close;
+  }
+  return open;
+}
+
+function standaloneMarkdownLink(trimmed: string): { label: string; url: string } | null {
+  if (!trimmed.startsWith("[")) return null;
+  // A label may nest balanced brackets; an escaped `\]` or one inside a code span never closes it.
+  let closeBracket = -1;
+  for (let index = 1, depth = 0; index < trimmed.length && closeBracket < 0; index += 1) {
+    const character = trimmed[index];
+    if (character === "\\") index += 1;
+    else if (character === "`") index = codeSpanEnd(trimmed, index) - 1;
+    else if (character === "[") depth += 1;
+    else if (character === "]" && depth-- === 0) closeBracket = index;
+  }
+  if (closeBracket < 0 || trimmed[closeBracket + 1] !== "(") return null;
+  const destination = markdownLinkDestinationScanner(trimmed)(closeBracket + 1);
+  if (destination === null || destination.end !== trimmed.length) return null;
+  let hasCharacterReference = false;
+  const url = trimmed
+    .slice(destination.hrefStart, destination.hrefEnd)
+    .replace(MARKDOWN_DESTINATION_TOKEN_PATTERN, (token, escaped: string | undefined) => {
+      if (escaped !== undefined) return escaped;
+      hasCharacterReference = true;
+      return token;
+    });
+  return url && !hasCharacterReference ? { label: trimmed.slice(1, closeBracket), url } : null;
 }
 
 function attachmentFromLine(
   line: string,
-): { url: string; media: "video" | "image" | "unknown" } | null {
-  const url =
-    BARE_URL_PATTERN.exec(line.trim())?.[1] ?? MARKDOWN_LINK_PATTERN.exec(line.trim())?.[1];
-  if (url === undefined || !isWebUrl(url)) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(url) || sourceControlClients.mediaUrl(url)?.kind === "video") {
-    return { url, media: "video" };
-  }
-  if (IMAGE_EXTENSION_PATTERN.test(url)) return { url, media: "image" };
-  return null;
+): Omit<Extract<PullRequestBodySegment, { kind: "attachment" }>, "id" | "kind"> | null {
+  const trimmed = line.trim();
+  const link = standaloneMarkdownLink(trimmed);
+  const url = link?.url ?? BARE_URL_PATTERN.exec(trimmed)?.[1];
+  if (url === undefined) return null;
+  // Only the path names the file: `report?file=demo.mp4` is a page, not a video.
+  const path = webUrl(url)?.pathname;
+  if (path === undefined) return null;
+  const media = VIDEO_EXTENSION_PATTERN.test(path)
+    ? "video"
+    : IMAGE_EXTENSION_PATTERN.test(path)
+      ? "image"
+      : sourceControlClients.mediaUrl(url)?.kind;
+  if (media === undefined) return null;
+  const label = link?.label.trim();
+  return label ? { url, media, label } : { url, media };
+}
+
+export function makePullRequestMediaKindAtom(
+  fetchMedia: (
+    url: string,
+    options: { headers: Record<string, string>; signal: AbortSignal },
+  ) => Promise<Pick<Response, "ok" | "headers" | "body">>,
+) {
+  return Atom.family((url: string | null) =>
+    Atom.make(
+      Effect.promise(async (signal) => {
+        if (url === null) return null;
+        try {
+          const response = await fetchMedia(url, { headers: { Range: "bytes=0-0" }, signal });
+          void response.body?.cancel().catch(() => undefined);
+          if (!response.ok) return null;
+          const type = response.headers.get("content-type")?.trim().toLowerCase();
+          if (type?.startsWith("image/")) return "image" as const;
+          if (type?.startsWith("video/")) return "video" as const;
+          return null;
+        } catch {
+          return null;
+        }
+      }),
+    ),
+  );
 }
 
 type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
@@ -170,27 +275,6 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
-const definitionParser = unified().use(remarkParse).use(remarkGfm);
-
-/**
- * The first definition of each label in the body, as authored, each joined onto one line so it
- * stands outside the quote or list it was written in.
- */
-function referenceDefinitions(body: string): string[] {
-  const definitions = new Map<string, string>();
-  const visit = (node: Root | RootContent, quotes: number) => {
-    if (node.type === "definition" && !definitions.has(node.identifier)) {
-      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
-      const source = body.slice(node.position?.start.offset, node.position?.end.offset);
-      definitions.set(node.identifier, source.replace(wrap, " "));
-    }
-    if (!("children" in node)) return;
-    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
-  };
-  visit(definitionParser.parse(body), 0);
-  return [...definitions.values()];
-}
-
 /**
  * Each markdown segment renders as its own document, so it leads with the body's definitions.
  * Leading, they win over a later redefinition in the segment, as the first one does in the body.
@@ -212,21 +296,58 @@ function withDefinitions(
     };
   }
   if (!segment.text.includes("[")) return segment;
+  const bomLength = segment.sourceOffset === 0 && segment.text.startsWith("\uFEFF") ? 1 : 0;
   return {
     ...segment,
-    text: definitions + segment.text,
-    sourceOffset: segment.sourceOffset - definitions.length,
+    text: definitions + segment.text.slice(bomLength),
+    sourceOffset: segment.sourceOffset + bomLength - definitions.length,
   };
 }
 
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+/**
+ * The first definition of each label in a body, each on one line so it stands outside the quote or
+ * list it was written in, as the client's Markdown parser reads them.
+ */
+export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
+
+/** How much text the body's definitions may add across all the segments that lead with them. */
+const DEFINITIONS_MAX_ADDED_LENGTH = 256 * 1024;
+
+function segmentsWithReferences(segments: ReadonlyArray<PullRequestBodySegment>): number {
+  let count = 0;
+  for (const segment of segments) {
+    if (segment.kind === "markdown") count += segment.text.includes("[") ? 1 : 0;
+    else if (segment.kind === "table") {
+      for (const cells of segment.rows)
+        for (const cell of cells) count += segmentsWithReferences(cell.segments);
+    }
+  }
+  return count;
+}
+
+export function splitPullRequestBody(
+  body: string,
+  findDefinitions: FindReferenceDefinitions,
+): ReadonlyArray<PullRequestBodySegment> {
   const segments = splitBodyAt(body, 0);
   // One markdown segment is the whole body, which resolves its own references.
   const whole = segments.length === 1 && segments[0]!.kind === "markdown";
   if (whole || !body.includes("]:")) return segments;
-  const definitions = referenceDefinitions(body);
+  const definitions = findDefinitions(body);
   if (definitions.length === 0) return segments;
   const leading = `${definitions.join("\n")}\n\n`;
+  // Past the budget the body renders as one document: its media stays links, its references resolve.
+  if (leading.length * segmentsWithReferences(segments) > DEFINITIONS_MAX_ADDED_LENGTH) {
+    const text = body.replace(/^(?:\r|\n)+/u, "");
+    return [
+      {
+        id: "markdown:0",
+        kind: "markdown",
+        text: text.trimEnd(),
+        sourceOffset: body.length - text.length,
+      },
+    ];
+  }
   return segments.map((segment) => withDefinitions(segment, leading));
 }
 
@@ -235,7 +356,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
-  let openFence: string | null = null;
+  let openFence: {
+    readonly marker: string;
+    readonly flushLeft: boolean;
+    /** Columns of a list item the fence opened in; a less indented line ends the item and fence. */
+    readonly itemIndent: number;
+  } | null = null;
+  let openComment = false;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
@@ -248,18 +375,33 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       segments.push({
         id: `markdown:${segments.length}`,
         kind: "markdown",
-        text: text.replace(/\s+$/u, ""),
+        text: text.trimEnd(),
         sourceOffset,
       });
     }
   };
 
-  const lines = body.split("\n");
+  const lines = body.replace(/\r(?!\n)/gu, "\n").split("\n");
   let tableScannedThrough = -1;
   let lineStart = baseOffset;
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
+    if (openComment) {
+      if (line.includes("-->")) {
+        openComment = false;
+      }
+      markdown.push(line);
+      continue;
+    }
+    if (
+      openFence !== null &&
+      openFence.itemIndent > 0 &&
+      line.trim() &&
+      indentColumns(line) < openFence.itemIndent
+    ) {
+      openFence = null;
+    }
     const fenceMatch = FENCE_PATTERN.exec(line);
     // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
     // A span that runs past this line is left an opener, so its lines stay out of media.
@@ -267,18 +409,33 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       openFence === null &&
       fenceMatch?.[1]![0] === "`" &&
       (fenceMatch[2]!.match(/`+/gu) ?? []).some((run) => run.length === fenceMatch[1]!.length);
-    if (fenceMatch !== null && !isInlineCode) {
+    // A backtick fence's info string cannot hold a backtick; on a list marker that is item text.
+    const isListText =
+      openFence === null &&
+      fenceMatch?.[1]![0] === "`" &&
+      fenceMatch[2]!.includes("`") &&
+      LIST_ITEM_PATTERN.test(line);
+    if (fenceMatch !== null && !isInlineCode && !isListText) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
+      // info string opening a nested fence, not a close. Under a fence opened at the margin, an
+      // indented-code line is content too: a tab-indented ``` there is part of the example.
       const closes =
         openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
+        fence[0] === openFence.marker[0] &&
+        fence.length >= openFence.marker.length &&
+        fenceMatch[2]!.trim().length === 0 &&
+        !LIST_ITEM_PATTERN.test(line) &&
+        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line)) &&
+        // A closer may sit at most three columns past its list item's content.
+        !(openFence.itemIndent > 0 && indentColumns(line) > openFence.itemIndent + 3);
       if (openFence === null) {
-        openFence = fence;
+        openFence = {
+          marker: fence,
+          flushLeft: line.startsWith(fence),
+          itemIndent: LIST_ITEM_PATTERN.test(line) ? line.indexOf(fence) : 0,
+        };
       } else if (closes) {
         openFence = null;
       }
@@ -286,6 +443,11 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       continue;
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
+      markdown.push(line);
+      continue;
+    }
+    if (HTML_COMMENT_START_PATTERN.test(line)) {
+      openComment = !line.includes("-->");
       markdown.push(line);
       continue;
     }
@@ -314,13 +476,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
     let cursor = index;
-    while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
+    while (cursor < lastCandidate && !VIDEO_TAG_CLOSE_PATTERN.test(lines[cursor]!)) {
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
+      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
       : undefined;
-    if (source !== undefined && isWebUrl(source)) {
+    if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();
       segments.push({
         id: `attachment:${segments.length}`,
@@ -340,32 +502,38 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   flushMarkdown();
   return segments;
 }
+let githubEmojiByAlias: ReadonlyMap<string, string> | undefined;
+const githubEmojiAlias = /:([a-z\d_+-]+)(?=:)/gu;
 
-/**
- * Finds the references the change request's host links in plain text, resolved against the change
- * request's repository. Null when the host links none.
- */
-export function changeRequestReferenceAutolinker(
-  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
-): ((text: string) => ReadonlyArray<ReferenceAutolink>) | null {
-  if (!changeRequest) return null;
-  const find = sourceControlClients.get(changeRequest.provider).referenceAutolinks;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
-  return find === undefined || repositoryUrl === undefined
-    ? null
-    : (text) => find(text, repositoryUrl);
+/** GitHub's `:alias:` emoji in `text`; a colon closes one alias only, so `:tada:tada:` has one. */
+export function githubEmojiAliases(
+  text: string,
+): ReadonlyArray<{ readonly index: number; readonly text: string; readonly emoji: string }> {
+  githubEmojiByAlias ??= new Map(
+    GITHUB_EMOJI_ALIASES.trim()
+      .split("\n")
+      .map((line) => {
+        const space = line.indexOf(" ");
+        return [line.slice(0, space), line.slice(space + 1)] as const;
+      }),
+  );
+  const found: { index: number; text: string; emoji: string }[] = [];
+  let end = 0;
+  for (const match of text.matchAll(githubEmojiAlias)) {
+    const emoji = githubEmojiByAlias.get(match[1]!);
+    if (emoji === undefined || match.index < end) continue;
+    end = match.index + match[0].length + 1;
+    found.push({ index: match.index, text: `${match[0]}:`, emoji });
+  }
+  return found;
 }
 
-/**
- * Forges link uploads root-relative, as GitCafe's `/api/attachments/<id>`. In a change request
- * body that always means the forge's origin, never a path on the machine rendering it.
- */
-export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: string): string {
-  if (!/^\/(?![/\\])/u.test(url)) return url;
-  try {
-    return new URL(url, changeRequestUrl).href;
-  } catch {
-    return url;
+export function expandGithubEmojiAliases(text: string): string {
+  let expanded = "";
+  let start = 0;
+  for (const alias of githubEmojiAliases(text)) {
+    expanded += text.slice(start, alias.index) + alias.emoji;
+    start = alias.index + alias.text.length;
   }
+  return start === 0 ? text : expanded + text.slice(start);
 }

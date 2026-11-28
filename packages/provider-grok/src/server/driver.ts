@@ -20,6 +20,7 @@ import {
   enrichGrokSnapshot,
 } from "./status.ts";
 import { grokUsageReader } from "./usage.ts";
+import { needsUsageAccessLimits } from "@t3tools/provider-core/server/usageLimits";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -51,7 +52,6 @@ const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` installs under `GROK_HOME` from the resolved executable and instance environment.
 // npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
 // Mise and Homebrew casks upgrade through their manager; `grok update` would install a second
 // copy, so a cask its brew cannot vouch for stays manual, as does a Nix store install.
@@ -92,6 +92,24 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         })
       );
     }
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const name = path.basename(context.realCommandPath).toLowerCase();
+    const installDir = path.dirname(context.realCommandPath);
+    const installDirName = path.basename(installDir).toLowerCase();
+    const home = path.dirname(installDir);
+    // `grok update` installs under `$GROK_HOME`, so a script install keeps its own home even if the
+    // instance sets another: `<home>/bin/grok` links into `<home>/downloads`, or on Windows is a copy
+    // beside it. Only an install script creates `downloads`, so a bare `bin/grok` elsewhere is not one.
+    const isScriptInstall =
+      (installDirName === "downloads" && name.startsWith("grok-")) ||
+      (installDirName === "bin" &&
+        (/^grok-\d/.test(name) ||
+          ((name === "grok" || name === "grok.exe") &&
+            (yield* fileSystem
+              .exists(path.join(home, "downloads"))
+              .pipe(Effect.orElseSucceed(() => false))))));
+    const scriptHome = isScriptInstall ? { GROK_HOME: home } : {};
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,
@@ -99,7 +117,14 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
+      env: {
+        ...context.env,
+        ...scriptHome,
+        npm_config_allow_scripts: GROK_NPM_PACKAGE,
+        // An npx-launched server's npm_config_user_agent outranks Grok's `[cli] installer`, steering
+        // a script install to npm. The runner extends process.env; only undefined removes a key.
+        npm_config_user_agent: undefined,
+      },
     });
   }),
 };
@@ -130,6 +155,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     accentColor,
     environment,
     enabled,
+    usageAccess = Effect.succeed(false),
     config,
   }) {
     const random = yield* SecureRandom.SecureRandom;
@@ -157,6 +183,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
+        npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -191,13 +218,18 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
             snapshot.installed &&
             snapshot.auth.status === "authenticated"
           ),
+        // readGrokAccount opens Grok's auth.json, so it waits for usage access.
         (snapshot) =>
-          readGrokAccount(processEnv).pipe(
-            Effect.map(({ email, usageLimits }) => ({
-              ...snapshot,
-              auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-              usageLimits,
-            })),
+          Effect.flatMap(usageAccess, (allowed) =>
+            allowed
+              ? readGrokAccount(processEnv).pipe(
+                  Effect.map(({ email, usageLimits }) => ({
+                    ...snapshot,
+                    auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                    usageLimits,
+                  })),
+                )
+              : Effect.map(needsUsageAccessLimits, (usageLimits) => ({ ...snapshot, usageLimits })),
           ),
       ),
       Effect.map(stampIdentity),
@@ -208,15 +240,35 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
+    // The limits-only check opens Grok's auth.json too, so it waits for usage access the same way.
+    const checkUsageLimits = Effect.flatMap(usageAccess, (allowed) =>
+      allowed
+        ? readGrokAccount(processEnv).pipe(
+            Effect.map(({ email, usageLimits }) => ({
+              usageLimits,
+              ...(email ? { auth: { email } } : {}),
+            })),
+          )
+        : Effect.map(needsUsageAccessLimits, (usageLimits) => ({ usageLimits })),
+    ).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
       resolveMaintenance,
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      // Each check starts the Grok CLI four times. A ready instance is rechecked on refresh or a
+      // settings change; only an unhealthy one keeps polling until it recovers.
+      refreshOnInterval: (snapshot) => snapshot.status !== "ready",
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      checkUsageLimits,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

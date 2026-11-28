@@ -66,7 +66,12 @@ export function makeSpeechTextCorrector(
     if (letters.length > 0 && letters.every((character) => character === character.toUpperCase()))
       return replacement.toUpperCase();
     const firstLetter = [...original].find((character) => /\p{L}/u.test(character));
-    if (firstLetter && firstLetter === firstLetter.toUpperCase()) {
+    // A term with its own capitals (iOS, macOS) keeps its spelling.
+    if (
+      firstLetter &&
+      firstLetter === firstLetter.toUpperCase() &&
+      replacement === replacement.toLowerCase()
+    ) {
       const [first = "", ...rest] = [...replacement];
       return first.toUpperCase() + rest.join("");
     }
@@ -121,7 +126,6 @@ export function makeSpeechTextCorrector(
     const tokens = [...text.matchAll(TOKEN)]
       .filter(([word]) => /^[\p{L}\p{M}\p{N}'’-]+$/u.test(word))
       .map((match) => ({
-        value: match[0],
         start: match.index,
         end: match.index + match[0].length,
       }));
@@ -152,12 +156,13 @@ export function makeSpeechTextCorrector(
         continue;
       }
       const first = tokens[index]!;
+      const last = tokens[index + best.count - 1]!;
       output.push(
         text.slice(cursor, first.start),
-        preserveCase(first.value, best.word),
+        preserveCase(text.slice(first.start, last.end - best.suffix.length), best.word),
         best.suffix,
       );
-      cursor = tokens[index + best.count - 1]!.end;
+      cursor = last.end;
       index += best.count;
     }
     output.push(text.slice(cursor));
@@ -193,6 +198,12 @@ export function makeSpeechTextCorrector(
 export function applySpeechAliases(text: string, words: SpeechCustomWords): string {
   return makeSpeechTextCorrector([], words)(text);
 }
+
+/** Hints first, so they survive the 100-term cap that cloud providers such as xAI enforce. */
+export const speechRecognitionWords = (
+  hints: readonly string[] | undefined,
+  terms: readonly string[],
+): string[] => [...(hints ?? []), ...terms].slice(0, 100);
 
 const normalizeWord = (word: string) => word.replace(/\s+/g, " ").trim();
 

@@ -54,6 +54,18 @@ describe("Azure DevOps change request URLs", () => {
     }
   });
 
+  it("takes a pull request URL that leaves the project out as a checkout reference", () => {
+    for (const url of [
+      "https://dev.azure.com/acme/_git/web/pullrequest/17",
+      "https://acme.visualstudio.com/_git/web/pullrequest/17",
+    ]) {
+      expect(definition.isChangeRequestReference(url), url).toBe(true);
+    }
+    expect(
+      definition.isChangeRequestReference("https://dev.azure.com/_git/web/pullrequest/17"),
+    ).toBe(false);
+  });
+
   it.each([
     ["ssh.dev.azure.com", "v3/org/project/web"],
     ["org.visualstudio.com", "defaultcollection/project/_git/web"],
@@ -113,6 +125,7 @@ describe("Azure DevOps remotes", () => {
     for (const remote of [
       "git@ssh.dev.azure.com:v3/org/project/repo",
       "ssh://git@ssh.dev.azure.com:22/v3/org/project/repo",
+      "ssh.dev.azure.com:v3/Org/My Project/My Repo",
       "git@vs-ssh.visualstudio.com:v3/org/project/repo",
       "https://org@dev.azure.com/org/project/_git/repo",
     ]) {
@@ -133,6 +146,18 @@ describe("Azure DevOps repository keys", () => {
     ]) {
       expect(registry.repositoryKeyFromRemote(remote), remote).toBe(
         "dev.azure.com/t3tools/platform/_git/t3code",
+      );
+    }
+  });
+
+  it("gives a project with spaces in its name the same key over SSH as over HTTPS", () => {
+    for (const remote of [
+      "git@ssh.dev.azure.com:v3/Org/My Project/My Repo",
+      "ssh.dev.azure.com:v3/Org/My Project/My Repo",
+      "https://dev.azure.com/Org/My%20Project/_git/My%20Repo",
+    ]) {
+      expect(registry.repositoryKeyFromRemote(remote), remote).toBe(
+        "dev.azure.com/org/my%20project/_git/my%20repo",
       );
     }
   });
@@ -218,10 +243,37 @@ describe("Azure DevOps repository keys", () => {
       expect(registry.canonicalRepositoryKey(key), key).toBe("dev.azure.com/org/project/_git/repo");
       expect(registry.findByRepositoryKey(key), key).toBe(definition);
     }
+    // A repository named like its project may leave the project out of its URL.
+    for (const key of [
+      "dev.azure.com/org/_git/repo",
+      "dev.azure.com/org/defaultcollection/_git/repo",
+      "org.visualstudio.com/_git/repo",
+      "org.visualstudio.com/defaultcollection/_git/repo",
+    ]) {
+      expect(registry.canonicalRepositoryKey(key), key).toBe("dev.azure.com/org/repo/_git/repo");
+    }
+    expect(registry.findByRepositoryKey("tfs/foo.visualstudio.com/_git/repo")).toBeUndefined();
     expect(registry.canonicalRepositoryKey("tfs.example/c/p/_git/r")).toBe(
       "tfs.example/c/p/_git/r",
     );
     expect(registry.findByRepositoryKey("tfs.example/c/p/_git/r")).toBeUndefined();
+  });
+
+  it("matches a shorthand pull request URL against an SSH checkout and builds its canonical URL", () => {
+    const remoteUrl = "git@ssh.dev.azure.com:v3/org/repo/repo";
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey: registry.repositoryKeyFromRemote(remoteUrl),
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    const link = parse("https://org.visualstudio.com/DefaultCollection/_git/repo/pullrequest/7")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(
+      definition.changeRequestUrl({
+        host: "org.visualstudio.com",
+        repository: "defaultcollection/_git/repo",
+        number: 7,
+      }),
+    ).toBe("https://dev.azure.com/org/repo/_git/repo/pullrequest/7");
   });
 });
 
@@ -250,5 +302,51 @@ describe("Azure DevOps repository selector", () => {
         name: "checkout%20(eu)",
       }),
     ).toBe("checkout (eu)");
+  });
+});
+
+describe("Azure DevOps issue scope", () => {
+  it("places work items in the project rather than the repository", () => {
+    const kind = SourceControlProviderKind.make("azure-devops");
+    expect(
+      definition.issueScope?.({ provider: kind, displayName: "acme/Web%20App/_git/web" }),
+    ).toBe("acme/Web App");
+    expect(definition.issueScope?.({ provider: kind, displayName: "web" })).toBeNull();
+    // One segment before `_git` is a different thing on each kind of host, so it needs the host.
+    expect(definition.issueScope?.({ provider: kind, displayName: "acme/_git/web" })).toBeNull();
+    const scopeOn = (canonicalKey: string, displayName: string) =>
+      definition.issueScope?.({ provider: kind, canonicalKey, displayName });
+    expect(scopeOn("dev.azure.com/acme/_git/web", "acme/_git/Web")).toBe("acme/Web");
+    expect(scopeOn("acme.visualstudio.com/web/_git/web", "Web%20App/_git/web")).toBe("Web App");
+    expect(scopeOn("acme.visualstudio.com/_git/web", "_git/Web")).toBe("Web");
+    // Its work items are at `acme.visualstudio.com/Web/_workitems/...`, without the collection.
+    expect(
+      scopeOn("acme.visualstudio.com/defaultcollection/_git/web", "DefaultCollection/_git/Web"),
+    ).toBe("Web");
+    expect(scopeOn("dev.azure.com/_git/web", "_git/web")).toBeNull();
+    // A legacy host keeps the organization in its name, and so does its work item URL.
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "web app",
+      scopeAlias: "defaultcollection/web app",
+      key: "9",
+    });
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/DefaultCollection/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "defaultcollection/web app",
+      scopeAlias: "web app",
+      key: "9",
+    });
+    expect(
+      definition.parseIssueUrl?.(new URL("https://dev.azure.com/acme/_workitems/edit/9")),
+    ).toBeNull();
   });
 });

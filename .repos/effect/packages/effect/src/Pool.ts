@@ -290,9 +290,10 @@ export const make = <A, E, R>(options: {
  *
  * `timeToLiveStrategy` defaults to `"usage"`, which expires idle, unreserved
  * excess items after `timeToLive` since their last borrower released them
- * (or acquisition if never borrowed). It checks once per `timeToLive`, so
- * retirement can take up to twice that duration. `"creation"` measures from
- * item creation instead.
+ * (or acquisition if never borrowed). Items that only become excess or
+ * unreserved after that deadline are retired within `timeToLive` of becoming
+ * eligible.
+ * `"creation"` measures from item creation instead.
  *
  * **Example** (Creating a connection pool)
  *
@@ -1168,23 +1169,27 @@ const strategyUsageTTL = Effect.fnUntraced(function*<A, E>(ttl: Duration.Input) 
   const clock = yield* Clock
   const ttlMillis = Duration.toMillis(Duration.fromInputUnsafe(ttl))
   return identity<Strategy<A, E>>({
-    run: (pool) => {
-      const process: Effect.Effect<void> = Effect.suspend(() => {
-        if (activeSize(pool) <= targetSize(pool)) return Effect.void
-        const expired = clock.currentTimeMillisUnsafe() - ttlMillis
+    run: (pool) =>
+      Effect.suspend(() => {
+        const now = clock.currentTimeMillisUnsafe()
+        let wakeAt = now + ttlMillis
+        const hasExcess = activeSize(pool) > targetSize(pool)
         let oldest: PoolItem<A, E> | undefined
         for (const item of pool.state.items) {
-          if (item.refCount > 0 || item.idleSince > expired) continue
-          if (pool.state.invalidated.has(item) || reservations.has(item)) continue
-          if (oldest === undefined || item.idleSince < oldest.idleSince) oldest = item
+          if (item.refCount > 0 || pool.state.invalidated.has(item)) continue
+          const deadline = item.idleSince + ttlMillis
+          if (deadline > now) {
+            wakeAt = Math.min(wakeAt, deadline)
+          } else if (
+            hasExcess && !reservations.has(item) && (oldest === undefined || item.idleSince < oldest.idleSince)
+          ) {
+            oldest = item
+          }
         }
-        return oldest === undefined ? Effect.void : Effect.flatMap(invalidatePoolItem(pool, oldest), () => process)
-      })
-      return process.pipe(
-        Effect.delay(ttl),
-        Effect.forever({ disableYield: true })
-      )
-    },
+        return oldest === undefined
+          ? clock.sleep(Duration.millis(wakeAt - now))
+          : invalidatePoolItem(pool, oldest)
+      }).pipe(Effect.forever({ disableYield: true })),
     onAcquire: (_) => Effect.void,
     reclaim: (_) => Effect.undefined
   })

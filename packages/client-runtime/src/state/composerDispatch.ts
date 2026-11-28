@@ -1,3 +1,8 @@
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+
+import { parseCodexFeedbackCommand } from "./threadFeedback.ts";
+
 export type ComposerDispatchMode = "auto" | "queue" | "steer" | "restart";
 export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
 
@@ -48,4 +53,25 @@ export function alternateComposerDispatchAction(
     alternateModifier: true,
     ...(activeTurnDefault === undefined ? {} : { activeTurnDefault }),
   }) as ActiveTurnComposerAction;
+}
+
+/** The composer runs these drafts itself, so they never queue for or steer a running turn. */
+export function composerRunsDraftLocally(input: {
+  readonly text: string;
+  /** The text a send reads `/feedback` and `/clear` from, when it strips more than `text`. */
+  readonly commandText?: string;
+  readonly holdsOnlyText: boolean;
+  readonly sideChat: boolean;
+  readonly usageLimits: boolean;
+  readonly codexFeedback: boolean;
+  readonly freshSession: boolean;
+}): boolean {
+  if (input.sideChat && parseSideChatCommand(input.text) !== null) return true;
+  if (!input.holdsOnlyText) return false;
+  const commandText = input.commandText ?? input.text;
+  return (
+    (input.usageLimits && isUsageLimitsCommand(input.text)) ||
+    (input.codexFeedback && parseCodexFeedbackCommand(commandText) !== null) ||
+    (input.freshSession && isClearComposerCommand(commandText))
+  );
 }

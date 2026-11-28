@@ -2,7 +2,6 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
-import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
 import {
   rightPanelHostRef,
@@ -53,42 +52,39 @@ export function planNextReopen(
   return { drop, restore: null };
 }
 
-type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
-  repository?: string;
-  number?: number;
-  selectedProjectId?: ProjectId;
-  selectedHost?: string;
-  selectedEnvironmentId?: EnvironmentId;
-};
-
-export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
-  previous: S,
+export function pullRequestsSearchForRestore<S extends object>(
+  preferences: S,
   selected: RightPanelSurface | null,
-): S & PullRequestListPreferences {
-  const {
-    repository: _repository,
-    number: _number,
-    selectedProjectId: _projectId,
-    selectedHost: _host,
-    selectedEnvironmentId: _environmentId,
-    ...filters
-  } = previous;
+) {
+  if (selected?.kind !== "pull-request") return preferences;
   return {
-    ...filters,
-    involvement: previous.involvement ?? "all",
-    state: previous.state ?? "open",
-    ...(selected?.kind === "pull-request"
-      ? {
-          repository: selected.repository,
-          number: selected.number,
-          selectedProjectId: selected.projectId as ProjectId,
-          ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
-          ...(selected.environmentId === undefined
-            ? {}
-            : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
-        }
-      : {}),
-  } as S & PullRequestListPreferences;
+    ...preferences,
+    repository: selected.repository,
+    number: selected.number,
+    selectedProjectId: selected.projectId as ProjectId,
+    ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
+    ...(selected.environmentId === undefined
+      ? {}
+      : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
+  };
+}
+
+export function issuesSearchForRestore<S extends object>(
+  preferences: S,
+  selected: RightPanelSurface | null,
+) {
+  if (selected?.kind !== "issue") return preferences;
+  return {
+    ...preferences,
+    ...(selected.environmentId === undefined
+      ? {}
+      : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
+    selectedProjectId: selected.projectId as ProjectId,
+    ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
+    tracker: selected.tracker,
+    scope: selected.scope,
+    key: selected.key,
+  };
 }
 
 export async function reopenClosedView(
@@ -158,8 +154,14 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
-    case "side-chat":
-      panels.openSideChat(ref, surface.threadId);
+    case "issue":
+      panels.openIssue(ref, surface);
+      break;
+    case "thread":
+      panels.openThread(ref, surface.threadId);
+      break;
+    case "linked-thread":
+      panels.openLinkedThread(ref, surface);
       break;
     default:
       panels.open(ref, surface.kind);

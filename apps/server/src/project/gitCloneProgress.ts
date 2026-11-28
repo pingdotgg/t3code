@@ -14,6 +14,7 @@ const STAGE_PREFIXES: ReadonlyArray<readonly [RegExp, ProjectCloneStage]> = [
   [/^Resolving deltas/, "resolving"],
   [/^Updating files/, "checkout"],
   [/^Checking out files/, "checkout"],
+  [/^Filtering content/, "checkout"],
 ];
 
 // Linear on hostile remote output: the tail is trimmed in code (optional `\s*`/`.*?` groups backtrack
@@ -40,4 +41,21 @@ export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | 
     percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null,
     detail,
   };
+}
+
+/** Git counts filtered files only as each one lands, so this prefix marks its Git LFS phase. */
+export function isGitFilterProgressLine(line: string): boolean {
+  return line.trimStart().startsWith("Filtering content");
+}
+
+/** Git prints nothing while a Git LFS object downloads; this reports the bytes of the unfinished ones. */
+export function gitLfsDownloadProgressLine(
+  partialBytes: number,
+  percent: number | null,
+): GitCloneProgressLine {
+  const size =
+    partialBytes >= 1024 ** 3
+      ? `${(partialBytes / 1024 ** 3).toFixed(2)} GiB`
+      : `${(partialBytes / 1024 ** 2).toFixed(1)} MiB`;
+  return { stage: "checkout", percent, detail: `Downloading Git LFS objects: ${size} in progress` };
 }

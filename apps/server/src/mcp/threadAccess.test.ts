@@ -62,6 +62,19 @@ it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
   }),
 );
 
+it.effect("points a bare launch hash at the mcp:launch: thread it belongs to", () =>
+  Effect.gen(function* () {
+    const hash = "3f9a1c0be47d25a86e1f0c9d4b7a2e5f8c3d6b9a0e1f4c7d2a5b8e0f3c6d9a1b";
+    const launched = ThreadId.make(`mcp:launch:${hash}`);
+    const error = yield* readBare([launched], client, ThreadId.make(hash));
+
+    expect(error.code).toBe("thread_not_found");
+    expect(error.message).toBe(
+      `The thread was not found. Did you mean \`${launched}\`? ${linksHint}`,
+    );
+  }),
+);
+
 it.effect("tells a caller with linked environments that the thread may be on one of them", () =>
   Effect.gen(function* () {
     const error = yield* readBare([], { ...client, linkedEnvironments: true });

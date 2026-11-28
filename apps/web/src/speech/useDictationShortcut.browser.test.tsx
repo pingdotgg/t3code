@@ -1,8 +1,10 @@
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { createRef, type RefObject } from "react";
+import { createRef, type RefObject, useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../test/render";
 import { useDictationShortcut, type DictationKeyHandlers } from "./useDictationShortcut";
+import { useDictationSubmissionShortcut } from "./useDictationSubmissionShortcut";
 
 const settings = vi.hoisted(() => ({ mode: "hold" as "hold" | "auto" | "toggle" }));
 vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => settings.mode }));
@@ -179,6 +181,32 @@ it("lets Escape in another editor of the recording editor's dialog reach that ed
   expect(speech.cancel).not.toHaveBeenCalled();
 });
 
+it("lets Escape close a modal opened over the recording before canceling it", async () => {
+  const speech = recording();
+  const closeImage = vi.fn();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Expanded image"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") closeImage();
+        }}
+      >
+        <button type="button">Close</button>
+      </div>
+    </>,
+  );
+  const close = screen.getByRole("button", { name: "Close" }).element();
+  if (!(close instanceof HTMLElement)) throw new Error("expected the image dialog's button");
+  close.focus();
+  close.dispatchEvent(escape());
+  expect(speech.cancel).not.toHaveBeenCalled();
+  expect(closeImage).toHaveBeenCalledTimes(1);
+});
+
 it("cancels the recording on Escape outside other shown dictation editors", async () => {
   const speech = recording();
   const reviewRef = createRef<HTMLTextAreaElement>();
@@ -234,3 +262,35 @@ it.each([
     expect(preview.cancel).toHaveBeenCalledTimes(previewRecords ? 1 : 0);
   },
 );
+
+function SubmissionProbe({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  useDictationSubmissionShortcut({ enabled: true, formRef, onKeyDown });
+  return (
+    <>
+      <div data-testid="timeline" tabIndex={0}>
+        <button type="button">Copy</button>
+        <input aria-label="Search" />
+      </div>
+      <form ref={formRef} />
+    </>
+  );
+}
+
+it("submits dictation on Enter while the chat timeline has focus", async () => {
+  const onKeyDown = vi.fn();
+  await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
+  (screen.getByTestId("timeline").element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onKeyDown).toHaveBeenCalledOnce();
+});
+
+it("leaves dictation Enter to a focused button or field", async () => {
+  const onKeyDown = vi.fn();
+  await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
+  (screen.getByRole("button", { name: "Copy" }).element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  (screen.getByRole("textbox", { name: "Search" }).element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onKeyDown).not.toHaveBeenCalled();
+});

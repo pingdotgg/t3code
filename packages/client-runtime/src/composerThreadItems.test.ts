@@ -54,6 +54,34 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
   expect(items.map((item) => item.thread.threadId)).toEqual(["word", "newer-mid-word"]);
 });
 
+it("offers the composer thread's own used side chats, but not other threads' side chats", () => {
+  const sideChatOf = (parent: string) => ({
+    rootThreadId: ThreadId.make(parent),
+    parentThreadId: ThreadId.make(parent),
+    relationshipToParent: "fork" as const,
+    sideChat: true,
+  });
+  const latestUserMessageAt = "2026-10-22T00:00:00.000Z";
+  const items = matchComposerThreadItems({
+    shells: [
+      shell("mine", "Why is the build slow?", { lineage: sideChatOf("main"), latestUserMessageAt }),
+      shell("unused", "Slow side chat", { lineage: sideChatOf("main") }),
+      shell("theirs", "Why is the test slow?", {
+        lineage: sideChatOf("other"),
+        latestUserMessageAt,
+      }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map(),
+    excludeThreadId: ThreadId.make("main"),
+    query: "slow",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(items.map(({ thread, description }) => ({ id: thread.threadId, description }))).toEqual([
+    { id: "mine", description: "Side chat" },
+  ]);
+});
+
 it("also offers threads on linked machines, naming the machine, but no other machine's", () => {
   const vps = EnvironmentId.make("env-vps");
   const items = matchComposerThreadItems({
@@ -76,6 +104,24 @@ it("also offers threads on linked machines, naming the machine, but no other mac
       description: "Thread on Hetzner VPS",
     },
   ]);
+
+  const sameIdItems = matchComposerThreadItems({
+    shells: [
+      shell("same", "Deploy script"),
+      shell("same", "Deploy script", { environmentId: vps }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map([[vps, "Hetzner VPS"]]),
+    excludeThreadId: ThreadId.make("same"),
+    query: "deploy",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(sameIdItems.map(({ thread, description }) => ({ thread, description }))).toEqual([
+    {
+      thread: { environmentId: vps, threadId: "same" },
+      description: "Thread on Hetzner VPS",
+    },
+  ]);
 });
 
 describe("matchComposerEnvironmentItems", () => {
@@ -89,6 +135,7 @@ describe("matchComposerEnvironmentItems", () => {
     expect(
       matchComposerEnvironmentItems({
         environments,
+        linkedEnvironments: new Map(),
         environmentId: EnvironmentId.make("env-here"),
         query: "  vps ",
       }),
@@ -105,6 +152,7 @@ describe("matchComposerEnvironmentItems", () => {
     expect(
       matchComposerEnvironmentItems({
         environments,
+        linkedEnvironments: new Map(),
         environmentId: EnvironmentId.make("env-here"),
         query: "lap",
       }),
@@ -112,9 +160,41 @@ describe("matchComposerEnvironmentItems", () => {
     expect(
       matchComposerEnvironmentItems({
         environments,
+        linkedEnvironments: new Map(),
         environmentId: EnvironmentId.make("env-here"),
         query: "",
       }),
     ).toEqual([]);
+  });
+
+  it("offers machines the composer's environment links to that this client is not paired with", () => {
+    expect(
+      matchComposerEnvironmentItems({
+        environments: [],
+        linkedEnvironments: new Map([
+          [EnvironmentId.make("env-here"), "Laptop"],
+          [EnvironmentId.make("env-build"), "buildbox"],
+        ]),
+        environmentId: EnvironmentId.make("env-here"),
+        query: "build",
+      }),
+    ).toEqual([
+      {
+        id: "environment:env-build",
+        type: "environment",
+        environmentId: "env-build",
+        machine: "server",
+        label: "buildbox",
+        description: "Machine",
+      },
+    ]);
+    expect(
+      matchComposerEnvironmentItems({
+        environments,
+        linkedEnvironments: new Map([[EnvironmentId.make("env-vps"), "Hetzner VPS"]]),
+        environmentId: EnvironmentId.make("env-here"),
+        query: "vps",
+      }).map((item) => item.machine),
+    ).toEqual(["cloud"]);
   });
 });

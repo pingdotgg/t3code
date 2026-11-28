@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { MoonIcon, SunIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import {
@@ -5,13 +6,13 @@ import {
   THEME_PREVIEW_RENDER_SPECS,
 } from "@t3tools/shared/themePreview";
 import { cn } from "../../lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getThemeColorsForMode,
   getThemeModes,
   type ThemeAppearance,
   type ThemeDefinition,
 } from "../../themePalette";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const THEME_PREVIEW_ROLES = [
   "sidebar",
@@ -159,55 +160,57 @@ export function ThemePreviewCircles({
   onSelectMode: (mode: ThemeMode) => void;
   previews: ThemeCardDefinition["previews"];
 }) {
+  const gt = useGT();
   return (
     <div className="flex min-h-16 items-center justify-center gap-2.5 px-3 pt-3">
       {previews.map((preview) => {
         const mode = preview.mode;
         const isPicked = activeModes.includes(mode);
         return (
-          <Tooltip key={mode}>
-            <TooltipTrigger
-              render={
-                <button
-                  aria-label={`Use ${label} ${mode} mode`}
-                  aria-pressed={isPicked}
-                  className={cn(
-                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1.5 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
-                    isPicked && "hover:scale-100",
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSelectMode(mode);
-                  }}
-                  type="button"
-                >
-                  <ThemePreviewCircle colors={preview.colors} mode={mode} />
-                  {isPicked ? (
-                    <>
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute inset-0 rounded-full"
-                        style={{ boxShadow: "inset 0 0 0 2px var(--ring)" }}
-                      />
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute bottom-0.5 right-0.5 flex size-5 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm"
-                      >
-                        {mode === "light" ? (
-                          <SunIcon className="size-3" />
-                        ) : (
-                          <MoonIcon className="size-3" />
-                        )}
-                      </span>
-                    </>
-                  ) : null}
-                </button>
-              }
-            />
-            <TooltipPopup>
-              {mode === "light" ? "Use for light mode only" : "Use for dark mode only"}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            key={mode}
+            render={
+              <button
+                aria-label={
+                  mode === "light"
+                    ? gt("Use {label} light mode", { label })
+                    : gt("Use {label} dark mode", { label })
+                }
+                aria-pressed={isPicked}
+                className={cn(
+                  "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1.5 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
+                  isPicked && "hover:scale-100",
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectMode(mode);
+                }}
+                type="button"
+              >
+                <ThemePreviewCircle colors={preview.colors} mode={mode} />
+                {isPicked ? (
+                  <>
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 rounded-full"
+                      style={{ boxShadow: "inset 0 0 0 2px var(--ring)" }}
+                    />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute bottom-0.5 right-0.5 flex size-5 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm"
+                    >
+                      {mode === "light" ? (
+                        <SunIcon className="size-3" />
+                      ) : (
+                        <MoonIcon className="size-3" />
+                      )}
+                    </span>
+                  </>
+                ) : null}
+              </button>
+            }
+            label={mode === "light" ? gt("Use for light mode only") : gt("Use for dark mode only")}
+          />
         );
       })}
     </div>

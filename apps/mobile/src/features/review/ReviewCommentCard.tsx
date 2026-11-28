@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react-native";
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
@@ -18,7 +19,6 @@ import {
   reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "./reviewModel";
-import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { useMarkdownCodeHighlight } from "../threads/markdownCodeHighlightState";
 
@@ -49,14 +49,15 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const messages = useMessages();
   const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
   const [NativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
-    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`),
-    [patch, props.comment.id],
+    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`, messages),
+    [patch, props.comment.id, messages],
   );
   const nativeReviewDiffData = useMemo(() => buildNativeReviewDiffData(parsedDiff), [parsedDiff]);
   const compactNativeRows = useMemo(() => {
@@ -209,7 +210,6 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             className="font-mono"
             style={{
               color: props.colors.text,
-              fontFamily: REVIEW_MONO_FONT_FAMILY,
               fontSize: codeSurface.fontSize,
               lineHeight: codeSurface.rowHeight,
             }}

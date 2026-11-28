@@ -1,9 +1,14 @@
 # Files in question answers
 
-When an agent asks a question that accepts a custom answer, use **Attach files** or paste an image into the answer field. On mobile, use the attachment button to choose photos or files. You can send a file by itself, with a selected option, or with a typed answer.
+When an agent asks a question that accepts a custom answer, you can attach files or paste images alongside (or instead of) a typed response.
 
-Each question keeps its own attachments as you move between questions. Your normal prompt draft stays separate. Wait for uploads to finish before submitting; retry or remove any failed upload. A failed response keeps the draft available to try again.
+- **Web and desktop**: Click **Attach files** or paste an image into the answer field.
+- **Mobile**: Tap the attachment button to choose photos or files.
 
-Files upload to the environment running the thread, including remote environments. The agent receives paths to those saved files with your answer and can open them with its available tools. Questions that only accept predefined choices do not offer attachments. Older servers need updating before this option appears.
+## Behavior and limits
 
-Submitted attachments remain in the thread history. Reverting a thread removes attachments belonging to discarded answers; deleting the thread uses the same file cleanup as other attachments. You can attach up to 100 files across one set of answers, using the same file and total image size limits as the normal composer.
+- **Limits**: Up to 100 files across one set of answers, with the same per-file and image size limits as the [composer](./composer.md#attach-files).
+- **Per-question drafts**: Each question keeps its own attachments while you move between questions, separate from your main composer draft. Wait for uploads to finish before submitting.
+- **How the agent sees them**: Files upload to the thread's environment (including remote environments), and the agent receives their saved file paths with your answer.
+- **Availability**: Only shown for questions that accept custom text (not fixed-choice-only questions). Requires an up-to-date server.
+- **Cleanup**: Submitted attachments stay in thread history and are cleaned up when you revert past or delete the thread.

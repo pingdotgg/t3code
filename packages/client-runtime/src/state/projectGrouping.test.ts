@@ -6,8 +6,10 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  groupIconFallbacks,
   pickableProjectGroups,
   derivePhysicalProjectKey,
+  resolveGroupDefaultProject,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -265,6 +267,54 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("represents a repository group by its root checkout, even when it was added last", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const local = { ...repositoryIdentity, rootPath: "/work/workspace" };
+    const remote = { ...repositoryIdentity, rootPath: "/srv/workspace" };
+    const archivedTool = makeProject("old-tool", "/work/workspace/_archive/old-tool", {
+      repositoryIdentity: local,
+    });
+    const app = makeProject("app-a", "/work/workspace/app-a", { repositoryIdentity: local });
+    const remoteApp = makeProject("remote-app", "/srv/workspace/app-a", {
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity: remote,
+    });
+    const remoteRoot = makeProject("remote-root", "/srv/workspace", {
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity: remote,
+    });
+    const root = makeProject("workspace", "/work/workspace", { repositoryIdentity: local });
+    const representativeOf = (
+      projects: ReadonlyArray<EnvironmentProject>,
+      preferredEnvironmentId: EnvironmentId | null = null,
+    ) =>
+      buildProjectGroups({ projects, settings: settings("repository"), preferredEnvironmentId })[0]
+        ?.representative.id;
+
+    expect(representativeOf([archivedTool, app, root])).toBe("workspace");
+    expect(representativeOf([archivedTool, app, remoteApp, remoteRoot, root], environmentId)).toBe(
+      "workspace",
+    );
+    expect(
+      representativeOf([archivedTool, app, remoteApp, remoteRoot, root], remoteEnvironmentId),
+    ).toBe("remote-root");
+    // A local root is not worth leaving the current environment for.
+    expect(representativeOf([archivedTool, root, remoteApp], remoteEnvironmentId)).toBe(
+      "remote-app",
+    );
+    expect(representativeOf([archivedTool, app])).toBe("old-tool");
+
+    // A new thread with no current or last-used project starts from the first project's group.
+    const all = [archivedTool, app, remoteApp, remoteRoot, root];
+    expect(resolveGroupDefaultProject(archivedTool, all, settings("repository")).id).toBe(
+      "workspace",
+    );
+    expect(resolveGroupDefaultProject(remoteApp, all, settings("repository")).id).toBe(
+      "remote-root",
+    );
+    expect(resolveGroupDefaultProject(archivedTool, all, settings("separate")).id).toBe("old-tool");
+  });
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
@@ -301,6 +351,41 @@ describe("buildProjectGroups", () => {
       buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
     expect(label(folderTitles)).toBe("T3 Code");
     expect(label(renamed)).toBe("t3code");
+  });
+
+  it("labels a renamed group by its rename after a checkout with a folder title joins it", () => {
+    const checkout = (id: string, root: string, overrides: Partial<EnvironmentProject> = {}) =>
+      makeProject(id, root, {
+        title: "t3code",
+        repositoryIdentity: { ...repositoryIdentity, rootPath: root },
+        ...overrides,
+      });
+    const renamed = checkout("renamed", "/work/t3code", { title: "T3", hasCustomTitle: true });
+    const joined = checkout("joined", "/remote/t3code", {
+      environmentId: EnvironmentId.make("remote"),
+    });
+    const renamedSubfolder = makeProject("web", "/remote/t3code/apps/web", {
+      title: "Web",
+      hasCustomTitle: true,
+      repositoryIdentity: { ...repositoryIdentity, rootPath: "/remote/t3code" },
+    });
+
+    const label = (projects: ReadonlyArray<EnvironmentProject>) =>
+      buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
+    expect(label([renamed, joined])).toBe("T3");
+    expect(label([joined, renamedSubfolder])).toBe("T3 Code");
+    // An older server may not send the repository root; like grouping, read that as the root.
+    expect(label([{ ...renamed, repositoryIdentity }, joined])).toBe("T3");
+
+    const joinedSubfolder = makeProject("web", "/work/t3code/apps/web", {
+      title: "web",
+      repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/t3code" },
+    });
+    const folderGroupLabel = buildProjectGroups({
+      projects: [renamedSubfolder, joinedSubfolder],
+      settings: settings("repository_path"),
+    })[0]?.label;
+    expect(folderGroupLabel).toBe("Web");
   });
 
   it("labels a group by its repository when clones disagree on its casing", () => {
@@ -345,6 +430,60 @@ describe("buildProjectGroups", () => {
       preferredEnvironmentId: environmentId,
     });
     expect(pathGroups.map((group) => group.label)).toEqual(["Design docs", "t3code"]);
+  });
+
+  it.each([
+    ["/", ["/", "/app", "/tools"]],
+    ["D:\\", ["D:/", "D:/app", "D:/tools"]],
+  ] as const)("keeps folder groups apart in a repository checked out at %s", (rootPath, paths) => {
+    const identity = { ...repositoryIdentity, rootPath };
+    const groups = buildProjectGroups({
+      projects: paths.map((path, index) =>
+        makeProject(`project-${index}`, path, { repositoryIdentity: identity }),
+      ),
+      settings: settings("repository_path"),
+    });
+
+    const key = repositoryIdentity.canonicalKey;
+    expect(groups.map((group) => group.key)).toEqual([key, `${key}::app`, `${key}::tools`]);
+  });
+
+  it("keeps a POSIX folder name ending in a backslash as part of the repository root", () => {
+    const identity = { ...repositoryIdentity, rootPath: "/work/repo\\" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("app", "/work/repo\\/app", { repositoryIdentity: identity }),
+        makeProject("sibling", "/work/repo\\other", { repositoryIdentity: identity }),
+      ],
+      settings: settings("repository_path"),
+    });
+
+    const key = repositoryIdentity.canonicalKey;
+    expect(groups.map((group) => group.key)).toEqual([`${key}::app`, key]);
+  });
+
+  it("keeps literal POSIX backslashes distinct from repository path separators", () => {
+    const identity = { ...repositoryIdentity, canonicalKey: "host/org/repo", rootPath: "/repo" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("literal", String.raw`/repo/a\b`, { repositoryIdentity: identity }),
+        makeProject("nested", "/repo/a/b", { repositoryIdentity: identity }),
+        makeProject("windows", String.raw`C:\repo\a\b`, {
+          environmentId: EnvironmentId.make("windows"),
+          repositoryIdentity: { ...identity, rootPath: String.raw`C:\repo` },
+        }),
+      ],
+      settings: settings("repository_path"),
+    });
+
+    expect(groups.map((group) => group.key)).toEqual([
+      String.raw`host/org/repo::a\b`,
+      "host/org/repo::a/b",
+    ]);
+    expect(groups.map((group) => group.members.map(({ project }) => project.id))).toEqual([
+      ["literal"],
+      ["nested", "windows"],
+    ]);
   });
 
   it("applies a physical-project override without dropping its siblings", () => {
@@ -492,5 +631,15 @@ describe("sortProjectsByGroupOrder", () => {
       ],
     );
     expect(sorted.map((entry) => entry.id)).toEqual(["pinned", "recent", "archived", "unlisted"]);
+  });
+});
+
+describe("groupIconFallbacks", () => {
+  it("lists the group's other members in order, leaving out its representative", () => {
+    const remote = EnvironmentId.make("remote");
+    const root = makeProject("root", "/work/t3code");
+    const web = makeProject("web", "/work/t3code/apps/web");
+    const remoteRoot = makeProject("root", "/work/t3code", { environmentId: remote });
+    expect(groupIconFallbacks([web, root, remoteRoot], root)).toEqual([web, remoteRoot]);
   });
 });

@@ -492,14 +492,17 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
   );
 
   const gitDirOf = Effect.fn("WorktreeCheckoutCache.gitDirOf")(function* (worktreePath: string) {
-    const contents = yield* fileSystem.readFileString(path.join(worktreePath, ".git"));
-    const gitDir = contents.match(/^gitdir: (.+)$/m)?.[1];
-    if (gitDir === undefined) {
+    const contents = (yield* fileSystem.readFileString(path.join(worktreePath, ".git"))).replace(
+      /[\r\n]+$/u,
+      "",
+    );
+    const prefix = "gitdir: ";
+    if (!contents.startsWith(prefix) || contents.length === prefix.length) {
       return yield* new WorktreeCheckoutCacheError({
         detail: `${worktreePath} is not a linked worktree`,
       });
     }
-    return path.resolve(worktreePath, gitDir.trim());
+    return path.resolve(worktreePath, contents.slice(prefix.length));
   });
 
   /**

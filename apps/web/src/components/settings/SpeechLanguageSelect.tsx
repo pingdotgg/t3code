@@ -1,17 +1,37 @@
 import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
+import { useGT, useLocale } from "gt-react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
-const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
-export const languageLabel = (code: string) => languageNames.of(code) ?? code;
+const languageNamesByLocale = new Map<string, Intl.DisplayNames>();
+export function languageLabel(code: string, locale = "en"): string {
+  let languageNames = languageNamesByLocale.get(locale);
+  if (!languageNames) {
+    languageNames = new Intl.DisplayNames([locale], { type: "language" });
+    languageNamesByLocale.set(locale, languageNames);
+  }
+  return languageNames.of(code) ?? code;
+}
+
+export function compareLanguageLabels(left: string, right: string, locale: string): number {
+  return languageLabel(left, locale).localeCompare(languageLabel(right, locale), locale);
+}
 
 type ModelLanguages = Pick<
   Extract<EnvironmentSpeechStatus, { supported: true }>,
   "languages" | "supportsLanguageDetection"
 >;
 
-export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages | null }) {
+export function SpeechLanguageSelect({
+  model,
+  automaticLabel,
+}: {
+  readonly model: ModelLanguages | null;
+  readonly automaticLabel?: string | undefined;
+}) {
+  const gt = useGT();
+  const locale = useLocale();
   const preference = useClientSettings((settings) => settings.speechLanguage);
   const languages = model?.languages ?? [];
   const resolved = model
@@ -20,15 +40,16 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
         preference,
       )
     : preference;
-  const effectiveLabel = resolved === "auto" ? "Auto-detect" : languageLabel(resolved);
+  const effectiveLabel =
+    resolved === "auto" ? (automaticLabel ?? gt("Auto-detect")) : languageLabel(resolved, locale);
   const unavailable =
     preference !== "auto" && preference !== resolved
-      ? `${languageLabel(preference)} unavailable`
+      ? gt("{language} unavailable", { language: languageLabel(preference, locale) })
       : null;
   const label = unavailable
-    ? `${effectiveLabel} (${unavailable})`
+    ? gt("{language} ({unavailable})", { language: effectiveLabel, unavailable })
     : preference === "auto" && resolved !== "auto"
-      ? `Auto (${effectiveLabel})`
+      ? gt("Auto ({language})", { language: effectiveLabel })
       : effectiveLabel;
   return (
     <Select
@@ -38,21 +59,23 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
         if (value) void updateClientSettings({ speechLanguage: value });
       }}
     >
-      <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-64">
+      <SelectTrigger size="sm" aria-label={gt("Transcription language")} className="max-w-64">
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        <SelectItem value="auto">Auto</SelectItem>
+        <SelectItem value="auto">
+          {gt("Auto", { $context: "automatic language detection" })}
+        </SelectItem>
         {unavailable ? (
           <SelectItem value={preference} disabled>
             {unavailable}
           </SelectItem>
         ) : null}
         {languages
-          .toSorted((left, right) => languageLabel(left).localeCompare(languageLabel(right)))
+          .toSorted((left, right) => compareLanguageLabels(left, right, locale))
           .map((code) => (
             <SelectItem key={code} value={code}>
-              {languageLabel(code)}
+              {languageLabel(code, locale)}
             </SelectItem>
           ))}
       </SelectPopup>

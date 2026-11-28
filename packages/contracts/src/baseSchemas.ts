@@ -28,6 +28,39 @@ const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0,
 });
 export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
 
+// Git forbids ASCII space and control characters in ref names but allows Unicode whitespace such
+// as U+00A0 and U+3000, which `String.prototype.trim` would strip from a name's edges.
+export function trimAsciiWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
+  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
+  return end - start === value.length ? value : value.slice(start, end);
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  return code === 0x20 || (code >= 0x09 && code <= 0x0d);
+}
+
+const isNonBlankGitRefName = Schema.makeFilter(
+  (value: string) => trimAsciiWhitespace(value).length > 0,
+  {
+    expected: "a non-blank string",
+    toJsonSchema: () => [{ minLength: 1 }, true],
+    arbitraryConstraint: { minLength: 1 },
+  },
+);
+/** A branch, ref or remote name. Unlike `TrimmedNonEmptyString`, it keeps Unicode whitespace. */
+export const GitRefName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+      encode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+    }),
+  ),
+).check(isNonBlankGitRefName);
+
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
@@ -47,16 +80,17 @@ export type IsoDateTime = typeof IsoDateTime.Type;
 
 export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
-  return Schema.optionalKey(
-    Schema.Unknown.pipe(
-      Schema.decodeTo(
-        Schema.UndefinedOr(value),
-        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
-          decode: (raw) =>
-            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
-          encode: (raw) => raw,
-        }),
-      ),
+  // Unreadable values drop the key: an own undefined property is not JSON and fails RPC encoding.
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.optionalKey(Schema.UndefinedOr(value)),
+      SchemaTransformation.transformOptional<Value["Encoded"] | undefined, unknown>({
+        decode: (raw) =>
+          Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
+            ? Option.some(raw.value as Value["Encoded"])
+            : Option.none(),
+        encode: (raw) => (Option.isSome(raw) && raw.value !== undefined ? raw : Option.none()),
+      }),
     ),
   );
 };
@@ -94,11 +128,18 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   );
 };
 
+const UnknownArrayElement = Schema.Unknown.pipe(
+  Schema.decodeTo(Schema.Undefined, {
+    decode: SchemaGetter.succeed(undefined),
+    encode: SchemaGetter.passthrough(),
+  }),
+);
+
 /** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
+  // Exit derives its wire codec from the encoded shape, which keeps the union but drops recovery middleware.
   Schema.Array(
-    Schema.UndefinedOr(element).pipe(
-      Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+    Schema.Union([element, UnknownArrayElement]).pipe(
       Schema.catchEncoding(() => Effect.succeedSome(undefined)),
     ),
   ).pipe(

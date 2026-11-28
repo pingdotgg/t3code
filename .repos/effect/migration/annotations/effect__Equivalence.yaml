@@ -33,7 +33,7 @@
   note: "Capitalized instance name; case-sensitive strict equality is unchanged."
 "effect/Equivalence#struct":
   replacement: "Equivalence.Struct"
-  note: "Capitalized constructor name. V4 also compares configured symbol and non-enumerable keys via Reflect.ownKeys."
+  note: "Capitalized constructor name. V4 also compares own enumerable symbol fields."
 "effect/Equivalence#symbol":
   replacement: "Equivalence.strictEqual<symbol>()"
   note: "There is no Symbol instance export; strictEqual preserves the v3 symbol comparison."

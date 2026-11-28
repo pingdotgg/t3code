@@ -11,6 +11,16 @@ it("wraps the native runner in a finally hook and patches only once", () => {
   expect(patchNativeCli(patched)).toBe(patched);
 });
 
+it("wraps the Vite+ 1.8 runner that also returns a dev command", () => {
+  const patched = patchNativeCli(
+    "\tconst { exitCode, devCommand } = await run({\n\t\targs: rustCliArgs\n\t});\n\tif (devCommand) await runInProcess(devCommand);",
+  );
+  expect(patched).toContain(
+    "({ exitCode, devCommand } = await run({\n\t\targs: rustCliArgs\n\t}));",
+  );
+  expect(patched).toContain("finally {\n\t\tawait finishRunHook?.();");
+});
+
 it("rejects an unknown native entrypoint before changing it", () => {
   expect(() => patchNativeCli("changed upstream entrypoint")).toThrow(
     "Unsupported Vite+ entrypoint",

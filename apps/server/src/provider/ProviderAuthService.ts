@@ -62,7 +62,12 @@ export class ProviderAuthService extends Context.Service<
       ownerSessionId: string,
     ) => Stream.Stream<ProviderAuthState, ProviderSetupError>;
     readonly tryHandlePromptCommand: (
-      input: ProviderAuthTarget & { readonly text: string; readonly hasAttachments: boolean },
+      input: ProviderAuthTarget & {
+        readonly text: string;
+        readonly hasAttachments: boolean;
+        /** False for agent, system and scheduled messages: no RPC scope check covered them. */
+        readonly sentByPerson: boolean;
+      },
     ) => Effect.Effect<boolean, ProviderSetupError>;
   }
 >()("t3/provider/ProviderAuthService") {}
@@ -305,6 +310,13 @@ export const makeProviderAuthService = Effect.gen(function* () {
         const instance = yield* registry.getInstance(input.instanceId);
         if (!instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments)) {
           return false;
+        }
+        if (!input.sentByPerson) {
+          return yield* new ProviderSetupError({
+            instanceId: input.instanceId,
+            operation: "logout",
+            detail: "Only a person can sign out of a provider from chat. Sign out in Settings.",
+          });
         }
         return yield* credentialChanges.withPermit(
           Effect.gen(function* () {

@@ -207,6 +207,26 @@ describe("projectChangeRequestUrl", () => {
     );
   });
 
+  it("keeps the scheme and port in the fallback URL for a mounted Forgejo repository", () => {
+    const forgejo: RepositoryIdentity = {
+      canonicalKey: "git.example.com/acme/repo",
+      provider: SourceControlProviderKind.make("forgejo"),
+      displayName: "acme/repo",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "ssh://git@git.example.com:2222/acme/repo.git",
+      },
+      webUrl: "http://git.example.com:3000/code/acme/repo",
+    };
+    expect(projectChangeRequestUrl(forgejo, "code/acme/repo", 7)).toBe(
+      "http://git.example.com:3000/code/acme/repo/pulls/7",
+    );
+    expect(projectChangeRequestUrl(forgejo, "code/acme/other", 7)).toBe(
+      "https://git.example.com/code/acme/other/pulls/7",
+    );
+  });
+
   it("builds the project's own Azure repository from its full path, not its short selector", () => {
     const azure: RepositoryIdentity = {
       canonicalKey: "dev.azure.com/org/project/_git/web",
