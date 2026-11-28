@@ -46,7 +46,8 @@ export function MiddleTruncate({
           <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
             {split.head}
           </span>
-          <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
+          {/* A tail wider than the box ends in its own ellipsis instead of spilling out. */}
+          <span className="max-w-full shrink-0 overflow-hidden text-ellipsis whitespace-pre peer-data-overflow:before:content-['…']">
             {split.tail}
           </span>
         </>

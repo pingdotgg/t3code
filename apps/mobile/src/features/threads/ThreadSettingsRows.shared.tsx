@@ -42,6 +42,9 @@ export function ModelRowContent(
     },
 ) {
   const gt = useGT();
+  // Custom models often share a long path, so cut its middle and keep the model name visible.
+  // Android only middle-ellipsizes a single line.
+  const isPath = props.option.label.includes("/");
   return (
     <View
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
@@ -68,7 +71,8 @@ export function ModelRowContent(
           <View className="flex-row items-center gap-2">
             <Text
               className="min-w-0 shrink text-base font-t3-medium text-foreground"
-              numberOfLines={props.labelNumberOfLines}
+              numberOfLines={isPath ? 1 : props.labelNumberOfLines}
+              ellipsizeMode={isPath ? "middle" : "tail"}
             >
               {props.option.label}
             </Text>
