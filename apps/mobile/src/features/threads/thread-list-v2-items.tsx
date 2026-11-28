@@ -175,6 +175,16 @@ const DONE_STATUS_LABEL: StatusLabel = {
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
 
+const FOLDER_STATUS_DOT_CLASS = {
+  approval: "bg-warning-foreground",
+  input: "bg-warning-foreground",
+  request: "bg-warning-foreground",
+  limited: "bg-warning-foreground",
+  failed: "bg-danger-foreground",
+  unread: "bg-adaptive-emerald-600-400",
+  working: "bg-adaptive-sky-600-400",
+} satisfies Record<NonNullable<ThreadListV2ProjectFolderListItem["hiddenStatus"]>, string>;
+
 // DM Sans has no tabular figures, so a ticking timer in it reflows the row every second.
 const TABULAR_DURATION_STYLE = {
   fontFamily: Platform.OS === "ios" ? "System" : "sans-serif",
@@ -414,13 +424,26 @@ export const ThreadListV2ProjectFolder = memo(function ThreadListV2ProjectFolder
   readonly onToggle: (projectKey: string) => void;
 }) {
   const gt = useGT();
-  const { count, expanded, project, projectKey, title } = props.item;
+  const m = useMessages();
+  const { count, expanded, hiddenStatus, project, projectKey, title } = props.item;
   const sidebar = props.pane === "sidebar";
   const tint = sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted";
   const label = expanded || count === 0 ? title : gt("{label} ({count})", { label: title, count });
+  const statusMessage =
+    hiddenStatus === "unread"
+      ? DONE_STATUS_LABEL.label
+      : hiddenStatus === null
+        ? null
+        : STATUS_LABEL_BY_STATUS[hiddenStatus]?.label;
+  const statusLabel =
+    hiddenStatus === "working"
+      ? gt("Working", { $context: "thread status" })
+      : statusMessage
+        ? m(statusMessage)
+        : null;
   return (
     <Pressable
-      accessibilityLabel={label}
+      accessibilityLabel={statusLabel === null ? label : `${label}, ${statusLabel}`}
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       className={cn(
@@ -447,6 +470,11 @@ export const ThreadListV2ProjectFolder = memo(function ThreadListV2ProjectFolder
       >
         {label}
       </Text>
+      {hiddenStatus !== null && (
+        <View
+          className={cn("size-1.5 shrink-0 rounded-full", FOLDER_STATUS_DOT_CLASS[hiddenStatus])}
+        />
+      )}
       <SymbolView
         name={expanded ? "chevron.down" : "chevron.right"}
         size={10}

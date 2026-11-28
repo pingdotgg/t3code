@@ -454,7 +454,18 @@ export interface ThreadListV2ProjectFolderListItem {
   readonly title: string;
   readonly count: number;
   readonly expanded: boolean;
+  readonly hiddenStatus: (typeof PROJECT_FOLDER_STATUS_PRIORITY)[number] | null;
 }
+
+const PROJECT_FOLDER_STATUS_PRIORITY = [
+  "approval",
+  "input",
+  "request",
+  "limited",
+  "failed",
+  "unread",
+  "working",
+] as const satisfies readonly (ThreadListV2Status | "unread")[];
 
 export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
@@ -538,7 +549,8 @@ export function threadListV2ListItemsAreEqual(
         previous.project === item.project &&
         previous.title === item.title &&
         previous.count === item.count &&
-        previous.expanded === item.expanded
+        previous.expanded === item.expanded &&
+        previous.hiddenStatus === item.hiddenStatus
       );
     case "v2-thread":
       return (
@@ -647,12 +659,21 @@ function groupActiveThreadRows(
       return [];
     }
     const expanded = !collapsed.has(scope.key);
-    const visibleRows = expanded
-      ? folderRows
-      : folderRows.filter(
-          ({ item: { thread } }) =>
-            scopedThreadKey(thread.environmentId, thread.id) === folders.selectedThreadKey,
-        );
+    const visibleRows = expanded ? folderRows : [];
+    const hiddenStatuses = new Set<ThreadListV2Status | "unread">();
+    if (!expanded) {
+      for (const row of folderRows) {
+        const { thread } = row.item;
+        if (scopedThreadKey(thread.environmentId, thread.id) === folders.selectedThreadKey) {
+          visibleRows.push(row);
+        } else {
+          const status = resolveThreadListV2RowStatus(thread);
+          hiddenStatuses.add(
+            status === "ready" && threadHasUnseenCompletion(thread) ? "unread" : status,
+          );
+        }
+      }
+    }
     return [
       {
         type: "v2-project-folder",
@@ -663,6 +684,8 @@ function groupActiveThreadRows(
         // Collapsed, a folder counts the threads it hides, not the open one it keeps.
         count: expanded ? folderRows.length : folderRows.length - visibleRows.length,
         expanded,
+        hiddenStatus:
+          PROJECT_FOLDER_STATUS_PRIORITY.find((status) => hiddenStatuses.has(status)) ?? null,
       },
       ...visibleRows.map((row): ThreadListV2ThreadListItem => ({
         ...row,

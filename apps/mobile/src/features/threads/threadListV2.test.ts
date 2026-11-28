@@ -935,9 +935,20 @@ describe("buildThreadListV2ListItems", () => {
     const layout = buildThreadListV2Items({
       threads: [
         thread("pinned", { pinnedAt: NOW }),
-        thread("selected", { activeOrderKey: "a0" }),
+        thread("selected", { activeOrderKey: "a0", hasPendingApprovals: true }),
         // Sent to last, so it leads its folder despite the manual order.
-        thread("other", { activeOrderKey: "a1", latestUserAuthoredMessageAt: NOW }),
+        thread("other", {
+          activeOrderKey: "a1",
+          latestUserAuthoredMessageAt: NOW,
+          runtime: {
+            status: "running",
+            activeRunId: RunId.make("run-other"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerName: "Codex",
+            lastError: null,
+            updatedAt: NOW,
+          },
+        }),
         thread("snoozed", { snoozedUntil: "2026-06-03T09:00:00.000Z" }),
         thread("settled", { settledOverride: "settled", settledAt: NOW }),
       ],
@@ -993,6 +1004,7 @@ describe("buildThreadListV2ListItems", () => {
     expect(collapsed[1]).toMatchObject({
       expanded: false,
       count: 1,
+      hiddenStatus: "working",
       project: { projectIcon: project.projectIcon },
     });
     expect(collapsed[2]).toMatchObject({ folderRow: "two-line" });
@@ -1001,7 +1013,7 @@ describe("buildThreadListV2ListItems", () => {
       ...input,
       projectFolders: { ...input.projectFolders, collapsedKeys: [], multiline: false },
     });
-    expect(expanded[1]).toMatchObject({ expanded: true, count: 2 });
+    expect(expanded[1]).toMatchObject({ expanded: true, count: 2, hiddenStatus: null });
     expect(expanded.slice(2, 4)).toMatchObject([
       { folderRow: "single-line", item: { thread: { id: "other" } } },
       { folderRow: "single-line", item: { thread: { id: "selected" } } },
@@ -1017,6 +1029,23 @@ describe("buildThreadListV2ListItems", () => {
       },
     });
     expect(threadListV2ListItemsAreEqual(collapsed[1]!, updated[1]!)).toBe(false);
+
+    const bothHidden = buildThreadListV2ListItems({
+      ...input,
+      projectFolders: { ...input.projectFolders, selectedThreadKey: null },
+    });
+    expect(bothHidden[1]).toMatchObject({ count: 2, hiddenStatus: "approval" });
+
+    const inputRequested = buildThreadListV2ListItems({
+      ...input,
+      items: input.items.map((item) =>
+        item.thread.id === "other"
+          ? { ...item, thread: { ...item.thread, hasPendingUserInput: true } }
+          : item,
+      ),
+    });
+    expect(inputRequested[1]).toMatchObject({ count: 1, hiddenStatus: "input" });
+    expect(threadListV2ListItemsAreEqual(collapsed[1]!, inputRequested[1]!)).toBe(false);
   });
 
   it("leads the list with unsent drafts and queued tasks, preserving section dividers", () => {
