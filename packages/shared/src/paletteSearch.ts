@@ -5,6 +5,8 @@ import type { OrchestrationV2ThreadOpens } from "@t3tools/contracts";
 import { WORKTREE_BRANCH_PREFIX } from "./git.ts";
 
 const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+// A vowel sign or accent continues the letter before it, so the next letter starts no word.
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
 const LOWERCASE = /\p{Ll}/u;
 const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
@@ -95,7 +97,7 @@ function isWordStart(
     (ALPHANUMERIC.test(character) || SYMBOL.test(character)) &&
     !afterApostrophe &&
     (previous === "" ||
-      !ALPHANUMERIC.test(previous) ||
+      !WORD_CHARACTER.test(previous) ||
       (LOWERCASE.test(previous) && UPPERCASE.test(character)) ||
       // The last capital of an acronym starts the next word: "JSONSchema".
       (UPPERCASE.test(previous) && UPPERCASE.test(character) && LOWERCASE.test(next)) ||
