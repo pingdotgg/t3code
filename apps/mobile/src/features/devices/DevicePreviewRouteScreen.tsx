@@ -416,6 +416,7 @@ function OpenDevicePreview({
       access={access}
       platform={session.platform}
       deviceId={session.deviceId}
+      deviceName={preview.name}
       serveSimOnly={preview.serveSimOnly}
       colors={{
         background: themeVariables["--color-sheet-solid"],

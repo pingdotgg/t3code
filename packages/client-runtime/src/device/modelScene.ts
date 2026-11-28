@@ -1,7 +1,7 @@
 // @effect-diagnostics globalFetch:off - This browser-only renderer owns abortable asset requests without an Effect runtime, like the live stream.
 import { Box3, Group, Mesh, MeshBasicMaterial, Texture, type Material, type Object3D } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import type { DeviceAssetSource } from "./model.ts";
+import type { DeviceAssetSource, DeviceModelId } from "./model.ts";
 import { createDisplayProjection, updateDisplayUv, type PhoneDisplayLayout } from "./phoneScene.ts";
 
 /** GLB resources belong to one viewer; the live framebuffer texture belongs to its stream presentation. */
@@ -30,10 +30,22 @@ export function disposeDeviceModel(root: Object3D) {
   for (const image of images) image.close();
 }
 
+const IPHONE_18_ISLAND_MESHES = [
+  "ajlSZFAJxVQUboJ",
+  "dseYgUIxMhSrccR",
+  "KNduBXMjGgxuHKf",
+  "oXwhgMrETYHoWMi",
+  "rDPYoDHxptvndJc",
+  "TbrMzrvsrKQFokG",
+  "TSnGjOfascDNZUr",
+  "xiJLhZQDYgSRrJP",
+];
+
 export function createImportedPhoneScene(
   asset: Group,
   texture: Texture,
   initial: PhoneDisplayLayout,
+  modelId?: DeviceModelId,
 ) {
   const screens: Mesh[] = [];
   asset.traverse((object) => {
@@ -66,6 +78,23 @@ export function createImportedPhoneScene(
   const originalMaterial = display.material;
   const screenMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
   display.material = screenMaterial;
+  const islandMaterial =
+    modelId === "iphone-18-pro" || modelId === "iphone-18-pro-max"
+      ? new MeshBasicMaterial({ color: 0x000000, toneMapped: false })
+      : null;
+  const islandMeshes = new Map<Mesh, Mesh["material"]>();
+  if (islandMaterial) {
+    asset.traverse((node) => {
+      if (
+        !(node instanceof Mesh) ||
+        !IPHONE_18_ISLAND_MESHES.some((name) => node.name.startsWith(name))
+      ) {
+        return;
+      }
+      islandMeshes.set(node, node.material);
+      node.material = islandMaterial;
+    });
+  }
   const root = new Group();
   const orientation = new Group();
   orientation.add(asset);
@@ -91,8 +120,10 @@ export function createImportedPhoneScene(
     },
     screenPoint: projection,
     dispose() {
-      // The model slot owns imported resources. This scene owns only its replacement screen material.
+      // The model slot owns imported resources, including the original materials.
       display.material = originalMaterial;
+      for (const [mesh, material] of islandMeshes) mesh.material = material;
+      islandMaterial?.dispose();
       screenMaterial.map = null;
       screenMaterial.dispose();
       orientation.remove(asset);

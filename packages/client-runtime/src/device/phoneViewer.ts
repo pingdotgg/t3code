@@ -286,7 +286,7 @@ export function createPhoneViewer(options: {
       const next = disposed
         ? null
         : model
-          ? createImportedPhoneScene(model.asset, texture, layout)
+          ? createImportedPhoneScene(model.asset, texture, layout, modelSource?.id)
           : foldAngle !== null && profile.id.startsWith("android")
             ? createFoldScene(foldAngle)
             : createPhoneScene(texture, layout, profile);

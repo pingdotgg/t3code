@@ -563,6 +563,10 @@
       "types": "./src/device/phoneInteraction.ts",
       "default": "./src/device/phoneInteraction.ts"
     },
+    "./device/iphone-display-hardware": {
+      "types": "./src/device/iphoneDisplayHardware.ts",
+      "default": "./src/device/iphoneDisplayHardware.ts"
+    },
     "./device/shape-profile": {
       "types": "./src/device/shapeProfile.ts",
       "default": "./src/device/shapeProfile.ts"
