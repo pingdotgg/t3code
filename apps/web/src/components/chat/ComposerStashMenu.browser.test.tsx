@@ -6,7 +6,13 @@ import { act, render } from "../../../test/render";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
-function Composer({ dialog = false }: { dialog?: boolean }) {
+function Composer({
+  dialog = false,
+  initialOpen = true,
+}: {
+  dialog?: boolean;
+  initialOpen?: boolean;
+}) {
   const composerFormRef = useRef<HTMLFormElement>(null);
   const [entries, setEntries] = useState(
     ["first", "second"].map((id) => ({
@@ -18,7 +24,7 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
     })),
   );
   const [draft, setDraft] = useState("Unsent draft");
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initialOpen);
   const [dialogOpen, setDialogOpen] = useState(dialog);
   const [answer, setAnswer] = useState<string | null>(null);
   return (
@@ -35,7 +41,14 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
         <p role="status">{answer ? `Selected: ${answer}` : "Choose an answer"}</p>
       </form>
       <input aria-label="Search threads" />
-      <button onClick={() => setOpen(true)}>Open stash</button>
+      <button
+        type="button"
+        data-prompt-stash-badge="true"
+        aria-label={`Stashed prompts: ${entries.length}. Open stash.`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        Open stash
+      </button>
       {open && (
         <ComposerStashMenu
           composerFormRef={composerFormRef}
@@ -134,4 +147,24 @@ it("leaves IME composition keys in the composer alone while the stash is open", 
   await focus(editor().element());
   await press("{Enter}");
   await expect.element(editor()).toHaveValue("first prompt");
+});
+
+it("restores the highlighted prompt on Enter from the stash badge while keeping drawer button Enter native", async () => {
+  await using _screen = await render(<Composer initialOpen={false} />);
+  const badge = page.getByRole("button", { name: /Open stash/ }).element();
+  await focus(badge);
+  await press("{Enter}");
+  await expect.element(stash()).toBeInTheDocument();
+
+  await press("{ArrowDown}{Enter}");
+  await expect.element(editor()).toHaveValue("second prompt");
+  await expect.element(stash()).not.toBeInTheDocument();
+
+  await focus(badge);
+  await press("{Enter}");
+  await expect.element(stash()).toBeInTheDocument();
+  await focus(page.getByRole("button", { name: "Delete stashed prompt" }).element());
+  await press("{Enter}");
+  await expect.element(stash()).not.toBeInTheDocument();
+  await expect.element(editor()).toHaveValue("second prompt");
 });

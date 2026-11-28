@@ -127,8 +127,12 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       return;
     }
     if (event.key === "Enter") {
-      // Let the delete button handle Enter instead of restoring its row.
-      if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
+      // Let buttons inside the drawer handle Enter natively instead of restoring.
+      if (
+        drawer.contains(target) &&
+        target instanceof Element &&
+        target.closest("button[aria-label]")
+      ) {
         return;
       }
       if (!highlightedEntry) return;
