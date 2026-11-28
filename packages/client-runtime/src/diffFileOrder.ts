@@ -106,29 +106,22 @@ function importedPaths(
 ): ReadonlySet<string> {
   const imported = new Set<string>();
   for (const line of lines) {
-    IMPORT_SPECIFIER.lastIndex = 0;
-    let match = IMPORT_SPECIFIER.exec(line);
-    while (match !== null) {
+    for (const match of line.matchAll(IMPORT_SPECIFIER)) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
       const isRelative = specifier.startsWith(".");
-      const resolvedPath =
-        specifier === "" ? null : isRelative ? resolveRelative(path, specifier) : specifier;
-      if (resolvedPath !== null) {
-        let target: string | undefined;
-        if (isRelative && resolvedPath === "") {
-          target = byModulePath.get("index");
-        } else {
-          const resolved = stripModuleExtension(resolvedPath);
-          target =
-            (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
+      const resolvedPath = isRelative ? resolveRelative(path, specifier) : specifier;
+      if (specifier === "" || resolvedPath === null) continue;
+      const resolved = stripModuleExtension(resolvedPath);
+      // `.` or `..` that lands on the repository root can only mean its index file.
+      const target =
+        resolvedPath === ""
+          ? byModulePath.get("index")
+          : ((exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
             byModulePath.get(resolved) ??
             byModulePath.get(`${resolved}/index`) ??
-            (isRelative ? undefined : byModuleName.get(moduleName(resolved)));
-        }
-        if (target !== undefined && target !== path) imported.add(target);
-      }
-      match = IMPORT_SPECIFIER.exec(line);
+            (isRelative ? undefined : byModuleName.get(moduleName(resolved))));
+      if (target !== undefined && target !== path) imported.add(target);
     }
   }
   return imported;
