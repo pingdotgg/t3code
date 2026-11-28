@@ -95,6 +95,7 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   startFromOrigin: boolean;
+  checkoutBranch?: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -124,6 +125,7 @@ export function BranchToolbarBranchSelector({
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
+  checkoutBranch = false,
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -195,6 +197,8 @@ export function BranchToolbarBranchSelector({
     readThreadShell(threadRef) ??
     serverThread ?? { runtime: null, worktreePath: activeWorktreePath };
 
+  // The base branch this selector filled in itself, so Open in worktree can drop it but keep a user's pick.
+  const autoBaseBranchRef = useRef<string | null>(null);
   const setThreadBranch = (
     branch: string | null,
     worktreePath: string | null,
@@ -209,6 +213,7 @@ export function BranchToolbarBranchSelector({
       return false;
     const latest = readLatestThreadState();
     if (automatic && (latest.runtime || latest.worktreePath)) return false;
+    autoBaseBranchRef.current = automatic ? branch : null;
     if (
       isWorktreeChangeBlocked({
         runtime: latest.runtime,
@@ -350,6 +355,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
+    checkoutBranch,
   });
   const [branchHold, setBranchHold] = useState<BranchHold | null>(null);
   const branchHoldCurrent =
@@ -701,19 +707,20 @@ export function BranchToolbarBranchSelector({
   const threadStarted = serverSession !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes a default base branch to the server thread or draft once branches load for a new worktree thread
   useEffect(() => {
-    if (
-      threadStarted ||
-      effectiveEnvMode !== "worktree" ||
-      activeWorktreePath ||
-      activeThreadBranch ||
-      !worktreeBaseBranchCandidate
-    ) {
+    if (threadStarted || effectiveEnvMode !== "worktree" || activeWorktreePath) return;
+    if (checkoutBranch) {
+      // Open in worktree never preselects; drop a default Branch off picked on its own.
+      if (activeThreadBranch !== null && activeThreadBranch === autoBaseBranchRef.current) {
+        setThreadBranch(null, null, true);
+      }
       return;
     }
+    if (activeThreadBranch || !worktreeBaseBranchCandidate) return;
     setThreadBranch(worktreeBaseBranchCandidate, null, true);
   }, [
     activeThreadBranch,
     activeWorktreePath,
+    checkoutBranch,
     effectiveEnvMode,
     setThreadBranch,
     threadStarted,
@@ -751,6 +758,7 @@ export function BranchToolbarBranchSelector({
       resolvedActiveBranch,
       resolvedActiveBranchIsRemote,
       startFromOrigin,
+      checkoutBranch,
     },
     messages,
   );
@@ -890,7 +898,7 @@ export function BranchToolbarBranchSelector({
             : "branch"
       }
       originControl={
-        isSelectingWorktreeBase
+        isSelectingWorktreeBase && !checkoutBranch
           ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
           : undefined
       }

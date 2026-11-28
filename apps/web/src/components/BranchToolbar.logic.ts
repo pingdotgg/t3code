@@ -11,7 +11,7 @@ import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { workspaceRelativeFilePath } from "@t3tools/shared/path";
+import { normalizeProjectPathForComparison, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import { m, type MessageResolver } from "../i18n/messages";
 import { deriveCanInterruptRunningThread } from "../session-logic";
@@ -123,20 +123,134 @@ export function resolveEnvModeLabel(mode: EnvMode, resolve: MessageResolver = m)
   return mode === "worktree" ? resolve(msg("New worktree")) : resolve(msg("Current checkout"));
 }
 
+/** What a new thread does with the picked branch; stored as `envMode` plus the draft's `checkoutBranch`. */
+export type WorkspaceMode = "switch" | "branch-off" | "open";
+
+export const WORKSPACE_MODES: ReadonlyArray<{
+  readonly mode: WorkspaceMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    mode: "switch",
+    label: msg("Project folder"),
+    description: msg("Work in the project folder. Picking a branch checks it out there"),
+  },
+  {
+    mode: "branch-off",
+    label: msg("Branch off"),
+    description: msg("New worktree on a fresh branch from it"),
+  },
+  {
+    mode: "open",
+    label: msg("Open in worktree"),
+    description: msg("Work on the branch in its own folder"),
+  },
+];
+
+export function resolveWorkspaceModeLabel(
+  mode: WorkspaceMode,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(WORKSPACE_MODES.find((entry) => entry.mode === mode)!.label);
+}
+
+export function resolveWorkspaceMode(input: {
+  envMode: EnvMode;
+  activeWorktreePath: string | null;
+  checkoutBranch: boolean;
+}): WorkspaceMode {
+  if (input.activeWorktreePath !== null) return "open";
+  if (input.envMode === "local") return "switch";
+  return input.checkoutBranch ? "open" : "branch-off";
+}
+
+export function resolveWorkspaceModeEnvMode(mode: WorkspaceMode): EnvMode {
+  return mode === "switch" ? "local" : "worktree";
+}
+
+export type WorkspaceModeNotice =
+  | { readonly kind: "branch-in-project-folder"; readonly branch: string }
+  | {
+      readonly kind: "joins-worktree";
+      readonly branch: string;
+      readonly worktreePath: string;
+      readonly runningThreadTitle: string | null;
+    }
+  | { readonly kind: "project-folder-busy"; readonly runningThreadTitle: string };
+
+export interface WorkspaceModeNoticeThread {
+  readonly id: string;
+  readonly title: string;
+  readonly worktreePath: string | null;
+  readonly runtime: { readonly activeRunId: string | null } | null;
+  readonly archivedAt: string | null;
+}
+
+/** The folder whose running threads the selected mode would disturb; `undefined` when none. */
+export function resolveWorkspaceModeFolder(input: {
+  mode: WorkspaceMode;
+  projectRoot: string;
+  branchWorktreePath: string | null;
+}): string | undefined {
+  if (input.mode === "switch") return input.projectRoot;
+  if (input.mode === "open" && input.branchWorktreePath !== null) return input.branchWorktreePath;
+  return undefined;
+}
+
+export function findRunningThreadTitle(input: {
+  threads: ReadonlyArray<WorkspaceModeNoticeThread>;
+  folder: string;
+  projectRoot: string;
+  currentThreadId: string;
+}): string | null {
+  const folder = normalizeProjectPathForComparison(input.folder);
+  const root = normalizeProjectPathForComparison(input.projectRoot);
+  return (
+    input.threads.find(
+      (thread) =>
+        thread.id !== input.currentThreadId &&
+        thread.archivedAt === null &&
+        (thread.runtime?.activeRunId ?? null) !== null &&
+        (thread.worktreePath === null
+          ? root
+          : normalizeProjectPathForComparison(thread.worktreePath)) === folder,
+    )?.title ?? null
+  );
+}
+
+export function resolveWorkspaceModeNotice(input: {
+  mode: WorkspaceMode;
+  branch: string | null;
+  branchWorktreePath: string | null;
+  projectRoot: string;
+  /** A thread running in the folder from `resolveWorkspaceModeFolder`. */
+  runningThreadTitle: string | null;
+}): WorkspaceModeNotice | null {
+  if (input.mode === "switch") {
+    return input.runningThreadTitle === null
+      ? null
+      : { kind: "project-folder-busy", runningThreadTitle: input.runningThreadTitle };
+  }
+  if (input.mode !== "open" || input.branch === null || input.branchWorktreePath === null) {
+    return null;
+  }
+  if (workspaceRelativeFilePath(input.projectRoot, input.branchWorktreePath) !== null) {
+    return { kind: "branch-in-project-folder", branch: input.branch };
+  }
+  return {
+    kind: "joins-worktree",
+    branch: input.branch,
+    worktreePath: input.branchWorktreePath,
+    runningThreadTitle: input.runningThreadTitle,
+  };
+}
+
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
   recursive: msg("Recursive"),
   "top-level": msg("Top level only"),
   none: msg("Skip"),
 };
-
-export function resolveCurrentWorkspaceLabel(
-  activeWorktreePath: string | null,
-  resolve: MessageResolver = m,
-): string {
-  return activeWorktreePath
-    ? resolve(msg("Current worktree"))
-    : resolveEnvModeLabel("local", resolve);
-}
 
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
@@ -233,10 +347,14 @@ export function resolveBranchToolbarValue(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  checkoutBranch?: boolean;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
   if (envMode === "worktree" && !activeWorktreePath) {
-    return activeThreadBranch ?? currentGitBranch;
+    // Opening a branch in a worktree sends only the picked branch, so never show a fallback.
+    return input.checkoutBranch === true
+      ? activeThreadBranch
+      : (activeThreadBranch ?? currentGitBranch);
   }
   return currentGitBranch ?? activeThreadBranch;
 }
@@ -288,6 +406,7 @@ export function resolveBranchTriggerLabel(
     resolvedActiveBranch: string | null;
     resolvedActiveBranchIsRemote: boolean | null;
     startFromOrigin: boolean;
+    checkoutBranch?: boolean;
   },
   resolve: MessageResolver = m,
 ): string {
@@ -301,7 +420,7 @@ export function resolveBranchTriggerLabel(
   if (!resolvedActiveBranch) {
     return resolve(msg("Select ref"));
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (effectiveEnvMode === "worktree" && !activeWorktreePath && input.checkoutBranch !== true) {
     // Only the server can determine a local branch's configured remote.
     return startFromOrigin && resolvedActiveBranchIsRemote === false
       ? resolve(msg("From {branch} (remote)", { branch: resolvedActiveBranch }))

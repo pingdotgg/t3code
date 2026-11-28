@@ -77,6 +77,7 @@ interface NewThreadWorkspaceOptions {
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
   workspaceExplicit?: boolean;
+  checkoutBranch?: boolean;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -88,6 +89,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.envMode !== undefined || options?.startFromOrigin !== undefined
       ? { workspaceExplicit: true }
       : {}),
+    ...(options?.checkoutBranch !== undefined ? { checkoutBranch: options.checkoutBranch } : {}),
   };
 }
 
@@ -110,6 +112,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      checkoutBranch?: boolean;
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
@@ -409,6 +412,9 @@ export function createNewThreadHandler(router: AnyRouter) {
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,
         startFromOrigin: options?.startFromOrigin ?? startFromOriginFor(initialEnvMode),
+        ...(options?.checkoutBranch !== undefined
+          ? { checkoutBranch: options.checkoutBranch }
+          : {}),
         ...(options?.envMode !== undefined || options?.startFromOrigin !== undefined
           ? { workspaceExplicit: true }
           : {}),
