@@ -5655,6 +5655,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    // regression: #22483 Full access stays in default mode when the CLI's first init ignores bypass
+    it.effect("moves an unrestricted Full access query to bypass when init reports default", () =>
+      Effect.gen(function* () {
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(async () => ({
+          effective: {},
+          provenance: {},
+          sources: [],
+        }));
+        const harness = yield* makeWakeHarnessWithOptions({ close: Queue.shutdown });
+        const now = yield* DateTime.now;
+        let ordinal = 0;
+        const start = () =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-init-default-${++ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Run git status.",
+              attachments: [],
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: "/unrestricted",
+              }),
+            }),
+          );
+
+        yield* start();
+        assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+        assert.equal(harness.getOpenedOptions()?.allowDangerouslySkipPermissions, true);
+        // e.g. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 makes the CLI ignore --permission-mode.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            permissionMode: "default",
+            uuid: "init-default-cli-init",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "init-default-result-1", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* start();
+
+        assert.include(
+          harness.permissionModeChanges,
+          "bypassPermissions",
+          "T3 opened the query with bypass, but nothing moved the CLI out of default",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     // regression: #21806 bypass policy reads the custom home and project, never ambient ~/.claude
     it.effect(
       "combines a normalized custom home with project policy without reading the ambient user tier",
