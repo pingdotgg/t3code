@@ -96,6 +96,13 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol(https, "https")).toBe(https);
   });
 
+  it("encodes literal spaces in Azure SCP paths without double-encoding escapes", () => {
+    const scp = "alice@corp.com@ssh.dev.azure.com:v3/Fabrikam/Project One/fab%20sample repo";
+    expect(cloneUrlForProtocol(scp, "https")).toBe(
+      "https://dev.azure.com/Fabrikam/Project%20One/_git/fab%20sample%20repo",
+    );
+  });
+
   it("refuses Azure rewrites when the project is missing or a custom port is set", () => {
     expect(cloneUrlForProtocol("git@ssh.dev.azure.com:v3/Fabrikam/fab_repo", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://dev.azure.com/Fabrikam/_git/fab_repo", "ssh")).toBeNull();
@@ -120,6 +127,10 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("git@github.com:pingdotgg/t3code.git", "https")).toBe(
       "https://github.com/pingdotgg/t3code.git",
     );
+    expect(cloneUrlForProtocol("alice@corp.com@gitlab.example.com:team/repo.git", "https")).toBe(
+      "https://gitlab.example.com/team/repo.git",
+    );
+    expect(cloneUrlForProtocol("@github.com:org/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://github.com/pingdotgg/t3code.git", "ssh")).toBe(
       "git@github.com:pingdotgg/t3code.git",
     );

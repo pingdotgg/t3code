@@ -2,7 +2,7 @@ import { isWindowsDrivePath } from "./path.ts";
 
 export type CloneProtocol = "ssh" | "https";
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/\/)(.+)$/;
+const SCP_LIKE_URL = /^(?:[^:/\s]+@)?(\[[^\]@/\s]+\]|[^@:/\s[\]]+):(?!\/\/)(.+)$/;
 // Userinfo may contain `@`; the last one before the first slash separates the host.
 const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
@@ -65,7 +65,9 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   // different positions; changing only the scheme produces an invalid clone URL.
   if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
     const azure = /^v3\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)$/.exec(parsed.path);
-    return azure ? `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}` : null;
+    return azure
+      ? `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}`.replaceAll(" ", "%20")
+      : null;
   }
   if (parsed.protocol === "https" && parsed.host.toLowerCase() === "dev.azure.com") {
     const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
