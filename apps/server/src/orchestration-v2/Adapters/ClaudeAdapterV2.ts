@@ -13022,6 +13022,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
+            const wasInterrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            const wasSteeredBeforeResult = (yield* Ref.get(steeredTurns)).has(
+              context.providerTurnId,
+            );
+            const continuesSteer =
+              (!wasInterrupted &&
+                wasSteeredBeforeResult &&
+                isClaudeActiveSteeringAbortResult(message)) ||
+              (context.pendingSteers.size > 0 && claudeEchoedPromptUuids(message).length > 0);
+            if (!continuesSteer) {
+              // Close steer admission before awaiting turn-end metadata so a late steer cannot join a finished turn.
+              context.steersClosed = true;
+            }
             if (context === (yield* Ref.get(activeTurn))) {
               yield* announceMcpSignIns(liveQuery, context);
             }

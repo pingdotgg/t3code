@@ -11779,6 +11779,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("rejects a steer that arrives while waiting for the final context summary", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const contextRequested = yield* Deferred.make<void>();
+      const releaseContext = yield* Deferred.make<SDKControlGetContextUsageResponse>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        getContextUsage: Deferred.succeed(contextRequested, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseContext)),
+        ),
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-steer-context-summary-race"),
+        text: "Continue.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      const usage = { ...zeroUsage, input_tokens: 19_000, output_tokens: 100 };
+      yield* Queue.offer(
+        harness.sdkMessages,
+        usageStreamFrame({ type: "message_start", message: { id: "msg_steer_race", usage } }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000691", result: "OK" }),
+      );
+      yield* Deferred.await(contextRequested);
+      const steer = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("steer-during-context-summary"),
+            text: "Too late.",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.result);
+      assert.equal(steer._tag, "Failure");
+      assert.lengthOf(harness.offeredMessages, 1);
+
+      yield* Deferred.succeed(releaseContext, claudeContextUsage);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([400, undefined])(
     "merges stream usage and clears categories after compaction to %s",
     (postTokens) =>
