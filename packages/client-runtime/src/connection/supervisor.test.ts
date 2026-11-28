@@ -20,6 +20,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Clock from "effect/Clock";
@@ -195,6 +196,8 @@ const makeTrackedFeed = Effect.fnUntraced(function* <A>(current?: Effect.Effect<
   const sent = yield* Ref.make(0);
   const sentBeforeSubscribe = yield* Ref.make(0);
   const takes = yield* SubscriptionRef.make(0);
+  // Subscribing and sending exclude each other, so the baseline counts exactly the missed events.
+  const lock = yield* Semaphore.make(1);
   const take = (subscription: PubSub.Subscription<A>) =>
     SubscriptionRef.update(takes, (count) => count + 1).pipe(
       Effect.andThen(PubSub.take(subscription)),
@@ -202,14 +205,21 @@ const makeTrackedFeed = Effect.fnUntraced(function* <A>(current?: Effect.Effect<
   return {
     changes: Stream.unwrap(
       Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(events);
-        yield* Ref.get(sent).pipe(Effect.flatMap((count) => Ref.set(sentBeforeSubscribe, count)));
+        const subscription = yield* PubSub.subscribe(events).pipe(
+          Effect.tap(() =>
+            Ref.get(sent).pipe(Effect.flatMap((count) => Ref.set(sentBeforeSubscribe, count))),
+          ),
+          Semaphore.withPermit(lock),
+        );
         const later = Stream.fromEffectRepeat(take(subscription));
         return current === undefined ? later : Stream.concat(Stream.fromEffect(current), later);
       }),
     ),
     send: (event: A) =>
-      Ref.update(sent, (count) => count + 1).pipe(Effect.andThen(PubSub.publish(events, event))),
+      Ref.update(sent, (count) => count + 1).pipe(
+        Effect.andThen(PubSub.publish(events, event)),
+        Semaphore.withPermit(lock),
+      ),
     applied: Effect.gen(function* () {
       const total = (yield* Ref.get(sent)) - (yield* Ref.get(sentBeforeSubscribe));
       yield* SubscriptionRef.changes(takes).pipe(
