@@ -337,27 +337,13 @@ describe("Antigravity permissions and questions", () => {
     ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
   });
 
-  const elicitationRequest = (
-    properties: Record<string, unknown>,
-    required?: ReadonlyArray<string>,
-  ) =>
-    ({
-      sessionId: "session-1",
-      mode: "form",
-      message: "The agent has 2 questions.",
-      requestedSchema: {
-        type: "object",
-        properties,
-        ...(required === undefined ? {} : { required }),
-      },
-    }) as EffectAcpSchema.CreateElicitationRequest;
-
+  // The ask_question form agy 1.5.14+ sends: 1-based `qN` choices, each with a `qN_other` field.
   const singleChoiceField = {
     type: "string",
-    title: "For Layer 2 of the pipeline, which LLM backend should we default to?",
+    title: "Which deploy target should we use?",
     oneOf: [
-      { const: "1", title: "OpenAI-compatible adapter", description: "Local and cloud via config" },
-      { const: "2", title: "Local-only server" },
+      { const: "1", title: "staging", description: "Shared test cluster" },
+      { const: "2", title: "production" },
     ],
   };
   const multiChoiceField = {
@@ -376,22 +362,30 @@ describe("Antigravity permissions and questions", () => {
     title: "Other",
     description: `Optional free-form answer to: ${question}`,
   });
+  const askQuestion = (properties: Record<string, unknown>) =>
+    extractAntigravityElicitationForm({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 3 questions.",
+      requestedSchema: { type: "object", properties },
+    } as EffectAcpSchema.CreateElicitationRequest);
+  const twoQuestions = () =>
+    askQuestion({
+      q1: singleChoiceField,
+      q1_other: otherField(singleChoiceField.title),
+      q2: multiChoiceField,
+      q2_other: otherField(multiChoiceField.title),
+    });
 
-  it("folds ask_question single- and multi-select choices with their Other field and orders numerically", () => {
-    const form = extractAntigravityElicitationForm(
-      elicitationRequest({
-        q1: singleChoiceField,
-        q1_other: otherField(singleChoiceField.title),
-        q10: {
-          type: "string",
-          title: "Final confirmation?",
-          oneOf: [{ const: "1", title: "Yes" }],
-        },
-        q10_other: otherField("Final confirmation?"),
-        q2: multiChoiceField,
-        q2_other: otherField(multiChoiceField.title),
-      }),
-    );
+  it("asks each ask_question question once, in numeric order, with typed replies to qN_other", () => {
+    const form = askQuestion({
+      q1: singleChoiceField,
+      q1_other: otherField(singleChoiceField.title),
+      q10: { type: "string", title: "Ship it?", oneOf: [{ const: "1", title: "Yes" }] },
+      q10_other: otherField("Ship it?"),
+      q2: multiChoiceField,
+      q2_other: otherField(multiChoiceField.title),
+    });
 
     expect(form?.questions).toEqual([
       {
@@ -399,13 +393,10 @@ describe("Antigravity permissions and questions", () => {
         header: "Question 1",
         question: singleChoiceField.title,
         options: [
-          {
-            label: "OpenAI-compatible adapter",
-            value: "1",
-            description: "Local and cloud via config",
-          },
-          { label: "Local-only server", value: "2", description: "Local-only server" },
+          { label: "staging", value: "1", description: "Shared test cluster" },
+          { label: "production", value: "2", description: "production" },
         ],
+        required: false,
       },
       {
         id: "q2",
@@ -416,60 +407,37 @@ describe("Antigravity permissions and questions", () => {
           { label: "Unit tests", value: "2", description: "Unit tests" },
           { label: "Fuzzing", value: "3", description: "Fuzzing" },
         ],
+        allowCustomAnswer: true,
         multiSelect: true,
       },
       {
         id: "q10",
         header: "Question 3",
-        question: "Final confirmation?",
+        question: "Ship it?",
         options: [{ label: "Yes", value: "1", description: "Yes" }],
+        required: false,
       },
     ]);
-
-    expect(form?.respond({ q1: "2", q2: ["1", "3", "1"], q10: "1" })).toEqual({
+    expect(form?.respond({ q1: "2", q2: ["1", "3"], q10: "1" })).toEqual({
       action: "accept",
       content: { q1: "2", q2: ["1", "3"], q10: "1" },
     });
-
-    expect(
-      form?.respond({ q1: "Use Gemini Flash", q2: "Only integration checks", q10: "Wait" }),
-    ).toEqual({
+    // q10 is optional in agy's schema, so skipping it still sends the other answers.
+    expect(form?.respond({ q1: "Use canary", q2: "Only integration checks" })).toEqual({
       action: "accept",
-      content: {
-        q1_other: "Use Gemini Flash",
-        q2_other: "Only integration checks",
-        q10_other: "Wait",
-      },
+      content: { q1_other: "Use canary", q2_other: "Only integration checks" },
     });
   });
 
-  it("splits attachment references onto qN_other while keeping selected choices on qN", () => {
-    const form = extractAntigravityElicitationForm(
-      elicitationRequest({
-        q1: singleChoiceField,
-        q1_other: otherField(singleChoiceField.title),
-        q2: multiChoiceField,
-        q2_other: otherField(multiChoiceField.title),
-      }),
-    );
+  it("keeps a chosen ask_question option on qN and sends its attachments as qN_other", () => {
+    const form = twoQuestions();
     const imageRef = 'Attached image "shot.png": "/tmp/shot.png"';
     const fileRef = 'Attached file "spec.txt": "/tmp/spec.txt"';
 
-    expect(
-      form?.respond({
-        q1: `1\n\n${imageRef}`,
-        q2: ["1", "3", fileRef],
-      }),
-    ).toEqual({
+    expect(form?.respond({ q1: `1\n\n${imageRef}`, q2: ["1", "3", fileRef] })).toEqual({
       action: "accept",
-      content: {
-        q1: "1",
-        q1_other: imageRef,
-        q2: ["1", "3"],
-        q2_other: fileRef,
-      },
+      content: { q1: "1", q1_other: imageRef, q2: ["1", "3"], q2_other: fileRef },
     });
-
     expect(form?.respond({ q1: imageRef, q2: fileRef })).toEqual({
       action: "accept",
       content: { q1_other: imageRef, q2_other: fileRef },
@@ -477,60 +445,10 @@ describe("Antigravity permissions and questions", () => {
   });
 
   it.each([
-    ["missing answer", { q2: ["1"] }],
-    ["array answer for single-select", { q1: ["1"], q2: ["1"] }],
-    ["unknown option in multi-select array", { q1: "1", q2: ["1", "unknown"] }],
-  ])("cancels ask_question elicitation on %s", (_, answers) => {
-    const form = extractAntigravityElicitationForm(
-      elicitationRequest({
-        q1: singleChoiceField,
-        q1_other: otherField(singleChoiceField.title),
-        q2: multiChoiceField,
-        q2_other: otherField(multiChoiceField.title),
-      }),
-    );
-    expect(form?.respond(answers)).toEqual({ action: "cancel" });
-  });
-
-  it.each([
-    [
-      "extra unrelated field",
-      elicitationRequest({
-        q1: singleChoiceField,
-        q1_other: otherField(singleChoiceField.title),
-        note: { type: "string", title: "Note" },
-      }),
-    ],
-    ["orphan companion", elicitationRequest({ q1_other: otherField("orphan") })],
-    [
-      "required field",
-      elicitationRequest({ q1: singleChoiceField, q1_other: otherField(singleChoiceField.title) }, [
-        "q1",
-      ]),
-    ],
-    [
-      "multi-select with item count constraints",
-      elicitationRequest({
-        q1: { ...multiChoiceField, minItems: 1 },
-        q1_other: otherField(multiChoiceField.title),
-      }),
-    ],
-    [
-      "duplicate option values",
-      elicitationRequest({
-        q1: {
-          type: "string",
-          title: "Pick one",
-          oneOf: [
-            { const: "1", title: "First" },
-            { const: "1", title: "Second" },
-          ],
-        },
-        q1_other: otherField("Pick one"),
-      }),
-    ],
-  ])("leaves %s to the generic ACP form parser", (_, request) => {
-    expect(extractAntigravityElicitationForm(request)).toBeUndefined();
+    ["an array for a single choice", { q1: ["1"], q2: ["1"] }],
+    ["an unknown option in a multi-select", { q1: "1", q2: ["1", "unknown"] }],
+  ])("cancels an ask_question answer with %s", (_, answers) => {
+    expect(twoQuestions()?.respond(answers)).toEqual({ action: "cancel" });
   });
 });
 

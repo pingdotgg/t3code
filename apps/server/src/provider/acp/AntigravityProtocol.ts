@@ -1,9 +1,7 @@
-import {
-  type OrchestrationV2UserInputQuestion,
-  type ProviderApprovalOption,
-  type ProviderUserInputAnswers,
-  TrimmedNonEmptyString,
-  type UserInputQuestion,
+import type {
+  ProviderApprovalOption,
+  ProviderUserInputAnswers,
+  UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -17,7 +15,6 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
-import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
 import {
   ACP_RAW_INPUT_PATH_KEYS,
   acpChangedPathsOfToolCall,
@@ -181,13 +178,31 @@ export function extractAntigravityUserInputQuestion(
 }
 
 const isAskQuestionForm = Schema.is(
-  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.optional(Schema.Array(Schema.String)),
+  }),
 );
 const isAskQuestionField = Schema.is(
   Schema.Struct({ title: Schema.String, description: Schema.optional(Schema.String) }),
 );
+const isTextField = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    enum: Schema.optional(Schema.Null),
+    oneOf: Schema.optional(Schema.Null),
+  }),
+);
 
-/** agy's ask_question puts each question in its field's title and a count in the message. */
+const ASK_QUESTION_ID = /^q(\d+)$/;
+// The file references `appendUserInputAttachmentPaths` appends to an answer.
+const ATTACHMENT_REFERENCE = /^Attached (?:image|file) "(?:\\.|[^"\\\r\n])*": "/;
+
+/**
+ * agy's ask_question sends each question as choice `qN` with an optional `qN_other` text field,
+ * the question in the field's title, keys in lexical order (q1, q10, q2), and a count in the
+ * message. agy appends `qN_other` to the chosen options, so attachment notes go there.
+ */
 export const extractAntigravityElicitationForm: NonNullable<
   AcpAdapterV2Flavor["extractElicitationForm"]
 > = (request) => {
@@ -195,17 +210,83 @@ export const extractAntigravityElicitationForm: NonNullable<
   const form = parseElicitationForm(request.requestedSchema, request.message);
   if (form === undefined) return undefined;
   const { properties } = request.requestedSchema;
+  const required = new Set(request.requestedSchema.required);
+  const askedIds = new Set(form.questions.map((question) => question.id));
+
+  // The shared parser folds a single choice's companion; fold a multi-select's here too.
+  const companions = new Map<string, string>();
+  const foldedIds = new Set<string>();
+  for (const question of form.questions) {
+    const companionId = `${question.id}_other`;
+    if (question.options.length === 0 || !Object.hasOwn(properties, companionId)) continue;
+    if (!question.multiSelect) {
+      if (!askedIds.has(companionId)) companions.set(question.id, companionId);
+    } else if (
+      !required.has(question.id) &&
+      !required.has(companionId) &&
+      isTextField(properties[companionId])
+    ) {
+      companions.set(question.id, companionId);
+      foldedIds.add(companionId);
+    }
+  }
+
+  const visible = form.questions.filter((question) => !foldedIds.has(question.id));
+  const ordered = visible.every((question) => ASK_QUESTION_ID.test(question.id))
+    ? visible.toSorted((left, right) => Number(left.id.slice(1)) - Number(right.id.slice(1)))
+    : visible;
+  const questions = ordered.map((parsed, index) => {
+    const question =
+      parsed.multiSelect && companions.has(parsed.id)
+        ? { ...parsed, allowCustomAnswer: true }
+        : parsed;
+    const field = properties[question.id];
+    if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
+      return question;
+    }
+    return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
+  });
+
   return {
-    questions: form.questions.map((question, index) => {
-      const field = properties[question.id];
-      if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
-        return question;
-      }
-      return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
-    }),
+    questions,
     respond: (answers) => {
-      const content = form.content(answers);
-      return content === undefined ? { action: "cancel" } : { action: "accept", content };
+      const prepared: Record<string, unknown> = { ...answers };
+      const notes: Array<[string, string]> = [];
+      for (const question of questions) {
+        const companionId = companions.get(question.id);
+        if (companionId === undefined || !Object.hasOwn(answers, question.id)) continue;
+        const answer = answers[question.id];
+        const values = new Set(question.options.map((option) => option.value ?? option.label));
+        if (question.multiSelect && typeof answer === "string") {
+          prepared[question.id] = undefined;
+          prepared[companionId] = answer;
+        } else if (question.multiSelect && Array.isArray(answer)) {
+          const extra = answer.filter((item) => !values.has(item));
+          if (extra.length === 0) continue;
+          if (!extra.every((item) => typeof item === "string" && ATTACHMENT_REFERENCE.test(item))) {
+            return { action: "cancel" };
+          }
+          const selected = answer.filter((item) => values.has(item));
+          prepared[question.id] = selected.length > 0 ? selected : undefined;
+          prepared[companionId] = extra.join("\n");
+        } else if (typeof answer === "string") {
+          // A choice with attachments arrives as `<value>\n\n<references>`.
+          const value = [...values].find(
+            (candidate) =>
+              answer.startsWith(`${candidate}\n\n`) &&
+              ATTACHMENT_REFERENCE.test(answer.slice(candidate.length + 2)),
+          );
+          if (value === undefined) continue;
+          prepared[question.id] = value;
+          notes.push([companionId, answer.slice(value.length + 2)]);
+        } else {
+          return { action: "cancel" };
+        }
+      }
+      const content = form.content(prepared);
+      return content === undefined
+        ? { action: "cancel" }
+        : { action: "accept", content: { ...content, ...Object.fromEntries(notes) } };
     },
   };
 };
@@ -230,191 +311,6 @@ export function makeAntigravityUserInputResponse(
   const option = matchingLabels.length === 1 ? matchingLabels[0] : undefined;
   return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : undefined;
 }
-
-const ElicitationChoice = Schema.Struct({
-  const: TrimmedNonEmptyString,
-  title: TrimmedNonEmptyString,
-  description: Schema.optional(Schema.NullOr(Schema.String)),
-});
-type ElicitationChoice = typeof ElicitationChoice.Type;
-
-const isElicitationForm = Schema.is(
-  Schema.Struct({
-    properties: Schema.Record(Schema.String, Schema.Unknown),
-    required: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
-  }),
-);
-const isSingleElicitationQuestion = Schema.is(
-  Schema.Struct({
-    type: Schema.Literal("string"),
-    title: TrimmedNonEmptyString,
-    oneOf: Schema.NonEmptyArray(ElicitationChoice),
-    enum: Schema.optional(Schema.Null),
-  }),
-);
-const isMultiElicitationQuestion = Schema.is(
-  Schema.Struct({
-    type: Schema.Literal("array"),
-    title: TrimmedNonEmptyString,
-    items: Schema.Struct({
-      type: Schema.optional(Schema.Null),
-      anyOf: Schema.NonEmptyArray(ElicitationChoice),
-      enum: Schema.optional(Schema.Null),
-    }),
-    minItems: Schema.optional(Schema.Null),
-    maxItems: Schema.optional(Schema.Null),
-  }),
-);
-const isElicitationCompanion = Schema.is(
-  Schema.Struct({
-    type: Schema.Literal("string"),
-    oneOf: Schema.optional(Schema.Null),
-    enum: Schema.optional(Schema.Null),
-    anyOf: Schema.optional(Schema.Null),
-  }),
-);
-
-// Matches file references appended by `appendUserInputAttachmentPaths`.
-const QUESTION_ATTACHMENT_PATTERN = /^Attached (?:image|file) "(?:\\.|[^"\\\r\n])*": "/;
-
-function extractElicitationChoices(field: unknown):
-  | {
-      readonly title: string;
-      readonly choices: ReadonlyArray<ElicitationChoice>;
-      readonly multiSelect: boolean;
-    }
-  | undefined {
-  if (isSingleElicitationQuestion(field)) {
-    return { title: field.title.trim(), choices: field.oneOf, multiSelect: false };
-  }
-  if (isMultiElicitationQuestion(field)) {
-    return { title: field.title.trim(), choices: field.items.anyOf, multiSelect: true };
-  }
-  return undefined;
-}
-
-/**
- * ask_question pairs each qN choice (single- or multi-select) with a qN_other text field and
- * puts the question text in title. Fold each pair into one question and route custom answers or
- * attachment notes to qN_other (agy appends qN_other to the resolved option labels).
- */
-export const extractAntigravityElicitationForm: NonNullable<
-  AcpAdapterV2Flavor["extractElicitationForm"]
-> = (request) => {
-  if (request.mode !== "form" || !isElicitationForm(request.requestedSchema)) return undefined;
-  const { properties, required } = request.requestedSchema;
-  if (required !== undefined && required !== null && required.length > 0) return undefined;
-
-  const matched: Array<{
-    readonly id: string;
-    readonly index: number;
-    readonly title: string;
-    readonly choices: ReadonlyArray<ElicitationChoice>;
-    readonly optionValues: ReadonlySet<string>;
-    readonly multiSelect: boolean;
-  }> = [];
-
-  for (const [id, field] of Object.entries(properties)) {
-    if (!/^q[1-9]\d*$/.test(id)) continue;
-    const parsed = extractElicitationChoices(field);
-    const companionId = `${id}_other`;
-    if (
-      parsed === undefined ||
-      !Object.hasOwn(properties, companionId) ||
-      !isElicitationCompanion(properties[companionId])
-    ) {
-      return undefined;
-    }
-    const optionValues = new Set(parsed.choices.map((option) => option.const));
-    if (optionValues.size !== parsed.choices.length) return undefined;
-    matched.push({
-      id,
-      index: Number(id.slice(1)),
-      title: parsed.title,
-      choices: parsed.choices,
-      optionValues,
-      multiSelect: parsed.multiSelect,
-    });
-  }
-
-  // Leave partial or differently shaped forms to the generic ACP fallback.
-  if (matched.length === 0 || Object.keys(properties).length !== matched.length * 2) {
-    return undefined;
-  }
-
-  // Go serializes map keys lexicographically (q1, q10, q2); restore numeric order.
-  matched.sort((left, right) => left.index - right.index);
-
-  const questions: OrchestrationV2UserInputQuestion[] = matched.map((entry, position) => ({
-    id: entry.id,
-    header: `Question ${position + 1}`,
-    question: entry.title,
-    options: entry.choices.map((option) => {
-      const label = option.title.trim();
-      return {
-        label,
-        value: option.const,
-        description: option.description?.trim() || label,
-      };
-    }),
-    ...(entry.multiSelect ? { multiSelect: true } : {}),
-  }));
-
-  return {
-    questions,
-    respond: (answers) => {
-      const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
-      for (const entry of matched) {
-        const answer = Object.hasOwn(answers, entry.id) ? answers[entry.id] : undefined;
-        const companionId = `${entry.id}_other`;
-
-        if (entry.multiSelect) {
-          if (Array.isArray(answer)) {
-            const selected = new Set<string>();
-            const notes: string[] = [];
-            for (const item of answer) {
-              if (typeof item !== "string") return { action: "cancel" };
-              if (entry.optionValues.has(item)) {
-                selected.add(item);
-              } else if (QUESTION_ATTACHMENT_PATTERN.test(item)) {
-                notes.push(item);
-              } else {
-                return { action: "cancel" };
-              }
-            }
-            if (selected.size === 0 && notes.length === 0) return { action: "cancel" };
-            if (selected.size > 0) entries.push([entry.id, [...selected]]);
-            if (notes.length > 0) entries.push([companionId, notes.join("\n")]);
-          } else if (typeof answer === "string" && answer.trim().length > 0) {
-            entries.push([companionId, answer]);
-          } else {
-            return { action: "cancel" };
-          }
-          continue;
-        }
-
-        if (typeof answer !== "string" || answer.trim().length === 0) {
-          return { action: "cancel" };
-        }
-        if (entry.optionValues.has(answer)) {
-          entries.push([entry.id, answer]);
-          continue;
-        }
-        const marker = answer.indexOf("\n\n");
-        if (marker >= 0) {
-          const prefix = answer.slice(0, marker);
-          const note = answer.slice(marker + 2);
-          if (entry.optionValues.has(prefix) && QUESTION_ATTACHMENT_PATTERN.test(note)) {
-            entries.push([entry.id, prefix], [companionId, note]);
-            continue;
-          }
-        }
-        entries.push([companionId, answer]);
-      }
-      return { action: "accept", content: Object.fromEntries(entries) };
-    },
-  };
-};
 
 function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
   return text.length <= limit
