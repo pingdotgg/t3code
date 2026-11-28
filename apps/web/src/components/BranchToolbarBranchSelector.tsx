@@ -241,17 +241,27 @@ export function BranchToolbarBranchSelector({
       onActiveThreadBranchOverrideChange?.(branch);
       return true;
     }
+    const draftTarget = draftId ?? threadRef;
+    const currentDraft = useComposerDraftStore.getState().getDraftThread(draftTarget);
+    // A checkout can finish after the same draft has moved to another project.
+    if (
+      !currentDraft ||
+      currentDraft.promotedTo ||
+      currentDraft.environmentId !== environmentId ||
+      currentDraft.projectId !== activeProject.id
+    ) {
+      return false;
+    }
     const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
       nextWorktreePath: worktreePath,
       currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
     });
-    setDraftThreadContext(draftId ?? threadRef, {
+    setDraftThreadContext(draftTarget, {
       branch,
       worktreePath,
       envMode: nextDraftEnvMode,
       environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
-      projectRef: scopeProjectRef(environmentId, activeProject.id),
     });
     return true;
   };
