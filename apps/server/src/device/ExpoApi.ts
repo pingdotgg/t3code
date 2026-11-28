@@ -222,6 +222,12 @@ const toExpoApiError = (
   }
 };
 
+/** Starter plans reject preview-host CORS; the simulator session itself is still allowed. */
+const isPreviewCorsPlanError = (error: ExpoApiError): boolean =>
+  error.rejected === true &&
+  /corsOrigins/i.test(error.detail ?? "") &&
+  /plan/i.test(error.detail ?? "");
+
 const toSession = (
   session: T3EasSimulatorSession.Result["deviceRunSessions"]["byId"],
 ): EasSession => {
@@ -309,21 +315,28 @@ export const makeExpoApi = (http: HttpClient.HttpClient, credential: ExpoCredent
             }),
       ),
     ),
-    create: (input: CreateEasSessionInput) =>
-      call("start a simulator session", (expo) =>
-        expo.T3CreateEasSimulatorSession({
-          input: {
-            appId: input.appId,
-            platform: input.platform === "ios" ? "IOS" : "ANDROID",
-            type: "AGENT_DEVICE",
-            name: input.name,
-            maxRunTimeMinutes: input.maxRunTimeMinutes,
-            maxIdleTimeMinutes: input.maxIdleTimeMinutes,
-            // Expo only issues the preview host's API URL when preview access is configured.
-            corsOrigins: ["http://localhost"],
-          },
-        }),
-      ).pipe(Effect.map(({ deviceRunSession }) => deviceRunSession.createDeviceRunSession.id)),
+    create: (input: CreateEasSessionInput) => {
+      const start = (corsOrigins?: ReadonlyArray<string>) =>
+        call("start a simulator session", (expo) =>
+          expo.T3CreateEasSimulatorSession({
+            input: {
+              appId: input.appId,
+              platform: input.platform === "ios" ? "IOS" : "ANDROID",
+              type: "AGENT_DEVICE",
+              name: input.name,
+              maxRunTimeMinutes: input.maxRunTimeMinutes,
+              maxIdleTimeMinutes: input.maxIdleTimeMinutes,
+              // Expo only issues the preview host's API URL when preview access is configured.
+              ...(corsOrigins === undefined ? {} : { corsOrigins: [...corsOrigins] }),
+            },
+          }),
+        ).pipe(Effect.map(({ deviceRunSession }) => deviceRunSession.createDeviceRunSession.id));
+      // Production plans need corsOrigins so the desktop can call the preview API.
+      // Starter accounts reject that field; retry without it for control plus screenshots.
+      return start(["http://localhost"]).pipe(
+        Effect.catchIf(isPreviewCorsPlanError, () => start()),
+      );
+    },
     session: (id: string) =>
       call("read a simulator session", (expo) => expo.T3EasSimulatorSession({ id })).pipe(
         Effect.map(({ deviceRunSessions }) => toSession(deviceRunSessions.byId)),
