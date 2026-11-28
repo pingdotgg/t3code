@@ -178,7 +178,14 @@ export function MediaVideoPlayer({
           )}
           style={style}
           onLoadedMetadata={(event) => {
-            prepareVideoFirstFrame(event.currentTarget);
+            const video = event.currentTarget;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              video.style.setProperty(
+                "--video-aspect",
+                `${video.videoWidth} / ${video.videoHeight}`,
+              );
+            }
+            prepareVideoFirstFrame(video);
             if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
           }}
           onPlay={() => {
