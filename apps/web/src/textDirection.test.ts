@@ -41,6 +41,16 @@ describe("textDirection", () => {
       "This long English sentence describes the technology sector in the U.S. هذه جملة عربية. وهذه جملة عربية أخرى.",
       "rtl",
     ],
+    [
+      "Urdu sentences ending in Arabic full stops beside one English sentence",
+      "ہاں۔ نہیں۔ Please check the output again.",
+      "rtl",
+    ],
+    [
+      "Urdu sentences ending in Arabic full stops without intervening whitespace",
+      "ہاں۔نہیں۔ Please check the output again.",
+      "rtl",
+    ],
   ])("reads %s", (_, text, direction) => {
     expect(textDirection(text)).toBe(direction);
   });
