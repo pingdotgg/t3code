@@ -20,6 +20,7 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { constVoid } from "effect/Function";
 import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
@@ -31,6 +32,8 @@ const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
 
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
+const sliceText = (text: string, limit: number) =>
+  text.slice(0, splitsSurrogatePair(text, limit) ? limit - 1 : limit);
 const MAX_SCREENSHOT_WIDTH = 1280;
 // Two attempts must fit in a snapshot's 10-second deadline.
 const SCREENSHOT_TIMEOUT_MS = 3_000;
@@ -750,18 +753,19 @@ const capture = async (
   // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
   // masking, which could hide the `data:` scheme behind a password value's dots.
   const redacted = withoutTreeDataPayloads(tree);
-  const accessibilityTree = (dotted ? maskTree(redacted, dotted) : redacted)
-    .slice(0, MAX_VISIBLE_TEXT_LENGTH)
-    .replace(/\[ref=((?:f\d+)?e\d+)\]/g, (_match, nativeRef: string) => {
-      const ref = `t3-${generation}-${nativeRef}`;
-      state.refs.set(ref, nativeRef);
-      return `[ref=${ref}]`;
-    });
+  const accessibilityTree = sliceText(
+    dotted ? maskTree(redacted, dotted) : redacted,
+    MAX_VISIBLE_TEXT_LENGTH,
+  ).replace(/\[ref=((?:f\d+)?e\d+)\]/g, (_match, nativeRef: string) => {
+    const ref = `t3-${generation}-${nativeRef}`;
+    state.refs.set(ref, nativeRef);
+    return `[ref=${ref}]`;
+  });
   return {
     ...page,
     url: withoutDataPayload(page.url),
     // Mask text before truncating so a value crossing the cut cannot leak its prefix.
-    visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
+    visibleText: sliceText(mask(page.visibleText), MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],

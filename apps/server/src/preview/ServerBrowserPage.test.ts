@@ -274,6 +274,28 @@ describe("server browser element refs", () => {
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
 
+  it.each(["visibleText", "accessibilityTree"] as const)(
+    "does not split emoji at the %s text limit",
+    async (field) => {
+      await page.setContent("<body>a</body>");
+      const prefix =
+        field === "visibleText"
+          ? ""
+          : (await page.ariaSnapshot({ mode: "ai", boxes: true })).slice(0, -1);
+      const withoutRefs = (text: string) => text.replace(/\[ref=[^\]]+\]/g, "[ref]");
+      for (const asciiLength of [19_998, 19_999, 20_000]) {
+        const text = "a".repeat(asciiLength - prefix.length) + "🚀";
+        await page.setContent(`<body>${text}</body>`);
+        const result = await takeSnapshot();
+        const value = String(result[field]);
+        expect(value.isWellFormed()).toBe(true);
+        expect(withoutRefs(value)).toBe(
+          withoutRefs((prefix + text).slice(0, asciiLength === 19_999 ? 19_999 : 20_000)),
+        );
+      }
+    },
+  );
+
   it("does not report an empty interactiveElements list beside a tree full of controls", async () => {
     await page.setContent(
       `<a href="#signin">Sign in</a><button>Open menu</button><button>Dismiss local database notice</button>`,
