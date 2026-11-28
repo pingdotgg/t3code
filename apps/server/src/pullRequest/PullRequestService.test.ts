@@ -3906,6 +3906,30 @@ it.effect(
     }),
 );
 
+// GitHub's detail read leaves out the latest reviews its summary read falls back on.
+it.effect("opening detail keeps the held review decision", () =>
+  Effect.gen(function* () {
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.succeed({
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              reviewDecision: "approved",
+            }),
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), reviewDecision: null }),
+        }),
+      ],
+    });
+    yield* service.summary(reference);
+    yield* service.detail(reference);
+    assert.strictEqual((yield* service.summary(reference)).reviewDecision, "approved");
+  }),
+);
+
 it.effect("preserves merge queue removal details from the provider", () =>
   Effect.gen(function* () {
     const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };

@@ -62,6 +62,27 @@ describe("mobile overview review status", () => {
     expect(result.reviews.map((review) => review.outdated)).toEqual([true]);
   });
 
+  it("follows the host's review decision over what the reviews alone suggest", () => {
+    const approved = review("APPROVED", "2026-10-10T09:00:00Z");
+    // A GitLab approval need not appear among the reviews.
+    expect(
+      pullRequestReviewSummary({ reviewers: [author], reviewDecision: "approved" }, activity([])),
+    ).toMatchObject({ title: "Reviews approved", count: "1 approved" });
+    expect(
+      pullRequestReviewSummary(
+        { reviewers: [], reviewDecision: "changes-requested" },
+        activity([approved]),
+      ),
+    ).toMatchObject({ title: "Changes requested", count: "1 reviewer" });
+    // An approval short of the host's rules still needs review, and still lists its approver.
+    const required = pullRequestReviewSummary(
+      { reviewers: [author], reviewDecision: "review-required" },
+      activity([approved]),
+    );
+    expect(required.title).toBe("Awaiting review");
+    expect(required.reviews).toHaveLength(1);
+  });
+
   it("keeps an approval when a later review only comments, and normalizes provider spelling", () => {
     const result = pullRequestReviewSummary(
       { reviewers: [] },

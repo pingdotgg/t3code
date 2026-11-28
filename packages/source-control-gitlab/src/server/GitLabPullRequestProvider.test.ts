@@ -114,7 +114,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
-      expect(readHosts).toEqual(Array(action === "merge" ? 14 : 13).fill(selectedHost));
+      expect(readHosts).toEqual(Array(action === "merge" ? 15 : 14).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
@@ -238,6 +238,7 @@ describe("getChangeRequest base freshness", () => {
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
           getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
+          getListStates: () => Effect.succeed(new Map()),
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
           listMergeRequestStats: stats,
@@ -910,6 +911,8 @@ describe("review decisions", () => {
           ...overrides,
           getMergeRequestDetail: () => Effect.succeed(detail),
           getListStates,
+          getProjectMergeCapabilities: () =>
+            Effect.succeed({ merge: true, squash: true, rebase: true }),
           listMergeRequestStats: () =>
             Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
         }),
@@ -926,7 +929,7 @@ describe("review decisions", () => {
   };
 
   it.effect(
-    "puts GitLab's approval and pipeline state on listed and summarized merge requests",
+    "puts GitLab's approval and pipeline state on listed, summarized and detailed merge requests",
     () =>
       Effect.gen(function* () {
         const provider = yield* providerWith((input) => {
@@ -941,6 +944,7 @@ describe("review decisions", () => {
         const listed = yield* provider.listChangeRequests(listing);
         assert.isDefined(provider.getChangeRequestSummary);
         const summary = yield* provider.getChangeRequestSummary(reference);
+        expect((yield* provider.getChangeRequest(reference)).reviewDecision).toBe("approved");
 
         expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
           "approved",
@@ -1049,6 +1053,7 @@ describe("review decisions", () => {
         undefined,
       ]);
       expect(summary.reviewDecision).toBeUndefined();
+      expect((yield* provider.getChangeRequest(reference)).reviewDecision).toBeUndefined();
     }),
   );
 });

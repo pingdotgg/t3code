@@ -204,7 +204,7 @@ export function normalizedReviewState(reviewState: string | null) {
 }
 
 export function pullRequestReviewSummary(
-  pr: Pick<PullRequestDetail, "reviewers">,
+  pr: Pick<PullRequestDetail, "reviewers" | "reviewDecision">,
   activity: Pick<PullRequestActivity, "comments" | "commits"> | null,
   resolve: MessageResolver = m,
 ) {
@@ -240,19 +240,24 @@ export function pullRequestReviewSummary(
   const approved = reviews.filter(
     (review) => review.reviewState === "APPROVED" && !review.outdated,
   );
-  if (requested.length)
+  // The host's own decision, where it gives one, outranks what the reviews alone suggest.
+  const decision =
+    pr.reviewDecision ??
+    (requested.length ? "changes-requested" : approved.length ? "approved" : null);
+  if (decision === "changes-requested")
     return {
       title: resolve(msg("Changes requested")),
       count: resolve(
         msg("{count, plural, one {{count} reviewer} other {{count} reviewers}}", {
-          count: requested.length,
+          // A host's decision implies at least one verdict before the activity names it.
+          count: Math.max(requested.length, 1),
         }),
       ),
       icon: "xmark.circle.fill",
       tint: "accent-danger-foreground",
       reviews,
     } as const;
-  if (approved.length)
+  if (decision === "approved")
     return {
       title:
         approved.length === 1 && approved[0]?.author
@@ -260,7 +265,7 @@ export function pullRequestReviewSummary(
           : resolve(msg("Reviews approved")),
       count: resolve(
         msg("{count, plural, one {{count} approved} other {{count} approved}}", {
-          count: approved.length,
+          count: Math.max(approved.length, 1),
         }),
       ),
       icon: "checkmark.circle",
@@ -268,7 +273,7 @@ export function pullRequestReviewSummary(
       reviews,
     } as const;
   const commented = reviews.filter((review) => review.reviewState === "COMMENTED");
-  if (commented.length && !pr.reviewers.length)
+  if (decision !== "review-required" && commented.length && !pr.reviewers.length)
     return {
       title: resolve(msg("Reviews")),
       count: resolve(

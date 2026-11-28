@@ -683,6 +683,7 @@ export const PullRequestDetail = Schema.Struct({
   mergedBy: Schema.optional(PullRequestActor),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
   mergeCapabilities: PullRequestMergeCapabilities,
