@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
@@ -547,9 +548,36 @@ function savedPullRequestKey(
     : `${environmentId}:${threadPullRequestKeyOf({ ...reference, host: reference.host })}`;
 }
 
+function sameSavedLinkSources(
+  previous: ReadonlyArray<EnvironmentThreadShell>,
+  next: ReadonlyArray<EnvironmentThreadShell>,
+): boolean {
+  return (
+    previous.length === next.length &&
+    next.every((thread, index) => {
+      const before = previous[index]!;
+      return (
+        before.environmentId === thread.environmentId &&
+        before.projectId === thread.projectId &&
+        (before.pullRequests === thread.pullRequests ||
+          (before.pullRequests.length === 0 && thread.pullRequests.length === 0))
+      );
+    })
+  );
+}
+
+// Every streaming tick replaces a thread shell. The shell reducer keeps unchanged links arrays,
+// so the map, and every summary atom reading it, stays put until a link actually changes.
+let previousSavedLinkSources: ReadonlyArray<EnvironmentThreadShell> = [];
+let previousSavedSummaries = new Map<string, PullRequestSummary>();
 const savedPullRequestSummariesAtom = Atom.make((get) => {
+  const threads = get(environmentThreadShells.threadShellsAtom);
+  if (sameSavedLinkSources(previousSavedLinkSources, threads)) {
+    previousSavedLinkSources = threads;
+    return previousSavedSummaries;
+  }
   const summaries = new Map<string, PullRequestSummary>();
-  for (const thread of get(environmentThreadShells.threadShellsAtom)) {
+  for (const thread of threads) {
     for (const link of visibleThreadPullRequests(thread.pullRequests)) {
       const summary = threadPullRequestLinkToSummary(link, thread.projectId);
       if (summary === null) continue;
@@ -557,6 +585,8 @@ const savedPullRequestSummariesAtom = Atom.make((get) => {
       summaries.set(key, newestPullRequestSummary(summaries.get(key) ?? null, summary) ?? summary);
     }
   }
+  previousSavedLinkSources = threads;
+  previousSavedSummaries = summaries;
   return summaries;
 });
 
