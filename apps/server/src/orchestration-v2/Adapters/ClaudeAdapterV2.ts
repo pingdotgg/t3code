@@ -2441,12 +2441,12 @@ function claudeLiveSelectionFlagSettings(
 // connect, and Claude Code tells the agent they disconnected. Explicit instance values still win.
 export function claudeQueryEnvironment(
   environment: NodeJS.ProcessEnv,
-  appThread: Pick<OrchestrationV2AppThread, "lineage">,
+  appThread: Pick<OrchestrationV2AppThread, "lineage"> | undefined,
   subagentPromptCacheTtl: "5m" | "1h" | undefined,
   resume = false,
 ): NodeJS.ProcessEnv {
   const promptCacheTtl =
-    appThread.lineage.relationshipToParent === "subagent" &&
+    appThread?.lineage.relationshipToParent === "subagent" &&
     subagentPromptCacheTtl !== undefined &&
     environment.CLAUDE_CODE_PROMPT_CACHE_TTL === undefined
       ? subagentPromptCacheTtl
@@ -5207,9 +5207,9 @@ function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
 }
 
 function isClaudeProviderContinuationTurn(
-  input: ProviderAdapter.ProviderAdapterV2TurnInput,
+  input: Partial<Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "message">>,
 ): boolean {
-  return input.message.createdBy === "agent" && input.message.creationSource === "provider";
+  return input.message?.createdBy === "agent" && input.message.creationSource === "provider";
 }
 
 function isClaudePromptEchoGatedFrame(message: SDKMessage): boolean {
@@ -5804,7 +5804,27 @@ interface ClaudeLiveQueryContext {
   // Root messages this process streamed; what it holds beyond the history it resumed.
   readonly emittedMessageUuids: Set<string>;
   transcriptPath: string | undefined;
+  // Opened by an MCP sign-in, without a turn's launch settings, so the next turn replaces it.
+  readonly signInOnly: boolean;
 }
+
+/** A sign-in opens the thread's process before any turn, so it has no app thread or message. */
+type ClaudeQueryOpenInput = Pick<
+  ProviderAdapter.ProviderAdapterV2TurnInput,
+  | "threadId"
+  | "providerThread"
+  | "modelSelection"
+  | "runtimePolicy"
+  | "resume"
+  | "agentFeedback"
+  | "nativeThreadHasTurns"
+> &
+  Partial<
+    Pick<
+      ProviderAdapter.ProviderAdapterV2TurnInput,
+      "appThread" | "message" | "providerTurnOrdinal"
+    >
+  >;
 
 interface ActiveClaudeToolCall {
   readonly nativeItemId: string;
@@ -6532,7 +6552,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
         const queryPolicyForTurn = Effect.fnUntraced(function* (
-          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          turnInput: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "runtimePolicy">,
         ) {
           if (
             permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) !== "bypassPermissions"
@@ -14119,7 +14139,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         const openQuery = Effect.fnUntraced(function* (
-          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          turnInput: ClaudeQueryOpenInput,
           nativeThreadId: string,
           queryPolicy: Effect.Success<ReturnType<typeof queryPolicyForTurn>>,
         ) {
@@ -14158,7 +14178,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
-          let replaceStaleProcess = false;
+          let replaceStaleProcess =
+            existing?.signInOnly === true && turnInput.appThread !== undefined;
           if (
             !turnInput.resume &&
             existing !== null &&
@@ -14313,7 +14334,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
-            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
+            turnInput.nativeThreadHasTurns ?? (turnInput.providerTurnOrdinal ?? 0) > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
@@ -14321,7 +14342,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,
-            title: turnInput.appThread.title,
+            ...(turnInput.appThread === undefined ? {} : { title: turnInput.appThread.title }),
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
@@ -14332,14 +14353,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             settings: adapterOptions.settings,
             // Delegated threads have no one typing, so they never ask for suggestions.
             promptSuggestions:
-              !isDelegatedAppThread(turnInput.appThread) && (yield* promptSuggestionsEnabled),
+              turnInput.appThread !== undefined &&
+              !isDelegatedAppThread(turnInput.appThread) &&
+              (yield* promptSuggestionsEnabled),
             ...(launchArgSettings === undefined
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
             environment: claudeQueryEnvironment(
               adapterOptions.environment,
               turnInput.appThread,
-              turnInput.appThread.lineage.relationshipToParent === "subagent"
+              turnInput.appThread?.lineage.relationshipToParent === "subagent"
                 ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
                 : undefined,
               shouldResume,
@@ -14415,7 +14438,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           // A new session's spawn applied this turn's title. A resume keeps the session's stored
           // title, so the last applied one stays authoritative until a turn compares again.
-          if (!shouldResume) {
+          if (!shouldResume && turnInput.appThread !== undefined) {
             appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title);
           }
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
@@ -14459,18 +14482,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
             emittedMessageUuids: new Set(),
             transcriptPath: undefined,
+            signInOnly: turnInput.appThread === undefined,
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
-          yield* Ref.update(queryContext, (replaced) => {
-            if (replaced !== null) {
-              replaced.handedOffSubagents = new Set(
-                [...context.subagentsFromEarlierProcesses].filter(
-                  (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
-                ),
-              );
-            }
-            return context;
-          });
+          const install = yield* Ref.modify(
+            queryContext,
+            (
+              replaced,
+            ): readonly [
+              {
+                readonly kept: ClaudeLiveQueryContext | null;
+                readonly closes: ClaudeLiveQueryContext | null;
+              },
+              ClaudeLiveQueryContext | null,
+            ] => {
+              // A sign-in and a turn can each open a process; a turn's process is never displaced.
+              const openedMeanwhile =
+                replaced !== null && replaced !== existing && !replaced.stopping ? replaced : null;
+              if (context.signInOnly && openedMeanwhile !== null) {
+                return [{ kept: openedMeanwhile, closes: null }, replaced];
+              }
+              if (replaced !== null) {
+                replaced.handedOffSubagents = new Set(
+                  [...context.subagentsFromEarlierProcesses].filter(
+                    (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
+                  ),
+                );
+              }
+              const closes = openedMeanwhile?.signInOnly === true ? openedMeanwhile : null;
+              if (closes !== null) closes.stopping = true;
+              return [{ kept: null, closes }, context];
+            },
+          );
+          if (install.kept !== null) {
+            context.stopping = true;
+            yield* querySession.close.pipe(Effect.ignore);
+            return install.kept;
+          }
+          if (install.closes !== null) yield* install.closes.query.close.pipe(Effect.ignore);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
@@ -14615,6 +14664,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           return context;
         });
+
+        const signInQueryLock = yield* Semaphore.make(1);
+        // An idle release ends the process that announced the sign-in, so Sign in opens one itself.
+        const signInQuery = (providerThread: OrchestrationV2ProviderThread) =>
+          signInQueryLock.withPermits(1)(
+            Effect.gen(function* () {
+              const live = yield* Ref.get(queryContext);
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              if ((live !== null && !live.stopping) || nativeThreadId == null) {
+                return yield* liveQueryForThread(providerThread);
+              }
+              const open: ClaudeQueryOpenInput = {
+                threadId: input.threadId,
+                providerThread,
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+                // Only a turn announces a sign-in, so the conversation already exists.
+                nativeThreadHasTurns: true,
+              };
+              return yield* openQuery(open, nativeThreadId, yield* queryPolicyForTurn(open)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "Claude could not start a session for the MCP sign-in.",
+                      cause,
+                    }),
+                ),
+              );
+            }),
+          );
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
@@ -15811,7 +15891,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerThread,
               server,
             }) {
-              const liveQuery = yield* liveQueryForThread(providerThread);
+              const liveQuery = yield* signInQuery(providerThread);
               const authorizationUrl = yield* liveQuery.query.mcpAuthenticate(server).pipe(
                 Effect.mapError(
                   () =>
@@ -15829,7 +15909,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               callbackUrl,
             }) {
               const fail = (detail: string) => new ProviderMcpSignInError({ server, detail });
-              const liveQuery = yield* liveQueryForThread(providerThread);
+              const liveQuery = yield* signInQuery(providerThread);
               const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
                 Effect.mapError(() => fail(`Claude couldn't finish the sign-in to ${server}.`)),
               );

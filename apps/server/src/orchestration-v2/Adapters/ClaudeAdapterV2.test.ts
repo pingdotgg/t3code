@@ -3877,7 +3877,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
       "mcpServerStatus" | "readMcpResource" | "callMcpTool"
     > &
-      Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
+      Partial<
+        Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules" | "mcpAuthenticate">
+      >;
     readonly environment?: NodeJS.ProcessEnv;
     readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
     readonly subagentLaunchToolUseId?: string;
@@ -3886,6 +3888,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly settings?: ClaudeSettings;
     readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
     readonly freshQueueOnReopen?: boolean;
+    readonly beforeOpen?: Effect.Effect<void>;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
@@ -3972,6 +3975,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
           open: (input) =>
             Effect.gen(function* () {
+              yield* options?.beforeOpen ?? Effect.void;
               openedOptions = input.options;
               const processMessages =
                 options?.freshQueueOnReopen === true && processQueues.length > 0
@@ -4017,7 +4021,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
-                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpAuthenticate:
+                    options?.mcp?.mcpAuthenticate ?? (() => Effect.die("unexpected MCP sign-in")),
                   mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                   reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
@@ -4063,7 +4068,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   (() => Effect.die("unexpected MCP resource read")),
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
-                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpAuthenticate:
+                  options?.mcp?.mcpAuthenticate ?? (() => Effect.die("unexpected MCP sign-in")),
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                 reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
@@ -7924,6 +7930,209 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // regression: #42868 Sign in on an MCP notice must work after Claude's idle release reopens the session
+  it.effect("starts an MCP sign-in on a reopened Claude session before its next turn", () =>
+    Effect.gen(function* () {
+      const authenticated: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        mcp: {
+          mcpServerStatus: Effect.succeed([{ name: "linear", status: "needs-auth" }]),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+          mcpAuthenticate: (server) =>
+            Effect.sync(() => {
+              authenticated.push(server);
+              return "https://linear.example/authorize";
+            }),
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-reopened-1"),
+          text: "Plan the sprint",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "mcp-sign-in-reopened-init",
+          session_id: WAKE_NATIVE_SESSION,
+          mcp_servers: [{ name: "linear", status: "pending" }],
+        }),
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "mcp-sign-in-reopened-result", result: "Planned" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const providerThread = harness.events.findLast(
+        (
+          event,
+        ): event is Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { type: "provider_thread.updated" }
+        > => event.type === "provider_thread.updated",
+      )!.providerThread;
+
+      // The idle release unloaded the first session; Sign in reopens and resumes the thread.
+      const reopened = yield* harness.adapter.openSession({
+        threadId: harness.threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-wake-2"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const resumed = yield* reopened.resumeThread({ providerThread });
+
+      const result = yield* reopened.mcpSignIn!.start({
+        providerThread: resumed,
+        server: "linear",
+      });
+
+      assert.deepEqual(result, { authorizationUrl: "https://linear.example/authorize" });
+      assert.deepEqual(authenticated, ["linear"]);
+
+      // The sign-in's process has none of a turn's launch settings, so the next turn replaces it.
+      assert.equal(harness.processQueues.length, 2);
+      yield* reopened.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: resumed,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-reopened-2"),
+          text: "Use Linear",
+          attachments: [],
+        }),
+      );
+      assert.equal(harness.processQueues.length, 3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // regression: #42868 a sign-in opening a process must not displace the one a turn opened meanwhile
+  it.effect("keeps a turn's Claude process when a sign-in opens one concurrently", () =>
+    Effect.gen(function* () {
+      const signInOpening = yield* Deferred.make<void>();
+      const releaseSignIn = yield* Deferred.make<void>();
+      const turnInstalled = yield* Deferred.make<void>();
+      const signInDone = yield* Deferred.make<void>();
+      const authenticated: Array<string> = [];
+      let opens = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        // The second open is the sign-in's: it stalls until the turn has installed its process.
+        beforeOpen: Effect.suspend(() =>
+          ++opens === 2
+            ? Deferred.succeed(signInOpening, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseSignIn)),
+              )
+            : Effect.void,
+        ),
+        // A turn with a new title renames its session after installing its process, before attaching.
+        renameSession: () =>
+          Deferred.isDone(signInOpening).pipe(
+            Effect.flatMap((racing) =>
+              racing
+                ? Deferred.succeed(turnInstalled, undefined).pipe(
+                    Effect.andThen(Deferred.await(signInDone)),
+                  )
+                : Effect.void,
+            ),
+          ),
+        mcp: {
+          mcpServerStatus: Effect.succeed([{ name: "linear", status: "needs-auth" }]),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+          mcpAuthenticate: (server) =>
+            Effect.sync(() => {
+              authenticated.push(server);
+              return "https://linear.example/authorize";
+            }),
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-race-1"),
+          text: "Plan the sprint",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "mcp-sign-in-race-result", result: "Planned" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const providerThread = harness.events.findLast(
+        (
+          event,
+        ): event is Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { type: "provider_thread.updated" }
+        > => event.type === "provider_thread.updated",
+      )!.providerThread;
+      const reopened = yield* harness.adapter.openSession({
+        threadId: harness.threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-wake-2"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const resumed = yield* reopened.resumeThread({ providerThread });
+
+      const signIn = yield* reopened
+        .mcpSignIn!.start({ providerThread: resumed, server: "linear" })
+        .pipe(Effect.ensuring(Deferred.succeed(signInDone, undefined)), Effect.forkScoped);
+      yield* Deferred.await(signInOpening);
+      const turn = yield* reopened
+        .startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: resumed,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mcp-sign-in-race-2"),
+            providerTurnOrdinal: 2,
+            title: "Sprint with Linear",
+            text: "Use Linear",
+            attachments: [],
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(turnInstalled);
+      yield* Deferred.succeed(releaseSignIn, undefined);
+
+      assert.deepEqual(yield* Fiber.join(signIn), {
+        authorizationUrl: "https://linear.example/authorize",
+      });
+      yield* Fiber.join(turn);
+      assert.deepEqual(authenticated, ["linear"]);
+      assert.equal(harness.processQueues.length, 3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn

@@ -612,6 +612,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
+          mcpSignIn: {
+            start: () => Effect.succeed({ authorizationUrl: "https://mcp.example/authorize" }),
+            complete: () => Effect.void,
+          },
           startTurn: () => options.startTurn ?? Effect.void,
           resumeTurn: () => options.startTurn ?? Effect.void,
           compactThread: () => options.startTurn ?? Effect.void,
@@ -1828,6 +1832,58 @@ it.effect("ProviderSessionManagerV2 still idles out a session releaseUnlessBusy 
       );
       assert.isTrue(yield* manager.isLive(providerSessionId));
       // The stopped run 1 never reports its end.
+      yield* TestClock.adjust("2 seconds");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+  }),
+);
+
+// regression: #42868 an idle release must not end the process holding a started MCP sign-in
+it.effect("ProviderSessionManagerV2 keeps a session loaded while its MCP sign-in can finish", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-mcp-sign-in");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const signIn = Effect.fnUntraced(function* () {
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: `native-${threadId}`,
+        });
+        yield* runtime.mcpSignIn!.start({ providerThread, server: "linear" });
+        return { mcpSignIn: runtime.mcpSignIn!, providerThread };
+      });
+
+      yield* signIn();
+      yield* TestClock.adjust("4 minutes");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      yield* TestClock.adjust("2 minutes");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+
+      const { mcpSignIn, providerThread } = yield* signIn();
+      yield* mcpSignIn.complete({
+        providerThread,
+        server: "linear",
+        callbackUrl: "http://localhost:1/callback?code=c",
+      });
       yield* TestClock.adjust("2 seconds");
       assert.isFalse(yield* manager.isLive(providerSessionId));
     }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));

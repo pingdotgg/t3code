@@ -82,6 +82,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 // Without native resume, a released session comes back as a summary of the thread, so it stays longer.
 const NO_NATIVE_RESUME_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
+// Claude Code abandons an MCP OAuth flow five minutes after it starts; the flow dies with the process.
+const MCP_SIGN_IN_HOLD_MS = 5 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
@@ -345,6 +347,8 @@ interface LiveSessionEntry {
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
+  /** A started MCP sign-in can still be finished until then, so idle release waits. */
+  readonly mcpSignInHeldUntilMs?: number;
   /** Keyed by native thread: a fresh session leaves the replaced one to unload on its own timer. */
   readonly idleThreadUnloads: ReadonlyMap<ProviderThreadId, IdleThreadUnload>;
 }
@@ -1691,6 +1695,7 @@ export const layerWithOptions = (
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
           const hasPendingWork =
+            (entry.mcpSignInHeldUntilMs ?? 0) > (yield* Clock.currentTimeMillis) ||
             (probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
@@ -2582,6 +2587,23 @@ export const layerWithOptions = (
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const mcpSignIn = runtime.mcpSignIn;
+        const holdForMcpSignIn = (held: boolean) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              Ref.update(sessions, (current) => {
+                const entry = current.get(sessionKey(providerSessionId));
+                if (entry?.runtime !== runtime) return current;
+                const updated = new Map(current);
+                updated.set(sessionKey(providerSessionId), {
+                  ...entry,
+                  mcpSignInHeldUntilMs: held ? now + MCP_SIGN_IN_HOLD_MS : 0,
+                });
+                return updated;
+              }),
+            ),
+            Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
+          );
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -2796,6 +2818,22 @@ export const layerWithOptions = (
               ),
               Effect.map(({ loaded }) => loaded),
             ),
+          ...(mcpSignIn === undefined
+            ? {}
+            : {
+                mcpSignIn: {
+                  start: (input) =>
+                    mcpSignIn
+                      .start(input)
+                      .pipe(
+                        Effect.tap(({ authorizationUrl }) =>
+                          holdForMcpSignIn(authorizationUrl !== null),
+                        ),
+                      ),
+                  complete: (input) =>
+                    mcpSignIn.complete(input).pipe(Effect.tap(() => holdForMcpSignIn(false))),
+                },
+              }),
           startTurn: (input) =>
             busyTurn(input, () =>
               agentFeedbackMode.pipe(

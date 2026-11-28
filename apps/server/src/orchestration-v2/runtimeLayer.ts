@@ -417,7 +417,13 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
 );
 
 const layerMcpSignInProvided = McpSignIn.layer.pipe(
-  Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      layerProviderSessionManagerProvided,
+      layerRuntimePolicyProvided,
+    ),
+  ),
 );
 
 export const layer = Layer.mergeAll(
