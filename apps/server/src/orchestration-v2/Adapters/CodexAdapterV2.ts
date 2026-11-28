@@ -1450,8 +1450,8 @@ function failureResetAt(
 interface ActiveCodexTurnContext {
   promptPending?: boolean;
   hookStopReason?: string;
-  appliedServiceTier?: string;
-  appliedEffort?: string;
+  /** The speed and effort Codex accepted after this turn started; a goal's turns share one. */
+  accepted?: { serviceTier?: string; effort?: string };
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -5591,12 +5591,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
               // Its input is the run's first selection; Codex runs it on what it accepted since.
-              if (goalHold.context.appliedServiceTier !== undefined) {
-                next.appliedServiceTier = goalHold.context.appliedServiceTier;
-              }
-              if (goalHold.context.appliedEffort !== undefined) {
-                next.appliedEffort = goalHold.context.appliedEffort;
-              }
+              // Shared, so an update still awaiting its reply reaches this turn too.
+              next.accepted = goalHold.context.accepted ??= {};
               const goalRun = continuedRuns.get(goalHold.context.providerTurnId) ?? [
                 goalHold.context,
               ];
@@ -7808,13 +7804,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }),
                     );
                     if (!claimed) return;
+                    // A speed or effort changed during the failed attempt outlives the retry.
+                    const { serviceTier, effort } = context.accepted ?? {};
                     // Notifications before the RPC response also take the terminalization permit.
                     yield* startNativeTurn(
                       {
                         ...context.input,
-                        // A speed or effort changed during the failed attempt outlives the retry.
-                        ...(context.appliedServiceTier === undefined &&
-                        context.appliedEffort === undefined
+                        ...(serviceTier === undefined && effort === undefined
                           ? {}
                           : {
                               modelSelection: {
@@ -7822,16 +7818,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                                 options: [
                                   ...(context.input.modelSelection.options ?? []).filter((option) =>
                                     option.id === "reasoningEffort"
-                                      ? context.appliedEffort === undefined
-                                      : context.appliedServiceTier === undefined ||
+                                      ? effort === undefined
+                                      : serviceTier === undefined ||
                                         (option.id !== "serviceTier" && option.id !== "fastMode"),
                                   ),
-                                  ...(context.appliedServiceTier === undefined
+                                  ...(serviceTier === undefined
                                     ? []
-                                    : [{ id: "serviceTier", value: context.appliedServiceTier }]),
-                                  ...(context.appliedEffort === undefined
+                                    : [{ id: "serviceTier", value: serviceTier }]),
+                                  ...(effort === undefined
                                     ? []
-                                    : [{ id: "reasoningEffort", value: context.appliedEffort }]),
+                                    : [{ id: "reasoningEffort", value: effort }]),
                                 ],
                               },
                             }),
@@ -8544,7 +8540,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             selectedEffort !== undefined &&
             effortTurns.some(
               (turn) =>
-                (turn.appliedEffort ?? codexSelectionEffort(turn.input.modelSelection)) !==
+                (turn.accepted?.effort ?? codexSelectionEffort(turn.input.modelSelection)) !==
                 selectedEffort,
             )
               ? ((yield* decodeTurnReasoningEffort(selectedEffort).pipe(
@@ -8568,10 +8564,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
           if (!applied) return;
           if (serviceTier !== undefined) {
-            for (const turn of turns) turn.appliedServiceTier = serviceTier;
+            for (const turn of turns) (turn.accepted ??= {}).serviceTier = serviceTier;
           }
           if (effort !== undefined) {
-            for (const turn of effortTurns) turn.appliedEffort = effort;
+            for (const turn of effortTurns) (turn.accepted ??= {}).effort = effort;
           }
         });
 

@@ -13422,7 +13422,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect.each([{ picked: "during a goal turn" }, { picked: "between goal turns" }] as const)(
+    it.effect.each([
+      { picked: "during a goal turn" },
+      { picked: "between goal turns" },
+      // Codex starts the next goal turn before it answers the pick.
+      { picked: "as the next goal turn starts" },
+    ] as const)(
       "an effort picked $picked reaches Codex, and the next goal turn can change it back",
       ({ picked }) =>
         Effect.gen(function* () {
@@ -13458,10 +13463,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 goal: codexGoal("active", 11),
               }),
               ...(picked === "between goal turns" ? firstPick : []),
+              ...(picked === "as the next goal turn starts" ? firstPick.slice(0, 1) : []),
               notification("continuation", "turn/started", {
                 threadId: nativeThreadId,
                 turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
               }),
+              ...(picked === "as the next goal turn starts" ? firstPick.slice(1) : []),
               // The continuation's input still says low; Codex runs it on high.
               ...request(
                 5,
