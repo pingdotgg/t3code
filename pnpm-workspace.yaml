@@ -302,6 +302,9 @@ patchedDependencies:
   effect@4.1.6: patches/effect@4.1.6.patch
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
   gt-i18n@1.0.40: patches/gt-i18n@1.0.40.patch
+  # Plural rules and the resolved locale are kept per locale list, not rebuilt for every formatted
+  # message: on Hermes that cost milliseconds per plural string.
+  "@generaltranslation/icu@0.1.2": patches/@generaltranslation__icu@0.1.2.patch
   # A browser test's first tester socket can close before opening on a busy runner; the
   # reconnect then opens but the tester keeps waiting on the dead attempt and fails after 60s.
   # https://github.com/vitest-dev/vitest/issues/10166

@@ -1,0 +1,86 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..e3bfa217cdbdddb24b186a787ab0b7163407a955 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -837,6 +837,16 @@ function applyScale(value, scale) {
+ 	}
+ 	return Number(value) * scale;
+ }
++// T3 patch: plural rules and the resolved locale are kept per locale list. They were rebuilt for
++// every formatted message, and on Hermes a polyfilled PluralRules or a supportedLocalesOf call
++// costs more than the rest of the format.
++const localeCaches = /* @__PURE__ */ new Map();
++function getLocaleCache(locales) {
++	const key = String(locales);
++	let cache = localeCaches.get(key);
++	if (!cache) localeCaches.set(key, cache = {});
++	return cache;
++}
+ function getNumberFormat(context, options = {}) {
+ 	return getCachedFormatter(context.numberFormats ??= /* @__PURE__ */ new Map(), JSON.stringify(options), () => {
+ 		return new Intl.NumberFormat(context.locales, options);
+@@ -854,7 +864,7 @@ function getPluralRules(context, type) {
+ 		error.originalMessage = context.message;
+ 		throw error;
+ 	}
+-	return getCachedFormatter(context.pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
++	return getCachedFormatter(getLocaleCache(context.locales).pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
+ 		return new Intl.PluralRules(context.locales, { type });
+ 	});
+ }
+@@ -881,9 +891,11 @@ function invalidSelection(name, value, options) {
+ }
+ function resolveLocale(locales) {
+ 	if (typeof Intl.Locale === "undefined") return void 0;
++	const cache = getLocaleCache(locales);
++	if (cache.locale) return cache.locale;
+ 	const supported = Intl.NumberFormat.supportedLocalesOf(locales)[0];
+ 	const requested = typeof locales === "string" ? locales : locales[0];
+-	return new Intl.Locale(supported ?? requested);
++	return cache.locale = new Intl.Locale(supported ?? requested);
+ }
+ //#endregion
+ //#region src/printer.ts
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a54f2235227290efe761215b30da542562b2e77f..3322b81b8ddadef4e55fdd15f641aea3e5ae30e9 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -836,6 +836,16 @@ function applyScale(value, scale) {
+ 	}
+ 	return Number(value) * scale;
+ }
++// T3 patch: plural rules and the resolved locale are kept per locale list. They were rebuilt for
++// every formatted message, and on Hermes a polyfilled PluralRules or a supportedLocalesOf call
++// costs more than the rest of the format.
++const localeCaches = /* @__PURE__ */ new Map();
++function getLocaleCache(locales) {
++	const key = String(locales);
++	let cache = localeCaches.get(key);
++	if (!cache) localeCaches.set(key, cache = {});
++	return cache;
++}
+ function getNumberFormat(context, options = {}) {
+ 	return getCachedFormatter(context.numberFormats ??= /* @__PURE__ */ new Map(), JSON.stringify(options), () => {
+ 		return new Intl.NumberFormat(context.locales, options);
+@@ -853,7 +863,7 @@ function getPluralRules(context, type) {
+ 		error.originalMessage = context.message;
+ 		throw error;
+ 	}
+-	return getCachedFormatter(context.pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
++	return getCachedFormatter(getLocaleCache(context.locales).pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
+ 		return new Intl.PluralRules(context.locales, { type });
+ 	});
+ }
+@@ -880,9 +890,11 @@ function invalidSelection(name, value, options) {
+ }
+ function resolveLocale(locales) {
+ 	if (typeof Intl.Locale === "undefined") return void 0;
++	const cache = getLocaleCache(locales);
++	if (cache.locale) return cache.locale;
+ 	const supported = Intl.NumberFormat.supportedLocalesOf(locales)[0];
+ 	const requested = typeof locales === "string" ? locales : locales[0];
+-	return new Intl.Locale(supported ?? requested);
++	return cache.locale = new Intl.Locale(supported ?? requested);
+ }
+ //#endregion
+ //#region src/printer.ts
