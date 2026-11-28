@@ -489,11 +489,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private func handleViewportPan(_ gesture: UIPanGestureRecognizer) {
     guard let surface else { return }
 
+    // libghostty scales the cursor position by the surface's content scale itself.
     let location = gesture.location(in: terminalViewport)
     ghostty_surface_mouse_pos(
       surface,
-      Double(location.x * contentScaleFactor),
-      Double(location.y * contentScaleFactor),
+      Double(location.x),
+      Double(location.y),
       GHOSTTY_MODS_NONE
     )
 
