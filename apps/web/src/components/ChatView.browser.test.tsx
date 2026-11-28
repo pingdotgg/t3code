@@ -4,6 +4,8 @@ import {
   EnvironmentId,
   IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderDriverKind,
+  ProviderThreadId,
   RunId,
   ThreadId,
   WS_METHODS,
@@ -14,6 +16,7 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { expect, it, vi } from "vite-plus/test";
@@ -48,6 +51,7 @@ import {
   threadWithHistory,
   threadWithQuestion,
   type FakeDriver,
+  type FakeThread,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
 
@@ -1159,6 +1163,80 @@ it("/side sends the draft's attachments and context, and keeps them when it does
       "/side what is this?",
     ]),
   );
+});
+
+/** A Codex thread that has a provider thread, so `/feedback` uploads instead of warning. */
+async function openCodexThreadWithReply(name: string) {
+  const history = threadWithHistory(name, 2);
+  const thread: FakeThread = {
+    ...history,
+    providerThreads: [
+      {
+        id: ProviderThreadId.make(`${name}-provider-thread`),
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: history.runs[0]!.providerInstanceId,
+        providerSessionId: null,
+        appThreadId: history.id,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 2,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: DateTime.makeUnsafe("2026-03-17T19:12:28.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-03-17T19:12:28.000Z"),
+      },
+    ],
+  };
+  const environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByText(`Answer 1 for ${thread.id}.`)).toBeVisible();
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  await expect.element(page.getByRole("button", { name: "Cancel reply" })).toBeVisible();
+  return {
+    thread,
+    editor: page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true }),
+    [Symbol.asyncDispose]: async () => {
+      await app[Symbol.asyncDispose]();
+      environment[Symbol.dispose]();
+    },
+  };
+}
+
+it("/feedback with a pending reply keeps the reply for the next message", async () => {
+  await using view = await openCodexThreadWithReply("feedback-reply");
+  const uploads: unknown[] = [];
+  using _upload = answerRpc(WS_METHODS.providerUploadFeedback, (input: unknown) => {
+    uploads.push(input);
+    return Effect.succeed({ feedbackId: "feedback-1" });
+  });
+
+  await userEvent.click(view.editor);
+  await insertText("/feedback testing");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(uploads).toHaveLength(1));
+  await expect.element(page.getByText("Feedback sent to OpenAI.")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Cancel reply" })).toBeVisible();
+});
+
+it("/feedback with a pending reply shows the send button, not steer, while a turn runs", async () => {
+  await using view = await openCodexThreadWithReply("feedback-reply-running");
+  const running = { ...view.thread.runs[1]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(view.thread.id, { type: "run.updated", payload: running }));
+
+  await userEvent.click(view.editor);
+  await insertText("/feedback testing");
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
 });
 
 it("opening Settings without a page event closes the composer model picker and permissions menu", async () => {
