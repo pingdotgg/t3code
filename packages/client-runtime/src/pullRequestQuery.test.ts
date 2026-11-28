@@ -69,6 +69,14 @@ describe("reading qualifiers out of a typed query", () => {
         "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
       ),
     ).toEqual({ text: "fix", filters: {} });
+    expect(parsePullRequestQuery("type:pr is:open bug")).toEqual(
+      parsePullRequestQuery("is:pr is:open bug"),
+    );
+    expect(parsePullRequestQuery("TYPE:PR bug")).toEqual({ text: "bug", filters: {} });
+    expect(parsePullRequestQuery("type:bug -type:pr label:type:pr").filters).toEqual({
+      labels: [["type:bug"], ["type:pr"]],
+      excludedLabels: ["type:pr"],
+    });
   });
 
   it("sets no author when the query names more than one", () => {
@@ -86,6 +94,18 @@ describe("reading qualifiers out of a typed query", () => {
     expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
     expect(parsed.filters.author).toBe("x".repeat(200));
     expect(parsed.text).toBe("fix ".repeat(50).trim());
+
+    const prefix = "x".repeat(199);
+    const split = `${prefix}😀`;
+    expect(parsePullRequestQuery(split).text).toBe(prefix);
+    expect(parsePullRequestQuery(`${"x".repeat(198)}😀x`).text).toBe(`${"x".repeat(198)}😀`);
+    expect(parsePullRequestQuery(`label:${split} -label:${split} author:${split}`).filters).toEqual(
+      {
+        labels: [[prefix]],
+        excludedLabels: [prefix],
+        author: prefix,
+      },
+    );
   });
 });
 
@@ -102,11 +122,19 @@ describe("colon-namespaced labels typed as a search", () => {
 
   it("leaves a name that already carries its own namespace alone", () => {
     expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
+    expect(parsePullRequestQuery("security:cve:critical,area:web,low").filters.labels).toEqual([
+      ["security:cve:critical", "area:web", "security:low"],
+    ]);
+    expect(parsePullRequestQuery("size:,area:web").filters.labels).toEqual([["area:web"]]);
   });
 
   // regression: #19934 negated key:value qualifiers become namespaced label exclusions
   it("excludes one the same way", () => {
     expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
+    expect(parsePullRequestQuery("-security:cve:critical").filters.excludedLabels).toEqual([
+      "security:cve:critical",
+    ]);
+    expect(parsePullRequestQuery("-size:,area:web").filters.excludedLabels).toEqual(["area:web"]);
     expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
       "size:S",
       "size:XS",

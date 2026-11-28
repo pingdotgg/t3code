@@ -13,7 +13,9 @@ import { MysqlContainer } from "./utils.ts"
 it.layer(MysqlContainer.layerClient, { timeout: "90 seconds" })("Persistence", (it) => {
   PersistedCacheTest.suiteWith("sql-mysql2-multi", Persistence.layerSqlMultiTable, it)
 
-  PersistedQueueTest.suiteWith("sql-mysql2", PersistedQueue.layerStoreSql(), it)
+  PersistedQueueTest.suiteWith("sql-mysql2", PersistedQueue.layerStoreSql(), it, {
+    nonDeliveryWait: "250 millis"
+  })
 
   PersistedQueueSqlTest.suiteWith(it)
 

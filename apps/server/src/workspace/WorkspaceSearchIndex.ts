@@ -22,6 +22,7 @@ import * as LayerMap from "effect/LayerMap";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -32,6 +33,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
@@ -54,6 +56,7 @@ const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
+const PASSIVE_REFRESH_INTERVAL_MS = 60_000;
 export const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
@@ -149,7 +152,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       ProjectSearchContentsResult,
       WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
     >;
-    readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
+    readonly refresh: (mode?: "passive") => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
@@ -351,20 +354,37 @@ function locateRegexMatches(
   return ranges;
 }
 
-// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+// `git grep -z` records: NUL-terminated metadata fields (filenames may contain LF), then LF-terminated text.
 function parseGitGrepRecords(
   stdout: string,
   fieldCount: number,
   truncated: boolean,
 ): Array<Array<string>> {
-  const lines = stdout.split("\n");
-  if (truncated || lines.at(-1) === "") lines.pop();
   const records: Array<Array<string>> = [];
-  for (const line of lines) {
-    const fields = line.split("\0");
-    if (fields.length < fieldCount) continue;
-    // Only the last field (the line or match text) can contain NUL bytes.
-    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  let offset = 0;
+  while (offset < stdout.length) {
+    const fields: Array<string> = [];
+    let complete = true;
+    for (let index = 0; index < fieldCount - 1; index += 1) {
+      const delimiter = stdout.indexOf("\0", offset);
+      if (delimiter === -1) {
+        complete = false;
+        break;
+      }
+      fields.push(stdout.slice(offset, delimiter));
+      offset = delimiter + 1;
+    }
+    if (!complete) break;
+    const lineEnd = stdout.indexOf("\n", offset);
+    if (lineEnd === -1) {
+      if (truncated) break;
+      fields.push(stdout.slice(offset));
+      records.push(fields);
+      break;
+    }
+    fields.push(stdout.slice(offset, lineEnd));
+    records.push(fields);
+    offset = lineEnd + 1;
   }
   return records;
 }
@@ -876,7 +896,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         break;
       }
       const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-      const lineContent = line.slice(0, CONTENT_LINE_MAX_LENGTH);
+      const lineContent = line.slice(
+        0,
+        splitsSurrogatePair(line, CONTENT_LINE_MAX_LENGTH)
+          ? CONTENT_LINE_MAX_LENGTH - 1
+          : CONTENT_LINE_MAX_LENGTH,
+      );
       const ranges = (
         literal
           ? Array.from((input.wholeWord ? line : lineContent).matchAll(literal), (match) => ({
@@ -1188,40 +1213,60 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
   });
 
+  const refreshPermit = yield* Semaphore.make(1);
+  let lastRefreshStartedAt: number | undefined;
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
-  )(function* () {
-    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
-    const result = yield* Effect.tryPromise({
-      try: () => finder.scanFilesAsync(),
-      catch: (cause) =>
-        new WorkspaceSearchIndexRefreshFailed({
-          cwd,
-          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
-          cause,
-        }),
-    });
-    if (!result.ok) {
-      return yield* new WorkspaceSearchIndexRefreshFailed({
-        cwd,
-        reason: result.error,
+  )(
+    function* (mode) {
+      const now = yield* Clock.currentTimeMillis;
+      if (mode === "passive") {
+        if (
+          lastRefreshStartedAt !== undefined &&
+          now - lastRefreshStartedAt < PASSIVE_REFRESH_INTERVAL_MS
+        ) {
+          return;
+        }
+        // The native scan can still be running after the caller's wait expires.
+        if (yield* isScanning) return;
+      }
+      // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+      const result = yield* Effect.tryPromise({
+        try: () => finder.scanFilesAsync(),
+        catch: (cause) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
+            cause,
+          }),
       });
-    }
-    // A rescan that outlasts the wait keeps running, and the finder answers
-    // from its previous index until it finishes, so the index stays usable.
-    yield* waitForIndexReady(
-      cwd,
-      finder,
-      ({ reason, cause }) =>
-        new WorkspaceSearchIndexRefreshFailed({
+      if (!result.ok) {
+        return yield* new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason,
-          cause,
-        }),
-    ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* loadIgnoredPaths();
-    invalidateSymlinkScan();
-  });
+          reason: result.error,
+        });
+      }
+      lastRefreshStartedAt = now;
+      // A rescan that outlasts the wait keeps running, and the finder answers
+      // from its previous index until it finishes, so the index stays usable.
+      yield* waitForIndexReady(
+        cwd,
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason,
+            cause,
+          }),
+      ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+      ignoredPaths = yield* loadIgnoredPaths();
+      invalidateSymlinkScan();
+    },
+    (effect, mode) =>
+      mode === "passive"
+        ? refreshPermit.withPermitsIfAvailable(1)(effect).pipe(Effect.asVoid)
+        : refreshPermit.withPermit(effect),
+  );
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {

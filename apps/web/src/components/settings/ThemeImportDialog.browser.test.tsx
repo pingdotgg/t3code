@@ -230,6 +230,53 @@ it("keeps a numbered copy when the theme name expands in its ID", async () => {
   });
 });
 
+it.each([
+  [
+    "a different theme label",
+    theme("Dusk"),
+    theme("Dusk", "#f97316"),
+    `${"a".repeat(47)}🌙.json`,
+    "a".repeat(47),
+  ],
+  [
+    "the same label after truncating",
+    { ...theme("a".repeat(47)), id: "custom-id" },
+    { ...theme("a".repeat(47), "#f97316"), id: "custom-id" },
+    `${"a".repeat(47)}🌙.json`,
+    `${"a".repeat(44)} (1)`,
+  ],
+  [
+    "the same label after truncating at a space",
+    { ...theme("a".repeat(46)), id: "custom-id" },
+    { ...theme("a".repeat(46), "#f97316"), id: "custom-id" },
+    `${"a".repeat(46)} 🌙.json`,
+    `${"a".repeat(44)} (1)`,
+  ],
+])(
+  "does not split a surrogate pair when naming a kept copy after its file (%s)",
+  async (_caseName, installed, imported, fileName, expectedLabel) => {
+    using _themes = isolateThemes();
+    const original = installCustomTheme(parseThemeFile(installed));
+    const json = JSON.stringify(imported);
+    await using _screen = await render(
+      <ThemeImportDialog
+        open
+        onOpenChange={() => {}}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
+    );
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await userEvent.upload(input, new File([json], fileName, { type: "application/json" }));
+    await expect.element(page.getByRole("textbox", { name: "Theme JSON" })).toHaveValue(json);
+    await page.getByRole("button", { name: "Add theme", exact: true }).click();
+    await expect.element(page.getByText("Already installed")).toBeVisible();
+    await page.getByRole("button", { name: "Keep both" }).click();
+
+    expect(getCustomThemes().find(({ id }) => id !== original.id)?.label).toBe(expectedLabel);
+  },
+);
+
 it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
   using _themes = isolateThemes();
   await using _screen = await render(

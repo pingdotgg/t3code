@@ -402,6 +402,8 @@ export const layerMemory: Layer.Layer<KeyValueStore> = Layer.sync(KeyValueStore)
   })
 })
 
+const utf8Decoder = new TextDecoder("utf-8", { ignoreBOM: true })
+
 /**
  * Provides a `KeyValueStore` backed by files in the specified directory.
  *
@@ -446,18 +448,20 @@ export const layerFileSystem = (
     return make({
       get: (key: string) =>
         withKeyPath("get", key, (path) =>
-          Effect.catchTag(
-            fs.readFileString(path),
-            "PlatformError",
-            (cause) =>
-              cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
-                new KeyValueStoreError({
-                  method: "get",
-                  key,
-                  message: `Unable to get item with key ${key}`,
-                  cause
-                })
-              )
+          fs.readFile(path).pipe(
+            Effect.map((bytes) => utf8Decoder.decode(bytes)),
+            Effect.catchTag(
+              "PlatformError",
+              (cause) =>
+                cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
+                  new KeyValueStoreError({
+                    method: "get",
+                    key,
+                    message: `Unable to get item with key ${key}`,
+                    cause
+                  })
+                )
+            )
           )),
       getUint8Array: (key: string) =>
         withKeyPath("getUint8Array", key, (path) =>
@@ -705,7 +709,6 @@ export const layerSql = (
       })
 
       const encoder = new TextEncoder()
-      const decoder = new TextDecoder()
       const ValueTypeString = 0
       const ValueTypeUint8Array = 1
 
@@ -732,7 +735,7 @@ export const layerSql = (
               const row = rows[0]
               switch (row.value_type) {
                 case ValueTypeString:
-                  return Effect.succeed(decoder.decode(row.value))
+                  return Effect.succeed(utf8Decoder.decode(row.value))
                 case ValueTypeUint8Array:
                   return Effect.succeed(Base64.encode(row.value))
                 default:
