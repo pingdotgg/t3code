@@ -1089,6 +1089,28 @@ describe("ProviderInstanceRegistry secret environment", () => {
     });
   });
 
+  it.effect("keeps the instance when a save only marks an inline secret as stored", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { mutator } = yield* fixture.make;
+      const entry = fixture.configMap[instanceId]!;
+      const inline = { name: "GATEWAY_KEY", value: "gw-key", sensitive: true };
+      yield* mutator.reconcile({
+        [instanceId]: { ...entry, environment: [...entry.environment!, inline] },
+      });
+      expect(fixture.created).toHaveLength(2);
+
+      yield* mutator.reconcile({
+        [instanceId]: {
+          ...entry,
+          environment: [...entry.environment!, { ...inline, valueRedacted: true }],
+        },
+      });
+      yield* mutator.reloadSecrets(instanceId);
+      expect(fixture.created).toHaveLength(2);
+    });
+  });
+
   it.effect("re-reads secrets on reload and rebuilds only when they changed", () => {
     const fixture = setup({});
     return Effect.gen(function* () {

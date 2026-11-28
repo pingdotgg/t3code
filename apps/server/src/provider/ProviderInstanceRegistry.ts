@@ -67,14 +67,32 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const withoutEnvironmentStorageMetadata = <T extends ProviderInstanceEnvironment[number]>(
+  variable: T,
+) => {
+  const { valueRedacted: _valueRedacted, ...runtime } = variable;
+  return runtime;
+};
 
-const withoutPresentation = ({
-  displayName: _displayName,
-  accentColor: _accentColor,
-  ...runtime
-}: ProviderInstanceConfig) => runtime;
+const withoutStorageMetadata = (entry: ProviderInstanceConfig): ProviderInstanceConfig =>
+  entry.environment === undefined
+    ? entry
+    : {
+        ...entry,
+        environment: entry.environment.map(withoutEnvironmentStorageMetadata),
+      };
+
+const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
+  Equal.equals(withoutStorageMetadata(a), withoutStorageMetadata(b));
+
+const withoutPresentation = (entry: ProviderInstanceConfig) => {
+  const {
+    displayName: _displayName,
+    accentColor: _accentColor,
+    ...runtime
+  } = withoutStorageMetadata(entry);
+  return runtime;
+};
 
 // Display name and accent colour are only labels; changing them must not stop the instance's sessions.
 const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
@@ -144,7 +162,9 @@ const withoutSecretReferences = (
   environment: ProviderInstanceEnvironment,
 ): ResolvedProviderInstanceEnvironment =>
   environment.flatMap((variable) =>
-    typeof variable.value === "string" ? [{ ...variable, value: variable.value }] : [],
+    typeof variable.value === "string"
+      ? [{ ...withoutEnvironmentStorageMetadata(variable), value: variable.value }]
+      : [],
   );
 
 interface CheckedSecret {
@@ -185,13 +205,15 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
     return secret === undefined || secret.trim() === "" ? undefined : secret;
   };
   const environment: ResolvedProviderInstanceEnvironment = variables.flatMap((variable) => {
-    if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
+    if (typeof variable.value === "string") {
+      return [{ ...withoutEnvironmentStorageMetadata(variable), value: variable.value }];
+    }
     const secret = next();
     if (secret === undefined) {
       unreadable.push(variable.name);
       return [];
     }
-    return [{ ...variable, value: secret, sensitive: true }];
+    return [{ ...withoutEnvironmentStorageMetadata(variable), value: secret, sensitive: true }];
   });
   const config = configFields.flatMap(({ field, key }) => {
     const secret = next();
