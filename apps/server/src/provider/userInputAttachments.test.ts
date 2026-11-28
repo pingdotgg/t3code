@@ -921,6 +921,8 @@ describe("question answer paths", () => {
               '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
               "<div>Harbor directions.<main><strong>Use the north pier.</strong></main>Boats depart at noon.</div>",
               '<div>Keep<x:main xmlns:x="urn:example"> this </x:main>inline too.</div>',
+              "<div>The Harbour Book<center>A Novel</center><center>By Ada Lovelace</center>First printing.</div>",
+              '<div>Keep<x:center xmlns:x="urn:example"> this </x:center>inline as well.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -934,6 +936,7 @@ describe("question answer paths", () => {
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
             "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
             "Harbor directions.\nUse the north pier.\nBoats depart at noon.\nKeep this inline too.",
+            "The Harbour Book\nA Novel\nBy Ada Lovelace\nFirst printing.\nKeep this inline as well.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
@@ -1161,6 +1164,39 @@ describe("question answer paths", () => {
             "[Skipped document part: chapter 1 (missing or invalid XML).]",
           ],
           absent: ["Draft SVG caption", "Draft prefixed caption", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="ch" href="ch.xhtml"/><item id="fig" href="fig.svg"/></manifest><spine><itemref idref="ch"/><itemref idref="fig"/></spine></package>',
+            "ch.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>' +
+              '<svg xmlns="http://www.w3.org/2000/svg" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:example">' +
+              "<metadata><rdf:RDF><dc:format>image/svg+xml</dc:format><dc:title>Matplotlib v3.11.2</dc:title></rdf:RDF></metadata>" +
+              "<title>Revenue chart</title><desc>Quarterly totals</desc><text>Q4 Revenue</text>" +
+              "<g><metadata>Nested RDF</metadata></g><meta:metadata>Foreign metadata</meta:metadata></svg>" +
+              '<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:metadata>Prefixed SVG metadata</svg:metadata><svg:text>Prefixed label</svg:text></svg:svg>' +
+              "</body></html>",
+            "fig.svg":
+              '<svg xmlns="http://www.w3.org/2000/svg"><metadata>Standalone SVG metadata</metadata><text>Standalone chart</text></svg>',
+          },
+          expected: [
+            "Revenue chart",
+            "Quarterly totals",
+            "Q4 Revenue",
+            "Foreign metadata",
+            "Prefixed label",
+            "Standalone chart",
+          ],
+          absent: [
+            "image/svg+xml",
+            "Matplotlib v3.11.2",
+            "Nested RDF",
+            "Prefixed SVG metadata",
+            "Standalone SVG metadata",
+          ],
         },
         {
           ext: "epub",
@@ -1953,14 +1989,15 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "xl/workbook.xml":
-              '<workbook><workbookPr date1904="true"/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
+              '<workbook><workbookPr date1904=" true "/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/dates.xml"/></Relationships>',
             "xl/styles.xml": '<styleSheet><cellXfs><xf numFmtId="14"/></cellXfs></styleSheet>',
             "xl/worksheets/dates.xml":
               "<worksheet><sheetData><row><c><v>1</v></c></row></sheetData></worksheet>",
           },
-          expected: ["## Sheet: Dates", "1 [Excel numFmtId=14; date system 1904]"],
+          expected: [],
+          exact: "## Sheet: Dates\n1 [Excel numFmtId=14; date system 1904]",
         },
         {
           ext: "xlsx",

@@ -180,7 +180,7 @@ describe("document preview contents", () => {
     [
       "nested table cells",
       String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
-      "Inner A\tInner B\t\t",
+      "Inner A\tInner B\t",
     ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
@@ -218,6 +218,42 @@ describe("document preview contents", () => {
       expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
+
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\pard Before table\par
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1\cell\row
+\pard After table\par
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before table<br>Item\tQuantity\t<br>Bolts\tFour\t<br>After table<br></p>",
+    );
+  });
+
+  it.each([
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
 
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
@@ -591,6 +627,9 @@ Third}`;
       [{ kernelspec }, "python"],
       [{ language_info: { name: "" }, kernelspec }, "python"],
       [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+      [{ kernelspec: { name: "Python3" } }, "python"],
+      [{ kernelspec: { name: { toString: null } } }, "text"],
+      [{ language_info: { name: { toString: null } }, kernelspec: { language: "r" } }, "r"],
     ] as const) {
       expect(
         openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
@@ -752,16 +791,25 @@ Third}`;
   });
 
   it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const inlineShape =
+      '<draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Recount on Monday</text:p></draw:text-box></draw:frame>';
     const archive = new JSZip().file(
       "content.xml",
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
         '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
         '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        `<table:table-row><table:table-cell><text:p>Plums</text:p></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Low<text:s/><text:span>${inlineShape}stock</text:span></text:p></text:list-item></text:list></table:table-cell></table:table-row>` +
+        `<table:table-row><table:table-cell><text:p>Figs</text:p></table:table-cell><table:table-cell office:value-type="string" office:string-value="Available"><text:p>${inlineShape}</text:p><text:p>${inlineShape}</text:p></table:table-cell></table:table-row>` +
         "</table:table></office:spreadsheet></office:body></office:document-content>",
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
-    expect(result.sheets[0]!.rows).toEqual([["Apples", "42"], ["Pears"]]);
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Apples", "42"],
+      ["Pears"],
+      ["Plums", "Low stock"],
+      ["Figs", "Available"],
+    ]);
   });
 
   it("reads an ODS time cell that has no display paragraph", async () => {
@@ -819,6 +867,38 @@ Third}`;
       if (gap === 2) expect(result.sheets[0]!.rows[3]).toEqual(["", "", "Last"]);
     },
   );
+
+  it("hides ODS sheets whose table style sets table:display to false", async () => {
+    const ns =
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta1" style:family="table"><style:table-properties table:display="true"/></style:style>' +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '<style:style style:name="ta_extref" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        "</office:automatic-styles><office:body><office:spreadsheet>" +
+        '<table:table table:name="Summary" table:style-name="ta1"><table:table-row><table:table-cell><text:p>Visible</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Private" table:style-name="ta2"><table:table-row><table:table-cell><text:p>Secret</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Notes"><table:table-row><table:table-cell><text:p>Plain</text:p></table:table-cell></table:table-row></table:table>' +
+        `<table:table table:name="'file:///rates.ods'#Rates" table:style-name="ta_extref"><table:table-source table:mode="copy-results-only" table:table-name="Rates"/><table:table-row><table:table-cell><text:p>Cached</text:p></table:table-cell></table:table-row></table:table>` +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets.map((sheet) => sheet.name)).toEqual(["Summary", "Notes"]);
+    expect(result.sheets[0]!.rows).toEqual([["Visible"]]);
+    const hiddenOnly = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '</office:automatic-styles><office:body><office:spreadsheet><table:table table:name="Only" table:style-name="ta2"/></office:spreadsheet></office:body></office:document-content>',
+    );
+    await expect(openDocument(hiddenOnly, "ods")).rejects.toMatchObject({
+      _tag: "PreviewError",
+      code: "ods-sheet-count",
+    });
+  });
 
   const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
   const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
@@ -928,6 +1008,35 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(
       "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p><p>Outer stays.</p>",
+    );
+  });
+
+  it("omits ODT text hidden by paragraph styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Shown" style:family="text"><style:text-properties text:display="true"/></style:style></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p text:style-name="P1">Use the obsolete west entrance.</text:p>',
+      '<text:h text:outline-level="2" text:style-name="Retired">Retired section</text:h>',
+      '<text:p text:style-name="P2">Draft <text:span text:style-name="Shown">North entrance</text:span> only.</text:p>',
+      '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+      "<text:p>Keep this.</text:p>",
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="paragraph"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="TextOnly" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p><span>North entrance</span></p><p>Paragraph ignores text family.</p><p>Keep this.</p>",
     );
   });
 
