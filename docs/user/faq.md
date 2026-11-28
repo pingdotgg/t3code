@@ -33,6 +33,8 @@ Yes. Link a paid T3 Chat account from your account menu → **T3 Chat → Link T
 
 Since v0.1.7, Claude in T3 Code drains your 5-hour limit at the same rate as Claude Code directly (an earlier Anthropic Agent SDK discrepancy has been resolved). If you still see it, [update T3 Code](./updating.md) on the machine running your agents.
 
+Verified Claude Ultra accounts have no 5-hour limit. Claude's responses stop listing that window, and T3 Code drops the Session row after the first turn that streams them. Max and unverified Ultra accounts keep it.
+
 ## How do I use T3 Code remotely?
 
 Your agents run wherever the T3 Code server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect via T3 Connect, LAN, Tailscale, or [app.t3.codes](https://app.t3.codes). See [Remote access](./remote-access.md).

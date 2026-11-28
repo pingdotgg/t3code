@@ -879,6 +879,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
+          accountKey: `${capabilities.email ?? ""}\0${capabilities.workspaceId ?? ""}\0${capabilities.subscriptionType ?? ""}`,
         })
       : claudeUsageResponseToLimits({
           response: capabilities.usage,
