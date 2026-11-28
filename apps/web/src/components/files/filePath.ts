@@ -35,6 +35,18 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
   ];
 }
 
+/** The path spanned by crumbs `first..last`; the project crumb is a name, not a path segment. */
+export function breadcrumbRangePath(
+  crumbs: readonly FileBreadcrumb[],
+  first: number,
+  last: number,
+): string {
+  const start = crumbs[first]?.kind === "project" ? first + 1 : first;
+  const path = crumbs[last]?.path ?? "";
+  const base = crumbs[start - 1]?.path ?? "";
+  return base ? path.slice(base.length).replace(/^[\\/]+/, "") : path;
+}
+
 /** Use the crumb's path spelling so trailing or repeated separators still match. */
 export function breadcrumbPathOf(relativePath: string): string {
   return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
