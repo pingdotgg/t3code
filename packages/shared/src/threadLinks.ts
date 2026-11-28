@@ -12,7 +12,7 @@ export const THREAD_LINK_PROTOCOL = "t3-thread";
 const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
 const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
-const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
+const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+(?:\\.+[A-Za-z0-9_%-]+)*";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // Unescaped brackets end a label, so consecutive unclosed brackets cannot restart a long scan.
@@ -54,7 +54,7 @@ const LINK_PATTERNS = [
   String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
   String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
   // After a URL character the hosted link is part of a longer URL, such as a redirect target.
-  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?!\.*[\w%/?#-])`,
 ].join("|");
 const THREAD_LINK = new RegExp(`${ESCAPED_CHARACTER}|${LINK_PATTERNS}`, "gm");
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(

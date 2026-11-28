@@ -188,6 +188,28 @@ describe("document preview contents", () => {
     expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
   });
 
+  it("shows RTF footnotes after the page text", () => {
+    // LibreOffice Writer marks the footnote destination with \*; Word does not.
+    const libreOffice = String.raw`{\rtf1\ansi{\pard The north region}{{\super \chftn{\*\footnote \chftn\pard\plain \s24\fi-340\li340{
+\tab Hold the obsolete value apart.}
+}}
+}{
+ is ready.}
+\par }`;
+    const word = String.raw`{\rtf1\ansi\pard The shipment left.{\cs16\super \chftn }{\footnote \pard\plain \s15 {\cs16\super \chftn } Inspect the seals.} Finance booked revenue.\par}`;
+    const html = (source: string) => {
+      const result = openRtf(bytes(source));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages[0]!.html;
+    };
+    expect(html(libreOffice)).toBe(
+      "<p data-rtf-whitespace>The north region<sup>1</sup> is ready.<br></p><hr><p data-rtf-whitespace><sup>1</sup>\tHold the obsolete value apart.</p>",
+    );
+    expect(html(word)).toBe(
+      "<p data-rtf-whitespace>The shipment left.<sup>1</sup> Finance booked revenue.<br></p><hr><p data-rtf-whitespace><sup>1</sup> Inspect the seals.</p>",
+    );
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -662,6 +684,42 @@ Third}`;
     ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
+  it("removes saved terminal cursor and erase sequences from notebook output", () => {
+    const result = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [
+                    "\u001b[?25lepoch 1\u001b[K\n",
+                    "\u001b[Aepoch 2\u001b[",
+                    "2K\u001b[?25h\n",
+                  ],
+                },
+                {
+                  output_type: "execute_result",
+                  data: { "text/plain": "\u001b[1Gready\u001b[0K" },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: "epoch 1\nepoch 2\n" },
+      { kind: "text", text: "ready" },
+    ]);
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",
@@ -1045,7 +1103,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><center><p>Archive <strike>draft</strike> edition</p></center><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -1062,6 +1120,7 @@ Third}`;
     expect(first.html).toContain(
       '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
     );
+    expect(first.html).toContain("<center><p>Archive <strike>draft</strike> edition</p></center>");
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",

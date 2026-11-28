@@ -435,6 +435,25 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("resolves quoted property names in route metadata", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        for (const [links, file] of [
+          [`[{ "rel": "icon", "href": "/brand/double.svg" }]`, "double.svg"],
+          [`[{ 'href': '/brand/single.svg', 'rel': 'icon' }]`, "single.svg"],
+          [`[{ "href": "/brand/mixed.svg", rel: "icon" }]`, "mixed.svg"],
+        ] as const) {
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "src/routes/__root.tsx", `const links = ${links};`);
+          yield* writeTextFile(cwd, `public/brand/${file}`, "<svg>brand</svg>");
+          expect(yield* resolver.resolvePath(cwd), file).toBe(
+            path.join(cwd, "public", "brand", file),
+          );
+        }
+      }),
+    );
+
     // regression: #5538 favicon resolution pinned the event loop
     it.effect("skips icon metadata without an href and keeps scanning", () =>
       Effect.gen(function* () {

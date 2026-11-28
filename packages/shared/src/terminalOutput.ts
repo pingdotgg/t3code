@@ -339,9 +339,9 @@ function escapeLength(input: string, index: number): number {
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
-    // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
+    // ST (and BEL for OSC) ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
-      if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (next === "]" && input[cursor] === "\u0007") return cursor - index + 1;
       if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
@@ -1034,10 +1034,11 @@ export function terminalOutputSpans(
   return spans;
 }
 
-const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;:]*m`, "gu");
+// Colours and the cursor, erase and mode controls a saved transcript cannot replay.
+const CSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
-  return text.replace(SGR_PATTERN, "");
+  return text.replace(CSI_PATTERN, "");
 }
 
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last

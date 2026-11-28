@@ -53,6 +53,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -4123,7 +4124,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
             return {
               type: "image" as const,
-              url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+              url: `data:${imageMimeTypeFromBytes(bytes) ?? attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
             } satisfies CodexSchema.V2TurnStartParams__UserInput;
           },
         );
@@ -4589,6 +4590,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               startedAt,
               completedAt,
               updatedAt,
+              ...(item.status === "declined" ? { toolNonExecutionKind: "declined" } : {}),
               type: "file_change",
               fileName: firstChange.path,
               diffStr:

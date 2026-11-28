@@ -1048,6 +1048,10 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
+    if (isRemoteProjectRepositoryStep && nextQuery !== query) {
+      cloneLookupGeneration.current += 1;
+      setIsRemoteProjectLookingUp(false);
+    }
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
     // A rewritten paste has no matching offsets, so its caret lands at the end.
     if (

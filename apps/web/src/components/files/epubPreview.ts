@@ -17,7 +17,7 @@ import type { EpubLocation, EpubNarrationCue, EpubPage } from "./officePreviewPr
 import { isPreviewError, PreviewError } from "./previewFailure";
 
 const htmlTags = new Set(
-  "a abbr acronym address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr tt u ul var video".split(
+  "a abbr acronym address article aside audio b bdi bdo big blockquote canvas caption center cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strike strong sub summary sup table tbody td tfoot th thead time tr tt u ul var video".split(
     " ",
   ),
 );
