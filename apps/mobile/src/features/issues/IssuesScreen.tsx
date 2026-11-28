@@ -18,7 +18,6 @@ import type {
   IssueListSort,
   IssueListState,
 } from "@t3tools/contracts";
-import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { AsyncResult } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { use, useRef, useState, type ReactNode } from "react";
@@ -51,7 +50,7 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { issueParamsKey } from "./issueParams";
 import { IssueListRow } from "./IssueListRow";
 import type { PullRequestFilterMenu } from "../pull-requests/PullRequestListFilters";
-import { issueListFiltersAtom } from "./issueListFilters";
+import { issueListFiltersAtom, issueSearchQuery } from "./issueListFilters";
 import { issueViewMatches } from "./issueSavedViews";
 import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -131,12 +130,7 @@ export function IssuesScreen(
       animated: false,
     });
   });
-  // A pasted wall of text searches by its start rather than failing the request.
-  const typedQuery = tab.query.trim();
-  const debouncedQuery = useDebouncedValue(
-    typedQuery.slice(0, splitsSurrogatePair(typedQuery, 200) ? 199 : 200).trim(),
-    300,
-  );
+  const debouncedQuery = useDebouncedValue(issueSearchQuery(tab.query), 300);
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const [state, setState] = useState<IssueListState>("open");
   const [involvement, setInvolvement] = useState<IssueInvolvement>("all");
