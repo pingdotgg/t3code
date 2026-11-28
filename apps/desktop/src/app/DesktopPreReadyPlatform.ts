@@ -15,6 +15,7 @@ import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
+  desktopEntryProgram,
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
@@ -62,6 +63,40 @@ const LinuxDesktopEntryConfig = Config.all({
   // electron-updater sets this on the AppImage it relaunches after installing an update.
   relaunchedByUpdater: trimmedString("APPIMAGE_SILENT_INSTALL"),
 });
+
+function isIntegratedAppImage(
+  applicationsDir: string,
+  ownEntryName: string,
+  appImagePath: string,
+): boolean {
+  const realPath = (path: string) => {
+    try {
+      return NodeFS.realpathSync(path);
+    } catch {
+      return null;
+    }
+  };
+  const appImageRealPath = realPath(appImagePath);
+  try {
+    return NodeFS.readdirSync(applicationsDir).some((name) => {
+      if (!name.endsWith(".desktop") || name === ownEntryName) return false;
+      try {
+        const program = desktopEntryProgram(
+          NodeFS.readFileSync(NodePath.posix.join(applicationsDir, name), "utf8"),
+        );
+        return (
+          program !== null &&
+          (program === appImagePath ||
+            (appImageRealPath !== null && realPath(program) === appImageRealPath))
+        );
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -155,6 +190,11 @@ export const make = Effect.gen(function* () {
               ) ?? process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
+            ...(Option.isSome(appImagePath) &&
+            Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
+            !isIntegratedAppImage(applicationsDir, linux.linuxDesktopEntryName, appImagePath.value)
+              ? { startupWMClass: linux.linuxDesktopEntryName.replace(/\.desktop$/u, "") }
+              : {}),
           }),
           "utf8",
         );

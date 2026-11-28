@@ -71,6 +71,8 @@ const layerHandler = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly otherEntries?: Record<string, string>;
+    readonly realPaths?: Record<string, string>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -115,7 +117,14 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          realPath: (path) => Effect.succeed(input.realPaths?.[path] ?? path),
+          readDirectory: () => Effect.succeed(Object.keys(input.otherEntries ?? {})),
+          readFileString: (path) =>
+            Effect.succeed(
+              input.otherEntries?.[path.slice(path.lastIndexOf("/") + 1)] ??
+                input.existingEntry ??
+                "",
+            ),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -239,7 +248,11 @@ describe("DesktopLinuxUrlHandler", () => {
       const recorded = emptyRecording();
 
       return Effect.gen(function* () {
-        yield* runRegister(recorded);
+        yield* runRegister(recorded, {
+          otherEntries: {
+            "backup.desktop": "Exec=/home/alice/Applications/T3-Code.AppImage.old %U\n",
+          },
+        });
 
         assert.deepEqual(recorded.directories, ["/home/alice/.local/share/applications"]);
         assert.equal(recorded.files.length, 1);
@@ -252,6 +265,8 @@ describe("DesktopLinuxUrlHandler", () => {
           "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        assert.include(recorded.files[0]?.content, "NoDisplay=false");
+        assert.include(recorded.files[0]?.content, "StartupWMClass=com.t3tools.T3Code");
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -293,8 +308,32 @@ describe("DesktopLinuxUrlHandler", () => {
       });
 
       assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code/t3code" %U');
+      assert.include(recorded.files[0]?.content, "NoDisplay=true");
+      assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
     });
   });
+
+  it.effect.each([
+    { integrated: "/home/alice/Applications/T3-Code.AppImage", label: "the same path" },
+    { integrated: "/home/alice/Applications/T3-Code-0.1.8.AppImage", label: "an update symlink" },
+  ])(
+    "keeps the entry hidden when an AppImage integrator launches it through $label",
+    ({ integrated }) => {
+      const recorded = emptyRecording();
+
+      return Effect.gen(function* () {
+        yield* runRegister(recorded, {
+          otherEntries: {
+            "appimagekit_0123abcd-T3_Code.desktop": `[Desktop Entry]\nExec=${integrated} %U\n`,
+          },
+          realPaths: { [integrated]: "/home/alice/Applications/T3-Code.AppImage" },
+        });
+
+        assert.include(recorded.files[0]?.content, "NoDisplay=true");
+        assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
+      });
+    },
+  );
 
   it.effect("does not rewrite the pre-ready entry while the portal can be reading it", () => {
     const recorded = emptyRecording();
@@ -305,6 +344,7 @@ describe("DesktopLinuxUrlHandler", () => {
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
+          startupWMClass: "com.t3tools.T3Code",
           iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
         }),
       });
@@ -334,6 +374,7 @@ describe("DesktopLinuxUrlHandler", () => {
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
+          startupWMClass: "com.t3tools.T3Code",
           iconPath,
         }),
       });

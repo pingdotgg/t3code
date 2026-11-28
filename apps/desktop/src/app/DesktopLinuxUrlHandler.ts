@@ -74,13 +74,14 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     ? escapeDesktopEntryExecArgument(value)
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// A standalone AppImage has no other launcher, so this entry must be visible and own the window.
+// Packages and integrated AppImages have their own launcher, so they get a hidden URL-only entry.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly startupWMClass?: string;
 }): string {
   return [
     "[Desktop Entry]",
@@ -89,11 +90,22 @@ export function renderUrlHandlerDesktopEntry(input: {
     `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
-    "NoDisplay=true",
+    `NoDisplay=${input.startupWMClass === undefined}`,
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${input.scheme};`,
+    ...(input.startupWMClass === undefined
+      ? []
+      : [`StartupWMClass=${escapeDesktopEntryString(input.startupWMClass)}`]),
     "",
   ].join("\n");
+}
+
+// AppImageLauncher, Gear Lever and appimaged install their own visible entry for the AppImage.
+// The update migration can leave that entry on a symlink, so callers also compare real paths.
+export function desktopEntryProgram(entry: string): string | null {
+  const exec = /^Exec=(.*)$/mu.exec(entry)?.[1];
+  if (exec === undefined) return null;
+  return /^"([^"]*)"/u.exec(exec)?.[1] ?? exec.split(" ")[0] ?? null;
 }
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
@@ -163,6 +175,29 @@ export const make = Effect.gen(function* () {
   const hicolorDir = environment.path.join(iconsDir, "hicolor");
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
+  const integratedAppImage = Effect.fn("DesktopLinuxUrlHandler.integratedAppImage")(function* (
+    appImagePath: string,
+  ) {
+    const realPath = (path: string) =>
+      fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => null));
+    const appImageRealPath = yield* realPath(appImagePath);
+    const names = yield* fileSystem
+      .readDirectory(environment.linuxApplicationsDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const name of names) {
+      if (!name.endsWith(".desktop") || name === environment.linuxDesktopEntryName) continue;
+      const program = desktopEntryProgram(
+        yield* fileSystem
+          .readFileString(environment.path.join(environment.linuxApplicationsDir, name))
+          .pipe(Effect.orElseSucceed(() => "")),
+      );
+      if (program === null) continue;
+      if (program === appImagePath) return true;
+      if (appImageRealPath !== null && (yield* realPath(program)) === appImageRealPath) return true;
+    }
+    return false;
+  });
+
   const writeDesktopEntry = Effect.gen(function* () {
     // Distribution packages that run on a shared Electron set
     // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
@@ -172,11 +207,18 @@ export const make = Effect.gen(function* () {
       Option.orElse(() => environment.appImagePath),
       Option.getOrElse(() => process.execPath),
     );
+    const standaloneAppImage =
+      Option.isSome(environment.appImagePath) &&
+      Option.isNone(environment.desktopLauncherPath) &&
+      !(yield* integratedAppImage(environment.appImagePath.value));
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
+      ...(standaloneAppImage
+        ? { startupWMClass: environment.linuxDesktopEntryName.replace(/\.desktop$/u, "") }
+        : {}),
     });
     // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem
