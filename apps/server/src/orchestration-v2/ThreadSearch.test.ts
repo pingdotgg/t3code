@@ -1285,6 +1285,31 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
     }),
   );
 
+  it.effect("returns every older message hit, which lists show in full", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:older-hits");
+      yield* createProject(project);
+      const ids = Array.from({ length: 8 }, (_, index) =>
+        ThreadId.make(`thread:older-hit-${index}`),
+      );
+      yield* Effect.forEach(
+        ids.map((id) => thread(id, project, { title: "Unrelated", settledAt: at(10) })),
+        projections.apply,
+        { discard: true },
+      );
+      assert.deepEqual(
+        yield* search.searchOlderSettled({
+          query: "plover",
+          before: DateTime.formatIso(at(30)),
+          messageThreadIds: ids,
+        }),
+        ids,
+      );
+    }),
+  );
+
   it.effect("matches the branch and linked pull requests, like the palette", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;

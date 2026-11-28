@@ -398,9 +398,9 @@ export class ThreadSearch extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadSearch") {}
 
-// Rows a client gets per search: enough for the shown results without sending every match.
+// Title rows a client gets per search: the best ones, since a common word can match every thread.
+// Each message hit gets its row: lists show every hit, and the search already caps the hits.
 const OLDER_SETTLED_TITLE_ROWS = 15;
-const OLDER_SETTLED_MESSAGE_ROWS = 5;
 
 // Only the fields the palette scorer reads, so an interactive search does not decode payloads.
 const OlderSettledTitleRow = Schema.Struct({
@@ -744,10 +744,7 @@ export const make = Effect.gen(function* () {
               }),
             )).map((row) => row.id),
           );
-    return [
-      ...titleIds,
-      ...messageCandidates.filter((id) => older.has(id)).slice(0, OLDER_SETTLED_MESSAGE_ROWS),
-    ];
+    return [...titleIds, ...messageCandidates.filter((id) => older.has(id))];
   });
 
   return ThreadSearch.of({ search, searchThreads, searchOlderSettled });
