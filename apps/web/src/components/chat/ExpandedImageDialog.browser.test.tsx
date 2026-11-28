@@ -234,6 +234,75 @@ describe("ExpandedImageDialog", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it("Enter saves after drawing or erasing following a toolbar click", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const src = canvas.toDataURL("image/png");
+    const file = new File([await (await fetch(src)).blob()], "shot.png", { type: "image/png" });
+    const save = vi.fn(async (saved: File) => ({ src, file: saved }));
+    const edit = { file, name: "shot.png", mimeType: "image/png", save };
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{ images: [{ src, name: "shot.png", mimeType: "image/png", edit }], index: 0 }}
+        onClose={vi.fn()}
+      />,
+      // The dialog renders no links and reads no route.
+      { router: false },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
+    const overlay = screen.getByRole("img", { name: "Draw on shot.png" });
+    await expect.element(overlay).toBeVisible();
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
+      cdp().send("Input.dispatchMouseEvent", {
+        type,
+        x: frame.left + x,
+        y: frame.top + y,
+        button: "left",
+        buttons: type === "mouseReleased" ? 0 : 1,
+        clickCount: 1,
+      });
+    const strokeCount = () => overlay.element().querySelectorAll(":scope > path").length;
+    const drawStroke = async (yOffset: number) => {
+      const before = strokeCount();
+      const box = overlay.element().getBoundingClientRect();
+      await mouse("mousePressed", box.left + 10, box.top + yOffset);
+      await mouse("mouseMoved", box.left + 40, box.top + yOffset);
+      await mouse("mouseReleased", box.left + 40, box.top + yOffset);
+      await vi.waitFor(() => expect(strokeCount()).toBe(before + 1));
+    };
+    const undo = screen.getByRole("button", { name: "Undo" });
+    const erase = screen.getByRole("button", { name: "Erase a stroke (E)" });
+    const done = screen.getByRole("button", { name: "Done" });
+
+    for (const yOffset of [12, 28, 44]) await drawStroke(yOffset);
+
+    // Clicking a toolbar button keeps Enter bound to that button until canvas input happens.
+    await userEvent.click(undo);
+    await expect.element(undo).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(strokeCount()).toBe(1));
+    expect(save).not.toHaveBeenCalled();
+
+    // Drawing and erasing both move focus back to Done so Enter saves.
+    await drawStroke(36);
+    await expect.element(done).toHaveFocus();
+
+    await userEvent.click(erase);
+    await expect.element(erase).toHaveFocus();
+    const box = overlay.element().getBoundingClientRect();
+    await mouse("mousePressed", box.left + 25, box.top + 36);
+    await mouse("mouseReleased", box.left + 25, box.top + 36);
+    await vi.waitFor(() => expect(strokeCount()).toBe(1));
+    await expect.element(done).toHaveFocus();
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+    await expect.element(done).not.toBeInTheDocument();
+  });
+
   it.each([
     { gesture: "backdrop to image", closes: false },
     { gesture: "image to backdrop", closes: false },
