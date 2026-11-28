@@ -1,13 +1,45 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   matchComposerEnvironmentItems,
+  matchComposerProjectItems,
   matchComposerThreadItems,
+  type ComposerProjectCandidate,
   type ComposerThreadCandidate,
 } from "./composerThreadItems.ts";
 
 const environmentId = EnvironmentId.make("env-composer");
+
+it("references projects by their host folder, leaving out other machines, archives and scratch", () => {
+  const project: ComposerProjectCandidate = {
+    id: ProjectId.make("common"),
+    environmentId,
+    title: "Common library",
+    workspaceRoot: "/work/Shared code",
+  };
+  const projects = [
+    project,
+    { ...project, id: ProjectId.make("remote"), environmentId: EnvironmentId.make("other") },
+    { ...project, id: ProjectId.make("archived"), archivedAt: "2026-10-01T00:00:00.000Z" },
+    { ...project, id: ProjectId.make("scratch"), isScratch: true as const },
+  ];
+  const expected = [
+    {
+      id: "project:env-composer:common",
+      type: "path",
+      path: "/work/Shared code",
+      label: "Common library",
+      description: "/work/Shared code",
+    },
+  ];
+  expect(matchComposerProjectItems({ projects, environmentId, query: " COMMON " })).toEqual(
+    expected,
+  );
+  expect(matchComposerProjectItems({ projects, environmentId, query: "shared" })).toEqual(expected);
+  expect(matchComposerProjectItems({ projects, environmentId, query: "" })).toEqual([]);
+  expect(matchComposerProjectItems({ projects, environmentId, query: "missing" })).toEqual([]);
+});
 
 function shell(
   id: string,

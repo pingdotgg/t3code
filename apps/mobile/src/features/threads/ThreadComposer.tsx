@@ -54,7 +54,7 @@ import {
   useComposerDraftResetGeneration,
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
-import { useProject, useVisibleThreadShells } from "../../state/entities";
+import { useProject, useProjects, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentScopeDenied } from "../../state/session";
@@ -264,6 +264,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const gt = useGT();
   const messages = useMessages();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
+  const projects = useProjects();
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
@@ -430,6 +431,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     props.selectedThread.projectId,
   );
   const composerMenu = useComposerCommandMenu({
+    projects,
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
     environmentId: props.environmentId,

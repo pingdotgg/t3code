@@ -7,12 +7,43 @@ import {
 } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
-import type { EnvironmentThreadShell } from "./state/models.ts";
+import type { EnvironmentProject, EnvironmentThreadShell } from "./state/models.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
+
+export type ComposerProjectCandidate = Pick<
+  EnvironmentProject,
+  "id" | "environmentId" | "title" | "workspaceRoot" | "archivedAt" | "isScratch"
+>;
+
+export function matchComposerProjectItems(input: {
+  projects: ReadonlyArray<ComposerProjectCandidate>;
+  environmentId: EnvironmentId;
+  query: string;
+}) {
+  const query = foldSearchQuery(input.query);
+  if (query.length === 0) return [];
+  return input.projects
+    .filter(
+      (project) =>
+        project.environmentId === input.environmentId &&
+        !project.archivedAt &&
+        !project.isScratch &&
+        (foldSearchQuery(project.title).includes(query) ||
+          foldSearchQuery(project.workspaceRoot).includes(query)),
+    )
+    .slice(0, 5)
+    .map((project) => ({
+      id: `project:${project.environmentId}:${project.id}`,
+      type: "path" as const,
+      path: project.workspaceRoot,
+      label: project.title,
+      description: project.workspaceRoot,
+    }));
+}
 
 export type ComposerThreadCandidate = ThreadSearchShell &
   Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;

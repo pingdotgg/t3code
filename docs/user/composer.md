@@ -155,6 +155,7 @@ Attached context—files, terminal excerpts, diff/file review comments, preview 
 
 - **Pull requests (`#`)**: On web and desktop, type `#` to browse recent PRs in the current repository (linked PRs appear first), type digits to match by number, or type a word to search by text.
 - **Threads (`@`)**: Type `@` and part of a thread title to reference a thread on the same server (or on a linked machine when Linked environments is enabled). You can also drag threads from the sidebar onto the composer, or paste a copied thread link. The prompt carries only a reference—the agent reads the thread on demand. Dropping a thread from an unlinked environment attaches a snapshot transcript file instead.
+- **Projects (`@`)**: Type `@` and part of a project name to insert its folder path. Projects on the thread's machine appear with their full paths, even outside the current workspace. This references the project folder without changing the thread's workspace; the agent's file access permissions still apply.
 - **Models (`@`)**: Type `@` and part of a model or provider name (e.g. `@opus` or `@opus:opencode`) to reference a model in your prompt (such as for delegation) without changing the thread's model.
 - **Images vs. files**: Images keep a thumbnail shelf above the composer plus optional inline chips; files live only as inline chips (deleting the last chip removes the file).
 

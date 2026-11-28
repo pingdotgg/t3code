@@ -9,13 +9,16 @@ import type {
 } from "@t3tools/contracts";
 import {
   type ComposerEnvironmentCandidate,
+  type ComposerProjectCandidate,
   matchComposerEnvironmentItems,
+  matchComposerProjectItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const EMPTY_PROJECTS: ReadonlyArray<ComposerProjectCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import {
@@ -253,6 +256,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  projects = EMPTY_PROJECTS,
   environments = EMPTY_ENVIRONMENTS,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
@@ -277,6 +281,7 @@ export function useComposerCommandMenu({
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  readonly projects?: ReadonlyArray<ComposerProjectCandidate>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
@@ -549,6 +554,11 @@ export function useComposerCommandMenu({
         ...threadItems,
         ...environmentItems,
         ...modelItems,
+        ...(environmentId
+          ? matchComposerProjectItems({ projects, environmentId, query: trigger.query }).map(
+              (item) => ({ ...item, kind: "directory" as const }),
+            )
+          : []),
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.normalize("NFC").split("/");
           return {
