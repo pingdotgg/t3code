@@ -1758,19 +1758,21 @@ export const layerWithOptions = (
             });
           }
           // Closing skips the threads' own idle unloads, so archive delivered children first.
-          yield* Effect.forEach(
-            entry.idleThreadUnloads,
-            ([providerThreadId, pending]) =>
-              unloadIdleThread({
-                providerSessionId: input.providerSessionId,
-                threadId: pending.threadId,
-                providerThreadId,
-                generation: pending.generation,
-                idleSinceMs: input.idleSinceMs,
-                archiveOnly: true,
-              }),
-            { discard: true },
-          );
+          const archiveDeliveredChildren = (idleSinceMs: number | undefined) =>
+            Effect.forEach(
+              entry.idleThreadUnloads,
+              ([providerThreadId, pending]) =>
+                unloadIdleThread({
+                  providerSessionId: input.providerSessionId,
+                  threadId: pending.threadId,
+                  providerThreadId,
+                  generation: pending.generation,
+                  ...(idleSinceMs === undefined ? {} : { idleSinceMs }),
+                  archiveOnly: true,
+                }),
+              { discard: true },
+            );
+          yield* archiveDeliveredChildren(input.idleSinceMs);
           // Checked after the probes and archives so a client that opens the thread meanwhile still keeps it.
           const viewedRetryMs = yield* viewedRecheckMs(
             entry.runtime,
@@ -1782,6 +1784,8 @@ export const layerWithOptions = (
             yield* Effect.sleep(Duration.millis(viewedRetryMs));
             return yield* releaseIfStillIdle(input);
           }
+          // A child skipped as open may have closed during the pass above; archive it before closing.
+          yield* archiveDeliveredChildren(undefined);
           // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
