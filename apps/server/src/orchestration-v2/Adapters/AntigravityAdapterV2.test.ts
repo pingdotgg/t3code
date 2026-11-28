@@ -2650,6 +2650,65 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // agy rejects a prompt sent while ask_question waits: "Can't add this prompt to session ...:
+  // the running prompt is waiting for a permission or question answer", and the session stays stuck.
+  it.effect("declines a steer while the agent waits on a question", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, {
+        agentVersion: "1.5.18",
+        holdsFirstPrompt: true,
+      });
+      const { session, providerThread, command, startTurn, until, requestPermission } = opened;
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      const answer = yield* requestPermission(
+        {
+          ...permissionRequest("interaction_1", [
+            { optionId: "red", name: "Red", kind: "allow_once" },
+            { optionId: "blue", name: "Blue", kind: "allow_once" },
+          ]),
+          sessionId: "mock-session-1",
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* until(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-1"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "Pick whichever you like",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.flip, Effect.exit);
+      assert.lengthOf(opened.prompts, 1, "the steer must not reach the waiting agent");
+      assert.equal(
+        Exit.isSuccess(steer) ? steer.value._tag : "steer accepted",
+        "ProviderAdapterSteerDeclinedError",
+        "a steer during a question must be declined so the message queues as a follow-up",
+      );
+      assert.equal(opened.cancels(), 0, "a declined steer must not cancel the question");
+      assert.isUndefined(answer.pollUnsafe(), "the question stays open for the user");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // A wake run has no prompt of its own, yet agy can keep working in it for minutes.
   it.effect("steers a continuation run that keeps working after its wake", () =>
     Effect.gen(function* () {
