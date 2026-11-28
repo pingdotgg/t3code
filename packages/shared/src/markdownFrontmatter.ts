@@ -1,5 +1,5 @@
 const LEADING_FRONTMATTER =
-  /^\uFEFF?---[ \t]*(?:\r\n|\r|\n)(?:[\s\S]*?(?:\r\n|\r|\n))?(?:---|\.\.\.)[ \t]*(?=\r\n|\r|\n|$)/;
+  /^\uFEFF?---[ \t]*(?:\r\n|\r|\n)(?:[\s\S]*?(?:\r\n|\r|\n))??(?:---|\.\.\.)[ \t]*(?=\r\n|\r|\n|$)/;
 
 /**
  * Blanks a leading YAML frontmatter block so rendered previews skip it instead

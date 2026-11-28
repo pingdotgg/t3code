@@ -495,6 +495,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
+      expect(path).toContain("with_labels_details=true");
       expect(path).toContain("per_page=11");
       expect(path).toContain("page=1");
     }),
@@ -718,6 +719,48 @@ layer("GitLabPullRequestCli.layer", (it) => {
         }
         expect(mockedExecute).toHaveBeenCalledTimes(mergeMethod === "rebase" ? 6 : 4);
       }),
+  );
+
+  it.effect("merges pinned to the head the caller reviewed, not the one it reads", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[0] === "api"
+              ? mergeRequestJson({
+                  diff_refs: { base_sha: "base", head_sha: "pushed-head", start_sha: "start" },
+                })
+              : "",
+          ),
+        ),
+      );
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "reviewed-head",
+      });
+      const merge = mockedExecute.mock.calls.at(-1)?.[0].args ?? [];
+      expect(merge[merge.indexOf("--sha") + 1]).toBe("reviewed-head");
+
+      // A rebase cannot be pinned, so a head that moved refuses it before rebasing.
+      mockedExecute.mockClear();
+      const refused = yield* Effect.flip(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "merge",
+          mergeMethod: "rebase",
+          expectedHeadSha: "reviewed-head",
+        }),
+      );
+      expect(refused._tag).toBe("GitLabMutationRefusedError");
+      expect(mockedExecute.mock.calls.map(([call]) => call.args[1])).not.toContain("rebase");
+    }),
   );
 
   it.effect.each([
@@ -1126,6 +1169,90 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.isNotNull(diff.nextCursor);
       assert.isFalse(diff.truncated);
       expect(argsOfCall(0)[1]).toContain("merge_requests/7/diffs?per_page=30&page=1");
+    }),
+  );
+
+  it.effect("counts a file GitLab withheld as too large and offers to read it alone", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                { old_path: "src/a.ts", new_path: "src/a.ts", diff: "@@ -1 +1 @@\n-a\n+b\n" },
+                { old_path: "src/huge.txt", new_path: "src/huge.txt", diff: "", too_large: true },
+              ]),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                data: {
+                  project: {
+                    mergeRequest: {
+                      diffStatsSummary: { fileCount: 2 },
+                      diffStats: [
+                        { path: "src/a.ts", additions: 1, deletions: 1 },
+                        { path: "src/huge.txt", additions: 20000, deletions: 0 },
+                      ],
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const diff = yield* cli.getMergeRequestDiff({ cwd: "/w", repository: "acme/web", number: 7 });
+
+      expect(diff.omittedFileStats).toEqual([
+        { path: "src/huge.txt", additions: 20000, deletions: 0 },
+      ]);
+      assert.isTrue(diff.withheldFilesReadable);
+    }),
+  );
+
+  it.effect("reads one withheld file's section from the merge request's raw diff", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            [
+              "diff --git a/src/a.ts b/src/a.ts",
+              "--- a/src/a.ts",
+              "+++ b/src/a.ts",
+              "@@ -1 +1 @@",
+              "-a",
+              "+b",
+              "diff --git a/src/huge.txt b/src/huge.txt",
+              "new file mode 100644",
+              "--- /dev/null",
+              "+++ b/src/huge.txt",
+              "@@ -0,0 +1,2 @@",
+              "+one",
+              "+two",
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const diff = yield* cli.getMergeRequestDiff({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        path: "src/huge.txt",
+      });
+
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/merge_requests/7/raw_diffs");
+      assert.strictEqual(
+        diff.patch,
+        "diff --git a/src/huge.txt b/src/huge.txt\nnew file mode 100644\n--- /dev/null\n+++ b/src/huge.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n",
+      );
     }),
   );
 
@@ -1674,6 +1801,68 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(JSON.parse(callAt(4).stdin ?? "").position).not.toHaveProperty("line_range");
       expect(argsOfCall(5)[1]).toContain("/notes");
       expect(argsOfCall(6)[1]).toContain("/approve");
+    }),
+  );
+
+  it.effect("approves at the head the caller reviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const approval = {
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        verdict: "approve" as const,
+        body: "",
+        comments: [],
+      };
+
+      yield* cli.submitReview({ ...approval, expectedHeadSha: "0a1b2c3d4e5f" });
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7/approve");
+      expect(JSON.parse(callAt(0).stdin ?? "{}")).toEqual({ sha: "0a1b2c3d4e5f" });
+
+      yield* cli.submitReview(approval);
+      expect(argsOfCall(1)[1]).toContain("merge_requests/7/approve");
+      expect(callAt(1).stdin).toBeUndefined();
+    }),
+  );
+
+  it.effect("posts no line comment when the head is no longer the one the caller reviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              iid: 7,
+              title: "t",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+              source_branch: "feat",
+              target_branch: "main",
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+              diff_refs: { base_sha: "base", head_sha: "newer-head", start_sha: "start" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const refused = yield* Effect.flip(
+        cli.submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          verdict: "approve",
+          body: "Looks right.",
+          expectedHeadSha: "reviewed-head",
+          comments: [{ path: "src/b.ts", position: { kind: "added", newLine: 12 }, body: "nit" }],
+        }),
+      );
+
+      expect(refused.message).toContain("the head is now newer-head, not reviewed-head");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7");
     }),
   );
 
@@ -2246,6 +2435,63 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(detail.maintainerCanModify).toBe(allowCollaboration);
       expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("asks GraphQL for merge request label colours the single REST GET cannot return", () =>
+    Effect.gen(function* () {
+      const restLabels = ["bug", ...Array.from({ length: 100 }, (_, index) => `extra-${index}`)];
+      const graphqlNodes = [
+        { title: "bug", color: "#E24329", description: "Something is broken" },
+        ...Array.from({ length: 99 }, (_, index) => ({
+          title: `extra-${index}`,
+          color: "#FFFFFF",
+        })),
+      ];
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequest: {
+                        userPermissions: { adminMergeRequest: false },
+                        labels: { nodes: graphqlNodes },
+                      },
+                    },
+                  },
+                })
+              : mergeRequestJson({ labels: restLabels }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      const graphql = mockedExecute.mock.calls.find(([call]) => call.args[1] === "graphql");
+      assert.isDefined(graphql);
+      expect(JSON.parse(graphql[0].stdin ?? "").query).toContain(
+        "labels(first: 100) { nodes { title color description } }",
+      );
+      expect(
+        mockedExecute.mock.calls.some(([call]) => call.args[1]?.includes("with_labels_details")),
+      ).toBe(false);
+      expect(detail.labels).toHaveLength(101);
+      expect(detail.labels[0]).toEqual({
+        name: "bug",
+        color: "#E24329",
+        description: "Something is broken",
+      });
+      expect(detail.labels[1]).toEqual({ name: "extra-0", color: "#FFFFFF", description: null });
+      expect(detail.labels.at(-1)).toEqual({ name: "extra-99", color: null });
     }),
   );
 

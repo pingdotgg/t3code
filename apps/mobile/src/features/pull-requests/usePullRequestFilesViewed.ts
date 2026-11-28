@@ -1,7 +1,9 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
 import { use, useState } from "react";
 import {
   composerPullRequests,
@@ -13,6 +15,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { viewedOverlay, type ViewedState } from "./pullRequestFilesViewed";
+import { m } from "../../i18n/messages";
 
 export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
   const registry = use(RegistryContext);
@@ -30,6 +33,9 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   const reads = useAtomValue(readsAtom);
   const write = useAtomCommand(composerPullRequests.setFilesViewed, { reportFailure: false });
   const [state, setState] = useState<ViewedState>({ key: scopeKey, presses: {}, error: null });
+  // Kept apart from `presses`, which a failed write clears, so a file marked here stays listed.
+  const [marked, setMarked] = useState({ key: scopeKey, paths: new Set<string>() });
+  const markedPaths = marked.key === scopeKey ? marked.paths : null;
   const presses = state.key === scopeKey ? state.presses : {};
   const error = state.key === scopeKey ? state.error : null;
   const overlay = viewedOverlay(presses, reads);
@@ -44,6 +50,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     if (!supported || !allowed || !query.data) return;
     const viewed = !isViewed(path);
     const version = (presses[path]?.version ?? 0) + 1;
+    setMarked((current) => ({
+      key: scopeKey,
+      paths: new Set(current.key === scopeKey ? current.paths : []).add(path),
+    }));
     update((current) => ({
       ...current,
       error: null,
@@ -71,7 +81,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       return {
         ...current,
         presses: rest,
-        error: cause instanceof Error ? cause.message : "Could not update viewed files.",
+        error:
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            : m(msg("Could not update viewed files.")),
       };
     });
     refresh();
@@ -80,6 +93,7 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     supported,
     canToggle: supported && allowed && Boolean(query.data),
     isViewed,
+    toggledHere: (path: string) => markedPaths?.has(path) === true,
     toggle,
     error: error ?? query.error,
     truncated: query.data?.truncated,

@@ -3,10 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { rehypeTextDirection } from "./markdownTextDirection";
 
 const text = (value: string) => ({ type: "text", value });
-const element = (tagName: string, children: object[]) => ({
+const element = (
+  tagName: string,
+  children: object[],
+  properties: Record<string, unknown> = {},
+) => ({
   type: "element",
   tagName,
-  properties: {} as Record<string, unknown>,
+  properties,
   children,
 });
 
@@ -35,5 +39,19 @@ describe("rehypeTextDirection", () => {
     const [pre] = directed(element("pre", [code]));
     expect(pre!.properties.dir).toBeUndefined();
     expect(code.properties.dir).toBeUndefined();
+  });
+
+  it("keeps authored ltr/rtl dir and replaces other dir values with detected direction", () => {
+    const cases = [
+      ["rtl", "Hello world", "rtl"],
+      ["ltr", "مرحبا بالعالم", "ltr"],
+      ["RTL", "Hello world", "RTL"],
+      ["auto", "مرحبا بالعالم", "rtl"],
+      [" rtl", "مرحبا بالعالم", "rtl"],
+    ] as const;
+    for (const [authored, sample, expected] of cases) {
+      const [block] = directed(element("p", [text(sample)], { dir: authored }));
+      expect(block!.properties.dir, `dir=${JSON.stringify(authored)}`).toBe(expected);
+    }
   });
 });

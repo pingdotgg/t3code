@@ -320,6 +320,92 @@ export const filterStatusOk = (self: HttpClientResponse): Effect.Effect<HttpClie
     })
   )
 
+/**
+ * Returns the links of the response's `Link` header with absolute targets.
+ *
+ * **Details**
+ *
+ * Each target is resolved against the response URL, which is the final URL
+ * after redirects, so `target` holds an absolute href. Links whose target does
+ * not resolve are dropped. A response without a `Link` header gives `[]`.
+ *
+ * **Gotchas**
+ *
+ * Links with an `anchor` parameter are dropped, because they describe a
+ * resource other than this response (RFC 8288 section 3.2). Parse the raw header
+ * with `Headers.parseLink` to read them.
+ *
+ * @see {@link link} to look up a single link by relation type
+ *
+ * @stability unstable
+ * @category accessors
+ * @since 4.1.6
+ */
+export const links = (self: HttpClientResponse): Array<Headers.Link> => {
+  const header = self.headers.link
+  if (header === undefined) return []
+  const base = self.url || undefined
+  const out: Array<Headers.Link> = []
+  for (const link of Headers.parseLink(header)) {
+    if (Object.hasOwn(link.params, "anchor")) continue
+    const url = resolveUrl(link.target, base)
+    if (url !== undefined) out.push({ ...link, target: url.href })
+  }
+  return out
+}
+
+const resolveUrl = (target: string, base: string | undefined): URL | undefined => {
+  try {
+    return new URL(target, base)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Returns the URL of the first link in the response's `Link` header with the
+ * given relation type.
+ *
+ * **When to use**
+ *
+ * Use to follow pagination links such as `next` with `Stream.paginate`.
+ *
+ * **Details**
+ *
+ * The relation type is compared case-insensitively, and the URL is resolved
+ * against the response URL. Returns `Option.none()` when no link matches.
+ * Links are read as by {@link links}, so links with an `anchor` parameter
+ * never match.
+ *
+ * **Example** (Reading the next page link)
+ *
+ * ```ts import.meta.vitest
+ * import { Option } from "effect"
+ * import { HttpClientRequest, HttpClientResponse } from "effect/http"
+ *
+ * const response = HttpClientResponse.fromWeb(
+ *   HttpClientRequest.get("https://example.com/items"),
+ *   new Response(null, { headers: { link: '</items?page=2>; rel="next"' } })
+ * )
+ *
+ * Option.map(HttpClientResponse.link(response, "next"), (url) => url.href) // => Option.some("https://example.com/items?page=2")
+ * ```
+ *
+ * @see {@link links} to read every link
+ *
+ * @stability unstable
+ * @category accessors
+ * @since 4.1.6
+ */
+export const link: {
+  (rel: string): (self: HttpClientResponse) => Option.Option<URL>
+  (self: HttpClientResponse, rel: string): Option.Option<URL>
+} = dual(2, (self: HttpClientResponse, rel: string): Option.Option<URL> => {
+  const type = rel.toLowerCase()
+  const found = links(self).find((link) => link.rel.includes(type))
+  return found === undefined ? Option.none() : Option.some(new URL(found.target))
+})
+
 // -----------------------------------------------------------------------------
 // internal
 // -----------------------------------------------------------------------------

@@ -7,9 +7,10 @@
  * when values are inspected.
  *
  * It also parses and formats the values of standard headers, such as HTTP
- * dates and `Retry-After`, with the tolerance the RFCs allow and nothing more.
- * The string codecs for those values live in `Schema`, for example
- * `Schema.DateTimeUtcFromHttpDate` and `Schema.RetryAfterFromString`.
+ * dates, `Retry-After` and `Link`, with the tolerance the RFCs allow and
+ * nothing more. The string codecs for those values live in `Schema`, for
+ * example `Schema.DateTimeUtcFromHttpDate`, `Schema.RetryAfterFromString` and
+ * `Schema.LinkHeaderFromString`.
  *
  * @stability unstable
  * @since 4.0.0
@@ -29,7 +30,9 @@ import * as Record from "../Record.ts"
 import * as Redactable from "../Redactable.ts"
 import * as Redacted from "../Redacted.ts"
 import * as Result from "../Result.ts"
+import * as Str from "../String.ts"
 import type { Mutable } from "../Types.ts"
+import { decodeExtValue } from "./MultipartParser/internal/contentType.ts"
 
 /**
  * Runtime type identifier for `Headers` values.
@@ -151,7 +154,11 @@ export const empty: Headers = Object.create(Proto)
  *
  * **Details**
  *
- * Header names are normalized to lowercase. Array values in record input are joined with `", "`, and `undefined` values are omitted.
+ * Header names are normalized to lowercase. Array values in record input and repeated names in iterable input are joined with `", "`, and `undefined` values are omitted.
+ *
+ * **Gotchas**
+ *
+ * A comma-joined `Set-Cookie` value is not safe to forward as a single header. Use `response.cookies` for structured cookies on HTTP client responses.
  *
  * @stability unstable
  * @category constructors
@@ -163,7 +170,8 @@ export const fromInput: (input?: Input) => Headers = (input) => {
   } else if (Symbol.iterator in input) {
     const out: Record<string, string> = Object.create(Proto)
     for (const [k, v] of input) {
-      out[k.toLowerCase()] = v
+      const key = k.toLowerCase()
+      out[key] = key in out ? `${out[key]}, ${v}` : v
     }
     return out as Headers
   }
@@ -250,6 +258,45 @@ export const set: {
 >(3, (self, key, value) => {
   const out = make(self)
   out[key.toLowerCase()] = value
+  return out
+})
+
+/**
+ * Returns a new `Headers` collection with the value added to the given header.
+ *
+ * **When to use**
+ *
+ * Use when several parts of an application each add to a list-valued header,
+ * such as `Link`, `Vary` or `Cache-Control`, without replacing values set
+ * elsewhere.
+ *
+ * **Details**
+ *
+ * The header name is normalized to lowercase. An existing value is joined with
+ * the new one by `", "`, and an empty value leaves the headers unchanged.
+ *
+ * **Gotchas**
+ *
+ * Do not append `Set-Cookie` this way: a comma-joined `Set-Cookie` value is
+ * not valid. Use the cookie APIs instead.
+ *
+ * @see {@link set} to replace a header value
+ *
+ * @stability unstable
+ * @category combinators
+ * @since 4.1.6
+ */
+export const append: {
+  (key: string, value: string): (self: Headers) => Headers
+  (self: Headers, key: string, value: string): Headers
+} = dual<
+  (key: string, value: string) => (self: Headers) => Headers,
+  (self: Headers, key: string, value: string) => Headers
+>(3, (self, key, value) => {
+  if (value === "") return self
+  const name = key.toLowerCase()
+  const out = make(self)
+  out[name] = name in out ? `${out[name]}, ${value}` : value
   return out
 })
 
@@ -780,3 +827,217 @@ export const RetryAfterEquivalence: Equ.Equivalence<RetryAfter> = (self, that) =
   self._tag === "Duration"
     ? that._tag === "Duration" && Duration.Equivalence(self.duration, that.duration)
     : that._tag === "DateTime" && DateTime.Equivalence(self.dateTime, that.dateTime)
+
+// -----------------------------------------------------------------------------
+// Link (RFC 8288)
+// -----------------------------------------------------------------------------
+
+/**
+ * A single link from a `Link` header.
+ *
+ * **Details**
+ *
+ * - `target` is the URI reference between `<` and `>`.
+ * - `rel` holds the relation types; it is empty when the link has no `rel`
+ *   parameter.
+ * - `params` holds every other parameter by name, such as `anchor`, `title`,
+ *   `type` or `hreflang`. A parameter without a value, such as `nopush`, maps
+ *   to `""`.
+ *
+ * @see {@link parseLink} for how parsed links are normalized
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.6
+ */
+export interface Link {
+  readonly target: string
+  readonly rel: ReadonlyArray<string>
+  readonly params: { readonly [name: string]: string }
+}
+
+const isLinkWhitespace = (char: string | undefined): boolean => char === " " || char === "\t"
+
+/**
+ * Parses a `Link` header value into its links.
+ *
+ * **Details**
+ *
+ * Parsing follows the forgiving algorithm of RFC 8288 Appendix B and never
+ * fails, so it returns an array rather than a `Result`. When it reaches input
+ * that is not a link-value, it stops and returns the links read so far.
+ *
+ * - Parameter names and relation types are lowercased.
+ * - For every parameter, including `rel` and extended parameters such as
+ *   `title*`, the first occurrence wins.
+ * - An extended parameter such as `title*` is decoded as RFC 8187 and stored
+ *   under `title`, replacing the plain form. An undecodable value is ignored,
+ *   leaving the plain form. `rel*` never sets the relation types.
+ *
+ * **Gotchas**
+ *
+ * Targets are returned as written, and `anchor` is kept as an ordinary
+ * parameter. `HttpClientResponse.links` resolves targets against the response
+ * URL and skips links that have an `anchor` parameter.
+ *
+ * **Example** (Reading a pagination link)
+ *
+ * ```ts import.meta.vitest
+ * import { Headers } from "effect/http"
+ *
+ * const links = Headers.parseLink('</items?page=2>; rel="next last", </items?page=1>; rel="prev"')
+ * links.find((link) => link.rel.includes("next"))?.target // => "/items?page=2"
+ * ```
+ *
+ * @see {@link formatLink} for the inverse operation
+ *
+ * @stability unstable
+ * @category header values
+ * @since 4.1.6
+ */
+export const parseLink = (input: string): Array<Link> => {
+  const links: Array<Link> = []
+  const length = input.length
+  let i = 0
+  const skipWhitespace = () => {
+    while (isLinkWhitespace(input[i])) i++
+  }
+  while (true) {
+    while (isLinkWhitespace(input[i]) || input[i] === ",") i++
+    if (input[i] !== "<") break
+    const end = input.indexOf(">", i + 1)
+    if (end === -1) break
+    const target = input.slice(i + 1, end)
+    i = end + 1
+
+    const plain = new Map<string, string>()
+    const extended = new Map<string, string | undefined>()
+    while (true) {
+      skipWhitespace()
+      if (input[i] !== ";") break
+      i++
+      skipWhitespace()
+      const nameStart = i
+      while (i < length && input[i] !== "=" && input[i] !== ";" && input[i] !== "," && !isLinkWhitespace(input[i])) i++
+      const name = input.slice(nameStart, i).toLowerCase()
+      skipWhitespace()
+      let paramValue = ""
+      if (input[i] === "=") {
+        i++
+        skipWhitespace()
+        if (input[i] === "\"") {
+          i++
+          while (i < length && input[i] !== "\"") {
+            if (input[i] === "\\") i++
+            paramValue += input.charAt(i)
+            i++
+          }
+          i++
+        } else {
+          const valueStart = i
+          while (i < length && input[i] !== ";" && input[i] !== ",") i++
+          paramValue = input.slice(valueStart, i).trim()
+        }
+      }
+      if (name.length > 1 && name.endsWith("*")) {
+        const baseName = name.slice(0, -1)
+        if (!extended.has(baseName)) extended.set(baseName, decodeExtValue(paramValue))
+      } else if (name !== "" && !plain.has(name)) {
+        plain.set(name, paramValue)
+      }
+    }
+
+    // Read rel before merging extended params so rel* cannot set rel, then delete it so rel* stays out of params.
+    const rel = plain.get("rel")
+    for (const [name, decoded] of extended) {
+      if (decoded !== undefined) plain.set(name, decoded)
+    }
+    plain.delete("rel")
+    links.push({
+      target,
+      rel: rel?.toLowerCase().split(/[ \t]+/).filter(Str.isNonEmpty) ?? [],
+      params: Object.fromEntries(plain)
+    })
+  }
+  return links
+}
+
+const quotableParamValue = /^[\t\x20-\x7e]*$/
+
+// Percent-encode chars outside visible ASCII plus `"` and `\` so a relation type cannot break the quoted rel.
+const formatRelationType = (type: string): string =>
+  Str.toWellFormed(type).replace(/[^\x21\x23-\x5b\x5d-\x7e]/gu, encodeURIComponent)
+
+const formatLinkParam = (name: string, value: string): string => {
+  if (value === "") return name
+  if (quotableParamValue.test(value)) return `${name}="${value.replace(/["\\]/g, "\\$&")}"`
+  const encoded = encodeURIComponent(Str.toWellFormed(value)).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+  return `${name}*=UTF-8''${encoded}`
+}
+
+/**
+ * Formats links as a `Link` header value.
+ *
+ * **When to use**
+ *
+ * Use with `HttpServerResponse.appendHeader` or
+ * `HttpClientRequest.appendHeader` to add links without replacing a `Link`
+ * header set elsewhere.
+ *
+ * **Details**
+ *
+ * Each link is written as `<target>`, then `rel` when it has relation types,
+ * then the other parameters, and links are joined with `", "`.
+ *
+ * - A parameter with the value `""` is written as a bare name.
+ * - A value made of tabs, spaces and visible ASCII is written as a
+ *   quoted-string, escaping `"` and `\\`.
+ * - Any other value, such as non-ASCII text or line breaks, is written as an
+ *   RFC 8187 extended parameter, for example `title*=UTF-8''Gr%C3%BC%C3%9Fe`.
+ * - A `rel` key in `params` is ignored; use the `rel` field.
+ * - In relation types, `"`, `\\`, whitespace, control characters and
+ *   non-ASCII characters are percent-encoded, as in a URI.
+ *
+ * An empty iterable gives `""`. Parsing the result gives back the same links,
+ * provided their names and relation types are lowercase and need no encoding.
+ *
+ * **Gotchas**
+ *
+ * `target` and parameter names are written as given. They must not contain
+ * `>`, line breaks or other characters that are invalid in a header value.
+ *
+ * **Example** (Writing canonical and alternate links)
+ *
+ * ```ts import.meta.vitest
+ * import { Headers } from "effect/http"
+ *
+ * Headers.formatLink([
+ *   { target: "https://example.com/en", rel: ["canonical"] },
+ *   { target: "https://example.com/de", rel: ["alternate"], params: { hreflang: "de" } }
+ * ]) // => '<https://example.com/en>; rel="canonical", <https://example.com/de>; rel="alternate"; hreflang="de"'
+ * ```
+ *
+ * @see {@link parseLink} for the inverse operation
+ *
+ * @stability unstable
+ * @category header values
+ * @since 4.1.6
+ */
+export const formatLink = (
+  links: Iterable<{
+    readonly target: string
+    readonly rel: ReadonlyArray<string>
+    readonly params?: { readonly [name: string]: string } | undefined
+  }>
+): string =>
+  Array.from(links, (link) => {
+    let out = `<${link.target}>`
+    if (link.rel.length > 0) out += `; rel="${link.rel.map(formatRelationType).join(" ")}"`
+    for (const [name, value] of Object.entries(link.params ?? {})) {
+      if (name.toLowerCase() !== "rel") out += `; ${formatLinkParam(name, value)}`
+    }
+    return out
+  }).join(", ")

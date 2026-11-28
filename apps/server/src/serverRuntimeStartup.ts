@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
@@ -10,13 +11,13 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -27,6 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { flushCompileCache } from "./compileCache.ts";
@@ -41,6 +43,7 @@ import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { VcsAutomaticFetchInterval } from "./vcs/VcsAutomaticFetchInterval.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -50,7 +53,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { formatHeadlessServeOutput, issueHeadlessServeAccessInfo } from "./startupAccess.ts";
+import { headlessServeOutput, resolveLocalOrigin } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -202,7 +205,10 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
     workspaceRoots,
     (cwd) =>
       Effect.gen(function* () {
-        const status = yield* git.statusDetails(cwd);
+        // Startup checks once, so it waits for the fetch rather than reading the old references.
+        const status = yield* git
+          .statusDetails(cwd)
+          .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
         if (
           !status.isRepo ||
           !status.isDefaultBranch ||
@@ -341,12 +347,8 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const localUrl = `http://localhost:${serverConfig.port}`;
-  const bindUrl =
-    serverConfig.host && !isWildcardHost(serverConfig.host)
-      ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
-      : localUrl;
-  const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
+  const baseTarget =
+    serverConfig.devUrl?.toString() ?? resolveLocalOrigin(serverConfig.host, serverConfig.port);
   return serverConfig.mode === "desktop"
     ? baseTarget
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
@@ -576,17 +578,30 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
     // Runs after activation: the status check fetches every enabled project's
     // remote, and awaiting it here held command readiness for that long.
-    yield* runStartupPhase(
-      "projects.auto-pull",
-      Effect.gen(function* () {
-        const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
-        const settings = yield* serverSettings.getSettings;
-        yield* autoPullProjects(projects, settings);
-      }),
-    ).pipe(
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
+    const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+    const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+    const autoPullEnabledProjects = Effect.gen(function* () {
+      const projects = yield* projectStore.listShells();
+      const settings = yield* serverSettings.getSettings;
+      yield* autoPullProjects(projects, settings);
+    }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Failed to load projects for automatic pull", { cause }),
       ),
+    );
+    // Status subscriptions only poll roots someone views, so unviewed roots are pulled here.
+    const autoPullOnFetchInterval = Effect.gen(function* () {
+      const interval = yield* automaticFetchInterval;
+      yield* Effect.sleep(
+        Duration.isZero(interval) ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL : interval,
+      );
+      if (!Duration.isZero(interval) && (yield* backgroundPolicy.shouldRunHostWork)) {
+        yield* autoPullEnabledProjects;
+      }
+    }).pipe(Effect.forever);
+    yield* runStartupPhase("projects.auto-pull", autoPullEnabledProjects).pipe(
+      Effect.andThen(autoPullOnFetchInterval),
       forkParked,
     );
 
@@ -625,11 +640,8 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         );
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
-          const accessInfo = yield* issueHeadlessServeAccessInfo();
-          yield* runStartupPhase(
-            "headless.output",
-            Console.log(formatHeadlessServeOutput(accessInfo)),
-          );
+          const output = yield* headlessServeOutput({ serviceManaged: launcher.managed });
+          yield* runStartupPhase("headless.output", Console.log(output));
         } else {
           yield* Effect.logDebug("startup phase: browser open check");
           const startupBrowserTarget = yield* resolveStartupBrowserTarget;

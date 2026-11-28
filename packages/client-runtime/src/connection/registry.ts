@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -49,9 +51,11 @@ import {
   credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
+  hasRelayRoute,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  targetWithLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -102,11 +106,12 @@ export class EnvironmentRegistry extends Context.Service<
     /**
      * Succeeds with `false` and changes nothing when the environment is
      * platform-managed, since the host owns that entry. With `knownAddressOnly`, it fails like
-     * `assertKnownAddress`, checked under the environment's lease.
+     * `assertKnownAddress`, checked under the environment's lease. A route added to a saved
+     * environment keeps the saved label unless `useRegistrationLabel` marks it as a requested edit.
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: { readonly knownAddressOnly?: boolean },
+      options?: { readonly knownAddressOnly?: boolean; readonly useRegistrationLabel?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
      * Fails when the route would add a new address to a saved user environment. Pairing that does
@@ -144,6 +149,16 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reorderRoutes: (
       environmentId: EnvironmentId,
       routeIds: ReadonlyArray<string>,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+      | ConnectionBlockedError
+    >;
+    readonly setLabel: (
+      environmentId: EnvironmentId,
+      label: string,
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
@@ -553,18 +568,23 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+        ...translatableDetail(
+          msg(
+            "That address claims to be {host}, which is already saved. Add it as a route from that environment's settings instead.",
+            { host: saved.target.label },
+          ),
+        ),
       });
     }
   });
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean },
+    options?: { readonly knownAddressOnly?: boolean; readonly useRegistrationLabel?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+    const incoming: ConnectionRoute = { target: registered.target, profile: registered.profile };
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
@@ -572,11 +592,17 @@ export const make = Effect.gen(function* () {
           return false;
         }
         if (options?.knownAddressOnly === true) {
-          yield* assertKnownAddress(route);
+          yield* assertKnownAddress(incoming);
         }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
+          // Keep the saved label (a local rename) unless T3 Connect, which owns relay labels, sent it.
+          const route =
+            incoming.target._tag === "RelayConnectionTarget" ||
+            options?.useRegistrationLabel === true
+              ? incoming
+              : { ...incoming, target: targetWithLabel(incoming.target, previous.target.label) };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
           const routes = existing.filter(
@@ -720,7 +746,11 @@ export const make = Effect.gen(function* () {
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+          if (
+            bearerReplaced &&
+            registration._tag === "BearerConnectionRegistration" &&
+            registration.credential._tag === "BearerConnectionCredential"
+          ) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
@@ -1016,11 +1046,44 @@ export const make = Effect.gen(function* () {
         if (reordered.length !== routes.length || new Set(routeIds).size !== routes.length) {
           return yield* new ConnectionBlockedError({
             reason: "configuration",
-            detail: "The route order must list every saved route once.",
+            ...translatableDetail(msg("The route order must list every saved route once.")),
           });
         }
         if (reordered.every((route, index) => route === routes[index])) return;
         yield* replaceRoutesLocked(entry, reordered);
+      }),
+    );
+  });
+
+  const setLabel = Effect.fn("EnvironmentRegistry.setLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    const trimmed = label.trim();
+    if (trimmed === "") {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        ...translatableDetail(msg("Environment label cannot be empty.")),
+      });
+    }
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        // T3 Connect owns the label of relay environments and would overwrite a local rename.
+        if (hasRelayRoute(entry)) {
+          return yield* new ConnectionBlockedError({
+            reason: "unsupported",
+            ...translatableDetail(msg("T3 Connect environments cannot be renamed here.")),
+          });
+        }
+        const routes = connectionRoutes(entry);
+        if (routes.every((route) => route.target.label === trimmed)) return;
+        // Only targets' labels are read, so profiles keep what the SSH broker last saved.
+        yield* replaceRoutesLocked(
+          entry,
+          routes.map((route) => ({ ...route, target: targetWithLabel(route.target, trimmed) })),
+        );
       }),
     );
   });
@@ -1193,6 +1256,7 @@ export const make = Effect.gen(function* () {
     remove,
     removeRoute,
     reorderRoutes,
+    setLabel,
     removeRelayEnvironments,
     retryNow,
     setEnabled,

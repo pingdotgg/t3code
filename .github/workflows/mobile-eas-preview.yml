@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
 
+permissions:
+  contents: read
+
 jobs:
   ios:
     name: EAS Preview (iOS)
@@ -17,7 +20,6 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       group: ${{ steps.update.outputs.group }}
       client: ${{ steps.client.outputs.link }}
@@ -47,32 +49,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
         if: steps.expo-token.outputs.present == 'true'
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.github/actions/drop-checkout-credentials
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
@@ -161,7 +141,6 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       group: ${{ steps.update.outputs.group }}
       client: ${{ steps.client.outputs.link }}
@@ -191,32 +170,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
         if: steps.expo-token.outputs.present == 'true'
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.github/actions/drop-checkout-credentials
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
@@ -291,362 +248,43 @@ jobs:
           group="$(eas update --auto --branch "pr-$PR" --platform android --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
           echo "group=$group" >> "$GITHUB_OUTPUT"
 
+  # Each build runs in mobile-eas-preview-build.yml, whose record job alone gets
+  # the token that pushes the tag. The group covers both of its jobs.
   android-build:
     name: Android preview client
     needs: android
     if: needs.android.outputs.build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 60
     concurrency:
       # One build per fingerprint; a second PR with the same one finds the tag.
       group: mobile-android-preview-build-${{ needs.android.outputs.fingerprint }}
       cancel-in-progress: false
       queue: max
     permissions:
-      contents: write # pushes the build record tag
-      pull-requests: write
-    outputs:
-      client: ${{ steps.build.outputs.link || steps.record.outputs.link }}
-    env:
-      APP_VARIANT: preview
-      NODE_OPTIONS: --max-old-space-size=8192
-      MOBILE_VERSION_POLICY: fingerprint
-      EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-      FINGERPRINT: ${{ needs.android.outputs.fingerprint }}
-      BUILD_TAG: mobile-android-preview-build/${{ needs.android.outputs.fingerprint }}
-      # Phones only: emulators use the development client from the native-client cache.
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-
-      - id: record
-        name: Check build record
-        run: |
-          if git fetch --quiet origin "refs/tags/$BUILD_TAG:refs/tags/$BUILD_TAG" 2>/dev/null; then
-            echo "built=true" >> "$GITHUB_OUTPUT"
-            echo "link=$(git tag -l --format='%(contents:subject)' "$BUILD_TAG")" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
-      - name: Drop checkout credentials
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
-
-      - name: Prepare build directories
-        if: steps.record.outputs.built != 'true'
-        run: |
-          cache="$HOME/.cache/t3-android-preview"
-          {
-            echo "GRADLE_USER_HOME=$cache/gradle"
-            echo "CCACHE_DIR=$cache/ccache"
-            echo "CCACHE_MAXSIZE=5G"
-            # Gradle installs the NDK fresh each run, so key on the compiler's version, not its mtime.
-            echo "CCACHE_COMPILERCHECK=%compiler% -v"
-            echo "pnpm_config_store_dir=$cache/pnpm-store"
-            # eas build --local copies the project here. A fixed path keeps
-            # ccache keys stable, and the same disk as the store lets pnpm hardlink.
-            echo "EAS_LOCAL_BUILD_WORKINGDIR=$cache/eas-build"
-            echo "CCACHE_BASEDIR=$cache/eas-build"
-            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
-            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
-          } >> "$GITHUB_ENV"
-
-      - name: Mount build cache
-        if: steps.record.outputs.built != 'true'
-        uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
-        with:
-          key: ${{ github.repository }}-android-preview-build
-          path: ~/.cache/t3-android-preview
-
-      - name: Configure Gradle and ccache
-        if: steps.record.outputs.built != 'true'
-        run: |
-          mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
-          rm -rf "$EAS_LOCAL_BUILD_WORKINGDIR"
-          # No daemon: nothing should hold the sticky disk open when it is committed.
-          printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update -qq && sudo apt-get install -y -qq ccache
-          ccache --zero-stats
-
-      - name: Setup Node
-        if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: package.json
-
-      - name: Enable corepack
-        if: steps.record.outputs.built != 'true'
-        run: |
-          npm install --global corepack@latest
-          corepack enable
-          pnpm --version
-
-      - name: Install mobile dependencies
-        if: steps.record.outputs.built != 'true'
-        run: pnpm install --frozen-lockfile --prefer-offline --filter=@t3tools/mobile...
-
-      - name: Setup Java
-        if: steps.record.outputs.built != 'true'
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup EAS
-        if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          packager: npm
-
-      - name: Pull preview environment variables
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        run: |
-          eas env:pull preview --non-interactive
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-          import { parseEnv } from "node:util";
-          const env = parseEnv(readFileSync(".env.local", "utf8"));
-          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
-          if (googleServicesFile) {
-            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
-          }
-          NODE
-
-      # `eas upload` hosts the APK on EAS and returns the page testers install from.
-      - id: build
-        name: Build and upload
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        shell: bash
-        run: |
-          eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
-          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
-          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
-          if [ -z "$link" ]; then
-            echo "::error::eas upload returned no install link"
-            exit 1
-          fi
-          echo "link=$link" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Android preview client for \`$FINGERPRINT\`: $link"
-            echo '```'
-            ccache --show-stats
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # The tag is the record later runs look up; its message is the install link.
-      - name: Record build
-        if: steps.record.outputs.built != 'true'
-        env:
-          LINK: ${{ steps.build.outputs.link }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$BUILD_TAG" -m "$LINK"
-          # Only this step has the token; the checkout's copy was removed before the build.
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
+      contents: write # the record job pushes the build record tag
+    uses: ./.github/workflows/mobile-eas-preview-build.yml
+    with:
+      platform: android
+      fingerprint: ${{ needs.android.outputs.fingerprint }}
+    secrets:
+      EXPO_PREVIEW_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
 
   ios-build:
     name: iOS preview client
     needs: ios
     if: needs.ios.outputs.build == 'true'
-    runs-on: blacksmith-12vcpu-macos-27
-    timeout-minutes: 60
     concurrency:
       # One build per fingerprint; a second PR with the same one finds the tag.
       group: mobile-ios-preview-build-${{ needs.ios.outputs.fingerprint }}
       cancel-in-progress: false
       queue: max
     permissions:
-      contents: write # pushes the build record tag
-      pull-requests: write
-    outputs:
-      client: ${{ steps.build.outputs.link || steps.record.outputs.link }}
-    env:
-      APP_VARIANT: preview
-      NODE_OPTIONS: --max-old-space-size=8192
-      MOBILE_VERSION_POLICY: fingerprint
-      EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-      FINGERPRINT: ${{ needs.ios.outputs.fingerprint }}
-      BUILD_TAG: mobile-ios-preview-build/${{ needs.ios.outputs.fingerprint }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: package.json
-
-      - id: record
-        name: Check build record
-        run: |
-          if git fetch --quiet origin "refs/tags/$BUILD_TAG:refs/tags/$BUILD_TAG" 2>/dev/null; then
-            link="$(git tag -l --format='%(contents)' "$BUILD_TAG" | node .github/scripts/mobile-ios-preview-record.cjs read)"
-            if [ -n "$link" ]; then
-              echo "built=true" >> "$GITHUB_OUTPUT"
-              echo "link=$link" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
-      - name: Drop checkout credentials
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
-
-      - name: Select Xcode 27.1
-        if: steps.record.outputs.built != 'true'
-        run: |
-          xcode=/Applications/Xcode_27.1.app
-          if [ ! -d "$xcode" ]; then
-            ls -d /Applications/Xcode*.app
-            echo "::error::Xcode 27.1 is not on this runner."
-            exit 1
-          fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
-          xcodebuild -version
-          echo "- Xcode: \`$(basename "$xcode")\`" >> "$GITHUB_STEP_SUMMARY"
-
-      # EAS's credentials step fails to import the distribution certificate without it.
-      - name: Install Apple WWDR G3 intermediate
-        if: steps.record.outputs.built != 'true'
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          sudo security add-certificates -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer" || true
-          security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | grep -m1 labl
-
-      - name: Enable corepack
-        if: steps.record.outputs.built != 'true'
-        run: |
-          npm install --global corepack@latest
-          corepack enable
-          pnpm --version
-
-      - name: Install mobile dependencies
-        if: steps.record.outputs.built != 'true'
-        run: pnpm install --frozen-lockfile --prefer-offline --filter=@t3tools/mobile...
-
-      - name: Setup EAS
-        if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          packager: npm
-
-      - name: Build tools
-        if: steps.record.outputs.built != 'true'
-        run: |
-          command -v pod || sudo gem install cocoapods --no-document
-          command -v fastlane || brew install fastlane
-          pod --version
-          fastlane --version | tail -1
-
-      - name: Pull preview environment variables
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        run: |
-          eas env:pull preview --non-interactive
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-          import { parseEnv } from "node:util";
-          const env = parseEnv(readFileSync(".env.local", "utf8"));
-          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
-          if (googleServicesFile) {
-            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
-          }
-          NODE
-
-      # EAS hosts the signed client and returns its install page.
-      - id: build
-        name: Build and upload
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        shell: bash
-        run: |
-          export EAS_LOCAL_BUILD_WORKINGDIR="$RUNNER_TEMP/eas-build"
-          eas build --local --platform ios --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.ipa"
-          eas upload --platform ios --build-path "$RUNNER_TEMP/t3code-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
-          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
-          if [ -z "$link" ]; then
-            echo "::error::eas upload returned no install link"
-            exit 1
-          fi
-          echo "link=$link" >> "$GITHUB_OUTPUT"
-          {
-            echo "### iOS preview client for \`$FINGERPRINT\`: $link"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # The tag stores the install link and provisioning-profile expiry.
-      - name: Record build
-        if: steps.record.outputs.built != 'true'
-        env:
-          LINK: ${{ steps.build.outputs.link }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/t3code-preview.ipa" | awk '/^Payload\/[^/]+\.app\/embedded.mobileprovision$/')"
-          test -n "$profile_path"
-          unzip -p "$RUNNER_TEMP/t3code-preview.ipa" "$profile_path" > "$RUNNER_TEMP/preview.mobileprovision"
-          security cms -D -i "$RUNNER_TEMP/preview.mobileprovision" > "$RUNNER_TEMP/preview-profile.plist"
-          record="$(node .github/scripts/mobile-ios-preview-record.cjs create "$LINK" "$RUNNER_TEMP/preview-profile.plist")"
-          old_tag="$(git rev-parse -q --verify "refs/tags/$BUILD_TAG" || true)"
-          git tag -f -a "$BUILD_TAG" -m "$record"
-          # Only this step has the token; the checkout's copy was removed before the build.
-          git push --force-with-lease="refs/tags/$BUILD_TAG:$old_tag" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
+      contents: write # the record job pushes the build record tag
+    uses: ./.github/workflows/mobile-eas-preview-build.yml
+    with:
+      platform: ios
+      fingerprint: ${{ needs.ios.outputs.fingerprint }}
+    secrets:
+      EXPO_PREVIEW_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
 
   comment:
     name: Mobile preview comment

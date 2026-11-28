@@ -6,6 +6,8 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface ReviewCommentTarget {
   readonly sectionId: string;
@@ -210,7 +212,7 @@ export function formatReviewSelectedRangeLabel(target: ReviewCommentTarget): str
   const firstNumber = getReviewUnifiedLineNumber(firstLine);
   const lastNumber = getReviewUnifiedLineNumber(lastLine);
 
-  if (firstNumber === null || lastNumber === null) {
+  if (firstNumber === null || lastNumber === null || firstNumber > lastNumber) {
     return lines.length === 1 ? "line" : `${lines.length} lines`;
   }
 
@@ -305,16 +307,42 @@ function extractReviewCommentBody(rawBody: string): {
   };
 }
 
+/** A stored "12 to 18" range label in the UI language, as the web chip shows it. */
+export function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
+  const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
+  return range === null
+    ? rangeLabel
+    : resolve(
+        msg("{start} to {end}", {
+          $context: "a range of lines in a file or diff",
+          start: range[1]!,
+          end: range[2]!,
+        }),
+      );
+}
+
+/** A review comment chip's stored "app.ts +3 to +5" label with its range in the UI language. */
+export function reviewCommentChipLabel(
+  label: string,
+  rangeLabel: string,
+  resolve: MessageResolver,
+): string {
+  return label.endsWith(` ${rangeLabel}`)
+    ? `${label.slice(0, -rangeLabel.length)}${reviewCommentRangeText(rangeLabel, resolve)}`
+    : label;
+}
+
 function parseReviewInlineComment(
   rawAttributes: string,
   rawBody: string,
   index: number,
+  resolve: MessageResolver,
 ): ReviewInlineComment | null {
   const attributes = readReviewCommentAttributes(rawAttributes);
   const startIndex = readNonNegativeInteger(attributes.startIndex);
   const endIndex = readNonNegativeInteger(attributes.endIndex);
-  const filePath = attributes.filePath?.trim();
-  const sectionId = attributes.sectionId?.trim();
+  const filePath = attributes.filePath;
+  const sectionId = attributes.sectionId;
   if (!filePath || !sectionId || startIndex === null || endIndex === null) {
     return null;
   }
@@ -323,11 +351,15 @@ function parseReviewInlineComment(
   return {
     id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
     sectionId,
-    sectionTitle: attributes.sectionTitle?.trim() || "Review",
+    sectionTitle:
+      attributes.sectionTitle?.trim() ||
+      resolve(msg("Review", { $context: "review comment section" })),
     filePath,
     startIndex: Math.min(startIndex, endIndex),
     endIndex: Math.max(startIndex, endIndex),
-    rangeLabel: attributes.rangeLabel?.trim() || "line",
+    rangeLabel: attributes.rangeLabel?.trim()
+      ? reviewCommentRangeText(attributes.rangeLabel.trim(), resolve)
+      : resolve(msg("line", { $context: "review comment range" })),
     text: body.text,
     diff: body.contents,
     fenceLanguage: body.language,
@@ -364,6 +396,7 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
 export function parseReviewInlineComments(
   value: string,
   context?: OrchestrationMessageContext,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ReviewInlineComment> {
   const comments: ReviewInlineComment[] = [];
   // Mask chip delimiters: labels containing </review_comment> would otherwise truncate the block.
@@ -381,6 +414,7 @@ export function parseReviewInlineComments(
       raw.slice(attributeStart, attributeEnd),
       raw.slice(attributeEnd + 1, -"</review_comment>".length),
       index,
+      resolve,
     );
     if (!comment) {
       continue;
@@ -409,7 +443,7 @@ export function parseReviewInlineComments(
       filePath: record.filePath,
       startIndex: record.startIndex,
       endIndex: record.endIndex,
-      rangeLabel: record.rangeLabel,
+      rangeLabel: reviewCommentRangeText(record.rangeLabel, resolve),
       text: record.text,
       diff: record.diff,
       ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
@@ -420,6 +454,7 @@ export function parseReviewInlineComments(
 
 export function parseReviewCommentMessageSegments(
   value: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ReviewCommentMessageSegment> {
   const segments: ReviewCommentMessageSegment[] = [];
   let cursor = 0;
@@ -445,6 +480,7 @@ export function parseReviewCommentMessageSegments(
       raw.slice(attributeStart, attributeEnd),
       raw.slice(attributeEnd + 1, -"</review_comment>".length),
       parsedCommentIndex,
+      resolve,
     );
     if (comment) {
       segments.push({ kind: "review-comment", comment });

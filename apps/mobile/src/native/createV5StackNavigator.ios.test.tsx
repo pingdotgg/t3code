@@ -33,18 +33,23 @@ vi.mock("./NativeScrollViewMarker", () => ({
 }));
 
 import { V5CardStackView, type V5StackViewProps } from "./createV5StackNavigator.ios";
+import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 
 const home = { key: "home", name: "Home" };
 const thread = { key: "thread", name: "Thread" };
 
-function fire(key: string, event: "onWillAppear" | "onWillDisappear" | "onDidDisappear") {
+function fire(
+  key: string,
+  event: "onWillAppear" | "onDidAppear" | "onWillDisappear" | "onDidDisappear",
+) {
   const handler = screens.get(key)?.[event] as (() => void) | undefined;
   if (!handler) throw new Error(`No ${event} for ${key}`);
   act(() => handler());
 }
 
-it("forgets native Back when a full-screen presentation covers the top card", () => {
+function renderThreadStack(tabActive?: boolean) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  screens.clear();
   const state: StackNavigationState<ParamListBase> = {
     key: "stack",
     type: "stack",
@@ -61,35 +66,75 @@ it("forgets native Back when a full-screen presentation covers the top card", ()
     options: {},
     render: () => null,
   });
+  const onRootVisibilityChange = vi.fn();
   const onNativePopChange = vi.fn();
+  const stack = (
+    <V5CardStackView
+      {...({
+        state,
+        navigation,
+        descriptors: { home: descriptor(home), thread: descriptor(thread) },
+        describe: () => descriptor(home),
+      } as unknown as V5StackViewProps)}
+      onRootVisibilityChange={onRootVisibilityChange}
+      onNativePopChange={onNativePopChange}
+    />
+  );
   const root = createRoot(document.createElement("div"));
-  try {
-    act(() =>
-      root.render(
-        <V5CardStackView
-          {...({
-            state,
-            navigation,
-            descriptors: { home: descriptor(home), thread: descriptor(thread) },
-            describe: () => descriptor(home),
-          } as unknown as V5StackViewProps)}
-          onNativePopChange={onNativePopChange}
-        />,
+  act(() =>
+    root.render(
+      tabActive === undefined ? (
+        stack
+      ) : (
+        <NativeWorkspaceTabActivityContext value={{ active: tabActive, isActive: () => tabActive }}>
+          {stack}
+        </NativeWorkspaceTabActivityContext>
       ),
-    );
+    ),
+  );
+  return {
+    onRootVisibilityChange,
+    onNativePopChange,
+    [Symbol.dispose]() {
+      act(() => root.unmount());
+      vi.unstubAllGlobals();
+    },
+  };
+}
 
-    // A presentation covers the thread: nothing in the stack appears beneath it.
-    fire("thread", "onWillDisappear");
-    fire("thread", "onDidDisappear");
-    expect(onNativePopChange).toHaveBeenLastCalledWith(null);
+it("forgets native Back when a full-screen presentation covers the top card", () => {
+  using stack = renderThreadStack();
 
-    // Native Back reveals Home, so the thread stays the card being popped.
-    fire("thread", "onWillDisappear");
-    fire("home", "onWillAppear");
-    fire("thread", "onDidDisappear");
-    expect(onNativePopChange).toHaveBeenLastCalledWith("thread");
-  } finally {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
-  }
+  // A presentation covers the thread: nothing in the stack appears beneath it.
+  fire("thread", "onWillDisappear");
+  fire("thread", "onDidDisappear");
+  expect(stack.onNativePopChange).toHaveBeenLastCalledWith(null);
+
+  // Native Back reveals Home, so the thread stays the card being popped.
+  fire("thread", "onWillDisappear");
+  fire("home", "onWillAppear");
+  fire("thread", "onDidDisappear");
+  expect(stack.onNativePopChange).toHaveBeenLastCalledWith("thread");
+});
+
+it("hides the root when a detail card appears, including after a cancelled back swipe", () => {
+  using stack = renderThreadStack(true);
+
+  // Cold-start deep link: Home's initial willAppear arrives before the thread's.
+  fire("home", "onWillAppear");
+  fire("thread", "onWillAppear");
+  expect(stack.onRootVisibilityChange).toHaveBeenLastCalledWith(false);
+
+  fire("home", "onWillAppear");
+  fire("thread", "onDidAppear");
+  expect(stack.onRootVisibilityChange).toHaveBeenLastCalledWith(false);
+});
+
+it("ignores card events from an inactive workspace tab", () => {
+  using stack = renderThreadStack(false);
+
+  fire("home", "onWillAppear");
+  fire("thread", "onWillDisappear");
+  expect(stack.onRootVisibilityChange).not.toHaveBeenCalled();
+  expect(stack.onNativePopChange).not.toHaveBeenCalled();
 });

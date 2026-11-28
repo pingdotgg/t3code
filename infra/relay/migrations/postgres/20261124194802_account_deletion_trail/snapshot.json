@@ -1,0 +1,89 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "0a77840f-76b7-46b8-9df4-14f4a48beeec",
+  "prevIds": ["0538d0fe-4847-4c62-85fb-420aa62709b3"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_account_deletions", "completed_at"],
+      "writes": [
+        "s|col|public.relay_account_deletions.completed_at",
+        "n|col|public.relay_account_deletions.completed_at",
+        "e|col|public.relay_account_deletions.completed_at"
+      ],
+      "reads": ["n|tbl|public.relay_account_deletions", "n|sch|public"]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_account_deletions",
+        "idx_relay_account_deletions_pending"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_account_deletions_pending",
+        "n|idx|public.idx_relay_account_deletions_pending",
+        "e|idx|public.idx_relay_account_deletions_pending",
+        "n|rel|public.idx_relay_account_deletions_pending"
+      ],
+      "reads": [
+        "n|tbl|public.relay_account_deletions",
+        "n|sch|public",
+        "n|col|public.relay_account_deletions.attempts",
+        "n|col|public.relay_account_deletions.requested_at"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "completed_at",
+        "type": "varchar(64)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "idx_relay_account_deletions_pending",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "attempts",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "requested_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"completed_at\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

@@ -1,9 +1,12 @@
+import { msg } from "gt-i18n";
+import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import {
   WS_METHODS,
   PullRequestActivity,
   PullRequestDetail as PullRequestDetailSchema,
   PullRequestPreview,
   PullRequestReviewGuideResult,
+  PullRequestStack,
   PullRequestListResult,
   PullRequestChecks,
   PullRequestDiffResult,
@@ -39,6 +42,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   type AtomCommand,
+  awaitAtomResult,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -65,7 +69,7 @@ export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 /** @public Required to name the error in consumers' inferred pull request results. */
 export class EnvironmentHttpConnectionNotReadyError extends Schema.TaggedError<EnvironmentHttpConnectionNotReadyError>()(
   "EnvironmentHttpConnectionNotReadyError",
-  { message: Schema.String },
+  { message: Schema.String, i18nMessage: Schema.optionalKey(MarkedText) },
 ) {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
@@ -313,17 +317,20 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
 ): C {
   return {
     ...command,
-    run: async (registry, target) => {
-      const edit = editOf(registry, target);
-      if (edit === null) return command.run(registry, target);
-      const edits = pullRequestPendingEditsAtom(target.environmentId);
-      registry.update(edits, (current) => [...current, edit]);
-      try {
-        return await command.run(registry, target);
-      } finally {
-        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
-      }
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        const edit = editOf(registry, target);
+        if (edit === null) return command.run(registry, target);
+        const edits = pullRequestPendingEditsAtom(target.environmentId);
+        return Effect.acquireUseRelease(
+          Effect.sync(() => registry.update(edits, (current) => [...current, edit])),
+          () => command.run(registry, target),
+          () =>
+            Effect.sync(() =>
+              registry.update(edits, (current) => current.filter((entry) => entry !== edit)),
+            ),
+        );
+      }),
   } satisfies AtomCommand<Target, A, E>;
 }
 
@@ -776,14 +783,31 @@ export function createPullRequestStackAtomFamily<R, E>(
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   const routedRequest = createPullRequestRouter();
-  return createEnvironmentRpcQueryAtomFamily(runtime, {
+  const hostAnswers = Atom.family((_key: string) =>
+    Atom.make(false).pipe(Atom.setIdleTTL(5 * 60_000)),
+  );
+  const answeredKey = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => JSON.stringify([target.environmentId, target.input]);
+  const stack = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:stack",
+    // A saved answer paints at once; `answered` stays false until the host answers.
+    persistence: persistQuery(Schema.NullOr(PullRequestStack)),
     tag: WS_METHODS.pullRequestsStack,
     execute: (input) => routedRequest(WS_METHODS.pullRequestsStack, input),
     staleTimeMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    onAnswer: (target, _value, registry) =>
+      Effect.sync(() => registry.set(hostAnswers(answeredKey(target)), true)),
   });
+  /** Whether this session has the host's own answer, which is what merging one layer alone needs. */
+  const answered = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => hostAnswers(answeredKey(target));
+  return Object.assign(stack, { answered });
 }
 
 export function pullRequestDetailToVcsStatus(
@@ -1064,7 +1088,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     const prepared = yield* SubscriptionRef.get(supervisor.prepared);
     if (Option.isNone(prepared)) {
       return yield* new EnvironmentHttpConnectionNotReadyError({
-        message: "The environment HTTP connection is not ready.",
+        ...translatableMessage(msg("The environment HTTP connection is not ready.")),
       });
     }
     return yield* loader.load(prepared.value, input);
@@ -1109,7 +1133,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
           }),
       });
-      preparedInput = { ...actionInput, mergeMethod };
+      // Without a head the caller showed, pin to the one this read judged mergeable.
+      preparedInput = {
+        ...actionInput,
+        mergeMethod,
+        ...(actionInput.expectedHeadSha === undefined && detail.headSha !== undefined
+          ? { expectedHeadSha: detail.headSha }
+          : {}),
+      };
     }
     return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
       ...preparedInput,
@@ -1274,7 +1305,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:diff",
       persistence: persistQuery(PullRequestDiffResult),
       staleTimeMs: 60_000,
-      execute: loadDiff,
+      // A guide tied to a commit must not reuse another push's cached pages.
+      execute: ({
+        cacheHeadSha: _cacheHeadSha,
+        ...input
+      }: PullRequestDiffInput & {
+        readonly cacheHeadSha?: string;
+      }) => loadDiff(input),
     }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",
@@ -1337,21 +1374,34 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         execute: runAction,
         onStart: (_target, registry) => readsInFlight(registry),
         // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
-        onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) =>
-          applyActionReply(
+        onSuccess: Effect.fnUntraced(function* (
+          { environmentId, input },
+          registry,
+          reply,
+          readsBeforeSend: ReadonlySet<object> | undefined,
+        ) {
+          const reference = pullRequestReference(input);
+          yield* applyActionReply(
             registry,
             environmentId,
-            pullRequestReference(input),
+            reference,
             reply,
             readsBeforeSend ?? new Set(),
-          ).pipe(
-            // The re-read a bare reply starts would otherwise show the old state until it answers.
-            Effect.andThen(
-              reply === undefined
-                ? acceptEdit(registry, environmentId, actionEdit(input), true)
-                : Effect.void,
-            ),
-          ),
+          );
+          // The re-read a bare reply starts would otherwise show the old state until it answers.
+          if (reply === undefined)
+            yield* acceptEdit(registry, environmentId, actionEdit(input), true);
+          if (input.action !== "approve-workflows") return;
+          const query = checks({ environmentId, input: reference });
+          if (!registry.getNodes().get(query)?.listeners.size) return;
+          if (
+            Option.getOrUndefined(loadedValue<PullRequestChecks | null>(registry, query)) === null
+          )
+            return;
+          // A pending read may have started before GitHub applied the approval.
+          if (registry.get(query).waiting) registry.refresh(query);
+          yield* awaitAtomResult(registry, query, { refresh: true }).pipe(Effect.ignore);
+        }),
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),

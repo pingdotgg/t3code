@@ -209,6 +209,7 @@ const makeUnsafe = <K, A, E>(options: {
  * - `capacity`: The maximum number of entries, including idle entries. A new key
  *   fails with `ExceededCapacityError` when full; existing entries are not evicted.
  * - `idleTimeToLive`: When the reference count reaches zero, the resource will be released after this duration.
+ *   Idle time, including `touch`, is measured on the `Clock` of the context the map is made in.
  *
  * **Example** (Creating a reference-counted map)
  *
@@ -490,8 +491,12 @@ const closeEntry = <A, E>(entry: State.Entry<A, E>) =>
     ? Fiber.interrupt(entry.fiber).pipe(Effect.andThen(Scope.close(entry.scope, Exit.void)))
     : Scope.close(entry.scope, Exit.void)
 
+const resetExpiresAt = <A, E>(entry: State.Entry<A, E>, clock: Clock) => {
+  entry.expiresAt = clock.currentTimeMillisUnsafe() + Duration.toMillis(entry.idleTimeToLive)
+}
+
 const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>) =>
-  Effect.withFiber((fiber) => {
+  Effect.suspend(() => {
     entry.refCount--
     if (entry.refCount > 0) {
       return Effect.void
@@ -509,8 +514,9 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
       return Effect.void
     }
 
-    const clock = fiber.getRef(Clock)
-    entry.expiresAt = clock.currentTimeMillisUnsafe() + Duration.toMillis(entry.idleTimeToLive)
+    // The idle timer belongs to the map, not to the last borrower.
+    const clock = Context.get(self.context, Clock)
+    resetExpiresAt(entry, clock)
     if (entry.fiber) return Effect.void
 
     entry.fiber = Effect.uninterruptibleMask(function loop(restore): Effect.Effect<void> {
@@ -531,7 +537,7 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
       Effect.ensuring(Effect.sync(() => {
         entry.fiber = undefined
       })),
-      Effect.runForkWith(fiber.context),
+      Effect.runForkWith(self.context),
       Fiber.runIn(self.scope)
     )
     return Effect.void
@@ -735,16 +741,10 @@ export const touch: {
 } = dual(
   2,
   <K, A, E>(self: RcMap<K, A, E>, key: K) =>
-    Effect.clockWith((clock) => {
-      if (self.state._tag === "Closed") {
-        return Effect.void
-      }
+    Effect.sync(() => {
+      if (self.state._tag === "Closed") return
       const o = MutableHashMap.get(self.state.map, key)
-      if (o._tag === "None" || Duration.isZero(o.value.idleTimeToLive)) {
-        return Effect.void
-      }
-      const entry = o.value
-      entry.expiresAt = clock.currentTimeMillisUnsafe() + Duration.toMillis(entry.idleTimeToLive)
-      return Effect.void
+      if (o._tag === "None" || Duration.isZero(o.value.idleTimeToLive)) return
+      resetExpiresAt(o.value, Context.get(self.context, Clock))
     })
 )

@@ -1,0 +1,425 @@
+{
+  "case": "markdown_text with bot mention, channel token, tokens inside inline code and fenced code, &lt;, bold, link; read back",
+  "recordedAt": "2026-11-12T18:43:24.731Z",
+  "calls": [
+    {
+      "method": "chat.postMessage",
+      "encoding": "json",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "markdown_text": "Fixture mentions: hi <@U0CCLMD4S1L> in <#C0CH1LGJ4F3>.\nInline code: `<@U0CCLMD4S1L> <#C0CH1LGJ4F3>`\n```\nfenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>\n```\nEscaped: &lt;not a tag&gt; and a raw < sign, **bold** and [x](https://effect.website)",
+        "unfurl_links": false,
+        "unfurl_media": false
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "channel": "C0CH1LGJ4F3",
+        "ts": "1794509003.143939",
+        "message": {
+          "user": "U0CCLMD4S1L",
+          "type": "message",
+          "ts": "1794509003.143939",
+          "bot_id": "B0CCQH77VA5",
+          "app_id": "A0CCHBHDK7X",
+          "text": "Fixture mentions: hi <@U0CCLMD4S1L> in <#C0CH1LGJ4F3>.\nInline code: `<@U0CCLMD4S1L> <#C0CH1LGJ4F3>`\n```fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>```\nEscaped: &lt;not a tag&gt; and a raw &lt; sign, *bold* and <https://effect.website|x>",
+          "team": "T05479Z6JBW",
+          "bot_profile": {
+            "id": "B0CCQH77VA5",
+            "deleted": false,
+            "name": "Janitor",
+            "updated": 1793135255,
+            "app_id": "A0CCHBHDK7X",
+            "user_id": "U0CCLMD4S1L",
+            "icons": {
+              "image_36": "https://scrubbed.invalid/image_36",
+              "image_48": "https://scrubbed.invalid/image_48",
+              "image_72": "https://scrubbed.invalid/image_72"
+            },
+            "team_id": "T05479Z6JBW"
+          },
+          "blocks": [
+            {
+              "type": "rich_text",
+              "block_id": "UfdV4+",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "Fixture mentions: hi "
+                    },
+                    {
+                      "type": "user",
+                      "user_id": "U0CCLMD4S1L"
+                    },
+                    {
+                      "type": "text",
+                      "text": " in "
+                    },
+                    {
+                      "type": "channel",
+                      "channel_id": "C0CH1LGJ4F3"
+                    },
+                    {
+                      "type": "text",
+                      "text": "."
+                    },
+                    {
+                      "type": "text",
+                      "text": "\n"
+                    },
+                    {
+                      "type": "text",
+                      "text": "Inline code: "
+                    },
+                    {
+                      "type": "text",
+                      "text": "<@U0CCLMD4S1L> <#C0CH1LGJ4F3>",
+                      "style": {
+                        "code": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "rich_text_preformatted",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>"
+                    }
+                  ]
+                },
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "Escaped: "
+                    },
+                    {
+                      "type": "text",
+                      "text": "<"
+                    },
+                    {
+                      "type": "text",
+                      "text": "not a tag"
+                    },
+                    {
+                      "type": "text",
+                      "text": ">"
+                    },
+                    {
+                      "type": "text",
+                      "text": " and a raw < sign, "
+                    },
+                    {
+                      "type": "text",
+                      "text": "bold",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "text": " and "
+                    },
+                    {
+                      "type": "link",
+                      "url": "https://effect.website",
+                      "text": "x"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "conversations.replies",
+      "encoding": "form",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "ts": "1794509003.143939",
+        "limit": 10
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "messages": [
+          {
+            "user": "U0CCLMD4S1L",
+            "type": "message",
+            "ts": "1794509003.143939",
+            "bot_id": "B0CCQH77VA5",
+            "app_id": "A0CCHBHDK7X",
+            "text": "Fixture mentions: hi <@U0CCLMD4S1L> in <#C0CH1LGJ4F3>.\nInline code: `<@U0CCLMD4S1L> <#C0CH1LGJ4F3>`\n```fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>```\nEscaped: &lt;not a tag&gt; and a raw &lt; sign, *bold* and <https://effect.website|x>",
+            "team": "T05479Z6JBW",
+            "bot_profile": {
+              "id": "B0CCQH77VA5",
+              "deleted": false,
+              "name": "Janitor",
+              "updated": 1793135255,
+              "app_id": "A0CCHBHDK7X",
+              "user_id": "U0CCLMD4S1L",
+              "icons": {
+                "image_36": "https://scrubbed.invalid/image_36",
+                "image_48": "https://scrubbed.invalid/image_48",
+                "image_72": "https://scrubbed.invalid/image_72"
+              },
+              "team_id": "T05479Z6JBW"
+            },
+            "blocks": [
+              {
+                "type": "rich_text",
+                "block_id": "UfdV4+",
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Fixture mentions: hi "
+                      },
+                      {
+                        "type": "user",
+                        "user_id": "U0CCLMD4S1L"
+                      },
+                      {
+                        "type": "text",
+                        "text": " in "
+                      },
+                      {
+                        "type": "channel",
+                        "channel_id": "C0CH1LGJ4F3"
+                      },
+                      {
+                        "type": "text",
+                        "text": "."
+                      },
+                      {
+                        "type": "text",
+                        "text": "\n"
+                      },
+                      {
+                        "type": "text",
+                        "text": "Inline code: "
+                      },
+                      {
+                        "type": "text",
+                        "text": "<@U0CCLMD4S1L> <#C0CH1LGJ4F3>",
+                        "style": {
+                          "code": true
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rich_text_preformatted",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Escaped: "
+                      },
+                      {
+                        "type": "text",
+                        "text": "<"
+                      },
+                      {
+                        "type": "text",
+                        "text": "not a tag"
+                      },
+                      {
+                        "type": "text",
+                        "text": ">"
+                      },
+                      {
+                        "type": "text",
+                        "text": " and a raw < sign, "
+                      },
+                      {
+                        "type": "text",
+                        "text": "bold",
+                        "style": {
+                          "bold": true
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "text": " and "
+                      },
+                      {
+                        "type": "link",
+                        "url": "https://effect.website",
+                        "text": "x"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "has_more": false
+      }
+    },
+    {
+      "method": "conversations.history",
+      "encoding": "form",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "latest": "1794509003.143939",
+        "inclusive": true,
+        "limit": 1
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "latest": "1794509003.143939",
+        "messages": [
+          {
+            "user": "U0CCLMD4S1L",
+            "type": "message",
+            "ts": "1794509003.143939",
+            "bot_id": "B0CCQH77VA5",
+            "app_id": "A0CCHBHDK7X",
+            "text": "Fixture mentions: hi <@U0CCLMD4S1L> in <#C0CH1LGJ4F3>.\nInline code: `<@U0CCLMD4S1L> <#C0CH1LGJ4F3>`\n```fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>```\nEscaped: &lt;not a tag&gt; and a raw &lt; sign, *bold* and <https://effect.website|x>",
+            "team": "T05479Z6JBW",
+            "bot_profile": {
+              "id": "B0CCQH77VA5",
+              "deleted": false,
+              "name": "Janitor",
+              "updated": 1793135255,
+              "app_id": "A0CCHBHDK7X",
+              "user_id": "U0CCLMD4S1L",
+              "icons": {
+                "image_36": "https://scrubbed.invalid/image_36",
+                "image_48": "https://scrubbed.invalid/image_48",
+                "image_72": "https://scrubbed.invalid/image_72"
+              },
+              "team_id": "T05479Z6JBW"
+            },
+            "blocks": [
+              {
+                "type": "rich_text",
+                "block_id": "UfdV4+",
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Fixture mentions: hi "
+                      },
+                      {
+                        "type": "user",
+                        "user_id": "U0CCLMD4S1L"
+                      },
+                      {
+                        "type": "text",
+                        "text": " in "
+                      },
+                      {
+                        "type": "channel",
+                        "channel_id": "C0CH1LGJ4F3"
+                      },
+                      {
+                        "type": "text",
+                        "text": "."
+                      },
+                      {
+                        "type": "text",
+                        "text": "\n"
+                      },
+                      {
+                        "type": "text",
+                        "text": "Inline code: "
+                      },
+                      {
+                        "type": "text",
+                        "text": "<@U0CCLMD4S1L> <#C0CH1LGJ4F3>",
+                        "style": {
+                          "code": true
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rich_text_preformatted",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "fenced <@U0CCLMD4S1L> <#C0CH1LGJ4F3>"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Escaped: "
+                      },
+                      {
+                        "type": "text",
+                        "text": "<"
+                      },
+                      {
+                        "type": "text",
+                        "text": "not a tag"
+                      },
+                      {
+                        "type": "text",
+                        "text": ">"
+                      },
+                      {
+                        "type": "text",
+                        "text": " and a raw < sign, "
+                      },
+                      {
+                        "type": "text",
+                        "text": "bold",
+                        "style": {
+                          "bold": true
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "text": " and "
+                      },
+                      {
+                        "type": "link",
+                        "url": "https://effect.website",
+                        "text": "x"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "has_more": true,
+        "pin_count": 0,
+        "channel_actions_ts": null,
+        "channel_actions_count": 0,
+        "response_metadata": {
+          "next_cursor": "bmV4dF90czoxNzk0NTA5MDAwMzUyNzg5"
+        }
+      }
+    }
+  ]
+}

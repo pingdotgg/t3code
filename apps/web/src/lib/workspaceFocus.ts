@@ -298,6 +298,8 @@ export function createWorkspaceFocusController(doc: Document) {
       if (
         doc.activeElement !== doc.body ||
         !doc.hasFocus() ||
+        // Scrolling swaps these out; focusing elsewhere would pull a screen reader's cursor along.
+        lost.closest("[inert][data-workspace-scroll-swap]") ||
         (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
       )
         return;

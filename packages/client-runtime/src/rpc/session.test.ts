@@ -8,6 +8,7 @@ import {
   ServerProvider,
   WS_METHODS,
   UsageLimitSourceId,
+  CALM_HOST_PRESSURE,
 } from "@t3tools/contracts";
 import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
@@ -291,6 +292,59 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect.each([
+    { established: false, closedWith: { _tag: "ConnectionBlockedError", reason: "unsupported" } },
+    {
+      established: true,
+      closedWith: { _tag: "ConnectionTransientError", reason: "remote-unavailable" },
+    },
+  ])(
+    "ends the session when config fails to decode, after readiness=$established",
+    ({ established, closedWith }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* session.ready.pipe(Effect.exit, Effect.forkChild);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        if (established) {
+          yield* completeInitialConfig(socket);
+          yield* Fiber.join(ready);
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+        } else {
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+          expect(yield* Fiber.join(ready)).toMatchObject({
+            _tag: "Failure",
+            cause: { reasons: [{ _tag: "Fail", error: { reason: "unsupported" } }] },
+          });
+        }
+
+        expect(yield* Effect.flip(session.closed)).toMatchObject({ ...closedWith, hop: "server" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fails readiness with the disconnect when the socket closes before its first config",
+    () =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(Effect.flip(session.ready));
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* awaitRequest(socket);
+        socket.close(1012, "service restart");
+
+        for (const error of [yield* Fiber.join(ready), yield* Effect.flip(session.closed)]) {
+          expect(error).toMatchObject({
+            _tag: "ConnectionTransientError",
+            reason: "transport",
+            detail: "Test environment disconnected.",
+          });
+        }
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -396,6 +450,26 @@ describe("RpcSessionFactory", () => {
       socket.serverMessage(encodeJson({ _tag: "Pong" }));
 
       expect(yield* session.inboundFrames).toBe(before + 1);
+    }),
+  );
+
+  it.effect("awaits a reply from a request until the next inbound frame", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      expect(yield* session.awaitingReply).toBe(false);
+
+      yield* Effect.forkChild(session.probe);
+      yield* awaitRequest(socket, 1);
+      expect(yield* session.awaitingReply).toBe(true);
+
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+      expect(yield* session.awaitingReply).toBe(false);
     }),
   );
 
@@ -576,7 +650,7 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  it.effect("replays theme updates and deletion as authoritative events", () =>
+  it.effect("replays theme updates, deletion and memory pressure as authoritative events", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory({ environmentThemes: true });
       const session = yield* factory.connect(PREPARED);
@@ -611,12 +685,17 @@ describe("RpcSessionFactory", () => {
         Stream.mapEffect((event) =>
           Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
         ),
-        Stream.take(4),
+        Stream.take(5),
         Stream.runCollect,
         Effect.forkChild,
       );
       yield* Deferred.await(subscriberStarted);
       yield* publishConfigEvents(socket, [
+        {
+          version: 1,
+          type: "hostPressureUpdated",
+          payload: { ...CALM_HOST_PRESSURE, memory: "severe" },
+        },
         {
           version: 1,
           type: "environmentThemesUpdated",
@@ -637,18 +716,24 @@ describe("RpcSessionFactory", () => {
       const liveEvents = Array.from(yield* Fiber.join(subscriber));
       expect(liveEvents.map((event) => event.type)).toEqual([
         "snapshot",
+        "hostPressureUpdated",
         "environmentThemesUpdated",
         "environmentThemesUpdated",
         "environmentThemesUpdated",
       ]);
-      expect(liveEvents[2]).toMatchObject({ payload: { themes: replacementThemes } });
+      expect(liveEvents[3]).toMatchObject({ payload: { themes: replacementThemes } });
 
+      // A late subscriber also needs the live pressure, which snapshots never carry.
       const replay = Array.from(
         yield* session
           .subscribeServerConfig({ environmentThemes: true })
-          .pipe(Stream.take(2), Stream.runCollect),
+          .pipe(Stream.take(3), Stream.runCollect),
       );
-      expect(replay.map((event) => event.type)).toEqual(["snapshot", "environmentThemesUpdated"]);
+      expect(replay.map((event) => event.type)).toEqual([
+        "snapshot",
+        "environmentThemesUpdated",
+        "hostPressureUpdated",
+      ]);
       expect(replay[1]).toMatchObject({ payload: { themes: [] } });
 
       let projection = applyServerConfigProjection(Option.none(), {
@@ -819,6 +904,33 @@ describe("RpcSessionFactory", () => {
       if (Exit.isFailure(closed)) {
         expect(Cause.hasDies(closed.cause)).toBe(true);
       }
+    }),
+  );
+
+  it.effect("closes the session when the server interrupts the config stream", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const request = yield* awaitRequest(socket);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: { _tag: "Failure", cause: [{ _tag: "Interrupt", fiberId: null }] },
+        }),
+      );
+
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
+        reason: "remote-unavailable",
+        detail: "Test environment config subscription ended.",
+      });
     }),
   );
 
@@ -999,7 +1111,8 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(readyFiber);
       expect(error).toMatchObject({
         reason: "configuration",
-        message: "Connected environment environment-2 does not match environment-1.",
+        message:
+          "This address now runs a different T3 Code install (environment-2, not environment-1). Remove this connection and add it again.",
       });
       expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
       expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");
@@ -1068,6 +1181,49 @@ describe("RpcSessionFactory", () => {
       yield* connectWith({ ...ENCODED_SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" });
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
       yield* connectWith(ENCODED_SERVER_CONFIG);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
+    }),
+  );
+
+  it.effect("refreshes the host clock when a liveness probe returns serverTime", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const ready = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        serverTime: "1970-01-01T01:00:00.000Z",
+      });
+      yield* Fiber.join(ready);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const legacyProbe = yield* Effect.forkChild(session.probe);
+      const legacyRequest = yield* awaitRequest(socket, 1);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: legacyRequest.id,
+          exit: { _tag: "Success", value: {} },
+        }),
+      );
+      yield* Fiber.join(legacyProbe);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const probe = yield* Effect.forkChild(session.probe);
+      const probeRequest = yield* awaitRequest(socket, 2);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: probeRequest.id,
+          exit: {
+            _tag: "Success",
+            value: { serverTime: "1970-01-01T00:00:00.000Z" },
+          },
+        }),
+      );
+      yield* Fiber.join(probe);
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
     }),
   );

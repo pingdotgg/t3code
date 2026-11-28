@@ -61,7 +61,7 @@ describe("OtlpMetrics", () => {
       )
     }))
 
-  it.effect("does not regress delta checkpoints when exports complete out of order", () =>
+  it.effect("serializes overlapping flushes and sends a fresh delta snapshot", () =>
     Effect.scoped(Effect.gen(function*() {
       const bodies = yield* Ref.make<ReadonlyArray<OtlpExportRequest>>([])
       const started = yield* Effect.forEach([0, 1], () => Deferred.make<void>())
@@ -102,18 +102,22 @@ describe("OtlpMetrics", () => {
         yield* TestClock.adjust("1 second")
         yield* Metric.update(counter, 1)
         const second = yield* Effect.forkChild(flusher.flush)
-        yield* Deferred.await(started[1])
+        yield* Effect.yieldNow
+        assert.isFalse(yield* Deferred.isDone(started[1]))
 
-        yield* Deferred.succeed(releases[1], undefined)
-        yield* Fiber.join(second)
         yield* Deferred.succeed(releases[0], undefined)
         yield* Fiber.join(first)
+        yield* Deferred.await(started[1])
+        yield* Deferred.succeed(releases[1], undefined)
+        yield* Fiber.join(second)
 
         yield* TestClock.adjust("1 second")
         yield* flusher.flush
       }).pipe(Effect.provide(layer), Effect.provideService(Metric.MetricRegistry, new Map()))
 
       const requests = yield* Ref.get(bodies)
+      assert.strictEqual(findMetric(requests[0], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 1)
+      assert.strictEqual(findMetric(requests[1], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 1)
       assert.strictEqual(findMetric(requests[2], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 0)
     })))
 
@@ -443,11 +447,15 @@ describe("OtlpMetrics", () => {
     Effect.gen(function*() {
       yield* Metric.update(Metric.timer("unit_timer_test", { boundaries: [10, 100] }), Duration.millis(5))
       yield* Metric.update(Metric.gauge("unit_custom_test", { attributes: { unit: "{request}" } }), 1)
+      yield* Metric.update(Metric.gauge("unit_dimensionless_test", { attributes: { unit: "1" } }), 1)
+      yield* Metric.update(Metric.gauge("unit_unspecified_test"), 1)
       yield* triggerExport
 
       const [request] = yield* MockHttpClient.requests
       assert.strictEqual(findMetric(request, "unit_timer_test")?.unit, "ms")
       assert.strictEqual(findMetric(request, "unit_custom_test")?.unit, "{request}")
+      assert.strictEqual(findMetric(request, "unit_dimensionless_test")?.unit, "1")
+      assert.strictEqual(findMetric(request, "unit_unspecified_test")?.unit, "")
     }).pipe(Effect.provide(TestLayerCumulative), Effect.provideService(Metric.MetricRegistry, new Map())))
 
   it.effect("keeps bigint precision beyond 2^53", () =>

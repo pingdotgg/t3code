@@ -1,14 +1,18 @@
 import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  endpointDefaultPreferenceKey,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
+  resolveCurrentOriginPairingUrl,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+import { formatDesktopSshTarget } from "./EnvironmentRow";
 
 describe("togglePairingScopeSelection", () => {
   it.each([
@@ -50,6 +54,34 @@ describe("parseManualDesktopSshTarget", () => {
     expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
       "SSH port must be between 1 and 65535.",
     );
+  });
+});
+
+describe("formatDesktopSshTarget", () => {
+  const target = { alias: "devbox", username: "root", hostname: "::1", port: 2222 };
+
+  it("brackets an IPv6 host when a port is shown", () => {
+    expect(formatDesktopSshTarget(target)).toBe("root@[::1]:2222");
+    expect(
+      parseManualDesktopSshTarget({ host: formatDesktopSshTarget(target), username: "", port: "" }),
+    ).toMatchObject({ username: "root", hostname: "::1", port: 2222 });
+  });
+
+  it("leaves IPv6 without a port and named hosts unchanged", () => {
+    expect(formatDesktopSshTarget({ ...target, username: null, port: null })).toBe("::1");
+    expect(formatDesktopSshTarget({ ...target, hostname: "devbox" })).toBe("root@devbox:2222");
+  });
+});
+
+describe("resolveCurrentOriginPairingUrl", () => {
+  it.each([
+    ["t3code://app/settings/connections", null],
+    ["http://127.0.0.1:3774/settings", null],
+    ["http://localhost:5173/", null],
+    ["https://host.example.ts.net/settings", "https://host.example.ts.net/pair#token=abc"],
+    ["http://192.168.1.20:3773/", "http://192.168.1.20:3773/pair#token=abc"],
+  ])("from %s", (href, expected) => {
+    expect(resolveCurrentOriginPairingUrl("abc", href)).toBe(expected);
   });
 });
 
@@ -152,6 +184,24 @@ describe("selectQrEndpointOption", () => {
   it("skips non-QR-shareable options in the fallback so the panel never opens on loopback", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
+    );
+  });
+});
+
+describe("endpointDefaultPreferenceKey", () => {
+  it("keeps two VPN addresses apart so setting one default does not mark the other", () => {
+    const vpnEndpoint = (address: string) =>
+      createAdvertisedEndpoint({
+        id: `vpn-ip:http://${address}:3773`,
+        label: "VPN IP",
+        provider: { id: "vpn", label: "VPN", kind: "private-network", isAddon: true },
+        httpBaseUrl: `http://${address}:3773`,
+        reachability: "private-network",
+        source: "desktop-addon",
+      });
+
+    expect(endpointDefaultPreferenceKey(vpnEndpoint("100.81.22.33"))).not.toBe(
+      endpointDefaultPreferenceKey(vpnEndpoint("100.82.22.33")),
     );
   });
 });

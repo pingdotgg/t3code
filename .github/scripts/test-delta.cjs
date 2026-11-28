@@ -70,7 +70,7 @@ function render(delta) {
   }
   lines.push(
     "",
-    "Keep tests that would fail for a real reason, and test logic below the UI where it can be. See [Testing](https://github.com/pingdotgg/t3code/blob/main/docs/internals/testing.md).",
+    "Keep tests that would fail for a real reason, and test logic below the UI where it can be. See [Testing](https://github.com/pingdotgg/t3code/blob/main/docs/internals/15_testing.md).",
   );
   return lines.join("\n");
 }

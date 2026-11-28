@@ -3,13 +3,16 @@ import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access"
 import type { AtomCommandConcurrency } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import type { Effect } from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 
-type Result = { _tag: "Success"; value: DeviceDetail } | { _tag: "Failure"; cause: unknown };
+type Result =
+  | { _tag: "Success"; value: DeviceDetail }
+  | { _tag: "Failure"; cause: Cause.Cause<Error> };
 const { read, action, subscribe } = vi.hoisted(() => ({
   read: vi.fn<() => Promise<Result>>(),
   action: vi.fn<() => Promise<Result>>(),
@@ -19,6 +22,7 @@ const { read, action, subscribe } = vi.hoisted(() => ({
 // Stubs only the transport; the device atoms' real scheduler and lanes decide ordering.
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   const runtime = await original();
+  const Effects = await import("effect/Effect");
   const createEnvironmentRpcCommand = (
     _runtime: unknown,
     options: {
@@ -28,19 +32,24 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
           registry: AtomRegistry.AtomRegistry,
           concurrency: AtomCommandConcurrency<unknown>,
           input: unknown,
-          execute: () => Promise<Result>,
-        ) => Promise<Result>;
+          effect: Effect<DeviceDetail, Error>,
+        ) => Effect<DeviceDetail, Error>;
       };
       readonly concurrency?: AtomCommandConcurrency<unknown>;
     },
   ) => {
     const send = options.label === "environment-data:device:detail" ? read : action;
+    const sent = Effects.promise(() => send()).pipe(
+      Effects.flatMap((result) =>
+        result._tag === "Success" ? Effects.succeed(result.value) : Effects.failCause(result.cause),
+      ),
+    );
     return {
       label: options.label,
       run: (registry: AtomRegistry.AtomRegistry, input: unknown) =>
         options.scheduler && options.concurrency
-          ? options.scheduler.schedule(registry, options.concurrency, input, () => send())
-          : send(),
+          ? options.scheduler.schedule(registry, options.concurrency, input, sent)
+          : sent,
     };
   };
   return { ...runtime, createEnvironmentRpcCommand: createEnvironmentRpcCommand as never };

@@ -68,13 +68,17 @@ const ForgejoUserSearch = Schema.Struct({
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
-    "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+    "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`gt` 2.0 or later) from https://gitea.com/gitea/cli to browse Forgejo pull requests.",
   unauthenticated:
-    "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+    "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `gt auth login`. A configured fj account must be repaired with fj.",
 };
 
 const repoPath = (input: ProviderRepositoryRef) =>
   `repos/${input.repository.split("/").map(encodeURIComponent).join("/")}`;
+const orgPath = (input: ProviderRepositoryRef) =>
+  `orgs/${encodeURIComponent(input.repository.split("/").at(-2) ?? "")}`;
+const isNoOrg = (e: PullRequestProviderError) =>
+  e.reason === "not-found" || (isForgejoCliError(e.cause) && e.cause.reason === "forbidden");
 const pullPath = (input: ProviderRepositoryRef & { readonly number: number }) =>
   `${repoPath(input)}/pulls/${input.number}`;
 const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =>
@@ -121,7 +125,7 @@ export const make = Effect.gen(function* () {
             detail: error.detail,
             cause: error,
             reason:
-              error.reason === "missing-cli"
+              error.reason === "missing-cli" || error.reason === "wrong-cli"
                 ? "missing-tool"
                 : error.reason === "authentication"
                   ? "unauthenticated"
@@ -282,6 +286,21 @@ export const make = Effect.gen(function* () {
     );
     return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
   });
+  const readLabels = Effect.fn("ForgejoPullRequestProvider.readLabels")(function* (
+    input: ProviderRepositoryRef,
+  ) {
+    // A personal owner answers 404 and a token without the organization scope 403.
+    const orgLabels = page({ ...input, path: `${orgPath(input)}/labels` }, ForgejoLabel).pipe(
+      Effect.catchIf(isNoOrg, () => Effect.succeed({ items: [], truncated: false })),
+    );
+    const [repo, org] = yield* Effect.all(
+      [page({ ...input, path: `${repoPath(input)}/labels` }, ForgejoLabel), orgLabels],
+      { concurrency: 2 },
+    );
+    const all = [...repo.items, ...org.items];
+    const items = all.filter((label, i) => all.findIndex((x) => x.name === label.name) === i);
+    return { items, all, truncated: repo.truncated || org.truncated };
+  });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
   const provider: PullRequestProviderApi = {
@@ -302,11 +321,20 @@ export const make = Effect.gen(function* () {
         // asked for. The service narrows the rest.
         const single = filters?.labels?.find((group) => group.length === 1)?.[0];
         if (single !== undefined) {
-          const labels = yield* page({ ...input, path: `${repoPath(input)}/labels` }, ForgejoLabel);
-          const label = labels.items.find(
-            (candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase(),
+          // The filter is only a narrowing hint, so an unreadable label list just skips it.
+          const labels = yield* Effect.catchIf(
+            readLabels(input),
+            (error) => error.reason !== "unauthenticated",
+            () => Effect.void,
           );
-          if (label !== undefined) params.set("labels", String(label.id));
+          const ids = new Set(
+            (labels?.all ?? [])
+              .filter((candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase())
+              .map((candidate) => candidate.id),
+          );
+          // A name shared by a repository and an organization label is ambiguous: filter by neither.
+          const [id] = ids;
+          if (ids.size === 1 && id !== undefined) params.set("labels", String(id));
         }
         if (filters?.author !== undefined)
           params.set("poster", resolvePullRequestAuthorFilter(filters.author, input.viewer));
@@ -368,6 +396,8 @@ export const make = Effect.gen(function* () {
       return {
         ...forgejoChangeRequest(pr),
         headSha: pr.head.sha,
+        mergeCommitSha: pr.merge_commit_sha || null,
+        mergedBy: forgejoActor(pr.merged_by),
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
         reviewers: (pr.requested_reviewers ?? []).flatMap((user) => {
@@ -550,6 +580,9 @@ export const make = Effect.gen(function* () {
                     ? "fast-forward-only"
                     : (input.mergeMethod ?? "merge"),
                 delete_branch_after_merge: deleteBranch,
+                ...(input.expectedHeadSha === undefined
+                  ? {}
+                  : { head_commit_id: input.expectedHeadSha }),
               },
             }).pipe(
               Effect.catchTags({
@@ -620,7 +653,7 @@ export const make = Effect.gen(function* () {
                 ? "REQUEST_CHANGES"
                 : "COMMENT",
           body: input.body,
-          commit_id: pr.head.sha,
+          commit_id: input.expectedHeadSha ?? pr.head.sha,
           comments: input.comments.map((comment) => {
             const position = comment.position;
             const old =
@@ -694,7 +727,7 @@ export const make = Effect.gen(function* () {
     ),
     listRepositoryLabels: Effect.fn("ForgejoPullRequestProvider.listRepositoryLabels")(
       function* (input) {
-        const labels = yield* page({ ...input, path: `${repoPath(input)}/labels` }, ForgejoLabel);
+        const labels = yield* readLabels(input);
         return {
           items: labels.items.map((label) => ({ name: label.name, color: label.color ?? null })),
           truncated: labels.truncated,

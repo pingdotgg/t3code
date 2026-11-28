@@ -2,21 +2,25 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
+  HTML_RENDER_NATIVE_OPEN_IMAGE_SCRIPT,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
+  readHtmlRenderImageRequest,
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
+import { T, useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
@@ -55,22 +59,37 @@ type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
 
-function readOverflowMessage(data: string): Overflow | null {
+function readOverflowMessage(message: unknown): Overflow | null {
+  return typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === OVERFLOW_MESSAGE_TYPE &&
+    "x" in message &&
+    typeof message.x === "boolean" &&
+    "y" in message &&
+    typeof message.y === "boolean"
+    ? { x: message.x, y: message.y }
+    : null;
+}
+
+function parseMessage(data: string): unknown {
   try {
-    const message: unknown = JSON.parse(data);
-    return typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === OVERFLOW_MESSAGE_TYPE &&
-      "x" in message &&
-      typeof message.x === "boolean" &&
-      "y" in message &&
-      typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
-      : null;
+    return JSON.parse(data);
   } catch {
     return null;
   }
+}
+
+function imagePreviewSource(message: unknown): FilePreviewSource | null {
+  const request = readHtmlRenderImageRequest(message);
+  if (request === undefined) return null;
+  const gallery = request.images.map((image) => ({
+    kind: "image" as const,
+    uri: image.src,
+    name: image.name,
+  }));
+  const selected = gallery[request.index];
+  return selected ? { ...selected, gallery } : null;
 }
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
@@ -82,10 +101,12 @@ export function HtmlRenderWebView(props: {
   readonly onLoadError?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
+  const openLink = useOpenPullRequest();
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
+  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
@@ -143,7 +164,7 @@ export function HtmlRenderWebView(props: {
         }
         onOpenWindow={(event) => {
           const url = event.nativeEvent.targetUrl;
-          if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
+          if (/^https?:/i.test(url)) void openLink(url);
         }}
         onLoadEnd={() => {
           setLoaded(true);
@@ -154,16 +175,23 @@ export function HtmlRenderWebView(props: {
         onHttpError={props.onLoadError}
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
-        {...(props.nested
-          ? {
-              injectedJavaScript: OVERFLOW_SCRIPT,
-              onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
-              },
-            }
-          : {})}
+        injectedJavaScript={
+          props.nested
+            ? OVERFLOW_SCRIPT + HTML_RENDER_NATIVE_OPEN_IMAGE_SCRIPT
+            : HTML_RENDER_NATIVE_OPEN_IMAGE_SCRIPT
+        }
+        onMessage={(event: WebViewMessageEvent) => {
+          const message = parseMessage(event.nativeEvent.data);
+          const image = imagePreviewSource(message);
+          if (image !== null) {
+            setPreview(image);
+            return;
+          }
+          const next = props.nested ? readOverflowMessage(message) : null;
+          if (next !== null) setOverflow(next);
+        }}
       />
+      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
       {loaded ? null : (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <AppActivityIndicator />
@@ -180,6 +208,7 @@ export function ThreadHtmlRender(props: {
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
   const height = htmlRenderFrameHeight(props.render, props.frameWidth);
@@ -218,7 +247,7 @@ export function ThreadHtmlRender(props: {
         {uri !== null && !failed ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
+            accessibilityLabel={gt("Open {title}", { title })}
             hitSlop={8}
             className="h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
             onPress={() =>
@@ -254,7 +283,7 @@ export function ThreadHtmlRender(props: {
         ) : failed || asset._tag === "Failure" ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Reload ${title}`}
+            accessibilityLabel={gt("Reload {title}", { title })}
             className="flex-1 items-center justify-center"
             onPress={() => {
               retried.current = false;
@@ -262,7 +291,9 @@ export function ThreadHtmlRender(props: {
               if (uri === null) void refresh().then((next) => next !== null && setUri(next));
             }}
           >
-            <Text className="text-sm text-foreground-muted">Page unavailable</Text>
+            <Text className="text-sm text-foreground-muted">
+              <T>Page unavailable</T>
+            </Text>
           </Pressable>
         ) : (
           <View className="flex-1 items-center justify-center">

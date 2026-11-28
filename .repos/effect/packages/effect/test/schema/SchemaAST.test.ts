@@ -384,7 +384,7 @@ describe("SchemaAST", () => {
 
       strictEqual(projected.encoding, undefined)
       strictEqual(projected.encodingChecks, undefined)
-      deepStrictEqual(projected.checks, [decoded, structural])
+      deepStrictEqual(projected.checks, [structural, decoded])
       strictEqual(projected.propertySignatures[0].type, SchemaAST.toType(Schema.NumberFromString.ast))
       strictEqual(ast.encoding, encoding)
       strictEqual(ast.propertySignatures[0].type, Schema.NumberFromString.ast)
@@ -454,6 +454,26 @@ describe("SchemaAST", () => {
       strictEqual(SchemaAST.isObjects(ast), true)
       strictEqual(ast.checks?.length, 1)
       strictEqual(ast.encodingChecks, undefined)
+    })
+
+    it("preserves annotations on decoded checks when promoting encoding checks", () => {
+      const schema = Schema.Struct({}).check(Schema.makeFilter(() => true, { title: "Decoded" })).pipe(
+        Schema.flip,
+        Schema.check(Schema.makeFilter(() => true, { title: "Encoded" })),
+        Schema.flip
+      )
+
+      assert.strictEqual(Schema.resolveAnnotations(Schema.toType(schema))?.title, "Decoded")
+    })
+
+    it("reports promoted encoding check failures first", () => {
+      const schema = Schema.Struct({}).check(Schema.makeFilter(() => "decoded failure")).pipe(
+        Schema.flip,
+        Schema.check(Schema.makeFilter(() => "encoded failure")),
+        Schema.flip
+      )
+
+      assert.throws(() => Schema.decodeUnknownSync(Schema.toType(schema))({}), /^encoded failure$/)
     })
 
     it("toEncoded preserves parent checks when projecting checked children without transformations", () => {
@@ -565,17 +585,6 @@ describe("SchemaAST", () => {
   })
 
   describe("collectSentinels", () => {
-    describe("Declaration", () => {
-      it("~sentinels", () => {
-        class A {
-          readonly _tag = "A"
-        }
-        const schema = Schema.instanceOf(A, { "~sentinels": [{ key: "_tag", literal: "A" }] })
-        const ast = schema.ast
-        deepStrictEqual(SchemaAST.collectSentinels(ast), [{ key: "_tag", literal: "A" }])
-      })
-    })
-
     describe("Struct", () => {
       it("required tag", () => {
         const schema = Schema.Struct({

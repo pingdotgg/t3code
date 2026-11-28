@@ -1,0 +1,667 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url(inter.woff2) format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: JB;
+        src: url(jbmono.woff2) format("woff2");
+        font-weight: 100 800;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --text: #f1f3f7;
+        --muted: #a3a3a3;
+        --dim: #636368;
+        --primary: #346bf1;
+        --primary-light: #6e9bfb;
+      }
+      html,
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: #000;
+        font-family: Inter, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .canvas {
+        position: relative;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        perspective: 1600px;
+        background:
+          radial-gradient(960px 560px at 32% 10%, rgba(52, 107, 241, 0.16), transparent 68%),
+          radial-gradient(640px 480px at 78% 85%, rgba(52, 107, 241, 0.08), transparent 70%), #000;
+      }
+
+      /* Beat 05: Landscape Pixel Tablet + Editorial Chrome
+         .tablet-stage at CSS (288, 188) size 1024x649, padding 12px
+         .tablet-screen hole at CSS (300, 200) size 1000x625 -> 1920x1080: (360, 240) size 1200x750 */
+      .android-header {
+        position: absolute;
+        left: 288px;
+        top: 32px;
+        width: 1024px;
+        opacity: 0;
+        z-index: 30;
+      }
+      .android-header .top-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 10px;
+      }
+      .android-header .num {
+        width: 38px;
+        height: 38px;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 17px;
+        font-weight: 700;
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .android-header .tag {
+        font-family: JB;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--primary-light);
+      }
+      .android-header .headline-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .android-header h1 {
+        font-size: 40px;
+        line-height: 1.06;
+        font-weight: 760;
+        letter-spacing: -0.035em;
+        color: var(--text);
+      }
+      .android-header h1 .soft {
+        color: var(--muted);
+      }
+      .android-pills {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .android-pill {
+        font-family: JB;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        padding: 7px 13px;
+        border-radius: 10px;
+      }
+      .android-pill.static {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.12);
+      }
+
+      .tablet-stage {
+        position: absolute;
+        left: 288px;
+        top: 188px;
+        width: 1024px;
+        height: 649px;
+        opacity: 0;
+      }
+      .tablet {
+        width: 100%;
+        height: 100%;
+        border-radius: 34px;
+        padding: 12px;
+        background: linear-gradient(155deg, #42454f 0%, #1b1d22 42%, #101115 72%, #2e313a 100%);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.2),
+          inset 0 0 0 1.5px rgba(255, 255, 255, 0.14),
+          0 44px 120px rgba(0, 0, 0, 0.92),
+          0 0 100px rgba(52, 107, 241, 0.18);
+      }
+      .tablet-screen {
+        width: 100%;
+        height: 100%;
+        border-radius: 24px;
+        background: #000;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+      .tablet-prog-track {
+        position: absolute;
+        left: 650px;
+        bottom: 26px;
+        width: 300px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        z-index: 30;
+        opacity: 0;
+      }
+      .tablet-prog-fill {
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary), var(--primary-light));
+        transform-origin: 0 50%;
+        transform: scaleX(0);
+      }
+
+      .intro-title {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        padding-bottom: 58px;
+        pointer-events: none;
+        z-index: 10;
+      }
+      .intro-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: JB;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--primary-light);
+        background: rgba(52, 107, 241, 0.14);
+        border: 1px solid rgba(52, 107, 241, 0.35);
+        padding: 8px 16px;
+        border-radius: 999px;
+      }
+
+      /* Right column: Editorial copy for Beats 01–04 (iPhone 18 Pro) */
+      .copy-stage {
+        position: absolute;
+        left: 636px;
+        top: 0;
+        width: 820px;
+        height: 900px;
+      }
+      .beat-copy {
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-52%);
+        width: 100%;
+        opacity: 0;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 24px;
+      }
+      .eyebrow .num {
+        width: 46px;
+        height: 46px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 20px;
+        font-weight: 700;
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .eyebrow .tag {
+        font-family: JB;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--primary-light);
+      }
+      .beat-copy h1 {
+        font-size: 74px;
+        line-height: 1.03;
+        font-weight: 760;
+        letter-spacing: -0.04em;
+        color: var(--text);
+      }
+      .beat-copy h1 .soft {
+        color: var(--muted);
+      }
+      .beat-copy .desc {
+        margin-top: 24px;
+        font-size: 29px;
+        line-height: 1.42;
+        font-weight: 480;
+        letter-spacing: -0.015em;
+        color: var(--muted);
+        max-width: 720px;
+      }
+      .pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+      .pill {
+        font-family: JB;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 10px 16px;
+        border-radius: 12px;
+      }
+      .pill.accent {
+        color: #93c5fd;
+        background: rgba(52, 107, 241, 0.16);
+        border-color: rgba(52, 107, 241, 0.4);
+      }
+      .pill.green {
+        color: #86efac;
+        background: rgba(74, 222, 128, 0.12);
+        border-color: rgba(74, 222, 128, 0.32);
+      }
+
+      .progress-track {
+        position: absolute;
+        left: 636px;
+        bottom: 72px;
+        width: 300px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        z-index: 25;
+        opacity: 0;
+      }
+      .progress-fill {
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary), var(--primary-light));
+        transform-origin: 0 50%;
+        transform: scaleX(0);
+      }
+
+      .top-brand {
+        position: absolute;
+        right: 48px;
+        top: 38px;
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        z-index: 35;
+        opacity: 0.9;
+      }
+      .top-brand img {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+      }
+      .top-brand span {
+        font-family: JB;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .top-brand b {
+        color: var(--text);
+      }
+
+      /* Official T3 Code outro */
+      .outro {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        opacity: 0;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        background:
+          radial-gradient(760px 460px at 50% 34%, rgba(52, 107, 241, 0.18), transparent 70%), #000;
+      }
+      .outro .logo {
+        width: 176px;
+        height: 176px;
+        display: block;
+        margin: 0 auto -10px;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35))
+          drop-shadow(0 18px 60px rgba(52, 107, 241, 0.35));
+      }
+      .outro h2 {
+        margin-top: 44px;
+        font-size: 76px;
+        line-height: 1.03;
+        font-weight: 760;
+        letter-spacing: -0.045em;
+      }
+      .outro h2 .and {
+        color: var(--muted);
+      }
+      .outro p {
+        margin-top: 22px;
+        font-size: 34px;
+        color: var(--muted);
+        font-weight: 550;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro p b {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .ver {
+        font-family: JB;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 6px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .outro .url {
+        margin-top: 44px;
+        font-family: JB;
+        font-size: 22px;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="top-brand" id="topBrand">
+        <img src="logo-prod.png" alt="" />
+        <span><b>T3 Code</b> Mobile 2.4</span>
+      </div>
+
+      <!-- Beat 05: Android Inspector Editorial Header + Landscape Pixel Tablet -->
+      <div class="android-header" id="androidHeader">
+        <div class="top-row">
+          <span class="num">05</span>
+          <span class="tag">Android Inspector</span>
+        </div>
+        <div class="headline-row">
+          <h1>Subagents, previews &amp; side chats <span class="soft">beside the chat.</span></h1>
+        </div>
+        <div class="android-pills">
+          <span class="android-pill" id="apSubagent">1 · Check the subagent</span>
+          <span class="android-pill" id="apPreview">2 · Try it on localhost</span>
+          <span class="android-pill" id="apSide">3 · Ask a side question</span>
+          <span class="android-pill static">Tablets &amp; foldables</span>
+        </div>
+      </div>
+
+      <div class="tablet-stage" id="tablet">
+        <div class="tablet">
+          <div class="tablet-screen"></div>
+        </div>
+      </div>
+
+      <div class="tablet-prog-track" id="tabletProgTrack">
+        <div class="tablet-prog-fill" id="tabletProg"></div>
+      </div>
+
+      <div class="intro-title" id="introTitle">
+        <div class="intro-badge">T3 Code Mobile 2.4</div>
+      </div>
+
+      <div class="copy-stage">
+        <div class="beat-copy" id="copy1">
+          <div class="eyebrow">
+            <span class="num">01</span>
+            <span class="tag">Localhost Previews</span>
+          </div>
+          <h1>Open localhost<br /><span class="soft">on your phone.</span></h1>
+          <p class="desc">
+            Preview any environment’s dev server right inside the app over a built-in tunnel, with a
+            Safari-style browser bar.
+          </p>
+          <div class="pills">
+            <span class="pill accent">localhost:5199</span>
+            <span class="pill">HMR Live</span>
+            <span class="pill">No port forwarding</span>
+          </div>
+        </div>
+
+        <div class="beat-copy" id="copy2">
+          <div class="eyebrow">
+            <span class="num">02</span>
+            <span class="tag">Cite &amp; Comment</span>
+          </div>
+          <h1>Quote any line<br /><span class="soft">into your reply.</span></h1>
+          <p class="desc">
+            Select text in assistant responses to cite or comment directly in the composer—and share
+            threads with guests from mobile.
+          </p>
+          <div class="pills">
+            <span class="pill accent">Native selection</span>
+            <span class="pill">Inline citations</span>
+            <span class="pill">Guest sharing</span>
+          </div>
+        </div>
+
+        <div class="beat-copy" id="copy3">
+          <div class="eyebrow">
+            <span class="num">03</span>
+            <span class="tag">Issues &amp; Linear</span>
+          </div>
+          <h1>Triage issues<br /><span class="soft">from your phone.</span></h1>
+          <p class="desc">
+            Move an issue to review, leave a comment, and see every thread working on it, right from
+            the new Issues tab.
+          </p>
+          <div class="pills">
+            <span class="pill accent">Issues tab</span>
+            <span class="pill">Linear</span>
+            <span class="pill">Change state</span>
+            <span class="pill">Comment</span>
+            <span class="pill">Linked threads</span>
+          </div>
+        </div>
+
+        <div class="beat-copy" id="copy4">
+          <div class="eyebrow">
+            <span class="num">04</span>
+            <span class="tag">Global &amp; Faster</span>
+          </div>
+          <h1>10 languages.<br /><span class="soft">85% lighter launch.</span></h1>
+          <p class="desc">
+            Full localization across the app, Workflows on mobile, and dramatically snappier thread
+            switching everywhere.
+          </p>
+          <div class="pills">
+            <span class="pill accent">10 languages</span>
+            <span class="pill">Workflows</span>
+            <span class="pill green">−85% launch data</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="progress-track" id="progTrack">
+        <div class="progress-fill" id="prog"></div>
+      </div>
+    </div>
+
+    <div class="outro">
+      <div>
+        <img class="logo" src="logo-prod.png" />
+        <h2>T3 Code Mobile<br /><span class="and">built for shipping anywhere</span></h2>
+        <p>Available now in <b>T3 Code</b> <span class="ver">2.4</span></p>
+        <div class="url">App Store &amp; Google Play · t3.codes</div>
+      </div>
+    </div>
+
+    <script src="kit.js"></script>
+    <script>
+      const showCopy = (sel, at, end) => {
+        const dur = end - at;
+        const fi = Math.min(0.45, 0.35 / dur);
+        const fo = Math.max(0.55, 1 - 0.35 / dur);
+        Kit.anim(
+          sel,
+          [
+            { opacity: 0, transform: "translateY(-44%)", offset: 0 },
+            { opacity: 1, transform: "translateY(-52%)", offset: fi },
+            { opacity: 1, transform: "translateY(-52%)", offset: fo },
+            { opacity: 0, transform: "translateY(-58%)", offset: 1 },
+          ],
+          { at, dur, ease: "linear" },
+        );
+      };
+
+      const highlightPill = (sel, at, end) => {
+        const dur = end - at;
+        const fi = Math.min(0.2, 0.22 / dur);
+        const fo = Math.max(0.8, 1 - 0.22 / dur);
+        const off = {
+          color: "#a3a3a3",
+          backgroundColor: "rgba(255, 255, 255, 0.05)",
+          borderColor: "rgba(255, 255, 255, 0.11)",
+        };
+        const on = {
+          color: "#93c5fd",
+          backgroundColor: "rgba(52, 107, 241, 0.18)",
+          borderColor: "rgba(52, 107, 241, 0.45)",
+        };
+        Kit.anim(
+          sel,
+          [
+            { ...off, offset: 0 },
+            { ...on, offset: fi },
+            { ...on, offset: fo },
+            { ...off, offset: 1 },
+          ],
+          { at, dur, ease: "linear" },
+        );
+      };
+
+      window.setup = () => {
+        // Intro title badge during the 3D iphone-18-pro.glb spin (0.0 -> 2.0s)
+        Kit.anim(
+          "#introTitle",
+          [
+            { opacity: 0, transform: "translateY(14px)", offset: 0 },
+            { opacity: 1, transform: "translateY(0)", offset: 0.25 },
+            { opacity: 1, transform: "translateY(0)", offset: 0.7 },
+            { opacity: 0, transform: "translateY(-10px)", offset: 1 },
+          ],
+          { at: 0.15, dur: 1.5, ease: "linear" },
+        );
+
+        // Progress bar across iPhone Beats 01–04 (2.0 -> 31.4s)
+        Kit.anim(
+          "#progTrack",
+          [
+            { opacity: 0, offset: 0 },
+            { opacity: 1, offset: 0.02 },
+            { opacity: 1, offset: 0.98 },
+            { opacity: 0, offset: 1 },
+          ],
+          { at: 1.85, dur: 29.65, ease: "linear" },
+        );
+        Kit.anim("#prog", [{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], {
+          at: 2.0,
+          dur: 29.4,
+          ease: "linear",
+        });
+
+        // iPhone live video plays 2.0s -> 31.4s (phone-live-v6.mp4 = 29.4s):
+        // Beat 01: Localhost Previews (2.0 -> 9.7s)
+        showCopy("#copy1", 1.8, 9.65);
+        // Beat 02: Cite & Comment (9.7 -> 17.4s)
+        showCopy("#copy2", 9.7, 17.35);
+        // Beat 03: Issues & Linear (17.4 -> 26.5s)
+        showCopy("#copy3", 17.4, 26.45);
+        // Beat 04: 10 Languages & Performance (26.5 -> 31.4s)
+        showCopy("#copy4", 26.5, 31.4);
+
+        // === BEAT 05 (31.5 -> 42.95s): Android inspector: subagent -> preview -> side chat ===
+        Kit.anim(
+          "#androidHeader",
+          [
+            { opacity: 0, transform: "translateY(14px)", offset: 0 },
+            { opacity: 1, transform: "translateY(0)", offset: 0.04 },
+            { opacity: 1, transform: "translateY(0)", offset: 0.96 },
+            { opacity: 0, transform: "translateY(-8px)", offset: 1 },
+          ],
+          { at: 31.5, dur: 11.45, ease: "linear" },
+        );
+        Kit.anim(
+          "#tablet",
+          [
+            { opacity: 0, transform: "translateY(18px) scale(0.985)", offset: 0 },
+            { opacity: 1, transform: "translateY(0) scale(1)", offset: 0.04 },
+            { opacity: 1, transform: "translateY(0) scale(1)", offset: 0.96 },
+            { opacity: 0, transform: "translateY(-8px) scale(0.99)", offset: 1 },
+          ],
+          { at: 31.5, dur: 11.45, ease: "linear" },
+        );
+        Kit.anim(
+          "#tabletProgTrack",
+          [
+            { opacity: 0, offset: 0 },
+            { opacity: 1, offset: 0.04 },
+            { opacity: 1, offset: 0.96 },
+            { opacity: 0, offset: 1 },
+          ],
+          { at: 31.55, dur: 11.35, ease: "linear" },
+        );
+        Kit.anim("#tabletProg", [{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], {
+          at: 31.65,
+          dur: 11.23,
+          ease: "linear",
+        });
+
+        // Sync active pill with tablet-live-v6.mp4 (starts at 31.65s):
+        highlightPill("#apSubagent", 31.65, 34.88);
+        highlightPill("#apPreview", 34.88, 37.57);
+        highlightPill("#apSide", 37.57, 42.88);
+
+        // === OUTRO (42.85 -> 45.5s) ===
+        Kit.anim("#topBrand", [{ opacity: 0.9 }, { opacity: 0 }], { at: 42.7, dur: 0.25 });
+        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 42.85, dur: 0.45 });
+        [".outro .logo", ".outro h2", ".outro p", ".outro .url"].forEach((sel, idx) => {
+          Kit.anim(
+            sel,
+            [
+              { opacity: 0, transform: "translateY(20px)" },
+              { opacity: 1, transform: "translateY(0)" },
+            ],
+            { at: 42.95 + idx * 0.08, dur: 0.45, ease: "cubic-bezier(0.22, 1, 0.36, 1)" },
+          );
+        });
+      };
+
+      window.layoutTime = 1;
+      window.placeCursor = () => {};
+
+      Kit.timeline([
+        [43.6, 0, 43.6],
+        [1.9, 43.6, 43.6],
+      ]);
+    </script>
+  </body>
+</html>

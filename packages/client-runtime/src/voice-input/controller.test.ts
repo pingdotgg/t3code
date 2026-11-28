@@ -253,6 +253,8 @@ describe("resolveTranscriptCommit", () => {
     ["a non-ASCII word after the caret", "Änderungen", 0, "Weitere", "de_DE", "Weitere Änderungen"],
     ["spaceless Japanese", "修正キャッシュ", 7, "テストも", "ja-JP", "修正キャッシュテストも"],
     ["spaceless Thai", "โลก", 0, "สวัสดี", "th-TH", "สวัสดีโลก"],
+    ["spaceless Mandarin after the caret", "你好", 2, "世界", "cmn-Hans-CN", "你好世界"],
+    ["spaceless Mandarin before the caret", "世界", 0, "你好", "cmn-Hans-CN", "你好世界"],
   ])(
     "inserts at a caret with the recorded language's word spacing: %s",
     (_case, text, caret, spoken, locale, expected) => {

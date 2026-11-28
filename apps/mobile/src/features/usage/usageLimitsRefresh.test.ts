@@ -11,15 +11,30 @@ const state = vi.hoisted(() => ({
     throw new Error("refresh not set up");
   },
 }));
-vi.mock("../../state/server", () => ({
-  serverEnvironment: {
-    refreshProviders: {
-      label: "refresh providers",
-      run: (_registry: unknown, input: { readonly environmentId: string }) =>
-        state.refresh(input.environmentId),
+vi.mock("../../state/server", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    serverEnvironment: {
+      refreshProviders: {
+        label: "refresh providers",
+        run: (
+          _registry: unknown,
+          input: {
+            readonly environmentId: string;
+            readonly input?: { readonly limitsOnly?: boolean };
+          },
+        ) => {
+          expect(input.input).toEqual({ limitsOnly: true });
+          return Effect.promise(() => state.refresh(input.environmentId)).pipe(
+            Effect.flatMap((result) =>
+              result._tag === "Failure" ? Effect.failCause(result.cause) : Effect.void,
+            ),
+          );
+        },
+      },
     },
-  },
-}));
+  };
+});
 
 import {
   environmentIdsKey,

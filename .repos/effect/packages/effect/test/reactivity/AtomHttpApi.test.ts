@@ -1,10 +1,10 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it, vitest } from "@effect/vitest"
 import { Duration, Effect, Exit, Layer, type Redacted, Ref, Schema, Stream } from "effect"
 import { Sse } from "effect/encoding"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import type * as HttpClientError from "effect/http/HttpClientError"
-import { Atom, AtomHttpApi, AtomRegistry, Hydration } from "effect/reactivity"
+import { AsyncResult, Atom, AtomHttpApi, AtomRegistry, Hydration } from "effect/reactivity"
 
 const Api = HttpApi.make("api").add(
   HttpApiGroup.make("group").add(
@@ -32,7 +32,80 @@ const StreamApi = HttpApi.make("StreamApi").add(
   )
 )
 
+const makeCountingClient = (next: () => number) =>
+  AtomHttpApi.Service()("FreshClient", {
+    baseUrl: "https://example.test",
+    api: HttpApi.make("FreshApi").add(
+      HttpApiGroup.make("group").add(HttpApiEndpoint.get("get", "/value", { success: Schema.Number }))
+    ),
+    httpClient: Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => Effect.sync(() => HttpClientResponse.fromWeb(request, Response.json(next()))))
+    )
+  })
+
 describe("AtomHttpApi", () => {
+  it.effect("reuses fresh hydration and revalidates stale hydration once", () =>
+    Effect.gen(function*() {
+      let requests = 0
+      const Client = makeCountingClient(() => ++requests)
+      const atom = Client.query("group", "get", {
+        serializationKey: "value",
+        staleTime: 1_000,
+        reactivityKeys: ["value"]
+      })
+      const clock = vitest.spyOn(Date, "now").mockReturnValue(10_000)
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()))
+      const server = AtomRegistry.make()
+      yield* Effect.addFinalizer(() => Effect.sync(() => server.dispose()))
+      yield* AtomRegistry.mount(server, atom)
+      assert.strictEqual(yield* AtomRegistry.getResult(server, atom), 1)
+      const state = Hydration.dehydrate(server)
+
+      for (const [age, refresh, expected] of [[500, false, 1], [1_500, false, 2], [500, true, 3]] as const) {
+        clock.mockReturnValue(10_000 + age)
+        const client = AtomRegistry.make()
+        yield* Effect.addFinalizer(() => Effect.sync(() => client.dispose()))
+        Hydration.hydrate(client, state)
+        if (refresh) client.refresh(atom)
+        yield* AtomRegistry.mount(client, atom)
+        if (!refresh) {
+          const seed = client.get(atom)
+          assert(AsyncResult.isSuccess(seed))
+          assert.strictEqual(seed.value, 1)
+        }
+        yield* Effect.yieldNow
+        const result = yield* AtomRegistry.getResult(client, atom, { suspendOnWaiting: true })
+        assert.strictEqual(result, expected)
+        assert.strictEqual(requests, expected)
+      }
+    }), { concurrent: false })
+
+  it.effect.each([false, true])(
+    "refreshes a shared key for both readers (legacy first: %s)",
+    (legacyFirst) =>
+      Effect.gen(function*() {
+        let requests = 0
+        const Client = makeCountingClient(() => ++requests)
+        const options = { serializationKey: "value", reactivityKeys: ["value"] }
+        const legacy = Client.query("group", "get", options)
+        const stale = Client.query("group", "get", { ...options, staleTime: 0 })
+        const registry = AtomRegistry.make()
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()))
+        const [first, second] = legacyFirst ? [legacy, stale] : [stale, legacy]
+        yield* AtomRegistry.mount(registry, first)
+        yield* AtomRegistry.getResult(registry, first, { suspendOnWaiting: true })
+        yield* AtomRegistry.mount(registry, second)
+        yield* Effect.yieldNow
+        const read = (atom: typeof stale) => AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })
+        const before = yield* read(stale)
+        if (legacyFirst) assert.strictEqual(before, 2)
+        registry.refresh(second)
+        assert.strictEqual(yield* read(first), before + 1)
+        assert.strictEqual(requests, before + 1)
+      })
+  )
+
   it.effect.each([
     { idA: "ApiA", groupA: "users", idB: "ApiB", groupB: "users" },
     { idA: "Api:users", groupA: "users", idB: "Api", groupB: "users:users" }
