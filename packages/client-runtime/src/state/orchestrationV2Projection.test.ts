@@ -192,6 +192,85 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
   });
 
+  it("preserves recorded run fields across run lifecycle updates when omitted", () => {
+    const delegatedCompletion = {
+      disposition: "open" as const,
+      nextGeneration: 1,
+      delivery: null,
+    };
+    const restartCancelledBackgroundWork = [{ kind: "subagent" as const, label: "Worker" }];
+    const output = { value: { ok: true }, submittedAt: "2026-06-20T00:00:00.000Z" };
+    let projection: OrchestrationV2ThreadProjection | null = {
+      ...emptyProjection,
+      runs: [
+        {
+          ...run,
+          status: "running",
+          completedAt: null,
+          explicitQueue: true,
+          delegatedCompletion,
+        },
+      ],
+    };
+
+    projection = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "event-run-bg-cancelled" as OrchestrationV2DomainEvent["id"],
+      type: "run.background-work-cancelled",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: { runId, restartCancelledBackgroundWork },
+    });
+
+    projection = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "event-run-output-submitted" as OrchestrationV2DomainEvent["id"],
+      type: "run.output-submitted",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: { runId, output },
+    });
+
+    const completed = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "event-run-completed" as OrchestrationV2DomainEvent["id"],
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: { ...run, status: "completed" },
+    });
+
+    expect(completed?.runs[0]).toMatchObject({
+      status: "completed",
+      explicitQueue: true,
+      delegatedCompletion,
+      restartCancelledBackgroundWork,
+      output,
+    });
+
+    const stoppedCohort = { disposition: "stopped" as const, nextGeneration: 2, delivery: null };
+    const updatedCohort = applyOrchestrationV2ProjectionEvent(completed, {
+      id: "event-run-cohort-stopped" as OrchestrationV2DomainEvent["id"],
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: {
+        ...run,
+        status: "completed",
+        delegatedCompletion: stoppedCohort,
+        output: { value: { ok: false }, submittedAt: "2026-06-20T00:01:00.000Z" },
+      },
+    });
+
+    expect(updatedCohort?.runs[0]).toMatchObject({
+      delegatedCompletion: stoppedCohort,
+      restartCancelledBackgroundWork,
+      explicitQueue: true,
+      output,
+    });
+  });
+
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
     const archivedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const event = {
