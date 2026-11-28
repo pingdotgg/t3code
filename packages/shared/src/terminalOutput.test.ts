@@ -32,6 +32,24 @@ describe("terminalOutputCollapseRedraws", () => {
 });
 
 describe("appendTerminalOutput", () => {
+  const red = "\u001b[0;31mX\u001b[0m";
+  it.each([
+    ["abc\u001b[\r31mX", red + "bc"],
+    ["abc\u001b\r[31mX", red + "bc"],
+    ["abc\u001b[\u0007\r31mX", red + "bc"],
+    ["abc\u001b\n[31mX", "abc\n" + red],
+    ["abcde\u001b\b\b[31mX", "abc" + red + "e"],
+    ["abc\u001b\r\u001b[31mX", red + "bc"],
+    ["abc\u001b\rXhidden\u001b\\Z", "Zbc"],
+  ])("applies line controls inside an escape across every split: %j", (input, expected) => {
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, input.slice(0, cut));
+      const resumed = feed([terminalOutputResumeText(state)]);
+      expect(appendTerminalOutput(state, input.slice(cut)).text).toBe(expected);
+      expect(appendTerminalOutput(resumed, input.slice(cut)).text).toBe(expected);
+    }
+  });
+
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
@@ -96,6 +114,17 @@ describe("appendTerminalOutput", () => {
       }
     },
   );
+
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
+  });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
@@ -322,6 +351,49 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       "\u001b8X",
     );
     expect(viewer.text).toBe("界e\u0301Xef");
+  });
+
+  it("restores the saved text color with the DEC cursor, including after resync", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const green = { color: TERMINAL_PALETTES.dark[2] };
+
+    const direct = feed(["\u001b[31mR\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(direct.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const source = feed(["\u001b[31mR\u001b7\u001b[32mG"]);
+    const resumed = feed([terminalOutputResumeText(source), "\u001b8X"]);
+    expect(terminalOutputSpans(resumed.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const resetActive = feed(["\u001b[31mR\u001b7\u001b[0m"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(resetActive), "P"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "P", style: null },
+    ]);
+
+    const savedDefault = feed(["\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(savedDefault.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "X", style: null },
+    ]);
+
+    const sco = feed(["\u001b[31mR\u001b[s\u001b[32mG"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(sco), "\u001b[uX"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "X", style: green },
+    ]);
   });
 
   it("restores a cursor saved on a row erased before the resync", () => {

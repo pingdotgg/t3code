@@ -595,6 +595,31 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+// Pasted lines land as if typed: the first continues the caret's line, the last runs into the text after it.
+it.each([
+  {
+    value: "Fix this error: ",
+    caret: "Fix this error: ".length,
+    expected: "Fix this error: foo\nbar",
+  },
+  { value: "before after", caret: "before ".length, expected: "before foo\nbarafter" },
+])("pastes two lines into $value at $caret", async ({ value, caret, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "foo\nbar");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "!");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected.replace("bar", "bar!"));
+});
+
 // regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
 it.each([
   // Shown bold like the same paste; the sent text stays verbatim.
@@ -658,6 +683,37 @@ it("keeps the destination of a link dropped from a web page", async () => {
   expect(serializeEditorDoc(editor.state.doc).value).toBe(
     "[Setup guide](https://example.com/setup)",
   );
+});
+
+it.each([
+  {
+    label: "inside inline code as plain text",
+    value: "`sumBy` after",
+    caret: "su".length,
+    pasted: "`suGuidemBy` after",
+  },
+  {
+    label: "as a link in italic text that also holds inline code",
+    value: "*`a` bold* after",
+    caret: "a bo".length,
+    pasted: "*`a` bo[Guide](https://example.com/guide)ld* after",
+  },
+])("pastes a linked word $label", async ({ value, caret, pasted }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+  });
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Guide");
+    clipboardData.setData("text/html", '<a href="https://example.com/guide">Guide</a>');
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
 it("keeps a pasted web link beside an imported thread chip", async () => {
@@ -1219,6 +1275,39 @@ describe("Markdown markers around styled text", () => {
     });
     expect(editor.state.doc.textContent).toBe("bold after?");
     expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+  });
+
+  it("keeps text a mouse drag selects still, and shows markers for a click on release", async () => {
+    await using screen = await mountEditor("start **bold words** end");
+    const { editor } = screen;
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const point = (pos: number) => {
+      const { left, top, bottom } = editor.view.coordsAtPos(pos);
+      return { x: frame.left + left, y: frame.top + (top + bottom) / 2 };
+    };
+    const mouse = (
+      type: "mousePressed" | "mouseMoved" | "mouseReleased",
+      { x, y }: { x: number; y: number },
+    ) => cdp().send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    const end = editor.state.doc.content.size - 1;
+    const hidden = editor.state.doc.textContent;
+    await mouse("mousePressed", point(end));
+    for (const pos of [end - 2, "start bold wo".length + 1, "start bo".length + 1]) {
+      await mouse("mouseMoved", point(pos));
+      await vi.waitFor(() => expect(editor.state.selection.head).toBe(pos));
+      expect(editor.state.doc.textContent).toBe(hidden);
+    }
+    const released = point("start bo".length + 1);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.selection.head).toBe("start bo".length + 1));
+    const { from, to } = editor.state.selection;
+    expect(editor.state.doc.textBetween(from, to)).toBe("ld words end");
+    expect(editor.state.doc.textContent).toBe(hidden);
+
+    await mouse("mousePressed", released);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("start **bold words** end"));
+    expect(editor.state.selection.empty).toBe(true);
   });
 
   it("keeps bold around a skill pasted inside it", async () => {

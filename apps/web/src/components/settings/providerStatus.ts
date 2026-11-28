@@ -207,3 +207,23 @@ export function getProviderVersionAdvisoryPresentation(
     targetVersion: null,
   };
 }
+
+// npm can install a launcher without its platform package; the launcher then reports this.
+const MISSING_PLATFORM_PACKAGE = "Missing optional dependency";
+
+export function getProviderReinstallCommand(provider: ServerProvider | undefined) {
+  const advisory = provider?.versionAdvisory;
+  if (
+    !provider?.installed ||
+    provider.status !== "error" ||
+    provider.version ||
+    !provider.message?.includes(MISSING_PLATFORM_PACKAGE) ||
+    provider.compatibilityAdvisory?.latestVersionStatus === "broken" ||
+    provider.compatibilityAdvisory?.latestVersionStatus === "unsupported" ||
+    advisory?.canUpdate !== true ||
+    !advisory.updateCommand
+  ) {
+    return null;
+  }
+  return advisory.updateCommand;
+}

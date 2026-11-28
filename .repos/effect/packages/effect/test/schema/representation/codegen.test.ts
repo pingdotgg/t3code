@@ -2,9 +2,11 @@ import { afterAll, assert, describe, it } from "@effect/vitest"
 import {
   Brand,
   Cause,
+  Chunk,
   type Codegen,
   Exit,
   HashMap,
+  HashSet,
   JsonSchema,
   Option,
   Redacted,
@@ -454,6 +456,20 @@ describe("Codegen.Module.addSchemas", { concurrent: false }, () => {
     example("HashMap", Schema.HashMap(Schema.String, Schema.Number), "HashMap.HashMap<string, number>", {
       accepts: [HashMap.empty(), HashMap.make(["a", 1])],
       rejects: [HashMap.make(["a", "b"]), {}]
+    })
+    example("HashSet", Schema.HashSet(Schema.String), "HashSet.HashSet<string>", {
+      accepts: [HashSet.make("a")],
+      rejects: [HashSet.make(1)]
+    })
+    it("Chunk", async () => {
+      const schema = Schema.Chunk(Schema.String)
+      const source = generate(schema).print()
+      register("Chunk", source, ["Chunk.Chunk<string>"])
+      await withGeneratedModule<{ TestRoot0: typeof schema }>(source, ({ TestRoot0 }) => {
+        const decoded = Schema.decodeUnknownSync(TestRoot0)(Chunk.make("a"))
+        assert.deepStrictEqual(Chunk.toArray(decoded), ["a"])
+        assert.isFalse(Schema.is(TestRoot0)(Chunk.make(1)))
+      })
     })
   })
 
