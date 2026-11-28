@@ -224,6 +224,23 @@ export const assertFullAccess = (context: Caller, message: string) =>
     ? Effect.void
     : Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message }));
 
+const broadestAccessDenied = (
+  { caller, scope: { client }, limits }: Caller,
+  broadest: RuntimeMode,
+  what: string,
+) => {
+  if (caller !== undefined || client === undefined) {
+    return `Only a caller with ${broadest}/default access can ${what}, because that work picks its own modes. This caller is limited to ${limits.runtimeMode}/${limits.interactionMode}.`;
+  }
+  const label = client.label.trim();
+  const name = label.length > 0 ? ` (${label})` : "";
+  const below = `below the ${broadest}/default access needed to ${what}, because that work picks its own modes.`;
+  const requiredAccess = broadest === "full-access" ? "Full access" : `${broadest} access`;
+  return client.access === "read-only" || isRuntimeModeAbove(broadest, client.access)
+    ? `This MCP client${name} was approved with ${client.access} access, ${below} Changing a T3 thread's permission mode does not affect this MCP connection; reconnect and approve it with ${requiredAccess}.`
+    : `This MCP client${name} is limited to ${limits.runtimeMode}/${limits.interactionMode} on this request, ${below}`;
+};
+
 /**
  * For work whose definition picks its own modes: the caller must hold the broadest modes a
  * thread may run in here, full access or an administrator's ceiling below it.
@@ -236,7 +253,7 @@ export const assertBroadestAccess = (context: Caller, what: string) => {
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: `Only a caller with ${broadest}/default access can ${what}, because that work picks its own modes. This caller is limited to ${context.limits.runtimeMode}/${context.limits.interactionMode}.`,
+          message: broadestAccessDenied(context, broadest, what),
         }),
       );
 };

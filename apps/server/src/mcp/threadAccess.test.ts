@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
-import { assertTargetWithinLimits, readThread } from "./threadAccess.ts";
+import { assertBroadestAccess, assertTargetWithinLimits, readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const claudeCode: McpInvocationContext.McpClientCaller = {
@@ -149,5 +149,88 @@ it.effect("identifies the target and effective caller ceiling when a thread writ
       expect(error.message).toContain(`${runtimeMode}/${interactionMode}`);
       expect(error.message).not.toMatch(/child|parent mode/i);
     }
+  }),
+);
+
+it.effect("identifies an external MCP client's permission limit in broadest-access refusals", () =>
+  Effect.gen(function* () {
+    const threads = {} as ThreadManagement.ThreadManagementService["Service"];
+    const what = "start or change workflow runs, or read hook paths";
+
+    const autoClient = yield* assertBroadestAccess(
+      {
+        scope: { ...client, client: { ...claudeCode, access: "auto" } },
+        threads,
+        caller: undefined,
+        limits: { runtimeMode: "auto", interactionMode: "default" },
+      },
+      what,
+    ).pipe(Effect.flip);
+    expect(autoClient.code).toBe("capability_denied");
+    expect(autoClient.message).toContain("This MCP client (Claude Code)");
+    expect(autoClient.message).toContain("approved with auto access");
+    expect(autoClient.message).toContain("full-access/default");
+    expect(autoClient.message).toMatch(/thread's permission mode/i);
+    expect(autoClient.message).toContain("Full access");
+
+    const belowCeiling = yield* assertBroadestAccess(
+      {
+        scope: {
+          ...client,
+          runtimeModeCeiling: "auto",
+          client: { ...claudeCode, access: "approval-required" },
+        },
+        threads,
+        caller: undefined,
+        limits: { runtimeMode: "approval-required", interactionMode: "default" },
+      },
+      what,
+    ).pipe(Effect.flip);
+    expect(belowCeiling.message).toContain("approved with approval-required access");
+    expect(belowCeiling.message).toContain("auto/default");
+    expect(belowCeiling.message).toContain("auto access");
+
+    const narrowedRequest = yield* assertBroadestAccess(
+      {
+        scope: {
+          ...client,
+          runtimeModeCeiling: "auto",
+          client: {
+            ...claudeCode,
+            access: "full-access",
+            narrowedTo: { runtimeMode: "approval-required", interactionMode: "default" },
+          },
+        },
+        threads,
+        caller: undefined,
+        limits: { runtimeMode: "approval-required", interactionMode: "default" },
+      },
+      what,
+    ).pipe(Effect.flip);
+    expect(narrowedRequest.message).toContain(
+      "This MCP client (Claude Code) is limited to approval-required/default on this request",
+    );
+    expect(narrowedRequest.message).not.toContain("was approved with");
+
+    const threadRefusal = yield* assertBroadestAccess(
+      {
+        scope: {
+          ...client,
+          client: undefined,
+          thread: {
+            threadId: bareId,
+            providerSessionId: "provider-session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+        },
+        threads,
+        caller: liveThreadShell(bareId, { runtimeMode: "auto" }),
+        limits: { runtimeMode: "auto", interactionMode: "default" },
+      },
+      what,
+    ).pipe(Effect.flip);
+    expect(threadRefusal.message).toContain("Only a caller with full-access/default access");
+    expect(threadRefusal.message).toContain("This caller is limited to auto/default.");
+    expect(threadRefusal.message).not.toContain("MCP client");
   }),
 );
