@@ -900,13 +900,13 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
 // binary open, and Windows refuses to overwrite or delete a running executable.
 const CODEX_SKILLS_HELPER_IDLE_TTL = "30 seconds";
 
-/** Reuses one app-server per launch identity; each read passes its cwd and rescans from disk. */
-export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* () {
+/** Reuses one app-server per launch identity; each read runs on the warm process. */
+export const makeCodexAppServerHelper = Effect.fn("makeCodexAppServerHelper")(function* () {
   const helpers = yield* RcMap.make({
     lookup: (launch: {
       readonly binaryPath: string;
-      readonly homePath?: string;
-      readonly launchArgs?: string;
+      readonly homePath?: string | undefined;
+      readonly launchArgs?: string | undefined;
       readonly environment: NodeJS.ProcessEnv;
     }) =>
       withCodexAppServerClient({ ...launch, cwd: process.cwd() }).pipe(
@@ -914,6 +914,46 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
       ),
     idleTimeToLive: CODEX_SKILLS_HELPER_IDLE_TTL,
   });
+  const invalidateAll = Effect.gen(function* () {
+    const keys = Array.from(yield* RcMap.keys(helpers));
+    yield* Effect.forEach(keys, (key) => RcMap.invalidate(helpers, key), { discard: true });
+  });
+  const withClient = Effect.fn("CodexAppServerHelper.withClient")(function* <A, E>(
+    input: {
+      readonly binaryPath: string;
+      readonly homePath?: string | undefined;
+      readonly launchArgs?: string | undefined;
+      readonly environment?: NodeJS.ProcessEnv | undefined;
+    },
+    use: (client: CodexClient.CodexAppServerClient["Service"]) => Effect.Effect<A, E>,
+  ) {
+    const launch = {
+      binaryPath: input.binaryPath,
+      ...(input.homePath !== undefined ? { homePath: input.homePath } : {}),
+      ...(input.launchArgs !== undefined ? { launchArgs: input.launchArgs } : {}),
+      environment: providerProbeEnvironment(input.environment ?? process.env),
+    };
+    // Retire helpers for a previous binary, home, credentials, or launch options.
+    const stale = Array.from(yield* RcMap.keys(helpers)).filter(
+      (key) => !Equal.equals(key, launch),
+    );
+    yield* Effect.forEach(stale, (key) => RcMap.invalidate(helpers, key), { discard: true });
+    return yield* RcMap.get(helpers, launch).pipe(
+      Effect.flatMap(use),
+      Effect.scoped,
+      // RcMap keeps a failed spawn, and a dead helper keeps failing; drop it so the retry respawns.
+      Effect.onError(() => RcMap.invalidate(helpers, launch)),
+      Effect.retry({ times: 1 }),
+    );
+  });
+  return { withClient, invalidateAll };
+});
+
+/** Reuses one app-server per launch identity; each read passes its cwd and rescans from disk. */
+export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* (
+  existingHelper?: Effect.Success<ReturnType<typeof makeCodexAppServerHelper>>,
+) {
+  const helper = existingHelper ?? (yield* makeCodexAppServerHelper());
   return Effect.fn("CodexSkillsProbe.probe")(function* (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
@@ -922,24 +962,118 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
     readonly environment?: NodeJS.ProcessEnv;
   }) {
     const { cwd, ...rest } = input;
-    const launch = {
-      ...rest,
-      environment: providerProbeEnvironment(rest.environment ?? process.env),
-    };
-    // Retire helpers for a previous binary, home, credentials, or launch options.
-    const stale = Array.from(yield* RcMap.keys(helpers)).filter(
-      (key) => !Equal.equals(key, launch),
-    );
-    yield* Effect.forEach(stale, (key) => RcMap.invalidate(helpers, key), { discard: true });
-    const skillsResponse = yield* RcMap.get(helpers, launch).pipe(
-      Effect.flatMap((client) => client.request("skills/list", { cwds: [cwd], forceReload: true })),
-      Effect.scoped,
-      // RcMap keeps a failed spawn, and a dead helper keeps failing; drop it so the retry respawns.
-      Effect.onError(() => RcMap.invalidate(helpers, launch)),
-      Effect.retry({ times: 1 }),
+    const skillsResponse = yield* helper.withClient(rest, (client) =>
+      client.request("skills/list", { cwds: [cwd], forceReload: true }),
     );
     return parseCodexSkillsListResponse(skillsResponse, cwd);
   });
+});
+
+export const probeCodexUsageLimits = Effect.fn("probeCodexUsageLimits")(function* (input: {
+  readonly helper: Effect.Success<ReturnType<typeof makeCodexAppServerHelper>>;
+  readonly codexSettings: CodexSettings;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  if (!input.codexSettings.enabled) return undefined;
+  const resolvedEnvironment = providerProbeEnvironment(input.environment ?? process.env);
+  const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+    "codex",
+    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
+  const startedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+  const deadlineMs = startedAtMs + probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
+  const launch = {
+    binaryPath: input.codexSettings.binaryPath,
+    homePath: input.codexSettings.homePath,
+    launchArgs: resolveCodexLaunchArgs(input.codexSettings.launchArgs, resolvedEnvironment),
+    environment: resolvedEnvironment,
+  };
+  return yield* input.helper
+    .withClient(launch, (client) =>
+      Effect.gen(function* () {
+        const [accountResponse, configResponse] = yield* Effect.all(
+          [
+            client.request("account/read", {}),
+            withCodexDiscoveryDeadline(
+              client.request("config/read", { includeLayers: false }),
+              deadlineMs,
+              CODEX_CONFIG_PROBE_TIMEOUT_MS,
+            ).pipe(Effect.orElseSucceed(() => undefined)),
+          ],
+          { concurrency: 2 },
+        );
+        if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+          return undefined;
+        }
+        const email = codexAccountEmail(accountResponse.account);
+        const baseAuth = email ? { email } : undefined;
+        if (configResponse === undefined) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: "Codex did not answer the config request.",
+            }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        if (!codexRoutesSpendNativeQuota(accountResponse, configResponse.config)) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        const rateLimits = yield* readCodexRateLimits(client, deadlineMs);
+        if ("failure" in rateLimits) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: rateLimits.failure,
+            }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        const workspaceId = rateLimits.accountId?.trim() || undefined;
+        const label = codexAccountAuthLabel(accountResponse.account, rateLimits.snapshot.planType);
+        return {
+          usageLimits: codexRateLimitsToLimits({
+            snapshot: rateLimits.snapshot,
+            rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
+            resetCredits: rateLimits.resetCredits,
+            checkedAt,
+          }),
+          auth: {
+            ...(email ? { email } : {}),
+            ...(workspaceId ? { workspaceId } : {}),
+            ...(label ? { label } : {}),
+          },
+        };
+      }),
+    )
+    .pipe(
+      Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
+      Effect.map(
+        Option.getOrElse(() =>
+          makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "Codex did not answer the usage request.",
+          }),
+        ),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(
+          makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: codexRateLimitsFailureMessage(error),
+          }),
+        ),
+      ),
+    );
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>

@@ -366,10 +366,12 @@ export function DevicePanel(props: {
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Smartphone className="size-4 shrink-0" />
                           <h3 className="font-medium">
-                            {group.platform === "ios"
-                              ? gt("iOS Simulators")
-                              : group.devices.some((device) => device.physical)
-                                ? gt("Android Devices")
+                            {group.devices.some((device) => device.physical)
+                              ? group.platform === "ios"
+                                ? gt("iOS Devices")
+                                : gt("Android Devices")
+                              : group.platform === "ios"
+                                ? gt("iOS Simulators")
                                 : gt("Android Emulators")}
                           </h3>
                         </div>
@@ -399,6 +401,13 @@ export function DevicePanel(props: {
                                               ?.label
                                           }
                                         </span>
+                                        {device.physical ? (
+                                          <span>
+                                            {gt("Physical", {
+                                              $context: "physical device, not a simulator",
+                                            })}
+                                          </span>
+                                        ) : null}
                                         <span>
                                           {device.booted
                                             ? gt("Running", { $context: "device state" })

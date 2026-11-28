@@ -59,7 +59,7 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 ### Snooze options
 
-Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. Choose **Wake thread** to bring a thread back early.
+Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. **Snooze → Indefinitely** keeps a thread snoozed until you wake it (it still wakes early on approvals, questions, errors, or new messages). Choose **Wake thread** to bring a thread back early.
 
 ## Link a pull request
 

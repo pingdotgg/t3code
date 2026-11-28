@@ -803,13 +803,16 @@ export function PullRequestsPage() {
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
+  // A panel without a host could be showing the same repository on another host.
   if (
     panelEnvironmentId !== null &&
+    renderedPullRequestSurface?.host !== undefined &&
     panelSummary?.additions !== undefined &&
     panelSummary.deletions !== undefined
   ) {
     const stat = {
       ...panelSummary,
+      host: renderedPullRequestSurface?.host,
       environmentId: panelEnvironmentId,
       additions: panelSummary.additions,
       deletions: panelSummary.deletions,

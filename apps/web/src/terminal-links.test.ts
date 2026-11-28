@@ -143,6 +143,7 @@ describe("extractTerminalLinks", () => {
     ["/tmp/docs)}])", "/tmp/docs)"],
     ["/tmp/docs):", "/tmp/docs"],
     ["/(60)", "/(60)"],
+    ["/tmp/:[60]", "/tmp/:[60]"],
   ])("trims only unbalanced closing delimiters from %s", (raw, text) => {
     expect(extractTerminalLinks(`see ${raw}`)).toEqual([
       { kind: isTerminalUrl(text) ? "url" : "path", text, start: 4, end: 4 + text.length },
@@ -186,6 +187,7 @@ describe("extractTerminalLinks", () => {
       "/var/lib/bluetooth/AA:BB:CC:11:22:DD",
       "/var/lib/bluetooth/AA:BB:CC:11:22",
     ],
+    ["./notes.txt:3:App.java:[27,49]", "./notes.txt:3:App.java:[27,49]", "./notes.txt:3"],
   ])("keeps %s whole and offers its location as the fallback", (line, text, fallback) => {
     expect(extractTerminalLinks(line)).toEqual([
       {
@@ -214,11 +216,41 @@ describe("extractTerminalLinks", () => {
       "/var/www/html/index.php(110)",
       "/var/www/html/index.php:110",
     ],
-  ])("offers the parenthesized location in %s as the fallback", (line, text, fallback) => {
+    [
+      "[ERROR] /app/src/main/java/App.java:[27,49] cannot find symbol",
+      "/app/src/main/java/App.java:[27,49]",
+      "/app/src/main/java/App.java:27:49",
+    ],
+    [
+      "[ERROR] /app/src/main/java/App.java:[99] Type mismatch: cannot convert from Integer to String",
+      "/app/src/main/java/App.java:[99]",
+      "/app/src/main/java/App.java:99",
+    ],
+    [
+      "   at Demo.Program.Main(String[] args) in /home/dev/app/Program.cs:line 29",
+      "/home/dev/app/Program.cs:line",
+      "/home/dev/app/Program.cs:29",
+    ],
+    [
+      String.raw`   at Demo.Program.Main(String[] args) in C:\app\Program.cs:line 29`,
+      String.raw`C:\app\Program.cs:line`,
+      String.raw`C:\app\Program.cs:29`,
+    ],
+  ])("offers the closing location in %s as the fallback", (line, text, fallback) => {
     const start = line.indexOf(text);
     const end = start + text.length;
     expect(extractTerminalLinks(line)).toEqual([
       { kind: "path", text, start, end, fallback: { text: fallback, end } },
+    ]);
+  });
+
+  it.each([
+    ["see /home/dev/app/notes:line for details", "/home/dev/app/notes:line"],
+    ["see /home/dev/app/notes:line 0x1d", "/home/dev/app/notes:line"],
+  ])("offers no line number as the fallback in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
     ]);
   });
 
@@ -391,6 +423,8 @@ describe("resolvePathLinkTarget", () => {
   it.each([
     [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
     ["/tmp/report(42,7)", "/tmp/report(42,7)"],
+    ["/tmp/report:[42,7]", "/tmp/report:[42,7]"],
+    ["/tmp/notes:line 29", "/tmp/notes:line"],
     ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
   ])("preserves existing path targets in %s", (line, target) => {
     const [link] = extractTerminalLinks(line);
