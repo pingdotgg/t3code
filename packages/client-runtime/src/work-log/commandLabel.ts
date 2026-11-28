@@ -1132,6 +1132,7 @@ function wrappedShellCommandProgramName(
   start: number,
   depth: number,
   remainingCommand: string | null,
+  separator: string | null,
   segmentsRemaining: number,
 ): string | null {
   let index = start;
@@ -1196,6 +1197,7 @@ function wrappedShellCommandProgramName(
     target === target.toLowerCase() &&
     NON_DESCRIPTIVE_SHELL_PROGRAMS.has(target) &&
     !TERMINAL_SHELL_PROGRAMS.has(target) &&
+    !(target === "true" && separator === "||") &&
     remainingCommand
   ) {
     return commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1);
@@ -1451,6 +1453,7 @@ function parseCommandProgramName(
         index + 1,
         depth,
         commandSplit.remainingCommand,
+        commandSplit.separator,
         segmentsRemaining,
       );
     }
@@ -1462,6 +1465,11 @@ function parseCommandProgramName(
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
       (!TERMINAL_SHELL_PROGRAMS.has(tokenProgram) ||
         (tokenProgram === "false" && commandSplit.separator !== "&&")) &&
+      !(
+        executionContext === "shell" &&
+        tokenProgram === "true" &&
+        commandSplit.separator === "||"
+      ) &&
       commandSplit.remainingCommand
     ) {
       return commandProgramNameInternal(

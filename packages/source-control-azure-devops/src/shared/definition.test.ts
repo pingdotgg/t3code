@@ -150,6 +150,18 @@ describe("Azure DevOps repository keys", () => {
     }
   });
 
+  it("gives a project with spaces in its name the same key over SSH as over HTTPS", () => {
+    for (const remote of [
+      "git@ssh.dev.azure.com:v3/Org/My Project/My Repo",
+      "ssh.dev.azure.com:v3/Org/My Project/My Repo",
+      "https://dev.azure.com/Org/My%20Project/_git/My%20Repo",
+    ]) {
+      expect(registry.repositoryKeyFromRemote(remote), remote).toBe(
+        "dev.azure.com/org/my%20project/_git/my%20repo",
+      );
+    }
+  });
+
   it.each([
     "git@ssh.dev.azure.com:v3/acme/platform/tool.git",
     "https://dev.azure.com/acme/platform/_git/tool.git",

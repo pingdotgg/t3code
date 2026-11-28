@@ -845,6 +845,16 @@ Third}`;
     );
   });
 
+  it("keeps ODT ruby readings apart from their base text", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+      '<text:p>Read <text:ruby text:style-name="Ru1"><text:ruby-base>漢字</text:ruby-base><text:ruby-text>かんじ</text:ruby-text></text:ruby> here.</text:p>' +
+      "</office:text></office:body></office:document-content>";
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p>Read <ruby>漢字<rt>かんじ</rt></ruby> here.</p>");
+  });
+
   it("respects ODT hidden text and hidden paragraph fields", async () => {
     // Field markup as LibreOffice Writer 24.2 saves it: no text:is-hidden, and the field text only in
     // text:string-value.
@@ -1188,6 +1198,13 @@ Third}`;
   });
 
   it("preserves the SVG filters used by EPUB artwork", async () => {
+    const fxFilter = `<filter id="fx">
+      <feMorphology operator="dilate" radius="1 2"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="7" stitchTiles="stitch" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="12" xChannelSelector="R" yChannelSelector="G"/>
+      <feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" divisor="1" bias="0" targetX="1" targetY="1" edgeMode="duplicate" preserveAlpha="true"/>
+      <feTile in="noise"/>
+    </filter>`;
     const archive = new JSZip()
       .file(
         "META-INF/container.xml",
@@ -1208,12 +1225,13 @@ Third}`;
           </filter>
           <filter id="drop"><feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5"/></filter>
           <filter id="tone"><feFlood flood-color="red"/><feBlend mode="multiply" in="SourceGraphic"/><feImage href="art.png"/></filter>
+          ${fxFilter}
           <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
         </svg>`,
       )
       .file(
         "fallback.xhtml",
-        '<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter></svg></body></html>',
+        `<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter>${fxFilter}</svg></body></html>`,
       );
     const book = await openEpub(archive);
     const { html } = await book.page(0);
@@ -1229,7 +1247,21 @@ Third}`;
     expect(html).toContain('<feBlend in="SourceGraphic" mode="multiply">');
     expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
-    expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
+    const fallbackHtml = (await book.page(1)).html;
+    expect(fallbackHtml).toContain('<feDropShadow dx="2">');
+    for (const output of [html, fallbackHtml]) {
+      expect(output).toContain('<feMorphology operator="dilate" radius="1 2">');
+      expect(output).toContain(
+        '<feTurbulence result="noise" type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="7" stitchTiles="stitch">',
+      );
+      expect(output).toContain(
+        '<feDisplacementMap in="SourceGraphic" in2="noise" scale="12" xChannelSelector="R" yChannelSelector="G">',
+      );
+      expect(output).toContain(
+        '<feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" divisor="1" bias="0" targetX="1" targetY="1" edgeMode="duplicate" preserveAlpha="true">',
+      );
+      expect(output).toContain('<feTile in="noise"></feTile>');
+    }
   });
 
   it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
