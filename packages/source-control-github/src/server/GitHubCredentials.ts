@@ -19,6 +19,7 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/shar
 import {
   requireSettingsSecretLiteral,
   type ServerSettings,
+  type SettingsSecretSlot,
   type SettingsSecretUnresolvedError,
 } from "@t3tools/contracts";
 
@@ -125,6 +126,12 @@ export function isGitHubHost(host: string): boolean {
   return HOSTNAME.test(host);
 }
 
+/** Match raw settings keys the way the per-host settings schema decodes them. */
+export const gitHubTokenSlot =
+  (host: string) =>
+  ({ field, key }: SettingsSecretSlot) =>
+    field === "tokens" && key !== undefined && normalizeHost(key) === host;
+
 function isGitHubDotCom(host: string): boolean {
   return host === "github.com" || host.endsWith(".ghe.com");
 }
@@ -218,17 +225,19 @@ export const make = Effect.gen(function* () {
     );
 
   const savedToken = (host: string) =>
-    sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
-      Effect.map((settings) => ({
-        token: readSettings(settings).tokens[host],
-        secretProviders: settings.secretProviders,
-      })),
-      Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
-      Effect.flatMap(({ token, secretProviders }) =>
-        requireSettingsSecretLiteral(token, secretProviders),
-      ),
-      Effect.map((token) => token.trim() || null),
-    );
+    sourceControlHost.settings
+      .getWithSecrets(GitHubClient.definition.kind, gitHubTokenSlot(host))
+      .pipe(
+        Effect.map((settings) => ({
+          token: readSettings(settings).tokens[host],
+          secretProviders: settings.secretProviders,
+        })),
+        Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+        Effect.flatMap(({ token, secretProviders }) =>
+          requireSettingsSecretLiteral(token, secretProviders),
+        ),
+        Effect.map((token) => token.trim() || null),
+      );
 
   const cacheKey = (host: string, account: string | undefined) =>
     account === undefined ? host : `${host}\u0000${account}`;

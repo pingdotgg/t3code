@@ -4,6 +4,7 @@ import {
   secretSettingsFields,
   type SecretReference,
   type ServerSettings,
+  type SettingsSecretSlot,
 } from "@t3tools/contracts";
 import type * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
@@ -88,11 +89,12 @@ export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.reso
     resolver: SecretResolver.SecretResolver["Service"],
     hosts: SourceControlHostsSettings,
     kind: string,
+    needsSecret?: (slot: SettingsSecretSlot) => boolean,
   ) {
     const schema = hostSettingsSchemas.get(kind);
     const fields = hosts[kind];
     if (schema === undefined || fields === undefined) return hosts;
-    const resolved = yield* resolveSettingsSecrets(resolver, schema, fields);
+    const resolved = yield* resolveSettingsSecrets(resolver, schema, fields, needsSecret);
     return resolved === fields ? hosts : { ...hosts, [kind]: resolved };
   },
 );
