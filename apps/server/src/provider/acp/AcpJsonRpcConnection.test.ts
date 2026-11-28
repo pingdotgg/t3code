@@ -9,7 +9,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1487,6 +1489,137 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.live("a prompt waiting for a late session/load stops at once when interrupted", () =>
+    Effect.gen(function* () {
+      const loadSettled = yield* Deferred.make<void>();
+      const promptStatuses: string[] = [];
+      const runtime = yield* AcpSessionRuntime.make({
+        authMethodId: "test",
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: { T3_ACP_EMIT_LOAD_REPLAY: "1", T3_ACP_LOAD_NEVER_REPLIES: "1" },
+        },
+        cwd: process.cwd(),
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "50 millis",
+        sessionLoadTimeout: "2 seconds",
+        sessionLoadReplayIdleReadiness: true,
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        requestLogger: (event) =>
+          event.method === "session/prompt"
+            ? Effect.sync(() => promptStatuses.push(event.status))
+            : event.method === "session/load" && event.status === "failed"
+              ? Deferred.succeed(loadSettled, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+      });
+      yield* runtime.start();
+      const prompting = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(prompting);
+      expect(yield* Deferred.isDone(loadSettled)).toBe(false);
+      yield* Deferred.await(loadSettled);
+      expect(promptStatuses).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.each(["stop", "mock-session-1", "mock-session-2"] as const)(
+    "a prompt waiting for a late session/load handles %s before dispatch",
+    (action) =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-late-load-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const log: string[] = [];
+        const replay = yield* Queue.unbounded<string>();
+        const idleGap = "50 millis";
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: {
+              T3_ACP_EMIT_LOAD_REPLAY: "1",
+              T3_ACP_LOAD_NEVER_REPLIES: "1",
+              T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+            },
+          },
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: idleGap,
+          sessionLoadTimeout: "2 seconds",
+          sessionLoadReplayIdleReadiness: true,
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.method === "session/load" || event.method === "session/prompt")
+                log.push(`${event.method} ${event.status}`);
+            }),
+        });
+        yield* runtime.handleSessionUpdate(({ sessionId, update }) =>
+          update.sessionUpdate === "user_message_chunk"
+            ? Queue.offer(replay, sessionId).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        const starting = yield* runtime.start().pipe(Effect.forkChild);
+        expect(yield* Queue.take(replay)).toBe("mock-session-1");
+        yield* TestClock.adjust(idleGap);
+        yield* Fiber.join(starting);
+
+        // Prompt registration is private. Its replay-idle timer starts after cancellation is armed.
+        const clock = yield* Clock.Clock;
+        const waiting = yield* Queue.unbounded<void>();
+        const prompting = yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] }).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            sleep: (duration) =>
+              Queue.offer(waiting, undefined).pipe(Effect.andThen(clock.sleep(duration))),
+          }),
+          Effect.result,
+          Effect.forkChild,
+        );
+        yield* Queue.take(waiting);
+        if (action === "stop") {
+          yield* runtime.cancel;
+          expect(yield* Fiber.join(prompting)).toMatchObject({
+            success: { stopReason: "cancelled" },
+          });
+          expect(log).toEqual(["session/load started", "session/load succeeded"]);
+          yield* TestClock.adjust("2 seconds");
+          expect(log).toContain("session/load failed");
+        } else {
+          const loading = yield* runtime.loadSession(action).pipe(Effect.forkChild);
+          expect(yield* Queue.take(replay)).toBe(action);
+          yield* TestClock.adjust(idleGap);
+          yield* Fiber.join(loading);
+          if (action === "mock-session-1") {
+            yield* Queue.take(waiting);
+            yield* TestClock.adjust(idleGap);
+          }
+          const result = yield* Fiber.join(prompting);
+          if (action === "mock-session-1") {
+            expect(result).toMatchObject({ success: { stopReason: "end_turn" } });
+            expect(log.slice(0, 5)).toEqual([
+              "session/load started",
+              "session/load succeeded",
+              "session/load started",
+              "session/load succeeded",
+              "session/prompt started",
+            ]);
+          } else {
+            expect(result).toMatchObject({
+              failure: { _tag: "AcpTransportError", method: "session/prompt" },
+            });
+          }
+        }
+        yield* runtime.request("_test/environment", {});
+        expect(readReceived(requestLogPath, ["session/prompt", "session/cancel"])).toEqual(
+          action === "mock-session-1" ? ["session/prompt"] : [],
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live("treats replay idle as loaded when the agent opts in", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -1495,6 +1628,16 @@ describe("AcpSessionRuntime", () => {
       expect(started.sessionSetupResult._meta).toMatchObject({
         t3SessionLoadReady: "replay_idle",
       });
+      // An unanswered session/load holds the prompt for one more idle gap, not its load timeout.
+      const prompted = yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
+      expect(prompted.stopReason).toBe("end_turn");
+      expect(yield* runtime.isSessionLoadInFlight!(started.sessionId)).toBe(false);
+      // No clock advance: a second wait on the unanswered load would block here.
+      const clock = yield* TestClock.make();
+      const next = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "again" }] })
+        .pipe(Effect.provideService(Clock.Clock, clock));
+      expect(next.stopReason).toBe("end_turn");
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({

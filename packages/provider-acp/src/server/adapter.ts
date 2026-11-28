@@ -1891,8 +1891,10 @@ interface ActiveAcpTurn {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
+  readonly itemIdentityVersion: 2 | undefined;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  readonly promptStop: Deferred.Deferred<void>;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
   appContextOffered?: ReadonlyMap<string, string> | undefined;
@@ -1927,7 +1929,8 @@ interface ActiveAcpTurn {
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
-  readonly subagents: Map<string, ActiveAcpSubagent>;
+  readonly subagents: Map<OrchestrationV2Subagent["id"], ActiveAcpSubagent>;
+  readonly currentSubagentsByTaskId: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
   readonly toolCallIdsByBackgroundTaskId: Map<string, string>;
@@ -2178,6 +2181,56 @@ interface ActiveAcpSubagent {
   transcriptFollowerStarted: boolean;
   transcriptTrailingDrainStop: Deferred.Deferred<void> | undefined;
   transcriptTrailingDrainStarted: boolean;
+}
+
+function subagentChildCompatible(
+  subagent: ActiveAcpSubagent,
+  childSessionId: string | null,
+): boolean {
+  return (
+    childSessionId === null ||
+    subagent.childSessionId === null ||
+    subagent.childSessionId === childSessionId
+  );
+}
+
+function uniqueSubagentByTaskId(subagents: Iterable<ActiveAcpSubagent>, nativeTaskId: string) {
+  let match: ActiveAcpSubagent | undefined;
+  for (const subagent of subagents) {
+    if (subagent.task.nativeTaskRef?.nativeId !== nativeTaskId) continue;
+    if (match !== undefined) return undefined;
+    match = subagent;
+  }
+  return match;
+}
+
+function matchSubagent(
+  context: ActiveAcpTurn,
+  lookup: {
+    readonly childSessionId: string | null;
+    readonly nativeTaskId: string;
+    readonly preferUnboundCarryoverOnly?: boolean;
+    readonly isTerminal?: boolean;
+  },
+): ActiveAcpSubagent | undefined {
+  if (lookup.childSessionId !== null) {
+    const bySession = context.subagentsBySessionId.get(lookup.childSessionId);
+    if (bySession !== undefined) return bySession;
+  }
+  if (lookup.isTerminal === true && lookup.childSessionId === null) {
+    return uniqueSubagentByTaskId(context.subagents.values(), lookup.nativeTaskId);
+  }
+  const current = context.currentSubagentsByTaskId.get(lookup.nativeTaskId);
+  if (current !== undefined && subagentChildCompatible(current, lookup.childSessionId)) {
+    return current;
+  }
+  const candidates: Array<ActiveAcpSubagent> = [];
+  for (const subagent of context.subagents.values()) {
+    if (lookup.preferUnboundCarryoverOnly === true && subagent.childSessionId !== null) continue;
+    if (!subagentChildCompatible(subagent, lookup.childSessionId)) continue;
+    candidates.push(subagent);
+  }
+  return uniqueSubagentByTaskId(candidates, lookup.nativeTaskId);
 }
 
 interface AcpNativeChildSession {
@@ -2560,26 +2613,57 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);
-        const providerNativeId = (nativeId: string) =>
+        const providerNativeId = (nativeId: string, version: 2 | undefined = itemIdentityVersion) =>
           acpProviderItemNativeId({
             instanceId: options.instanceId,
-            itemIdentityVersion,
+            itemIdentityVersion: version,
             nativeId,
           });
-        const providerNodeId = (nativeItemId: string) =>
+        const providerNodeId = (
+          nativeItemId: string,
+          version: 2 | undefined = itemIdentityVersion,
+        ) =>
           idAllocator.derive.nodeFromProviderItem({
             driver,
-            nativeItemId: providerNativeId(nativeItemId),
+            nativeItemId: providerNativeId(nativeItemId, version),
           });
-        const providerMessageId = (nativeItemId: string) =>
+        const subagentChildRootId = (
+          taskId: string,
+          version: 2 | undefined = itemIdentityVersion,
+        ) => providerNodeId(JSON.stringify(["child-root", taskId]), version);
+        const scopedToolItemId = (sessionId: string, turnOrdinal: number, toolCallId: string) =>
+          JSON.stringify(["tool", sessionId, turnOrdinal, toolCallId]);
+        const scopedSubagentTaskId = (
+          sessionId: string,
+          turnOrdinal: number,
+          taskId: string,
+          childSessionId?: string,
+        ) =>
+          JSON.stringify(
+            childSessionId === undefined
+              ? ["task", sessionId, turnOrdinal, taskId]
+              : ["task", sessionId, turnOrdinal, taskId, childSessionId],
+          );
+        const scopedUserInputItemId = (
+          sessionId: string,
+          turnOrdinal: number,
+          nativeItemId: string,
+        ) => JSON.stringify(["user-input", sessionId, turnOrdinal, nativeItemId]);
+        const providerMessageId = (
+          nativeItemId: string,
+          version: 2 | undefined = itemIdentityVersion,
+        ) =>
           idAllocator.derive.messageFromProviderItem({
             driver,
-            nativeItemId: providerNativeId(nativeItemId),
+            nativeItemId: providerNativeId(nativeItemId, version),
           });
-        const providerTurnItemId = (nativeItemId: string) =>
+        const providerTurnItemId = (
+          nativeItemId: string,
+          version: 2 | undefined = itemIdentityVersion,
+        ) =>
           idAllocator.derive.turnItemFromProviderItem({
             driver,
-            nativeItemId: providerNativeId(nativeItemId),
+            nativeItemId: providerNativeId(nativeItemId, version),
           });
         const deriveProviderTurnId = (nativeTurnId: string) =>
           idAllocator.derive.providerTurn({
@@ -2812,7 +2896,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }),
           );
         });
-        const setActiveSessionSetup = Effect.fnUntraced(function* (
+        const applyActiveSessionSetupLocked = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
           followsAgentWorkState =
@@ -2830,9 +2914,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
+          const route = yield* Ref.get(lastTurnRoute);
+          const previousSessionId = (yield* Ref.get(activeSessionSetup))?.sessionId ?? null;
+          const hasForeignWake = (yield* Ref.get(wakeBuffer)).some(
+            (frame) => frame.sessionId !== setup.sessionId,
+          );
+          if (
+            (route !== null && route.nativeSessionId !== setup.sessionId) ||
+            (previousSessionId !== null && previousSessionId !== setup.sessionId) ||
+            hasForeignWake
+          ) {
+            yield* Ref.set(lastTurnRoute, null);
+            yield* Ref.update(continuationGeneration, (generation) => generation + 1);
+            yield* Ref.set(continuationRequested, false);
+            yield* Ref.set(wakeBuffer, []);
+            yield* Ref.set(wakeReports, noWakeReports);
+          }
           yield* Ref.set(activeSessionSetup, setup);
           yield* resetPublishedCatalogKey;
         });
+        const setActiveSessionSetup = (setup: AcpSessionRuntime.AcpSessionRuntimeStartResult) =>
+          continuationPermit.withPermit(applyActiveSessionSetupLocked(setup));
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         // Mode values configureSession left the agent in; a later difference is the agent's own change.
@@ -2912,6 +3014,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.tap((generation) => Ref.set(runtimeCallbackGeneration, generation)),
         );
         const runtimeCallbackPermit = yield* Semaphore.make(1);
+        const pendingPostActivationUpdates: Array<EffectAcpSchema.SessionNotification> = [];
+        const clearLoadingSession = (expectedSessionId?: string) =>
+          runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              if (
+                expectedSessionId !== undefined &&
+                (yield* Ref.get(loadingSessionId)) !== expectedSessionId
+              ) {
+                return;
+              }
+              yield* Ref.set(loadingSessionId, null);
+              pendingPostActivationUpdates.length = 0;
+            }),
+          );
         const runtimeTransitionPermit = yield* Semaphore.make(1);
         const nativeResponseAcknowledgements = yield* Ref.make(
           new Map<
@@ -3135,6 +3251,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }),
         );
         const lastTurnRoute = yield* Ref.make<{
+          readonly nativeSessionId: string;
           readonly threadId: ThreadId;
           readonly providerThreadId: ProviderThreadId;
         } | null>(null);
@@ -3172,7 +3289,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // Grok re-prompts on stale monitor notices; suppress output until a genuine terminal or app turn.
         const suppressPostSettleMonitorPrompt = yield* Ref.make(false);
-        const runningBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const runningBackgroundTaskIds = yield* Ref.make<ReadonlyMap<string, ReadonlySet<string>>>(
+          new Map(),
+        );
+        const hasRunningBackgroundTasks = (sessionId: string) =>
+          Ref.get(runningBackgroundTaskIds).pipe(
+            Effect.map((bySession) => (bySession.get(sessionId)?.size ?? 0) > 0),
+          );
         // Background command task id → the completed turn that owns its row. Ended commands stay,
         // bounded, so a later authoritative terminal still corrects the row on its run.
         const detachedBackgroundCommands = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(
@@ -3231,40 +3354,51 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const setBackgroundTaskRunning =
           /* Provider events include streaming deltas; avoid a span for each update. */
-          Effect.fnUntraced(function* (taskId: string, running: boolean) {
-            if (running && (yield* Ref.get(endedBackgroundTaskIds)).has(taskId)) {
+          Effect.fnUntraced(function* (sessionId: string, taskId: string, running: boolean) {
+            const endedKey = sessionScopedId(sessionId, taskId);
+            if (running && (yield* Ref.get(endedBackgroundTaskIds)).has(endedKey)) {
               return;
             }
             yield* Ref.update(runningBackgroundTaskIds, (current) => {
-              if (current.has(taskId) === running) return current;
-              const next = new Set(current);
+              const sessionTasks = current.get(sessionId);
+              if ((sessionTasks?.has(taskId) ?? false) === running) return current;
+              const next = new Map(current);
+              const nextTasks = new Set(sessionTasks);
               if (running) {
-                next.add(taskId);
+                nextTasks.add(taskId);
+                next.set(sessionId, nextTasks);
               } else {
-                next.delete(taskId);
+                nextTasks.delete(taskId);
+                if (nextTasks.size === 0) next.delete(sessionId);
+                else next.set(sessionId, nextTasks);
               }
               return next;
             });
           });
 
-        const markBackgroundTaskEnded = (taskId: string) =>
-          Ref.update(endedBackgroundTaskIds, (current) => {
-            if (current.has(taskId)) return current;
-            const next = new Set(current).add(taskId);
+        const markBackgroundTaskEnded = (sessionId: string, taskId: string) => {
+          const endedKey = sessionScopedId(sessionId, taskId);
+          return Ref.update(endedBackgroundTaskIds, (current) => {
+            if (current.has(endedKey)) return current;
+            const next = new Set(current).add(endedKey);
             for (const oldest of next) {
               if (next.size <= endedBackgroundTaskIdLimit) break;
               next.delete(oldest);
             }
             return next;
-          }).pipe(Effect.andThen(setBackgroundTaskRunning(taskId, false)));
+          }).pipe(Effect.andThen(setBackgroundTaskRunning(sessionId, taskId, false)));
+        };
 
-        const applyBackgroundTaskMutationRunning = (mutation: {
-          readonly taskId: string;
-          readonly status: "running" | "completed" | "failed";
-        }) =>
+        const applyBackgroundTaskMutationRunning = (
+          sessionId: string,
+          mutation: {
+            readonly taskId: string;
+            readonly status: "running" | "completed" | "failed";
+          },
+        ) =>
           mutation.status === "running"
-            ? setBackgroundTaskRunning(mutation.taskId, true)
-            : markBackgroundTaskEnded(mutation.taskId);
+            ? setBackgroundTaskRunning(sessionId, mutation.taskId, true)
+            : markBackgroundTaskEnded(sessionId, mutation.taskId);
 
         const trackRunningBackgroundTools =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -3278,7 +3412,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const taskId = flavor.extractBackgroundTaskId(toolCall);
               if (taskId === undefined) continue;
               const status = toolStatus(toolCall.status);
-              yield* setBackgroundTaskRunning(taskId, status === "pending" || status === "running");
+              yield* setBackgroundTaskRunning(
+                notification.sessionId,
+                taskId,
+                status === "pending" || status === "running",
+              );
             }
           });
 
@@ -4120,7 +4258,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageId?: string | null,
         ) {
           if (text.length === 0 && mode === "append") return;
-          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          const nativeItemId = `${subagent.task.id}:message:${messageId ?? "result"}`;
           const previous = subagent.assistantMessages.get(nativeItemId);
           const messageText = mode === "replace" ? text : `${previous ?? ""}${text}`;
           subagent.assistantMessages.set(nativeItemId, messageText);
@@ -4225,11 +4363,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           owner?: ActiveAcpTurn,
         ) {
-          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
           const key =
             sessionId === subagent.childSessionId
-              ? `${nativeTaskId}:tool:${toolCall.toolCallId}`
-              : `${nativeTaskId}:session:${sessionId}:tool:${toolCall.toolCallId}`;
+              ? `${subagent.task.id}:tool:${toolCall.toolCallId}`
+              : `${subagent.task.id}:${sessionScopedId(sessionId, toolCall.toolCallId)}`;
+          const nativePath =
+            sessionId === subagent.childSessionId
+              ? `tool:${toolCall.toolCallId}`
+              : `session:${sessionId}:tool:${toolCall.toolCallId}`;
+          const nativeId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:${nativePath}`;
           const context = subagent.toolState;
           const rootSessionId = yield* Ref.get(activeSessionId);
           subagent.toolSessionIds.set(key, sessionId);
@@ -4278,7 +4420,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nodeId: subagent.childRootNodeId,
               providerThreadId: subagent.task.providerThreadId,
               providerTurnId: null,
-              nativeItemRef: { driver, nativeId: key, strength: "strong" },
+              nativeItemRef: { driver, nativeId, strength: "strong" },
               parentItemId: null,
               ordinal,
               status,
@@ -4338,12 +4480,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           subagent.transcriptEntryFingerprints.set(entry.itemId, fingerprint);
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+          const itemKey = `${subagent.rootSessionId}:${subagent.task.id}:transcript:${entry.itemId}`;
           const nativeItemId = `${subagent.rootSessionId}:${nativeTaskId}:transcript:${entry.itemId}`;
           const now = yield* DateTime.now;
           const startedAt =
             subagent.transcriptStartedAt.get(entry.itemId) ?? entry.createdAt ?? now;
           subagent.transcriptStartedAt.set(entry.itemId, startedAt);
-          const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
+          const ordinal = resolveSubagentChildOrdinal(subagent, itemKey);
           const nativeItemRef = {
             driver,
             nativeId: nativeItemId,
@@ -4361,7 +4504,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 type: "turn_item.updated",
                 driver,
                 turnItem: {
-                  id: providerTurnItemId(nativeItemId),
+                  id: providerTurnItemId(itemKey),
                   threadId: subagent.childThreadId,
                   runId: null,
                   nodeId: subagent.childRootNodeId,
@@ -4384,8 +4527,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             case "assistant_message": {
               const artifacts = makeSubagentConversationArtifacts({
-                messageId: providerMessageId(nativeItemId),
-                turnItemId: providerTurnItemId(nativeItemId),
+                messageId: providerMessageId(itemKey),
+                turnItemId: providerTurnItemId(itemKey),
                 threadId: subagent.childThreadId,
                 rootNodeId: subagent.childRootNodeId,
                 providerThreadId: subagent.task.providerThreadId,
@@ -4396,7 +4539,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ordinal,
                 now: entry.createdAt ?? now,
               });
-              subagent.assistantMessages.set(nativeItemId, entry.text);
+              subagent.assistantMessages.set(itemKey, entry.text);
               subagent.assistantText = entry.text;
               yield* emitProviderEvent({
                 type: "message.updated",
@@ -4413,8 +4556,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             case "user_message": {
               const artifacts = makeSubagentConversationArtifacts({
                 senderThreadId: subagent.task.threadId,
-                messageId: providerMessageId(nativeItemId),
-                turnItemId: providerTurnItemId(nativeItemId),
+                messageId: providerMessageId(itemKey),
+                turnItemId: providerTurnItemId(itemKey),
                 threadId: subagent.childThreadId,
                 rootNodeId: subagent.childRootNodeId,
                 providerThreadId: subagent.task.providerThreadId,
@@ -4442,7 +4585,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 type: "turn_item.updated",
                 driver,
                 turnItem: {
-                  id: providerTurnItemId(nativeItemId),
+                  id: providerTurnItemId(itemKey),
                   threadId: subagent.childThreadId,
                   runId: null,
                   nodeId: subagent.childRootNodeId,
@@ -4476,7 +4619,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const completedAt = completedAtForStatus(status, now);
               const title = toolCall.title ?? null;
               const base = {
-                id: providerTurnItemId(nativeItemId),
+                id: providerTurnItemId(itemKey),
                 threadId: subagent.childThreadId,
                 runId: null,
                 nodeId: subagent.childRootNodeId,
@@ -4756,6 +4899,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const emitSubagent = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           reported: AcpAdapterV2SubagentUpdate,
+          existing?: ActiveAcpSubagent,
         ) {
           // Providers with cancellation detection already classify their subagent failures.
           const update: AcpAdapterV2SubagentUpdate =
@@ -4764,12 +4908,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             reported.status === "failed"
               ? { ...reported, status: "interrupted" }
               : reported;
-          // Hydration uses a new toolCallId but references the original child by subagent_id or task id.
-          const existing =
-            context.subagents.get(update.nativeTaskId) ??
-            (update.childSessionId !== null
-              ? context.subagentsBySessionId.get(update.childSessionId)
-              : undefined);
           const updateIsTerminal = acpSubagentStatusIsTerminal(update.status);
           if (
             existing !== undefined &&
@@ -4800,19 +4938,44 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: nativeTaskId,
             strength: "strong" as const,
           };
-          const nodeId = existing?.task.id ?? providerNodeId(nativeTaskId);
+          const baseScopedTaskId = scopedSubagentTaskId(
+            context.nativeThreadId,
+            context.input.providerTurnOrdinal,
+            nativeTaskId,
+          );
+          const baseNodeId = providerNodeId(baseScopedTaskId, context.itemIdentityVersion);
+          const scopedTaskId =
+            existing === undefined &&
+            update.childSessionId !== null &&
+            context.subagents.has(baseNodeId)
+              ? scopedSubagentTaskId(
+                  context.nativeThreadId,
+                  context.input.providerTurnOrdinal,
+                  nativeTaskId,
+                  update.childSessionId,
+                )
+              : baseScopedTaskId;
+          const nodeId =
+            existing?.task.id ?? providerNodeId(scopedTaskId, context.itemIdentityVersion);
+          const knownChildThread =
+            update.childSessionId === null
+              ? undefined
+              : (yield* Ref.get(providerThreadByNativeSessionId)).get(update.childSessionId);
           const childThreadId =
             existing?.childThreadId ??
+            knownChildThread?.appThreadId ??
             idAllocator.derive.subagentThread({
               driver,
               providerInstanceId: context.input.modelSelection.instanceId,
-              nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
+              nativeThreadId: scopedTaskId,
             });
           const childRootNodeId =
-            existing?.childRootNodeId ?? providerNodeId(`${nativeTaskId}:child-root`);
-          const turnItemId = existing?.turnItemId ?? providerTurnItemId(nativeTaskId);
+            existing?.childRootNodeId ??
+            subagentChildRootId(scopedTaskId, context.itemIdentityVersion);
+          const turnItemId =
+            existing?.turnItemId ?? providerTurnItemId(scopedTaskId, context.itemIdentityVersion);
           const turnItemOrdinal =
-            existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(context, nativeTaskId));
+            existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(context, scopedTaskId));
           const taskStatus = update.status;
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
@@ -4872,9 +5035,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             transcriptTrailingDrainStarted: false,
           };
           subagent.task = task;
-          context.subagents.set(nativeTaskId, subagent);
+          context.subagents.set(subagent.task.id, subagent);
 
-          if (existing === undefined) {
+          if (existing === undefined && knownChildThread?.appThreadId == null) {
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver,
@@ -4899,11 +5062,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 creationSource: "provider",
               }),
             });
-            const promptNativeItemId = `${nativeTaskId}:prompt`;
+          }
+          if (existing === undefined) {
+            context.currentSubagentsByTaskId.set(nativeTaskId, subagent);
+            const promptNativeItemId = `${subagent.task.id}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               senderThreadId: context.input.threadId,
-              messageId: providerMessageId(promptNativeItemId),
-              turnItemId: providerTurnItemId(promptNativeItemId),
+              messageId: providerMessageId(promptNativeItemId, context.itemIdentityVersion),
+              turnItemId: providerTurnItemId(promptNativeItemId, context.itemIdentityVersion),
               threadId: childThreadId,
               rootNodeId: childRootNodeId,
               providerThreadId: null,
@@ -4930,24 +5096,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (childSessionId !== null && subagent.childSessionId === null) {
             subagent.childSessionId = childSessionId;
             context.subagentsBySessionId.set(childSessionId, subagent);
-            const providerThread = makeProviderThread({
-              driver,
-              providerInstanceId: context.input.modelSelection.instanceId,
-              idAllocator,
-              appThreadId: childThreadId,
-              providerSessionId: input.providerSessionId,
-              nativeThreadId: childSessionId,
-              ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
-              forkedFrom: {
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-              },
-              now,
-            });
+            const providerThread =
+              knownChildThread !== undefined && knownChildThread.appThreadId === childThreadId
+                ? knownChildThread
+                : {
+                    ...makeProviderThread({
+                      driver,
+                      providerInstanceId: context.input.modelSelection.instanceId,
+                      idAllocator,
+                      appThreadId: childThreadId,
+                      providerSessionId: input.providerSessionId,
+                      nativeThreadId:
+                        knownChildThread === undefined
+                          ? childSessionId
+                          : `${childThreadId}:${childSessionId}`,
+                      ...(context.itemIdentityVersion === undefined
+                        ? {}
+                        : { itemIdentityVersion: context.itemIdentityVersion }),
+                      forkedFrom: {
+                        providerThreadId: subagent.parentProviderThreadId,
+                        providerTurnId: subagent.providerTurnId,
+                      },
+                      now,
+                    }),
+                    nativeThreadRef: {
+                      driver,
+                      nativeId: childSessionId,
+                      strength: "strong" as const,
+                    },
+                  };
             subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
-            yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-              new Map(current).set(childSessionId, providerThread),
-            );
+            if (knownChildThread === undefined) {
+              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                new Map(current).set(childSessionId, providerThread),
+              );
+            }
             yield* emitProviderEvent({
               type: "provider_thread.updated",
               driver,
@@ -4992,14 +5175,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             node: {
               id: nodeId,
-              threadId: context.input.threadId,
+              threadId: subagent.task.threadId,
               runId: subagent.task.runId,
               parentNodeId: subagent.task.parentNodeId,
               rootNodeId: subagent.task.parentNodeId,
               kind: "subagent",
               status: taskStatus,
               countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
+              providerThreadId: subagent.parentProviderThreadId,
               providerTurnId: subagent.providerTurnId,
               nativeItemRef,
               runtimeRequestId: null,
@@ -5035,10 +5218,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             turnItem: {
               id: turnItemId,
-              threadId: context.input.threadId,
+              threadId: subagent.task.threadId,
               runId: subagent.task.runId,
               nodeId,
-              providerThreadId: context.input.providerThread.id,
+              providerThreadId: subagent.parentProviderThreadId,
               providerTurnId: subagent.providerTurnId,
               nativeItemRef,
               parentItemId: null,
@@ -5126,6 +5309,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         };
 
+        const emitSubagentStatus = (
+          owner: ActiveAcpTurn,
+          subagent: ActiveAcpSubagent,
+          status: AcpAdapterV2SubagentUpdate["status"],
+          result: string | null,
+          childSessionId = subagent.childSessionId,
+        ) =>
+          emitSubagent(
+            owner,
+            {
+              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
+              childSessionId,
+              prompt: subagent.task.prompt,
+              title: subagent.task.title,
+              model: subagent.task.model,
+              status,
+              result,
+            },
+            subagent,
+          );
+
         const publishNativeChildStatus = Effect.fnUntraced(function* (
           child: AcpNativeChildSession,
           status: AcpAdapterV2SubagentUpdate["status"],
@@ -5133,15 +5337,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const { subagent, owner } = child;
           if (subagent === undefined || owner === undefined) return;
           if (acpSubagentStatusIsTerminal(status)) yield* terminalizeSubagentTools(subagent);
-          yield* emitSubagent(owner, {
-            nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-            childSessionId: subagent.childSessionId,
-            prompt: subagent.task.prompt,
-            title: subagent.task.title,
-            model: subagent.task.model,
-            status,
-            result: child.result,
-          });
+          yield* emitSubagentStatus(owner, subagent, status, child.result);
         });
 
         const syncNativeChildren = Effect.fnUntraced(function* (
@@ -5151,19 +5347,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           for (const [sessionId, child] of nativeChildren) {
             if (child.parentSessionId !== rootSessionId) continue;
             if (child.subagent === undefined && child.delegationId !== null) {
-              const subagent = context.subagents.get(child.delegationId);
+              const subagent = matchSubagent(context, {
+                childSessionId: sessionId,
+                nativeTaskId: child.delegationId,
+                preferUnboundCarryoverOnly: true,
+              });
               if (subagent !== undefined) {
                 child.subagent = subagent;
                 child.owner = context;
-                yield* emitSubagent(context, {
-                  nativeTaskId: child.delegationId,
-                  childSessionId: sessionId,
-                  prompt: subagent.task.prompt,
-                  title: subagent.task.title,
-                  model: subagent.task.model,
-                  status: "running",
-                  result: child.result,
-                });
+                yield* emitSubagentStatus(context, subagent, "running", child.result, sessionId);
               }
             }
             const subagent = child.subagent;
@@ -5191,15 +5383,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 completedAt: null,
               };
               subagent.providerTurnId = context.providerTurnId;
-              subagent.turnItemOrdinal = yield* resolveItemOrdinal(
-                context,
-                subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-              );
+              subagent.turnItemOrdinal = yield* resolveItemOrdinal(context, subagent.task.id);
               subagent.terminalStatusProjected = false;
-              context.subagents.set(
-                subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-                subagent,
-              );
+              context.subagents.set(subagent.task.id, subagent);
+              if (child.delegationId !== null)
+                context.currentSubagentsByTaskId.set(child.delegationId, subagent);
               context.subagentsBySessionId.set(sessionId, subagent);
               yield* publishNativeChildStatus(child, "running");
               for (const [key, tool] of subagent.toolState.tools) {
@@ -5474,15 +5662,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               !acpSubagentStatusBlocksTurnSettlement(subagent.task.status)
             )
               continue;
-            yield* emitSubagent(context, {
-              nativeTaskId: nativeTaskId(subagent),
-              prompt: subagent.task.prompt,
-              title: subagent.task.title,
-              model: subagent.task.model,
-              status: "idle",
-              childSessionId: subagent.childSessionId,
-              result: null,
-            });
+            yield* emitSubagentStatus(context, subagent, "idle", null);
           }
         });
 
@@ -5632,6 +5812,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             const backgroundStatus = projectedStatus ?? toolStatus(toolCall.status);
             yield* setBackgroundTaskRunning(
+              context.nativeThreadId,
               backgroundTaskId,
               backgroundStatus === "pending" || backgroundStatus === "running",
             );
@@ -5658,7 +5839,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : [];
           let hydratedRegisteredMonitor = false;
           for (const backgroundCompletion of backgroundCompletions) {
-            yield* applyBackgroundTaskMutationRunning(backgroundCompletion);
+            yield* applyBackgroundTaskMutationRunning(context.nativeThreadId, backgroundCompletion);
             if (backgroundCompletion.status !== "running") {
               yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
                 new Set(current).add(backgroundCompletion.taskId),
@@ -5724,24 +5905,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
-            const existingSubagent =
-              context.subagents.get(subagentUpdate.nativeTaskId) ??
-              (subagentUpdate.childSessionId !== null
-                ? context.subagentsBySessionId.get(subagentUpdate.childSessionId)
-                : undefined);
-            if (
-              existingSubagent === undefined &&
-              !(subagentUpdate.prompt === "" && subagentUpdate.title === null) &&
-              subagentUpdate.suppressNormalTool !== false
-            ) {
-              yield* closeTextStreamsForNewTool(context);
+            const isTerminal = acpSubagentStatusIsTerminal(subagentUpdate.status);
+            const canSpawn =
+              !isTerminal &&
+              subagentUpdate.suppressNormalTool !== false &&
+              (subagentUpdate.prompt !== "" || subagentUpdate.title !== null);
+            const existing = matchSubagent(context, {
+              childSessionId: subagentUpdate.childSessionId,
+              nativeTaskId: subagentUpdate.nativeTaskId,
+              preferUnboundCarryoverOnly: canSpawn,
+              isTerminal,
+            });
+            const ambiguousTerminal =
+              isTerminal &&
+              existing === undefined &&
+              subagentUpdate.childSessionId === null &&
+              [...context.subagents.values()].some(
+                (subagent) => subagent.task.nativeTaskRef?.nativeId === subagentUpdate.nativeTaskId,
+              );
+            if (!ambiguousTerminal) {
+              if (
+                existing === undefined &&
+                !(subagentUpdate.prompt === "" && subagentUpdate.title === null) &&
+                subagentUpdate.suppressNormalTool !== false
+              ) {
+                yield* closeTextStreamsForNewTool(context);
+              }
+              yield* emitSubagent(
+                context,
+                stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
+                  ? { ...subagentUpdate, status: "interrupted" }
+                  : subagentUpdate,
+                existing,
+              );
             }
-            yield* emitSubagent(
-              context,
-              stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
-                ? { ...subagentUpdate, status: "interrupted" }
-                : subagentUpdate,
-            );
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -5768,13 +5965,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : undefined) ??
             toolStatus(toolCall.status);
           const now = yield* DateTime.now;
-          const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
+          const nativeItemId = scopedToolItemId(
+            context.nativeThreadId,
+            context.input.providerTurnOrdinal,
+            toolCall.toolCallId,
+          );
           if (!context.itemOrdinals.has(nativeItemId)) {
             yield* closeTextStreamsForNewTool(context);
           }
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
-          const nodeId = providerNodeId(nativeItemId);
-          const turnItemId = providerTurnItemId(nativeItemId);
+          const nodeId = providerNodeId(nativeItemId, context.itemIdentityVersion);
+          const turnItemId = providerTurnItemId(nativeItemId, context.itemIdentityVersion);
           const nativeItemRef = {
             driver,
             nativeId: toolCall.toolCallId,
@@ -6328,31 +6529,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           });
 
-        const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
-          if (continuationRequests === undefined) {
-            return false;
-          }
-          const pending = yield* continuationPermit.withPermit(
-            Effect.gen(function* () {
-              if (yield* Ref.get(continuationClosed)) return Option.none();
-              if (yield* Ref.get(stoppedRunQuarantine)) return Option.none();
-              if (yield* Ref.get(continuationRequested)) return Option.none();
-              const route = yield* Ref.get(lastTurnRoute);
-              if (route === null) return Option.none();
-              yield* Ref.set(continuationRequested, true);
-              const generation = yield* Ref.updateAndGet(
-                continuationGeneration,
-                (value) => value + 1,
-              );
-              const reports = yield* Ref.modify(wakeReports, ({ reports }) => [
-                reports,
-                { reports, offered: new Set(reports.keys()) },
-              ]);
-              return Option.some({ route, generation, reports });
-            }),
-          );
-          if (Option.isNone(pending)) return false;
-          const { route, generation, reports } = pending.value;
+        const reserveContinuationRunLocked = Effect.fnUntraced(function* (sessionId: string) {
+          if (continuationRequests === undefined) return Option.none();
+          if (yield* Ref.get(continuationClosed)) return Option.none();
+          if (yield* Ref.get(stoppedRunQuarantine)) return Option.none();
+          if (yield* Ref.get(continuationRequested)) return Option.none();
+          const route = yield* Ref.get(lastTurnRoute);
+          if (route?.nativeSessionId !== sessionId) return Option.none();
+          yield* Ref.set(continuationRequested, true);
+          const generation = yield* Ref.updateAndGet(continuationGeneration, (value) => value + 1);
+          const reports = yield* Ref.modify(wakeReports, ({ reports }) => [
+            reports,
+            { reports, offered: new Set(reports.keys()) },
+          ]);
+          return Option.some({ route, generation, reports });
+        });
+
+        const dispatchContinuationReservation = Effect.fnUntraced(function* (pending: {
+          readonly route: {
+            readonly nativeSessionId: string;
+            readonly threadId: ThreadId;
+            readonly providerThreadId: ProviderThreadId;
+          };
+          readonly generation: number;
+          readonly reports: ReadonlyMap<string, BackgroundWorkReport>;
+        }) {
+          if (continuationRequests === undefined) return false;
+          const { route, generation, reports } = pending;
           const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
@@ -6403,6 +6606,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const offerContinuationRun = Effect.fnUntraced(function* (sessionId: string) {
+          if (continuationRequests === undefined) {
+            return false;
+          }
+          const pending = yield* continuationPermit.withPermit(
+            reserveContinuationRunLocked(sessionId),
+          );
+          if (Option.isNone(pending)) return false;
+          return yield* dispatchContinuationReservation(pending.value);
+        });
+
         const applyLateBackgroundMutation = Effect.fnUntraced(function* (
           sessionId: string,
           mutation: {
@@ -6410,8 +6624,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly status: "running" | "completed" | "failed";
           },
         ) {
-          const taskAlreadyEnded = (yield* Ref.get(endedBackgroundTaskIds)).has(mutation.taskId);
-          yield* applyBackgroundTaskMutationRunning(mutation);
+          const taskAlreadyEnded = (yield* Ref.get(endedBackgroundTaskIds)).has(
+            sessionScopedId(sessionId, mutation.taskId),
+          );
+          yield* applyBackgroundTaskMutationRunning(sessionId, mutation);
           if (mutation.status === "running") {
             if (taskAlreadyEnded && acpPostSettleMonitorPromptShouldSuppress(mutation)) {
               yield* Ref.set(suppressPostSettleMonitorPrompt, true);
@@ -6439,7 +6655,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             postSettleContinuationEnabled &&
             (yield* Ref.get(activeSessionId)) === sessionId &&
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            !(yield* hasRunningBackgroundTasks(sessionId)) &&
             (yield* Ref.get(wakeBuffer)).some((notification) =>
               acpPostSettleContinuationOfferEvidence(notification, flavor),
             )
@@ -6487,15 +6703,68 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
             return false;
           }
-          if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
           if (notification.sessionId !== (yield* Ref.get(activeSessionId))) return false;
-          const owner = [...(yield* Ref.get(detachedBackgroundCommands)).values()].find(
-            (turn) => turn.tools.get(update.toolCallId)?.backgroundCommandTaskId !== undefined,
-          );
-          if (owner === undefined) return false;
-          for (const event of parseSessionUpdateEvent(notification).events) {
-            if (event._tag === "ToolCallUpdated") yield* emitTool(owner, event.toolCall);
+          const detached = yield* Ref.get(detachedBackgroundCommands);
+          if (detached.size === 0) return false;
+          const parsedEvents = parseSessionUpdateEvent(notification).events;
+          const event = parsedEvents.find((event) => event._tag === "ToolCallUpdated");
+          if (event === undefined) return false;
+          const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+          const incomingTaskId = flavor.extractBackgroundTaskId?.(toolCall);
+          let owner: ActiveAcpTurn | undefined;
+          if (incomingTaskId !== undefined) {
+            if (
+              active?.finalized === false &&
+              active.toolCallIdsByBackgroundTaskId.has(incomingTaskId)
+            )
+              return false;
+            owner = detached.get(incomingTaskId);
+            if (owner?.toolCallIdsByBackgroundTaskId.get(incomingTaskId) !== update.toolCallId)
+              return false;
+          } else {
+            if (update.sessionUpdate === "tool_call") return false;
+            if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
+            if (
+              (yield* Ref.get(wakeBuffer)).some(
+                (frame) =>
+                  frame.sessionId === notification.sessionId &&
+                  frame.update.sessionUpdate === "tool_call" &&
+                  frame.update.toolCallId === update.toolCallId,
+              )
+            )
+              return false;
+            const owners = [...new Set(detached.values())]
+              .filter(
+                (turn) =>
+                  turn.nativeThreadId === notification.sessionId &&
+                  turn.tools.get(update.toolCallId)?.backgroundCommandTaskId !== undefined,
+              )
+              .sort((a, b) => a.input.runOrdinal - b.input.runOrdinal);
+            const running = owners.filter((turn) => {
+              const status = toolStatus(turn.tools.get(update.toolCallId)!.status);
+              return status === "pending" || status === "running";
+            });
+            const explicitNonTerminal =
+              event.toolCall.status !== undefined &&
+              (toolStatus(event.toolCall.status) === "pending" ||
+                toolStatus(event.toolCall.status) === "running");
+            if (explicitNonTerminal ? running.length > 1 : owners.length > 1) return true;
+            if (explicitNonTerminal && running.length === 0 && owners.length > 1) return true;
+            owner = running[0] ?? (active === null || active.finalized ? owners[0] : undefined);
           }
+          if (owner === undefined || owner.nativeThreadId !== notification.sessionId) return false;
+          const status = toolStatus(owner.tools.get(update.toolCallId)?.status);
+          if (
+            owner.finalized &&
+            (status === "completed" || status === "failed") &&
+            toolStatus(event.toolCall.status) === status &&
+            update.sessionUpdate === "tool_call_update" &&
+            Object.keys(update).every(
+              (key) => key === "sessionUpdate" || key === "toolCallId" || key === "status",
+            )
+          )
+            return true;
+          yield* emitTool(owner, event.toolCall);
           return true;
         });
 
@@ -6585,12 +6854,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   alreadyHandledToolUpdate =
                     alreadyHandledToolUpdate ||
                     (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(completion.taskId);
-                  yield* applyBackgroundTaskMutationRunning(completion);
+                  yield* applyBackgroundTaskMutationRunning(notification.sessionId, completion);
                 }
               }
             }
           }
-          const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
+          const backgroundWorkRunning = yield* hasRunningBackgroundTasks(notification.sessionId);
           const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
           // Chunks carry no task id: while an unpolled completion awaits its report, keep them.
           const isInTurnHandledAgentChatter =
@@ -6748,6 +7017,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // Native close sends cancelled idle before acknowledging the user's Stop.
           if (work.stopReason === "cancelled" && pendingStopCloseTurn === context) {
             context.interrupted = true;
+            yield* Deferred.succeed(context.promptStop, undefined);
           }
           const failure = context.interrupted
             ? undefined
@@ -6917,7 +7187,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.finalized &&
               context.finalizedStatus === "completed" &&
               postSettleContinuationEnabled &&
-              (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+              !(yield* hasRunningBackgroundTasks(notification.sessionId)) &&
               acpPostSettleContinuationOfferEvidence(notification, flavor)
             ) {
               yield* offerContinuationRun(notification.sessionId);
@@ -7072,22 +7342,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
                 if (
                   yield* updateCarryoverSubagentStatus(
-                    subagentUpdate.nativeTaskId,
+                    notification.sessionId === (yield* Ref.get(activeSessionId))
+                      ? {
+                          childSessionId: subagentUpdate.childSessionId,
+                          nativeTaskId: subagentUpdate.nativeTaskId,
+                        }
+                      : (subagentUpdate.childSessionId ?? notification.sessionId),
                     subagentUpdate.status,
                     subagentUpdate.result,
                     { project: projectCarryover },
                   )
-                ) {
-                  carryoverTerminalized = true;
-                }
-                if (
-                  subagentUpdate.childSessionId !== null &&
-                  (yield* updateCarryoverSubagentStatus(
-                    subagentUpdate.childSessionId,
-                    subagentUpdate.status,
-                    subagentUpdate.result,
-                    { project: projectCarryover },
-                  ))
                 ) {
                   carryoverTerminalized = true;
                 }
@@ -7156,7 +7420,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     subagentUpdate.nativeTaskId === nativeTaskId ||
                     subagentUpdate.childSessionId === notification.sessionId
                   ) {
-                    yield* emitSubagent(context, subagentUpdate);
+                    yield* emitSubagent(context, subagentUpdate, subagent);
                   }
                   continue;
                 }
@@ -7409,7 +7673,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ),
                     );
                   }
-                  yield* applyBackgroundTaskMutationRunning(mutation);
+                  yield* applyBackgroundTaskMutationRunning(context.nativeThreadId, mutation);
                   if (mutation.status !== "running" && !reportArrivedBeforeNotice) {
                     yield* markPendingInjectedReport(context, mutation.taskId);
                   }
@@ -7427,16 +7691,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   (subagent.task.status === "running" || subagent.task.status === "pending")
                 ) {
                   // Agents may answer without hydrating output; finish the subagent so deferred finalize can close.
-                  yield* emitSubagent(context, {
-                    nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
-                    prompt: subagent.task.prompt,
-                    title: subagent.task.title,
-                    model: subagent.task.model,
-                    status: notice.status,
-                    childSessionId: notice.childSessionId,
-                    result: null,
-                    suppressNormalTool: true,
-                  });
+                  yield* emitSubagentStatus(context, subagent, notice.status, null);
                 }
               }
               break;
@@ -7624,14 +7879,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeResponseAcknowledgement,
           );
           const now = yield* DateTime.now;
-          const nodeId = providerNodeId(request.nativeItemId);
-          const turnItemId = providerTurnItemId(request.nativeItemId);
+          const scopedItemId = scopedUserInputItemId(
+            context.nativeThreadId,
+            context.input.providerTurnOrdinal,
+            request.nativeItemId,
+          );
+          const nodeId = providerNodeId(scopedItemId);
+          const turnItemId = providerTurnItemId(scopedItemId);
           const nativeItemRef = {
             driver,
             nativeId: request.nativeItemId,
             strength: "weak" as const,
           };
-          const ordinal = yield* resolveItemOrdinal(context, request.nativeItemId);
+          const ordinal = yield* resolveItemOrdinal(context, scopedItemId);
           const runtimeRequest: OrchestrationV2RuntimeRequest = {
             id: requestId,
             nodeId,
@@ -7970,20 +8230,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const updateCarryoverSubagentStatus = Effect.fnUntraced(function* (
-          nativeIdOrChildSessionId: string,
+          lookup:
+            | string
+            | { readonly childSessionId: string | null; readonly nativeTaskId: string },
           status: OrchestrationV2Subagent["status"],
           result?: string | null,
           options?: { readonly project?: boolean },
         ) {
           const carryover = yield* Ref.get(carryoverSubagents);
           if (carryover === null) return false;
-          const match = carryover.subagents.find((subagent) => {
-            const nativeId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-            return (
-              nativeId === nativeIdOrChildSessionId ||
-              subagent.childSessionId === nativeIdOrChildSessionId
-            );
-          });
+          const match =
+            typeof lookup === "string"
+              ? (carryover.subagents.find((subagent) => subagent.childSessionId === lookup) ??
+                uniqueSubagentByTaskId(carryover.subagents, lookup))
+              : ((lookup.childSessionId === null
+                  ? undefined
+                  : carryover.subagents.find(
+                      (subagent) => subagent.childSessionId === lookup.childSessionId,
+                    )) ??
+                uniqueSubagentByTaskId(
+                  carryover.subagents.filter((subagent) =>
+                    subagentChildCompatible(subagent, lookup.childSessionId),
+                  ),
+                  lookup.nativeTaskId,
+                ));
           if (match === undefined) return false;
           const shouldProject = options?.project !== false;
           if (match.task.status === status) {
@@ -8029,16 +8299,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (context !== null && subagent !== undefined && !context.finalized) {
             if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return;
-            yield* emitSubagent(context, {
-              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
-              prompt: subagent.task.prompt,
-              title: subagent.task.title,
-              model: subagent.task.model,
-              status: notice.status,
-              childSessionId: notice.childSessionId,
-              result: notice.result,
-              suppressNormalTool: true,
-            });
+            yield* emitSubagentStatus(context, subagent, notice.status, notice.result);
             yield* rearmDeferredFinalize(context);
             return;
           }
@@ -8073,7 +8334,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
             if (context.finalizedStatus === "completed") {
-              yield* emitSubagent(context, update);
+              yield* emitSubagent(context, update, subagent);
             } else {
               yield* mutateCarryoverSubagentStatus(subagent, update.status, update.result);
             }
@@ -8096,19 +8357,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 continue;
               }
               const subagent =
-                context.subagents.get(subagentUpdate.nativeTaskId) ??
-                (subagentUpdate.childSessionId === null
-                  ? undefined
-                  : context.subagentsBySessionId.get(subagentUpdate.childSessionId)) ??
-                context.subagentsBySessionId.get(notification.sessionId);
+                context.subagentsBySessionId.get(notification.sessionId) ??
+                matchSubagent(context, {
+                  childSessionId: subagentUpdate.childSessionId,
+                  nativeTaskId: subagentUpdate.nativeTaskId,
+                  isTerminal: true,
+                });
               if (subagent === undefined) continue;
               const nativeTaskId =
                 subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
               if (
-                subagentUpdate.nativeTaskId !== nativeTaskId &&
-                (subagentUpdate.childSessionId === null ||
-                  (subagentUpdate.childSessionId !== subagent.childSessionId &&
-                    subagentUpdate.childSessionId !== notification.sessionId))
+                !subagentChildCompatible(
+                  subagent,
+                  subagentUpdate.childSessionId ??
+                    (notification.sessionId === context.nativeThreadId
+                      ? null
+                      : notification.sessionId),
+                ) ||
+                (subagentUpdate.nativeTaskId !== nativeTaskId &&
+                  (subagentUpdate.childSessionId === null ||
+                    (subagentUpdate.childSessionId !== subagent.childSessionId &&
+                      subagentUpdate.childSessionId !== notification.sessionId)))
               ) {
                 continue;
               }
@@ -8202,7 +8471,37 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
               // Replayed history feeds snapshots only; it must not drive live turn or wake state.
-              if (sessionUpdateIsReplay(rawNotification)) {
+              const loading = yield* Ref.get(loadingSessionId);
+              const isLoadingRoot = rawNotification.sessionId === loading;
+              const loadInFlight =
+                runtime.isSessionLoadInFlight === undefined
+                  ? isLoadingRoot
+                  : yield* runtime.isSessionLoadInFlight(rawNotification.sessionId);
+              const isExplicitReplay = sessionUpdateIsReplay(rawNotification);
+              const updateType = rawNotification.update.sessionUpdate;
+              if (
+                loading !== null &&
+                !isLoadingRoot &&
+                rawNotification.sessionId !== (yield* Ref.get(activeSessionId)) &&
+                !isExplicitReplay &&
+                (yield* Ref.get(activeTurn)) === null
+              )
+                return;
+              const configUpdate =
+                updateType === "config_option_update" || updateType === "current_mode_update";
+              if (isLoadingRoot && loadInFlight && !isExplicitReplay && configUpdate) return;
+              if (isLoadingRoot && !loadInFlight && !isExplicitReplay) {
+                pendingPostActivationUpdates.push(rawNotification);
+                return;
+              }
+              if (
+                isExplicitReplay ||
+                (loadInFlight &&
+                  !configUpdate &&
+                  updateType !== "available_commands_update" &&
+                  updateType !== "usage_update" &&
+                  updateType !== "session_info_update")
+              ) {
                 const normalized =
                   flavor.normalizeSessionUpdate?.(rawNotification) ?? rawNotification;
                 yield* projectExtractedContextUsage(normalized, false);
@@ -8273,14 +8572,69 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
             ),
           );
+        const drainPendingPostActivationUpdatesLocked: Effect.Effect<void> = Effect.gen(
+          function* () {
+            if ((yield* Ref.get(loadingSessionId)) !== null) return;
+            while (pendingPostActivationUpdates.length > 0) {
+              const notification = pendingPostActivationUpdates.shift()!;
+              yield* projectAcpRuntimeSessionUpdateEffect(notification).pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    pendingPostActivationUpdates.unshift(notification);
+                  }),
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.logError("failed to replay post-activation ACP session update", {
+                    driver,
+                    cause,
+                  }),
+                ),
+              );
+            }
+          },
+        );
         const projectAcpRuntimeSessionUpdate = (
           handlerGeneration: number,
           rawNotification: EffectAcpSchema.SessionNotification,
         ) =>
           runRuntimeCallbackAtGeneration(
             handlerGeneration,
-            projectAcpRuntimeSessionUpdateEffect(rawNotification),
+            drainPendingPostActivationUpdatesLocked.pipe(
+              Effect.andThen(projectAcpRuntimeSessionUpdateEffect(rawNotification)),
+            ),
           ).pipe(Effect.asVoid);
+
+        const commitActivatedSession = Effect.fnUntraced(function* (
+          setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+          route?: { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId },
+        ) {
+          yield* runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              yield* continuationPermit.withPermit(
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    yield* applyActiveSessionSetupLocked(setup);
+                    yield* Ref.set(activeSessionId, setup.sessionId);
+                    if (route !== undefined) {
+                      yield* Ref.set(lastTurnRoute, {
+                        nativeSessionId: setup.sessionId,
+                        threadId: route.threadId,
+                        providerThreadId: route.providerThreadId,
+                      });
+                    }
+                    for (let index = pendingPostActivationUpdates.length - 1; index >= 0; index--) {
+                      if (pendingPostActivationUpdates[index]!.sessionId !== setup.sessionId) {
+                        pendingPostActivationUpdates.splice(index, 1);
+                      }
+                    }
+                    yield* Ref.set(loadingSessionId, null);
+                  }),
+                ),
+              );
+              yield* drainPendingPostActivationUpdatesLocked;
+            }),
+          );
+        });
 
         // Post-settle background work retains the latest turn policy.
         const clientPolicyContext = Effect.map(Ref.get(activeTurn), (context) => ({
@@ -8942,7 +9296,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return yield* runtime.start();
           });
           return yield* (flavor.withRuntimeStartup?.(startup) ?? startup).pipe(
-            Effect.onError(() => Ref.set(loadingSessionId, null)),
+            Effect.onError(() => clearLoadingSession(resumeSessionId)),
           );
         });
 
@@ -9132,6 +9486,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(runtimeRestartRequired, false);
             yield* reportStartupPhase(undefined);
             yield* Ref.set(activeSessionId, candidate.sessionId);
+            // Replacement commits already hold runtimeCallbackPermit.
+            yield* Ref.set(loadingSessionId, null);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
@@ -9149,7 +9505,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(wakeBuffer, []);
                 yield* Ref.set(wakeReports, noWakeReports);
                 yield* Ref.set(continuationRequested, false);
-                yield* Ref.set(runningBackgroundTaskIds, new Set());
+                yield* Ref.set(runningBackgroundTaskIds, new Map());
                 yield* Ref.set(detachedBackgroundCommands, new Map());
                 yield* Ref.set(detachedUnawaitedTools, new Map());
                 yield* Ref.set(endedBackgroundTaskIds, new Set());
@@ -9195,9 +9551,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
-        yield* Ref.set(activeSessionId, started.sessionId);
-        yield* Ref.set(loadingSessionId, null);
-        yield* setActiveSessionSetup(started);
+        yield* commitActivatedSession(
+          started,
+          started.sessionId === input.initialNativeThreadId
+            ? {
+                threadId: input.threadId,
+                providerThreadId: idAllocator.derive.providerThread({
+                  driver,
+                  providerInstanceId: options.instanceId,
+                  nativeThreadId: started.sessionId,
+                }),
+              }
+            : undefined,
+        );
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         yield* runtime.drainEvents;
         const steersWithPrompt = flavor.steersWithPrompt?.(started.initializeResult) === true;
@@ -9220,6 +9586,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activateSession = Effect.fnUntraced(function* (
           sessionId: string,
           threadId: ThreadId | null,
+          route?: { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId },
         ) {
           const initialFailure = yield* Ref.modify(initialSessionActivationFailure, (failure) =>
             failure?.sessionId === sessionId ? [failure.error, null] : [undefined, failure],
@@ -9231,23 +9598,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
-          const activated = yield* Effect.gen(function* () {
-            if (!canLoadSession && !canResumeSession) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver,
-                detail: `ACP driver cannot load or resume session ${sessionId}`,
-              });
-            }
-            yield* reportStartupPhase("resume");
-            return canLoadSession
-              ? yield* runtime.loadSession(sessionId, activationOptions)
-              : yield* runtime.resumeSession(sessionId, activationOptions);
-          }).pipe(
-            Effect.onError(() => Ref.set(loadingSessionId, null)),
-            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
-          );
-          rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
-          return activated;
+          return yield* Effect.gen(function* () {
+            const activated = yield* Effect.gen(function* () {
+              if (!canLoadSession && !canResumeSession) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: `ACP driver cannot load or resume session ${sessionId}`,
+                });
+              }
+              yield* reportStartupPhase("resume");
+              return canLoadSession
+                ? yield* runtime.loadSession(sessionId, activationOptions)
+                : yield* runtime.resumeSession(sessionId, activationOptions);
+            }).pipe(Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))));
+            rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
+            yield* commitActivatedSession(activated, route);
+            return activated;
+          }).pipe(Effect.onError(() => clearLoadingSession(sessionId)));
         });
 
         const validateModelSelection = Effect.fn("AcpAdapterV2.validateModelSelection")(function* (
@@ -9687,16 +10054,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (subagent.task.status !== "running" && subagent.task.status !== "pending") {
               continue;
             }
-            yield* emitSubagent(context, {
-              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-              prompt: subagent.task.prompt,
-              title: subagent.task.title,
-              model: subagent.task.model,
-              status: "interrupted",
-              childSessionId: subagent.childSessionId,
-              result: subagent.task.result,
-              suppressNormalTool: true,
-            });
+            yield* emitSubagentStatus(context, subagent, "interrupted", subagent.task.result);
           }
         });
 
@@ -9748,7 +10106,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
-              yield* Ref.set(runningBackgroundTaskIds, new Set());
+              yield* Ref.set(runningBackgroundTaskIds, new Map());
               yield* Ref.set(detachedBackgroundCommands, new Map());
               yield* Ref.set(detachedUnawaitedTools, new Map());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -9819,15 +10177,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
               if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) continue;
-              yield* emitSubagent(context, {
-                nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-                prompt: subagent.task.prompt,
-                title: subagent.task.title,
-                model: subagent.task.model,
-                status: settledStatus === "completed" ? "idle" : settledStatus,
-                childSessionId: subagent.childSessionId,
-                result: null,
-              });
+              yield* emitSubagentStatus(
+                context,
+                subagent,
+                settledStatus === "completed" ? "idle" : settledStatus,
+                null,
+              );
             }
           }
           if (settledStatus === "completed") {
@@ -10005,7 +10360,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             postSettleContinuationEnabled &&
             settledStatus === "completed" &&
             !directStopQuarantine &&
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            !(yield* hasRunningBackgroundTasks(context.nativeThreadId)) &&
             (yield* Ref.get(wakeBuffer)).some((notification) =>
               acpPostSettleContinuationOfferEvidence(notification, flavor),
             )
@@ -10375,6 +10730,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
+          yield* clearLoadingSession();
           yield* Ref.set(activeSessionSetup, null);
           yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
@@ -10721,14 +11077,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const needsSessionActivation =
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
-              const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
-              yield* Ref.set(activeSessionId, activated.sessionId);
-              yield* Ref.set(loadingSessionId, null);
-              yield* setActiveSessionSetup(activated);
+              const activated = yield* activateSession(requestedSessionId, turnInput.threadId, {
+                threadId: turnInput.threadId,
+                providerThreadId: turnInput.providerThread.id,
+              });
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
             } else {
+              if (pendingPostActivationUpdates.length > 0) {
+                yield* runtimeCallbackPermit.withPermit(drainPendingPostActivationUpdatesLocked);
+              }
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
               if (
@@ -10780,6 +11139,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             yield* validateModelSelection(turnInput.modelSelection);
             yield* Ref.set(lastTurnRoute, {
+              nativeSessionId: requestedSessionId,
               threadId: turnInput.threadId,
               providerThreadId: turnInput.providerThread.id,
             });
@@ -10818,6 +11178,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
             const providerTurnId = deriveProviderTurnId(nativeTurnId);
             const completed = yield* Deferred.make<void, never>();
+            const promptStop = yield* Deferred.make<void>();
             const promptWireSettled = yield* Deferred.make<void, never>();
             const promptDispatched = yield* Deferred.make<void, never>();
             const promptStarted = yield* Deferred.make<void, never>();
@@ -10844,8 +11205,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               providerTurnId,
               nativeThreadId: requestedSessionId,
               nativeTurnId,
+              itemIdentityVersion,
               startedAt,
               completed,
+              promptStop,
               itemOrdinals: new Map(),
               outgoingPrompt:
                 (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
@@ -10878,6 +11241,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),
+              currentSubagentsByTaskId: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),
               toolCallIdsByBackgroundTaskId: new Map(),
@@ -10913,10 +11277,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (carryover !== null && carryover.sessionId === requestedSessionId) {
               rehydratedCarryoverSubagents = carryover.subagents;
               for (const subagent of carryover.subagents) {
-                const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
-                if (nativeId !== null) {
-                  context.subagents.set(nativeId, subagent);
-                }
+                context.subagents.set(subagent.task.id, subagent);
                 if (subagent.childSessionId !== null) {
                   context.subagentsBySessionId.set(subagent.childSessionId, subagent);
                 }
@@ -11097,7 +11458,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 compactSession === undefined
                   ? sendPromptWhenIdle(
                       context,
-                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                      () =>
+                        runtime.prompt(
+                          { prompt: promptParts!.prompt },
+                          {
+                            ...promptOptions,
+                            sessionId: requestedSessionId,
+                            stop: context.promptStop,
+                          },
+                        ),
                       superseded,
                     )
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
@@ -11247,7 +11616,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         () =>
                           runtime.prompt(
                             { prompt: steerPrompt },
-                            { dispatched, released: releasedForSteer },
+                            {
+                              sessionId: context.nativeThreadId,
+                              stop: context.promptStop,
+                              dispatched,
+                              released: releasedForSteer,
+                            },
                           ),
                         superseded,
                       ),
@@ -11272,7 +11646,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return [dispatched, context] as const;
             }),
           );
-          yield* Deferred.await(dispatched);
+          const steerOutcome = yield* Effect.raceFirst(
+            Deferred.await(dispatched).pipe(Effect.as("dispatched" as const)),
+            Deferred.await(context.promptStop).pipe(Effect.as("stopped" as const)),
+          );
+          if (steerOutcome === "stopped") {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: `Provider turn ${turnInput.providerTurnId} stopped before it could be steered.`,
+            });
+          }
           // A wake run sent no prompt, so its inactivity watchdog waits for this one.
           yield* Deferred.succeed(context.promptDispatched, undefined);
         });
@@ -11289,6 +11672,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const openTurn = yield* Ref.get(activeTurn);
             if (openTurn !== null && !openTurn.finalized) {
               openTurn.interrupted = true;
+              yield* Deferred.succeed(openTurn.promptStop, undefined);
               yield* finalizeTurn(openTurn, "interrupted");
             }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
@@ -11363,7 +11747,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
           if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
           if (yield* Ref.get(continuationRequested)) return true;
-          if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+          if (rootSessionId !== null && (yield* hasRunningBackgroundTasks(rootSessionId)))
+            return true;
           const active = yield* Ref.get(activeTurn);
           if (
             active !== null &&
@@ -11522,15 +11907,51 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
+                      threadInput.providerThread.appThreadId === null
+                        ? undefined
+                        : {
+                            threadId: threadInput.providerThread.appThreadId,
+                            providerThreadId: threadInput.providerThread.id,
+                          },
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
-                    yield* Ref.set(activeSessionId, activated.sessionId);
-                    yield* Ref.set(loadingSessionId, null);
-                    yield* setActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
+                  } else if (threadInput.providerThread.appThreadId !== null) {
+                    const appThreadId = threadInput.providerThread.appThreadId;
+                    const pendingContinuation = yield* runtimeCallbackPermit.withPermit(
+                      Effect.gen(function* () {
+                        yield* drainPendingPostActivationUpdatesLocked;
+                        return yield* continuationPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* Ref.set(lastTurnRoute, {
+                              nativeSessionId: sessionId,
+                              threadId: appThreadId,
+                              providerThreadId: threadInput.providerThread.id,
+                            });
+                            if ((yield* Ref.get(activeTurn)) !== null) return Option.none();
+                            const buffered = (yield* Ref.get(wakeBuffer)).filter(
+                              (frame) => frame.sessionId === sessionId,
+                            );
+                            if (buffered.length === 0) return Option.none();
+                            const eligible =
+                              followsAgentWorkState ||
+                              (postSettleContinuationEnabled &&
+                                !(yield* hasRunningBackgroundTasks(sessionId)) &&
+                                buffered.some((frame) =>
+                                  acpPostSettleContinuationOfferEvidence(frame, flavor),
+                                ));
+                            if (!eligible) return Option.none();
+                            return yield* reserveContinuationRunLocked(sessionId);
+                          }),
+                        );
+                      }),
+                    );
+                    if (Option.isSome(pendingContinuation)) {
+                      yield* dispatchContinuationReservation(pendingContinuation.value);
+                    }
                   }
                   const now = yield* DateTime.now;
                   return {
@@ -11782,7 +12203,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             agentRequests.clear();
                             nativeChildren.clear();
                             yield* quarantineStoppedRun();
-                            if (context !== null) context.interrupted = true;
+                            if (context !== null) {
+                              context.interrupted = true;
+                              yield* Deferred.succeed(context.promptStop, undefined);
+                            }
                             yield* cancelPendingRuntimeRequests();
                             yield* terminalizeCarryoverSubagents(carryover);
                             if (context !== null) {
@@ -11959,6 +12383,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     });
                     const runTransition = Effect.gen(function* () {
                       context.interrupted = true;
+                      yield* Deferred.succeed(context.promptStop, undefined);
                       if (hardRestart || turnInput.requestRuntimeRestart === true) {
                         yield* quarantineStoppedRun();
                       }
@@ -12107,11 +12532,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* runtimeTransitionPermit.withPermit(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
+                  const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
+                  const active = yield* Ref.get(activeTurn);
+                  if (active !== null && active.nativeThreadId !== sessionId) {
+                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver,
+                      detail: `ACP provider turn ${active.providerTurnId} is still active`,
+                      reason: "previous_turn_active",
+                    });
+                  }
                   useProviderThreadIdentity(snapshotInput.providerThread);
                   yield* restartRuntimeAfterTeardownIfRequired(
                     snapshotInput.providerThread.appThreadId,
                   ).pipe(Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))));
-                  const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
                   if ((yield* Ref.get(activeSessionId)) !== sessionId) {
                     if (!capabilities.threads.canReadThreadSnapshot) {
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -12125,16 +12558,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
                     yield* Ref.set(loadingSessionId, sessionId);
-                    const activated = yield* runtime
-                      .loadSession(sessionId, acpMcpActivation(mcpContext))
-                      .pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
-                    rememberTerminalEnvironment(
-                      activated.sessionId,
-                      yield* readMcpContext(snapshotInput.providerThread.appThreadId),
-                    );
-                    yield* Ref.set(activeSessionId, activated.sessionId);
-                    yield* Ref.set(loadingSessionId, null);
-                    yield* setActiveSessionSetup(activated);
+                    yield* Effect.gen(function* () {
+                      const activated = yield* runtime.loadSession(
+                        sessionId,
+                        acpMcpActivation(mcpContext),
+                      );
+                      rememberTerminalEnvironment(
+                        activated.sessionId,
+                        yield* readMcpContext(snapshotInput.providerThread.appThreadId),
+                      );
+                      yield* commitActivatedSession(activated);
+                    }).pipe(Effect.onError(() => clearLoadingSession(sessionId)));
                     yield* Ref.set(activeSelection, null);
                     yield* Ref.set(activeInteractionMode, null);
                   }
@@ -12267,12 +12701,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     acpMcpActivation(mcpContext),
                     forkMeta,
                   );
+                  yield* commitActivatedSession(forked);
                   rememberTerminalEnvironment(
                     forked.sessionId,
                     yield* readMcpContext(forkInput.targetThreadId),
                   );
-                  yield* Ref.set(activeSessionId, forked.sessionId);
-                  yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   yield* Ref.set(activeInteractionMode, null);
                   itemIdentityVersion = 2;
