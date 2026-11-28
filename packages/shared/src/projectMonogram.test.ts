@@ -19,6 +19,19 @@ describe("projectMonogram", () => {
     expect(projectMonogram("건강 상담")).toBe("건");
     expect(projectMonogram("〆切管理")).toBe("〆");
     expect(projectMonogram("ー長")).toBe("ー");
+    expect(projectMonogram("か\u309Aな")).toBe("か\u309A");
+  });
+
+  it("keeps combining marks attached when uppercasing initials", () => {
+    expect(projectMonogram("ΐδέα")).toBe("Ι\u0308\u0301Α");
+    expect(projectMonogram("ǰava")).toBe("J\u030CA");
+    expect(projectMonogram("Alpha ǰava")).toBe("AJ\u030C");
+  });
+
+  it("keeps combining marks within a single word", () => {
+    expect(projectMonogram("สวัสดี")).toBe("สดี");
+    expect(projectMonogram("v\u0301elo")).toBe("V\u0301O");
+    expect(projectMonogram("हिन्दी")).toBe("हिदी");
   });
 
   it("normalizes width and keeps supplementary ideographs whole", () => {
