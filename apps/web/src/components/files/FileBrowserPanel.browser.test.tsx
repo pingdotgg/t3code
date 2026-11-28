@@ -1,4 +1,5 @@
-import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { EnvironmentId, type FilesystemEntryMetadata, type ProjectEntry } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
 
@@ -10,6 +11,7 @@ import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { writeExpandedDirectories } from "./fileTreeExpansion";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
@@ -50,6 +52,21 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
+// Host path to the server's answer; a path left out never answers.
+const fileMetadata = new Map<string, FilesystemEntryMetadata>();
+const unansweredMetadata = Atom.make(
+  AsyncResult.initial<FilesystemEntryMetadata | null, never>(true),
+);
+vi.mock("~/hooks/useFileMetadata", () => ({
+  getFileMetadataQueryAtom: (_environmentId: EnvironmentId, path: string) => {
+    const metadata = fileMetadata.get(path);
+    return metadata ? Atom.make(AsyncResult.success(metadata)) : unansweredMetadata;
+  },
+}));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  readEnvironmentScope: () => true,
+}));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 
 function findTreeRow(path: string): HTMLElement | null {
@@ -186,6 +203,53 @@ describe("FileBrowserPanel", () => {
     );
     await userEvent.click(action);
     expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
+  });
+
+  it("leaves Open preview out for markdown known to be past the rendering limit", async () => {
+    using _listing = withDirectoryListing([
+      { path: "huge.md", kind: "file" },
+      { path: "small.md", kind: "file" },
+      { path: "unanswered.md", kind: "file" },
+    ]);
+    fileMetadata.set("/repo/huge.md", { kind: "file", byteLength: FULL_TEXT_MAX_BYTES + 1 });
+    fileMetadata.set("/repo/small.md", { kind: "file", byteLength: FULL_TEXT_MAX_BYTES });
+    using _metadata = { [Symbol.dispose]: () => fileMetadata.clear() };
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        onOpenFilePreview={() => {}}
+        workspaceMutationId={null}
+      />,
+    );
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await vi.waitFor(() => expect(findTreeRow("huge.md")).not.toBeNull());
+    const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
+    const copyPath = page.getByRole("menuitem", { name: "Copy path", exact: true });
+    const openRowMenu = (path: string) =>
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+
+    openRowMenu("huge.md");
+    await expect.element(copyPath).toBeVisible();
+    await expect.element(action).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    for (const path of ["small.md", "unanswered.md"]) {
+      openRowMenu(path);
+      await expect.element(action).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+    }
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
