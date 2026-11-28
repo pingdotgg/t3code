@@ -1647,6 +1647,11 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    /** Finalization pauses here between marking the turn finalized and clearing it. */
+    readonly finalizeGate?: {
+      readonly reached: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    };
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1760,18 +1765,30 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     defaultModel: Effect.undefined,
     ...(profileDirectory === undefined ? {} : { profileDirectory }),
   };
+  const finalizeGate = options?.finalizeGate;
   const adapter =
     options === undefined
       ? yield* makeAntigravityAdapterV2(adapterOptions)
       : yield* makeAcpAdapterV2({
           instanceId,
-          flavor: makeAntigravityAcpAdapterFlavor({
-            ...adapterOptions,
-            random: crypto,
-            fileSystem: yield* FileSystem.FileSystem,
-            path,
-            host: yield* ProviderHost.ProviderHost,
-          }),
+          flavor: {
+            ...makeAntigravityAcpAdapterFlavor({
+              ...adapterOptions,
+              random: crypto,
+              fileSystem: yield* FileSystem.FileSystem,
+              path,
+              host: yield* ProviderHost.ProviderHost,
+            }),
+            ...(finalizeGate === undefined
+              ? {}
+              : {
+                  executedModel: () =>
+                    Deferred.succeed(finalizeGate.reached, undefined).pipe(
+                      Effect.andThen(Deferred.await(finalizeGate.release)),
+                      Effect.as(undefined),
+                    ),
+                }),
+          },
           selfInvocation,
           ...(adapterOptions.continuationRequests === undefined
             ? {}
@@ -2421,6 +2438,10 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     Effect.gen(function* () {
       const { session, providerThread, startTurn, throughPromptSettled } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      assert.isTrue(
+        session.providerSession.capabilities.tools.supportsBackgroundWait,
+        "Antigravity must advertise supportsBackgroundWait so t3_background_wait is exposed",
+      );
       yield* startTurn(1, false);
       yield* throughPromptSettled;
       const taskIds = ["mock-session-1/task-2"];
@@ -2431,6 +2452,118 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         awaited: true,
       });
       assert.deepEqual(result.matched, taskIds);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // `waiting=false` lets the run end while the command keeps running, as with a daemon.
+  it.effect("ends the run when t3_background_wait releases a running command", () =>
+    Effect.gen(function* () {
+      const { session, providerThread, command, offers, send, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      const beforeRelease = yield* run.throughPromptSettled;
+      const originalCommandItem = beforeRelease.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.isDefined(originalCommandItem);
+      const taskIds = ["mock-session-1/task-2"];
+      const released = yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds,
+        awaited: false,
+      });
+      assert.deepEqual(released.matched, taskIds);
+      yield* TestClock.adjust("5 seconds");
+      const settledEvents = yield* run.throughTerminal;
+      const terminal = settledEvents.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.equal(run.cancels(), 0, "releasing a running command must not cancel it");
+      const itemAtSettle = [...beforeRelease, ...settledEvents].findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.equal(
+        itemAtSettle?.type === "turn_item.updated" && itemAtSettle.turnItem.status,
+        "running",
+        "releasing a running command must not mark its tool row completed before it finishes",
+      );
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      const completedUpdate = (yield* run.until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId &&
+          event.turnItem.status === "completed",
+      )).at(-1);
+      assert.equal(
+        completedUpdate?.type === "turn_item.updated" && completedUpdate.turnItem.id,
+        originalCommandItem?.type === "turn_item.updated" && originalCommandItem.turnItem.id,
+        "eventual completion must update the released command's original row",
+      );
+      assert.include(JSON.stringify(completedUpdate), "Command exited with code 0.");
+      assert.lengthOf(offers, 1, "the released command still wakes the thread when it ends");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("wakes the thread when a released command ends while its run finalizes", () =>
+    Effect.gen(function* () {
+      const finalizeGate = {
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const { session, providerThread, command, offers, send, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 }, undefined, undefined, {
+          finalizeGate,
+        });
+      yield* startTurn(1, false);
+      yield* run.throughPromptSettled;
+      yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds: ["mock-session-1/task-2"],
+        awaited: false,
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(finalizeGate.reached);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* Deferred.succeed(finalizeGate.release, undefined);
+      yield* run.throughTerminal;
+      assert.lengthOf(offers, 1, "a completion during finalization still wakes the thread");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("fails a released command's row when its agent exits", () =>
+    Effect.gen(function* () {
+      const { session, providerThread, command, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* run.throughPromptSettled;
+      yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds: ["mock-session-1/task-2"],
+        awaited: false,
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* run.throughTerminal;
+      yield* run.runtimeDies;
+      yield* run.until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId &&
+          event.turnItem.status === "failed",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 

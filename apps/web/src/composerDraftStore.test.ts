@@ -286,6 +286,40 @@ describe("composerDraftStore addImages", () => {
     expect(draft?.images.map((image) => image.id)).toEqual(["img-a", "img-c"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
   });
+
+  it("replaces an edited image's bytes in place and drops its stale persisted copy", () => {
+    const store = useComposerDraftStore.getState();
+    const first = makeImage({ id: "first", previewUrl: "blob:first" });
+    const second = makeImage({ id: "second", previewUrl: "blob:second", sizeBytes: 6 });
+    store.addImages(threadRef, [first, second]);
+    const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    useComposerDraftStore.setState((state) => ({
+      draftsByThreadKey: {
+        ...state.draftsByThreadKey,
+        [threadKey]: {
+          ...state.draftsByThreadKey[threadKey]!,
+          persistedAttachments: [first, second].map(({ id, name, mimeType, sizeBytes }) => ({
+            id,
+            name,
+            mimeType,
+            sizeBytes,
+            dataUrl: `data:${mimeType};base64,AA==`,
+          })),
+        },
+      },
+    }));
+    const edited = new File([new Uint8Array(12).fill(3)], "second.png", { type: "image/png" });
+
+    expect(store.replaceImageFile(threadRef, "second", edited)).toBe(true);
+
+    const draft = store.getComposerDraft(threadRef);
+    expect(draft?.images.map((image) => image.id)).toEqual(["first", "second"]);
+    expect(draft?.images[1]).toMatchObject({ file: edited, sizeBytes: 12 });
+    expect(draft?.images[1]?.previewUrl).not.toBe("blob:second");
+    expect(draft?.persistedAttachments.map((attachment) => attachment.id)).toEqual(["first"]);
+    expect(revokeSpy).toHaveBeenCalledWith("blob:second");
+    expect(store.replaceImageFile(threadRef, "missing", edited)).toBe(false);
+  });
 });
 
 describe("composerDraftStore copied attachments", () => {
