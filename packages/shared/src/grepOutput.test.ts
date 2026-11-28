@@ -74,6 +74,9 @@ describe("parseGrepOutput", () => {
     expect(parseGrepOutput("(notes:12:draft.md)\n2:needle", ".")).toEqual([
       { fileName: "(notes:12:draft.md)", line: 2, preview: "needle" },
     ]);
+    expect(parseGrepOutput(" notes.md\n2:needle", ".")).toEqual([
+      { fileName: " notes.md", line: 2, preview: "needle" },
+    ]);
     expect(parseGrepOutput("a.ts:1:first\na.ts:2:second\n2026:notes.md:3:third", ".")).toEqual([
       { fileName: "a.ts", line: 1, preview: "first" },
       { fileName: "a.ts", line: 2, preview: "second" },
@@ -110,6 +113,7 @@ describe("parseGrepOutput", () => {
     ["grouped text contains a timestamp", "docs/notes:12:draft.md\n2:at 10:30:00 needle"],
     ["the second inline filename is all digits", "a.ts:1:first\n2026:3:second"],
     ["the second inline filename has a numeric prefix", "a.ts:1:first\n2026:notes.md:3:second"],
+    ["two inline rows with a leading-space filename", " notes.md:1:first\n2026:3:second"],
   ])("leaves %s raw", (_name, output) => {
     expect(parseGrepOutput(output, "/repo")).toBeUndefined();
   });

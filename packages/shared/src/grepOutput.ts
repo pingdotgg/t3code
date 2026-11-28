@@ -62,9 +62,15 @@ export function parseGrepOutput(
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
-    if (ripgrepFormat !== "inline" && /^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(nextLine)) {
+    if (ripgrepFormat !== "inline" && RIPGREP_NUMBERED_LINE.test(nextLine)) {
       // Two inline rows can also look like a bare heading and its numbered match.
-      if (ripgrepFormat === undefined && inline && PATH_LINE_TEXT.test(nextLine)) return undefined;
+      if (
+        ripgrepFormat === undefined &&
+        PATH_LINE_TEXT.test(nextLine) &&
+        PATH_LINE_TEXT.test(trimmed)
+      ) {
+        return undefined;
+      }
       file = line;
       ripgrepFormat = "heading";
       continue;
