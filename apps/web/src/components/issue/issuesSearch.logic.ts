@@ -6,6 +6,7 @@ import {
   type IssueListInput,
   type ProjectId,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 
 import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 
@@ -14,7 +15,8 @@ import type { IssuesSearch } from "./IssuesPage";
 // The router reads a bare `key=42` as a number.
 const bounded = (value: unknown): string | undefined => {
   const text = typeof value === "number" ? String(value) : value;
-  return typeof text === "string" && text.trim() ? text.trim().slice(0, 200) : undefined;
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  return trimmed ? trimmed.slice(0, splitsSurrogatePair(trimmed, 200) ? 199 : 200) : undefined;
 };
 
 const labels = (raw: unknown): ReadonlyArray<string> | undefined => {

@@ -20,6 +20,7 @@ import {
 } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
@@ -77,6 +78,25 @@ const layerDependenciesFor = (
   threadShell: PullRequestTestThread | null = thread,
 ) =>
   Layer.mergeAll(
+    // Only the tracked repository answers: anywhere else falls back to the project's identity.
+    Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+      resolve: (cwd) =>
+        Effect.succeed(
+          cwd === "/work/tracked"
+            ? {
+                ...project.repositoryIdentity!,
+                canonicalKey: "github.acme.test/platform/tracked",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.acme.test:Platform/Tracked.git",
+                },
+                displayName: "Platform/Tracked",
+                name: "Tracked",
+              }
+            : null,
+        ),
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeedSome(project),
     }),
@@ -104,7 +124,7 @@ describe("createdPullRequestKey", () => {
           number: 12,
           url: "https://github.com/Other/Fork/pull/12",
         }),
-        project,
+        project.repositoryIdentity,
       ),
     ).toEqual({
       host: "github.com",
@@ -118,7 +138,7 @@ describe("createdPullRequestKey", () => {
     expect(
       createdPullRequestKey(
         prResult({ status: "opened_existing", number: 3, url: "https://ghe.internal/x/3" }),
-        project,
+        project.repositoryIdentity,
       ),
     ).toEqual({
       host: "github.acme.test",
@@ -146,10 +166,21 @@ describe("linkCreatedPullRequest", () => {
           number: 42,
           url: "https://github.com/t3tools/t3code/pull/42",
         }),
+        cwd: "/work/project",
+        commandId,
+      }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
+      // An unreadable URL is keyed by the repository the action ran in, not the project's.
+      yield* linkCreatedPullRequest({
+        threadId: THREAD_ID,
+        result: prResult({ status: "created", number: 7, url: "https://ghe.internal/x/7" }),
+        cwd: "/work/tracked",
         commandId,
       }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
 
-      expect(yield* Ref.get(commands)).toEqual([
+      expect(
+        (yield* Ref.get(commands)).map((command) => "repository" in command && command.repository),
+      ).toEqual(["t3tools/t3code", "platform/tracked"]);
+      expect((yield* Ref.get(commands)).slice(0, 1)).toEqual([
         {
           type: "thread.pull-request.link",
           commandId: "server:pr-created-link:test",

@@ -271,6 +271,33 @@ describe(`RateLimiter`, () => {
       }).pipe(
         Effect.provide(RateLimiter.layerStoreMemory)
       ))
+
+    it.effect("admits at most the limit until the full window elapses", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        const consume = limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "fail",
+          window: "1 minute",
+          limit: 5,
+          key: "full-window"
+        })
+        const attempt = consume.pipe(Effect.match({
+          onSuccess: (result) => result.remaining,
+          onFailure: (error) => error.reason._tag
+        }))
+        assert.deepStrictEqual(yield* Effect.forEach([0, 1, 2, 3], () => attempt), [4, 3, 2, 1])
+
+        yield* TestClock.adjust("48 seconds")
+        assert.deepStrictEqual(yield* Effect.forEach([0, 1], () => attempt), [0, "RateLimitExceeded"])
+
+        yield* TestClock.adjust("12 seconds")
+        const result = yield* consume
+        assert.strictEqual(result.remaining, 4)
+        assert.strictEqual(Duration.toMillis(result.resetAfter), 60_000)
+      }).pipe(
+        Effect.provide(RateLimiter.layerStoreMemory)
+      ))
   })
 
   describe("token-bucket", () => {

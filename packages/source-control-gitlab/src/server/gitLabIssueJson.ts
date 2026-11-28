@@ -218,6 +218,8 @@ export function decodeCreatedIssueJson(
   return Result.map(decodeIssue(raw), (issue) => ({ number: issue.iid, url: issue.web_url }));
 }
 
+const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+
 /**
  * The events GitLab records as notes of its own. A label note names its labels by id ("added ~7
  * label"), which is why labellings come from `/resource_label_events` instead and are dropped here.
@@ -243,11 +245,81 @@ function toSystemEvent(
   if (text.startsWith("mentioned in ")) {
     return { kind: "referenced", detail: trimmed(text.slice("mentioned in ".length)) };
   }
+  // GitLab 17.11+ uses HTML <code class="idiff"> diffs; older notes used **…** with {-…-}/{+…+}.
+  if (/^<(?:p|div)>changed title\b/.test(text)) {
+    const html = / to <code class="idiff">(.*?)<\/code><\/(?:p|div)>$/.exec(text)?.[1];
+    const detail = html
+      ?.replace(/<[^<>]*>/g, "")
+      .replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENTITY[m.slice(1, -1)] ?? m);
+    return { kind: "renamed", detail: trimmed(detail) };
+  }
   if (text.startsWith("changed title")) {
-    // GitLab marks the new title with its own inline-diff braces.
-    return { kind: "renamed", detail: trimmed(/\{\+(.+)\+\}/.exec(text)?.[1]) };
+    const raw = legacyNewTitle(text);
+    return { kind: "renamed", detail: trimmed(raw?.replace(/\{\+(.*?)\+\}/g, "$1")) };
   }
   return null;
+}
+
+/**
+ * The new side of "changed title from **old** to **new**". Whole {-…-} runs in the old title are
+ * skipped so a deleted "** to **" is not the boundary; GitLab does not escape markers, so only the
+ * old side's runs are deletions. A single forward scan, so a malformed note cannot backtrack.
+ */
+function legacyNewTitle(text: string): string | null {
+  const prefix = "changed title from **";
+  const boundary = "** to **";
+  if (!text.startsWith(prefix) || !text.endsWith("**")) return null;
+  let index = prefix.length;
+  let deletionsClose = true;
+  while (index < text.length && !text.startsWith(boundary, index)) {
+    if (deletionsClose && text.startsWith("{-", index)) {
+      const end = text.indexOf("-}", index + 2);
+      if (end !== -1) {
+        index = end + 2;
+        continue;
+      }
+      // No later "{-" can close either; stop searching so the scan stays linear.
+      deletionsClose = false;
+    }
+    index += 1;
+  }
+  const start = index + boundary.length;
+  return start <= text.length - 2 ? text.slice(start, -2) : null;
+}
+
+// The path class excludes the sigil, so matching is linear on any input.
+const MENTION = /^(?:merge request ([\w.\-/]*)!|issue ([\w.\-/]*)#)([1-9]\d*)$/;
+
+/**
+ * Where a "mentioned in merge request !12" note came from, addressed from the issue's own web URL
+ * so a self-managed host under a subpath resolves. A commit, epic or snippet mention gets none.
+ */
+export function withMentionReference(
+  event: IssueEvent,
+  issueUrl: string,
+  scope: string,
+): IssueEvent {
+  const match = event.kind === "referenced" ? MENTION.exec(event.detail ?? "") : null;
+  const projectUrl = issueUrl.split("/-/")[0]!;
+  if (match === null || !projectUrl.toLowerCase().endsWith(`/${scope.toLowerCase()}`)) {
+    return event;
+  }
+  const [, mergeRequestPath, issuePath, digits] = match;
+  const isMergeRequest = mergeRequestPath !== undefined;
+  const path = mergeRequestPath ?? issuePath ?? "";
+  // A project in the same namespace is named by its path alone.
+  const repository =
+    path === "" ? scope : path.includes("/") ? path : `${scope.replace(/[^/]*$/, "")}${path}`;
+  const base = projectUrl.slice(0, projectUrl.length - scope.length);
+  return {
+    ...event,
+    reference: {
+      repository,
+      number: Number(digits),
+      kind: isMergeRequest ? "pull-request" : "issue",
+      url: `${base}${repository}/-/${isMergeRequest ? "merge_requests" : "issues"}/${digits}`,
+    },
+  };
 }
 
 interface GitLabIssueNotes {

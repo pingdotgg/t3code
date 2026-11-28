@@ -1,7 +1,9 @@
 import {
   IssueTrackerKind,
+  issueTrackerBindingScopes,
   type IssueRef,
   type IssueTrackerConnectionList,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
 import {
   LINEAR_HOST,
@@ -14,11 +16,22 @@ import type { EnvironmentProject } from "./state/shell.ts";
 
 type LinkProject = Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
 
+const issueBindingsByRepository = new WeakMap<
+  RepositoryIdentity,
+  ReturnType<typeof sourceControlClients.issueBindings>
+>();
+
 /** The hosts and scopes a project's git-host tracker is bound to, the way the server resolves them. */
 function projectIssueBindings(project: LinkProject) {
-  return sourceControlClients
-    .issueBindings(project.repositoryIdentity)
+  const identity = project.repositoryIdentity;
+  if (identity == null) return [];
+  const cached = issueBindingsByRepository.get(identity);
+  if (cached !== undefined) return cached;
+  const bindings = sourceControlClients
+    .issueBindings(identity)
     .map((binding) => ({ ...binding, scope: binding.scope.toLowerCase() }));
+  issueBindingsByRepository.set(identity, bindings);
+  return bindings;
 }
 
 function linkAuthority(url: string): string | null {
@@ -62,15 +75,20 @@ export function isStandaloneIssueLink(url: string): boolean {
   return parseStandaloneIssueLink(url) !== null;
 }
 
+const LINEAR_LINK_HINT_PATTERN = new RegExp(
+  `${LINEAR_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`,
+  "i",
+);
+
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return text.includes(`${LINEAR_HOST}/`);
+  return LINEAR_LINK_HINT_PATTERN.test(text);
 }
 
 /**
  * A standalone tracker link resolves through the project bound to its scope, else any bound to
- * the tracker, and only when it names the workspace the credential reaches: team keys repeat
- * across workspaces, so a link elsewhere stays an ordinary link.
+ * the tracker, and only through an account whose credential reaches the workspace it names: team
+ * keys repeat across workspaces, so a link elsewhere stays an ordinary link.
  */
 function resolveStandaloneIssueLink<Project extends LinkProject>(
   url: string,
@@ -81,21 +99,30 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
   const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
   if (parsed === null || trackers === undefined) return null;
   const { tracker, link } = parsed;
-  const workspace = trackers.trackers.find(
-    (connection) => connection.tracker === tracker && connection.account !== null,
-  )?.workspace;
-  if (workspace?.toLowerCase() !== link.workspace.toLowerCase()) return null;
-  const { bindings } = trackers;
+  const accounts = new Set(
+    [...trackers.trackers, ...(trackers.accounts ?? [])]
+      .filter(
+        (connection) =>
+          connection.tracker === tracker &&
+          connection.account !== null &&
+          connection.workspace?.toLowerCase() === link.workspace.toLowerCase(),
+      )
+      .map((connection) => connection.accountId ?? null),
+  );
+  if (accounts.size === 0) return null;
+  const bindings = { ...trackers.bindings, ...trackers.accountBindings };
   const onTracker = projects.flatMap((project) => {
     const binding = bindings[project.id];
-    return binding?.tracker === tracker ? [{ project, binding }] : [];
+    return binding?.tracker === tracker && accounts.has(binding.accountId ?? null)
+      ? [{ project, binding }]
+      : [];
   });
   const preferFirst = (candidates: typeof onTracker) =>
     candidates.find((candidate) => candidate.project.id === preferredProjectId) ?? candidates[0];
   const scope = link.scope.toLowerCase();
-  const own = preferFirst(
-    onTracker.filter((candidate) => candidate.binding.scope.toLowerCase() === scope),
-  );
+  const boundScope = (candidate: (typeof onTracker)[number]) =>
+    issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
+  const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
   if (lender === undefined) return null;
   return {
@@ -104,7 +131,7 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
       projectId: lender.project.id,
       tracker: lender.binding.tracker,
       host: link.host,
-      scope: own === undefined ? link.scope : lender.binding.scope,
+      scope: (own && boundScope(own)) ?? link.scope,
       key: link.key,
     },
   };

@@ -250,6 +250,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     listProjectThreads: unused,
     sendToThread: unused,
+    submitRunOutput: unused,
     assertProviderInstanceEnabled: unused,
     isProviderInstanceEnabledForProject: unused,
     hasReceipt: unused,
@@ -1197,7 +1198,12 @@ describe("AgentAwarenessRelay", () => {
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+        ),
+      ),
     ),
   );
 });

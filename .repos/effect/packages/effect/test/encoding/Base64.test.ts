@@ -1,9 +1,10 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it, vi } from "@effect/vitest"
 import { Result } from "effect"
 import * as Base64 from "effect/encoding/Base64"
 import type * as EncodingError from "effect/encoding/EncodingError"
+import { describeWithFallback, describeWithoutNatives } from "../utils/encoding.ts"
 
-describe("Base64", () => {
+describeWithFallback("Base64", () => {
   it("encodes and decodes binary subarrays with and without padding", () => {
     const bytes = new Uint8Array([42, 251, 255, 128, 42])
     const vectors = ["", "+w==", "+/8=", "+/+A"]
@@ -11,6 +12,7 @@ describe("Base64", () => {
     for (const [length, encoded] of vectors.entries()) {
       const view = bytes.subarray(1, 1 + length)
       assert.strictEqual(Base64.encode(view), encoded)
+      assert.strictEqual(Base64.encodeUnpadded(view), encoded.replace(/=+$/, ""))
       assert.deepStrictEqual(Result.getOrThrow(Base64.decode(encoded)), view)
     }
     assert.deepStrictEqual(bytes, new Uint8Array([42, 251, 255, 128, 42]))
@@ -77,7 +79,13 @@ describe("Base64", () => {
 
   it("encodes strings and bytes", () => {
     assert.strictEqual(Base64.encode("hello"), "aGVsbG8=")
+    assert.strictEqual(Base64.encodeUnpadded("hello"), "aGVsbG8")
     assert.strictEqual(Base64.encode(new Uint8Array([72, 101, 108, 108, 111])), "SGVsbG8=")
+  })
+
+  it("encodes unpaired surrogates as the UTF-8 replacement character", () => {
+    assert.strictEqual(Base64.encode("\uD800"), "77+9")
+    assert.strictEqual(Base64.encode("\uDC00"), "77+9")
   })
 
   it("decodes bytes and UTF-8 strings", () => {
@@ -86,6 +94,10 @@ describe("Base64", () => {
       new Uint8Array([72, 101, 108, 108, 111])
     )
     assert.strictEqual(Result.getOrThrow(Base64.decodeString("8J+Riw==")), "👋")
+  })
+
+  it("preserves a leading U+FEFF when round-tripping strings", () => {
+    assert.strictEqual(Result.getOrThrow(Base64.decodeString(Base64.encode("\uFEFFa"))), "\uFEFFa")
   })
 
   it("rejects invalid input with format information", () => {
@@ -103,12 +115,42 @@ describe("Base64", () => {
 
   it("round trips every byte value", () => {
     const bytes = Uint8Array.from({ length: 256 }, (_, i) => i)
-    assert.deepStrictEqual(Result.getOrThrow(Base64.decode(Base64.encode(bytes))), bytes)
+    const encoded = Base64.encode(bytes)
+    assert.deepStrictEqual(Result.getOrThrow(Base64.decode(encoded)), bytes)
+    // MIME-style 76-character lines
+    assert.deepStrictEqual(Result.getOrThrow(Base64.decode(encoded.replace(/.{76}/g, "$&\r\n"))), bytes)
   })
 
   it("ignores non-zero trailing bits", () => {
     assert.deepStrictEqual(Result.getOrThrow(Base64.decode("Zh==")), new Uint8Array([102]))
     assert.deepStrictEqual(Result.getOrThrow(Base64.decode("Zm9=")), new Uint8Array([102, 111]))
+  })
+
+  it("decodes either alphabet, with or without padding", () => {
+    for (const length of [0, 48]) {
+      const prefix = "AAAA".repeat(length)
+      const bytes = new Uint8Array([...new Uint8Array(length * 3), 251, 255])
+      for (const encoded of ["+/8=", "+/8", "-_8=", "-_8"]) {
+        assert.deepStrictEqual(Result.getOrThrow(Base64.decodeLenient(prefix + encoded)), bytes)
+      }
+      assert.deepStrictEqual(Result.getOrThrow(Base64.decodeLenient(prefix + "+w")), bytes.subarray(0, -1))
+      assert.strictEqual(Base64.encodeUnpadded(bytes), prefix + "+/8")
+    }
+  })
+
+  it("rejects invalid lenient input and preserves the original input", () => {
+    for (const prefix of ["", "AAAA".repeat(48)]) {
+      // The last two mix the alphabets.
+      for (const suffix of ["Zm9vY", "Zg=", "-_!\r\n=", "Zg=v", "+_8", "-/8="]) {
+        const input = prefix + suffix
+        const result = Base64.decodeLenient(input)
+        assert.isTrue(Result.isFailure(result), input)
+        if (Result.isFailure(result)) {
+          const { input: actual, kind, module } = result.failure
+          assert.deepStrictEqual({ kind, module, input: actual }, { kind: "Decode", module: "Base64", input })
+        }
+      }
+    }
   })
 
   it("rejects invalid input with both decoders", () => {
@@ -121,8 +163,27 @@ describe("Base64", () => {
     assertFailure("Zg=v", "Zg=v", misplacedPadding)
     assertFailure("=Zg=", "=Zg=", misplacedPadding)
     assertFailure("====", "====", misplacedPadding)
-    for (const char of ["-", "_", "!", "{", "\u00e9"]) {
+    for (const char of ["-", "_", "!", "{", "\u00e9", " ", "\t", "\f"]) {
       assertFailure(`Zm9${char}`, `Zm9${char}`, `Invalid character ${char}`)
+      // Long enough for size-gated decoders
+      const long = `${"Zm9v".repeat(64)}Zm9${char}`
+      assertFailure(long, long, `Invalid character ${char}`)
+    }
+  })
+})
+
+describeWithoutNatives("Base64 Buffer fallback", () => {
+  it("encodes and decodes with Buffer", () => {
+    const bytes = Uint8Array.from({ length: 96 }, (_, i) => (i * 151) & 0xff)
+    const encoded = btoa(String.fromCharCode(...bytes))
+    const from = vi.spyOn(Buffer, "from")
+    try {
+      assert.strictEqual(Base64.encode(bytes), encoded)
+      assert.strictEqual(from.mock.calls.length, 1)
+      assert.deepStrictEqual(Result.getOrThrow(Base64.decode(encoded)), bytes)
+      assert.strictEqual(from.mock.calls.length, 2)
+    } finally {
+      from.mockRestore()
     }
   })
 })

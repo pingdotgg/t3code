@@ -15,6 +15,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -55,7 +56,7 @@ const layerOffers = Layer.effect(
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "remote-delegated-task" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),

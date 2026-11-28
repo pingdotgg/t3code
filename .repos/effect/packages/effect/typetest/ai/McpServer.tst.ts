@@ -1,5 +1,5 @@
 import { hole } from "effect"
-import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai"
+import { McpProtocol, McpSchema, McpServer, type Skill, Tool, Toolkit } from "effect/ai"
 import type * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -175,6 +175,21 @@ describe("McpServer", () => {
       expect<Effect.Error<typeof run>>().type.toBe<Cause.IllegalArgumentError>()
       expect<Layer.Error<typeof layer>>().type.toBe<Cause.IllegalArgumentError>()
     })
+  })
+
+  it("should type content mappers by tool name and decoded success", () => {
+    const toolkit = Toolkit.make(Tool.make("toString"), Tool.make("preview", { success: Schema.Uint8ArrayFromBase64 }))
+    McpServer.registerToolkit(toolkit, {
+      content: {
+        preview: (png) => {
+          expect(png).type.toBe<Uint8Array>()
+          return []
+        }
+      }
+    })
+    McpServer.toolkit(toolkit, { content: { preview: (data) => [{ type: "image", data, mimeType: "image/png" }] } })
+    expect(McpServer.registerToolkit).type.not.toBeCallableWith(toolkit, { content: { unknown: () => [] } })
+    expect(McpServer.toolkit).type.not.toBeCallableWith(toolkit, { content: { unknown: () => [] } })
   })
 
   it("should make declared toolkit dependencies request-level in both registration APIs", () => {
@@ -468,6 +483,21 @@ describe("McpServer", () => {
         HttpRouter.HttpRouter | HttpRouter.Request<"Requires", CurrentUser>
       >()
       expect<Layer.Services<typeof authenticated>>().type.toBe<McpServer.McpServer>()
+    })
+  })
+
+  describe("skills", () => {
+    it("should accept a Skill value in registerSkill and skill", () => {
+      const skill = hole<Skill.Skill>()
+      expect(McpServer.registerSkill(skill, { uri: "skill://billing/refunds/SKILL.md" })).type.toBe<
+        Effect.Effect<void, Cause.IllegalArgumentError, McpServer.McpServer>
+      >()
+      expect(McpServer.skill(skill, { uri: "skill://billing/refunds/SKILL.md", annotations: Context.empty() })).type
+        .toBe<
+          Layer.Layer<never, Cause.IllegalArgumentError, McpServer.McpServer>
+        >()
+      expect<Parameters<typeof McpServer.registerSkill>>().type.toBe<[options: McpServer.SkillOptions]>()
+      expect<Parameters<typeof McpServer.skill>>().type.toBe<[options: McpServer.SkillOptions]>()
     })
   })
 })

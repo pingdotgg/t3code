@@ -82,6 +82,48 @@ describe("Equal.equals", () => {
       assert.isFalse(Equal.equals(p1, q1))
     })
 
+    it("keeps differently unrolled plain cycles consistent with Hash and HashMap", () => {
+      const makeRing = (size: number) => {
+        const nodes: Array<{ next?: unknown }> = Array.from({ length: size }, () => ({}))
+        for (let i = 0; i < size; i++) nodes[i].next = nodes[(i + 1) % size]
+        return nodes[0]
+      }
+      const makeShared = (size: number) => {
+        const a = makeRing(size)
+        return [a, { next: a.next }] as const
+      }
+      const k = Symbol("x")
+      const j = Symbol("x")
+      const wrap = (v: object) => ({ [k]: v, [j]: v })
+
+      const pairs = [
+        () => [makeRing(1), makeRing(2)] as const,
+        () => [makeRing(37), makeRing(41)] as const,
+        () => {
+          const a: Array<unknown> = []
+          a.push(a)
+          const b1: Array<unknown> = []
+          b1.push([b1])
+          return [a, b1] as const
+        },
+        () => makeShared(2),
+        () => {
+          const [a, b] = makeShared(1)
+          return [wrap(a), wrap(b)] as const
+        }
+      ]
+      for (const make of pairs) {
+        for (const prehash of ["none", "left", "right", "both"] as const) {
+          const [a, b] = make()
+          if (prehash === "left" || prehash === "both") Hash.hash(a)
+          if (prehash === "right" || prehash === "both") Hash.hash(b)
+          assert.isFalse(Equal.equals(a, b), prehash)
+          assert.isFalse(Equal.equals(b, a), prehash)
+          assert.isFalse(HashMap.has(HashMap.make([a, 1]), b), prehash)
+        }
+      }
+    })
+
     it("agrees with bisimilarity on random cyclic graphs", () => {
       // Compute the greatest bisimulation by eliminating invalid pairs.
       const bisimilar = (left: Spec, right: Spec): ReadonlyArray<ReadonlyArray<boolean>> => {
@@ -152,6 +194,58 @@ describe("Equal.equals", () => {
       const obj1 = { a: 1, b: 2 }
       const obj2 = { a: 1, c: 2 }
       expect(Equal.equals(obj1, obj2)).toBe(false)
+    })
+
+    it("reads fresh plain objects once and avoids exponential traversal on shared acyclic graphs", () => {
+      let reads = 0
+      const leaf = () => ({
+        get v() {
+          reads++
+          return 1
+        }
+      })
+      const dag = (tag: number) => {
+        let node: unknown = leaf()
+        for (let i = 0; i < 14; i++) node = { l: node, r: node }
+        return { dag: node, tag }
+      }
+
+      assert.isTrue(Equal.equals(leaf(), leaf()))
+      assert.strictEqual(reads, 2)
+
+      reads = 0
+      assert.isFalse(Equal.equals(dag(0), dag(1)))
+      assert.strictEqual(reads, 2)
+
+      reads = 0
+      assert.isTrue(Equal.equals(dag(0), dag(0)))
+      assert.strictEqual(reads, 2)
+
+      reads = 0
+      let a: unknown = leaf(), b1: unknown = leaf(), b2: unknown = leaf()
+      for (let i = 0; i < 14; i++) {
+        a = { l: a, r: a }
+        ;[b1, b2] = [{ l: b1, r: b2 }, { l: b2, r: b1 }]
+      }
+      assert.isTrue(Equal.equals(a, b1))
+      assert.strictEqual(reads, 4)
+    })
+
+    it("does not equate plain objects with built-ins that override constructor", () => {
+      const record = { constructor: Object }
+      const set = Object.assign(new Set(), record)
+      assert.isFalse(Equal.equals(record, set))
+      assert.isFalse(Equal.equals(set, record))
+    })
+
+    it("includes inherited properties on objects with custom plain prototypes", () => {
+      const p1 = Object.create({ type: "p" })
+      const p2 = Object.create({ type: "p" })
+      const q = Object.create({ type: "q" })
+      assert.isTrue(Equal.equals(p1, p2))
+      assert.strictEqual(Hash.hash(p1), Hash.hash(p2))
+      assert.isFalse(Equal.equals(p1, q))
+      assert.isFalse(Equal.equals(p1, {}))
     })
 
     // The protocol keys are strings, so data can carry them without implementing the protocols.
@@ -382,6 +476,18 @@ describe("Equal.equals", () => {
       const arr2 = [1, 2]
       expect(Equal.equals(arr1, arr2)).toBe(false)
     })
+
+    it("compares arrays by index consistently while keeping Hash.array iterable-based", () => {
+      const a = Object.assign([1], {
+        *[Symbol.iterator]() {
+          yield 2
+        }
+      })
+      assert.isTrue(Equal.equals(a, [1]))
+      assert.strictEqual(Hash.hash(a), Hash.hash([1]))
+      assert.isTrue(Equal.equals(a, [1]))
+      assert.strictEqual(Hash.array(a), Hash.array([...a]))
+    })
   })
 
   describe("primitives", () => {
@@ -423,6 +529,20 @@ describe("Equal.equals", () => {
 
     it("should compare invalid dates without throwing", () => {
       expect(Equal.equals(new Date(NaN), new Date(NaN))).toBe(true)
+    })
+
+    it("keeps dates with custom methods consistent with Hash", () => {
+      const customIso = Object.assign(new Date(0), { toISOString: () => "custom" })
+      const plain = new Date(0)
+      assert.isFalse(Equal.equals(customIso, plain))
+      assert.isFalse(Equal.equals(plain, customIso))
+      assert.notStrictEqual(Hash.hash(customIso), Hash.hash(plain))
+
+      const customTime = Object.assign(new Date(0), { getTime: () => 1000 })
+      const later = new Date(1000)
+      assert.isFalse(Equal.equals(customTime, later))
+      assert.isFalse(Equal.equals(later, customTime))
+      assert.notStrictEqual(Hash.hash(customTime), Hash.hash(later))
     })
   })
 
@@ -504,6 +624,22 @@ describe("Equal.equals", () => {
       const point1 = new CustomPoint(1, 2)
       const point2 = new CustomPoint(1, 2)
       expect(Equal.equals(point1, point2)).toBe(true)
+    })
+
+    it("respects Hash-only implementations using reference hashing", () => {
+      class RefHashed implements Hash.Hash {
+        constructor(readonly x: number) {}
+        [Hash.symbol](): number {
+          return Hash.random(this)
+        }
+      }
+
+      const a = new RefHashed(1)
+      const b = new RefHashed(1)
+      assert.isTrue(Equal.equals(a, a))
+      assert.isFalse(Equal.equals(a, b))
+      assert.isFalse(Equal.equals(a, { x: 1 }))
+      assert.isFalse(Equal.equals({ x: 1 }, a))
     })
 
     it("clears visited state when a custom Equal throws", () => {
@@ -1173,6 +1309,23 @@ describe("Equal.equals", () => {
       // Even though stack traces are different, errors should be equal
       expect(error1.stack).not.toBe(error2.stack)
       expect(Equal.equals(error1, error2)).toBe(true)
+    })
+
+    const withSiteMetadata = (line: number, enumerable: boolean): Error => {
+      const error = new Error("same message")
+      const metadata = { line, column: line, sourceURL: `file${line}.ts`, originalLine: line, originalColumn: line }
+      for (const [key, value] of Object.entries(metadata)) {
+        Object.defineProperty(error, key, { value, enumerable, writable: true, configurable: true })
+      }
+      return error
+    }
+
+    it("should ignore non-enumerable construction-site metadata (JavaScriptCore)", () => {
+      assert.isTrue(Equal.equals(withSiteMetadata(1, false), withSiteMetadata(2, false)))
+    })
+
+    it("should compare enumerable fields named like construction-site metadata", () => {
+      assert.isFalse(Equal.equals(withSiteMetadata(1, true), withSiteMetadata(2, true)))
     })
   })
 

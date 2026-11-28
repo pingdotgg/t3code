@@ -1,0 +1,55 @@
+{
+  "case": "H8: a file upload whose comment mentions the bot (file_share message and app_mention), then a message_changed after its first thread reply",
+  "provenance": {
+    "source": "Slack Events API deliveries to the janitor2 app (A0CCHBHDK7X), logged by janitor production's EFF-3709 fixture capture (Effect-TS/janitor a751115)",
+    "channel": "chat-testing-123 (C0CH1LGJ4F3), a private channel",
+    "author": "Tim Smart (U080YLYB277), typing in the Slack client",
+    "recordedAt": "2026-11-12T23:25:50Z to 2026-11-12T23:36:10Z, a session run with Jarvis on EFF-3694",
+    "body": "The delivered JSON string, verbatim apart from the envelope token member, which the capture removes, and the members listed in a delivery's scrubbed, whose URLs are replaced",
+    "headers": "The capture's allowlist. The signature is never logged"
+  },
+  "deliveries": [
+    {
+      "loggedAt": "2026-11-12T23:29:07.390Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526147",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"text\":\"H8 <@U0CCLMD4S1L> file\",\"files\":[{\"id\":\"F0CDY7WPKU5\",\"created\":1793617539,\"timestamp\":1793617539,\"mimetype\":\"image\\/svg+xml\",\"filetype\":\"svg\",\"pretty_type\":\"SVG\",\"user\":\"U080YLYB277\",\"user_team\":\"T05479Z6JBW\",\"editable\":false,\"size\":1023,\"mode\":\"hosted\",\"is_external\":false,\"external_type\":\"\",\"is_public\":true,\"public_url_shared\":false,\"display_as_bot\":false,\"username\":\"\",\"name\":\"T3.svg\",\"title\":\"T3.svg\",\"is_modified_by_ai\":false,\"url_private\":\"https:\\/\\/scrubbed.invalid\\/url_private\",\"url_private_download\":\"https:\\/\\/scrubbed.invalid\\/url_private_download\",\"media_display_type\":\"unknown\",\"permalink\":\"https:\\/\\/scrubbed.invalid\\/permalink\",\"permalink_public\":\"https:\\/\\/scrubbed.invalid\\/permalink_public\",\"skipped_shares\":true,\"has_rich_preview\":false,\"file_access\":\"visible\"}],\"upload\":false,\"user\":\"U080YLYB277\",\"display_as_bot\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"vmQq2\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H8 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" file\"}]}]}],\"ts\":\"1794526147.127619\",\"client_msg_id\":\"bfaeb4c3-06ae-4962-9914-45b76bf4236f\",\"channel\":\"C0CH1LGJ4F3\",\"subtype\":\"file_share\",\"event_ts\":\"1794526147.127619\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH64E434M\",\"event_time\":1794526147,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}",
+      "scrubbed": [
+        "permalink",
+        "permalink_public",
+        "url_private",
+        "url_private_download"
+      ]
+    },
+    {
+      "loggedAt": "2026-11-12T23:29:07.554Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526147",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"app_mention\",\"text\":\"H8 <@U0CCLMD4S1L> file\",\"files\":[{\"id\":\"F0CDY7WPKU5\",\"created\":1793617539,\"timestamp\":1793617539,\"mimetype\":\"image\\/svg+xml\",\"filetype\":\"svg\",\"pretty_type\":\"SVG\",\"user\":\"U080YLYB277\",\"user_team\":\"T05479Z6JBW\",\"editable\":false,\"size\":1023,\"mode\":\"hosted\",\"is_external\":false,\"external_type\":\"\",\"is_public\":true,\"public_url_shared\":false,\"display_as_bot\":false,\"username\":\"\",\"name\":\"T3.svg\",\"title\":\"T3.svg\",\"is_modified_by_ai\":false,\"url_private\":\"https:\\/\\/scrubbed.invalid\\/url_private\",\"url_private_download\":\"https:\\/\\/scrubbed.invalid\\/url_private_download\",\"media_display_type\":\"unknown\",\"permalink\":\"https:\\/\\/scrubbed.invalid\\/permalink\",\"permalink_public\":\"https:\\/\\/scrubbed.invalid\\/permalink_public\",\"is_starred\":false,\"skipped_shares\":true,\"has_rich_preview\":false,\"file_access\":\"visible\"}],\"upload\":false,\"user\":\"U080YLYB277\",\"display_as_bot\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"vmQq2\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H8 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" file\"}]}]}],\"ts\":\"1794526147.127619\",\"client_msg_id\":\"bfaeb4c3-06ae-4962-9914-45b76bf4236f\",\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794526147.127619\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH9E0NN14\",\"event_time\":1794526147,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6ImFwcF9tZW50aW9uIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}",
+      "scrubbed": [
+        "permalink",
+        "permalink_public",
+        "url_private",
+        "url_private_download"
+      ]
+    },
+    {
+      "loggedAt": "2026-11-12T23:29:25.636Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526187",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"subtype\":\"message_changed\",\"message\":{\"text\":\"H8 <@U0CCLMD4S1L> file\",\"files\":[{\"id\":\"F0CDY7WPKU5\",\"created\":1793617539,\"timestamp\":1793617539,\"mimetype\":\"image\\/svg+xml\",\"filetype\":\"svg\",\"pretty_type\":\"SVG\",\"user\":\"U080YLYB277\",\"user_team\":\"T05479Z6JBW\",\"editable\":false,\"size\":1023,\"mode\":\"hosted\",\"is_external\":false,\"external_type\":\"\",\"is_public\":true,\"public_url_shared\":false,\"display_as_bot\":false,\"username\":\"\",\"name\":\"T3.svg\",\"title\":\"T3.svg\",\"is_modified_by_ai\":false,\"url_private\":\"https:\\/\\/scrubbed.invalid\\/url_private\",\"url_private_download\":\"https:\\/\\/scrubbed.invalid\\/url_private_download\",\"media_display_type\":\"unknown\",\"permalink\":\"https:\\/\\/scrubbed.invalid\\/permalink\",\"permalink_public\":\"https:\\/\\/scrubbed.invalid\\/permalink_public\",\"skipped_shares\":true,\"has_rich_preview\":false,\"file_access\":\"visible\"}],\"upload\":false,\"user\":\"U080YLYB277\",\"display_as_bot\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"vmQq2\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H8 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" file\"}]}]}],\"type\":\"message\",\"client_msg_id\":\"bfaeb4c3-06ae-4962-9914-45b76bf4236f\",\"thread_ts\":\"1794526147.127619\",\"reply_count\":1,\"reply_users_count\":1,\"latest_reply\":\"1794526163.740459\",\"reply_users\":[\"U0CCLMD4S1L\"],\"is_locked\":false,\"ts\":\"1794526147.127619\"},\"previous_message\":{\"text\":\"H8 <@U0CCLMD4S1L> file\",\"files\":[{\"id\":\"F0CDY7WPKU5\",\"created\":1793617539,\"timestamp\":1793617539,\"mimetype\":\"image\\/svg+xml\",\"filetype\":\"svg\",\"pretty_type\":\"SVG\",\"user\":\"U080YLYB277\",\"user_team\":\"T05479Z6JBW\",\"editable\":false,\"size\":1023,\"mode\":\"hosted\",\"is_external\":false,\"external_type\":\"\",\"is_public\":true,\"public_url_shared\":false,\"display_as_bot\":false,\"username\":\"\",\"name\":\"T3.svg\",\"title\":\"T3.svg\",\"is_modified_by_ai\":false,\"url_private\":\"https:\\/\\/scrubbed.invalid\\/url_private\",\"url_private_download\":\"https:\\/\\/scrubbed.invalid\\/url_private_download\",\"media_display_type\":\"unknown\",\"permalink\":\"https:\\/\\/scrubbed.invalid\\/permalink\",\"permalink_public\":\"https:\\/\\/scrubbed.invalid\\/permalink_public\",\"is_starred\":false,\"skipped_shares\":true,\"has_rich_preview\":false,\"file_access\":\"visible\"}],\"upload\":false,\"user\":\"U080YLYB277\",\"display_as_bot\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"vmQq2\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H8 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" file\"}]}]}],\"type\":\"message\",\"ts\":\"1794526147.127619\",\"client_msg_id\":\"bfaeb4c3-06ae-4962-9914-45b76bf4236f\",\"thread_ts\":\"1794526147.127619\",\"reply_count\":1,\"reply_users_count\":1,\"latest_reply\":\"1794526163.740459\",\"reply_users\":[\"U0CCLMD4S1L\"],\"is_locked\":false,\"subscribed\":false},\"channel\":\"C0CH1LGJ4F3\",\"hidden\":true,\"ts\":\"1794526164.003900\",\"event_ts\":\"1794526164.003900\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CGW201CQP\",\"event_time\":1794526164,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}",
+      "scrubbed": [
+        "permalink",
+        "permalink_public",
+        "url_private",
+        "url_private_download"
+      ]
+    }
+  ]
+}
