@@ -1805,6 +1805,13 @@ export const ServerSettingsOperation = Schema.Literals([
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
+/** Why a setting the administrator's policy locks cannot be changed. */
+export const managedSettingMessage = (
+  setting: string | undefined,
+  organization: string | undefined,
+) =>
+  `${setting ?? "This setting"} is managed by ${organization ?? "your organization"} and cannot be changed.`;
+
 /** Why a provider the administrator's policy leaves out cannot be used. */
 export const disallowedProviderMessage = (organization: string | undefined, label: string) =>
   `${organization === undefined ? "Your organization" : `${organization}'s`} policy does not allow the ${label} provider.`;
@@ -1826,7 +1833,7 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
 ) {
   override get message(): string {
     if (this.operation === "write-managed-setting") {
-      return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
+      return managedSettingMessage(this.managedSetting, this.managedBy);
     }
     if (this.operation === "use-disallowed-provider") {
       return disallowedProviderMessage(

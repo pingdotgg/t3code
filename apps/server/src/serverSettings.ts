@@ -289,6 +289,11 @@ export class ServerSettingsService extends Context.Service<
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Fails as `updateSettings(patch)` would against the settings as last loaded, without applying it. */
+    readonly checkSettingsUpdate: (
+      patch: ServerSettingsPatch,
+    ) => Effect.Effect<void, ServerSettingsError>;
+
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
@@ -354,6 +359,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
+    checkSettingsUpdate: () => Effect.void,
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
@@ -1225,58 +1231,83 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /** What `update` would write, after the managed-policy checks every write must pass. */
+  const vetSettingsUpdate = Effect.fn("ServerSettings.vetSettingsUpdate")(function* (
+    current: ServerSettings,
+    patch: ServerSettingsPatch,
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+  ) {
+    // An older client echoes a reference as the redacted marker; restore it before vetting so
+    // a removed provider's reference is cleared below rather than restored by persistence.
+    const updated = withoutRedirectedSecrets(
+      current,
+      withEchoedSecretReferences(current, yield* update(current)),
+    );
+    // Vet before secrets: a variable the policy hides from clients is not one they removed.
+    const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
+    if (vetted._tag === "Locked") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "write-managed-setting",
+        managedSetting: vetted.path,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
+    if (vettedProviders._tag === "Locked") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "write-managed-setting",
+        managedSetting: vettedProviders.path,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    if (vettedProviders._tag === "Disallowed") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "use-disallowed-provider",
+        providerInstanceId: vettedProviders.instanceId,
+        providerLabel: vettedProviders.label,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    return vettedProviders.settings;
+  });
+
+  const storedSettingsOf = <E, R>(
+    load: Effect.Effect<
+      { readonly settings: ServerSettings; readonly parseFailure: Option.Option<unknown> },
+      E,
+      R
+    >,
+  ) =>
+    load.pipe(
+      Effect.flatMap(({ settings, parseFailure }) =>
+        Option.isSome(parseFailure)
+          ? Effect.fail(
+              new ServerSettingsError({
+                settingsPath,
+                operation: "read-file",
+                cause: parseFailure.value,
+              }),
+            )
+          : Effect.succeed(settings),
+      ),
+    );
+  const reloadForWrite = storedSettingsOf(reloadSettings);
+
   const updateAndPersistSettings = (
     patch: ServerSettingsPatch,
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const { settings: current, parseFailure } = yield* reloadSettings;
-        if (Option.isSome(parseFailure)) {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "read-file",
-            cause: parseFailure.value,
-          });
-        }
-        // An older client echoes a reference as the redacted marker; restore it before vetting so
-        // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSecrets(
-          current,
-          withEchoedSecretReferences(current, yield* update(current)),
-        );
-        // Vet before secrets: a variable the policy hides from clients is not one they removed.
-        const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
-        if (vetted._tag === "Locked") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "write-managed-setting",
-            managedSetting: vetted.path,
-            managedBy: managedPolicy?.organization,
-          });
-        }
-        const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
-        if (vettedProviders._tag === "Locked") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "write-managed-setting",
-            managedSetting: vettedProviders.path,
-            managedBy: managedPolicy?.organization,
-          });
-        }
-        if (vettedProviders._tag === "Disallowed") {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "use-disallowed-provider",
-            providerInstanceId: vettedProviders.instanceId,
-            providerLabel: vettedProviders.label,
-            managedBy: managedPolicy?.organization,
-          });
-        }
+        const current = yield* reloadForWrite;
+        const vettedSettings = yield* vetSettingsUpdate(current, patch, update);
         // After vetting, which can keep stored variables a policy hides from clients.
         const persisted = yield* persistSettingsSecrets(
           current,
-          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+          withoutRemovedSecretProviderReferences(current, vettedSettings),
         );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
@@ -1464,6 +1495,20 @@ const make = Effect.gen(function* () {
           const patched = applyServerSettingsPatch(current, patch);
           return applyProviderInstanceMutation(patched, mutation);
         }),
+      ),
+    // The settings as last loaded, so a check saves nothing; the write itself reloads them.
+    checkSettingsUpdate: (patch) =>
+      writeSemaphore.withPermits(1)(
+        storedSettingsOf(Cache.get(settingsCache, cacheKey)).pipe(
+          Effect.flatMap((current) =>
+            vetSettingsUpdate(current, patch, (stored) =>
+              ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+                Effect.as(applyServerSettingsPatch(stored, patch)),
+              ),
+            ),
+          ),
+          Effect.asVoid,
+        ),
       ),
     withSettingsSnapshot,
     get streamChanges() {

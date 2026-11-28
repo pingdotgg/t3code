@@ -183,6 +183,7 @@ import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as EventStore from "./orchestration-v2/EventStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -1851,6 +1852,9 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       Layer.effect(ProjectService.ProjectService, ProjectService.make).pipe(
         Layer.provide(
           Layer.mergeAll(
+            Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
+              getProjectByCommandId: () => Effect.succeedNone,
+            }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               readShellSnapshot: (options) =>
                 Effect.succeed(
