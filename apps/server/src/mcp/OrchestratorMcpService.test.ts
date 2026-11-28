@@ -2524,7 +2524,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               { id: "agent", values: ["build"], default: "build" },
             ],
           },
-          { id: "gpt-4" },
+          { id: "gpt-4", favorite: true },
           { id: "gpt-3" },
           { id: "my-alpha" },
         ]);
