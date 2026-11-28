@@ -36,6 +36,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -299,6 +300,11 @@ function FileDocument(props: {
   );
 }
 
+const subscribeToFullscreen = (onChange: () => void) => {
+  document.addEventListener("fullscreenchange", onChange);
+  return () => document.removeEventListener("fullscreenchange", onChange);
+};
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
   readonly src: string;
@@ -306,6 +312,8 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /** The frame height tracks the page, so the page must not scroll inside it. */
+  readonly fitted?: boolean;
   /** Keeps the page's scrollIntoView calls from scrolling the host, for frames inline in the chat. */
   readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
@@ -318,6 +326,11 @@ export function HtmlRenderDocument(props: {
       `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
   );
   const [loaded, setLoaded] = useState(false);
+  // A page that takes the screen can be taller than the screen, so it must scroll there.
+  const fullscreen = useSyncExternalStore(
+    subscribeToFullscreen,
+    () => document.fullscreenElement !== null && document.fullscreenElement === frameRef.current,
+  );
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
@@ -457,6 +470,9 @@ export function HtmlRenderDocument(props: {
         sandbox="allow-scripts allow-forms"
         // Lets a page's video or image viewer take the screen.
         allow="fullscreen"
+        // Chromium latches trackpad swipes to a frame the page can scroll one device pixel;
+        // only the frame element can stop a cross-origin page scrolling.
+        scrolling={props.fitted && !fullscreen ? "no" : undefined}
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
