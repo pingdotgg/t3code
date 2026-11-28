@@ -8395,13 +8395,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
             ),
           );
+        const drainPendingPostActivationUpdatesLocked: Effect.Effect<void> = Effect.gen(
+          function* () {
+            if ((yield* Ref.get(loadingSessionId)) !== null) return;
+            while (pendingPostActivationUpdates.length > 0) {
+              const notification = pendingPostActivationUpdates.shift()!;
+              yield* projectAcpRuntimeSessionUpdateEffect(notification).pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    pendingPostActivationUpdates.unshift(notification);
+                  }),
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.logError("failed to replay post-activation ACP session update", {
+                    driver,
+                    cause,
+                  }),
+                ),
+              );
+            }
+          },
+        );
         const projectAcpRuntimeSessionUpdate = (
           handlerGeneration: number,
           rawNotification: EffectAcpSchema.SessionNotification,
         ) =>
           runRuntimeCallbackAtGeneration(
             handlerGeneration,
-            projectAcpRuntimeSessionUpdateEffect(rawNotification),
+            drainPendingPostActivationUpdatesLocked.pipe(
+              Effect.andThen(projectAcpRuntimeSessionUpdateEffect(rawNotification)),
+            ),
           ).pipe(Effect.asVoid);
 
         const commitActivatedSession = Effect.fnUntraced(function* (
@@ -8422,26 +8445,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         providerThreadId: route.providerThreadId,
                       });
                     }
+                    for (let index = pendingPostActivationUpdates.length - 1; index >= 0; index--) {
+                      if (pendingPostActivationUpdates[index]!.sessionId !== setup.sessionId) {
+                        pendingPostActivationUpdates.splice(index, 1);
+                      }
+                    }
                     yield* Ref.set(loadingSessionId, null);
                   }),
                 ),
               );
-              while (pendingPostActivationUpdates.length > 0) {
-                const notification = pendingPostActivationUpdates.shift()!;
-                yield* projectAcpRuntimeSessionUpdateEffect(notification).pipe(
-                  Effect.onInterrupt(() =>
-                    Effect.sync(() => {
-                      pendingPostActivationUpdates.unshift(notification);
-                    }),
-                  ),
-                  Effect.catchCause((cause) =>
-                    Effect.logError("failed to replay post-activation ACP session update", {
-                      driver,
-                      cause,
-                    }),
-                  ),
-                );
-              }
+              yield* drainPendingPostActivationUpdatesLocked;
             }),
           );
         });
@@ -10889,6 +10902,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
             } else {
+              if (pendingPostActivationUpdates.length > 0) {
+                yield* runtimeCallbackPermit.withPermit(drainPendingPostActivationUpdatesLocked);
+              }
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
               if (
@@ -11722,29 +11738,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   } else if (threadInput.providerThread.appThreadId !== null) {
                     const appThreadId = threadInput.providerThread.appThreadId;
                     const pendingContinuation = yield* runtimeCallbackPermit.withPermit(
-                      continuationPermit.withPermit(
-                        Effect.gen(function* () {
-                          yield* Ref.set(lastTurnRoute, {
-                            nativeSessionId: sessionId,
-                            threadId: appThreadId,
-                            providerThreadId: threadInput.providerThread.id,
-                          });
-                          if ((yield* Ref.get(activeTurn)) !== null) return Option.none();
-                          const buffered = (yield* Ref.get(wakeBuffer)).filter(
-                            (frame) => frame.sessionId === sessionId,
-                          );
-                          if (buffered.length === 0) return Option.none();
-                          const eligible =
-                            followsAgentWorkState ||
-                            (postSettleContinuationEnabled &&
-                              !(yield* hasRunningBackgroundTasks(sessionId)) &&
-                              buffered.some((frame) =>
-                                acpPostSettleContinuationOfferEvidence(frame, flavor),
-                              ));
-                          if (!eligible) return Option.none();
-                          return yield* reserveContinuationRunLocked(sessionId);
-                        }),
-                      ),
+                      Effect.gen(function* () {
+                        yield* drainPendingPostActivationUpdatesLocked;
+                        return yield* continuationPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* Ref.set(lastTurnRoute, {
+                              nativeSessionId: sessionId,
+                              threadId: appThreadId,
+                              providerThreadId: threadInput.providerThread.id,
+                            });
+                            if ((yield* Ref.get(activeTurn)) !== null) return Option.none();
+                            const buffered = (yield* Ref.get(wakeBuffer)).filter(
+                              (frame) => frame.sessionId === sessionId,
+                            );
+                            if (buffered.length === 0) return Option.none();
+                            const eligible =
+                              followsAgentWorkState ||
+                              (postSettleContinuationEnabled &&
+                                !(yield* hasRunningBackgroundTasks(sessionId)) &&
+                                buffered.some((frame) =>
+                                  acpPostSettleContinuationOfferEvidence(frame, flavor),
+                                ));
+                            if (!eligible) return Option.none();
+                            return yield* reserveContinuationRunLocked(sessionId);
+                          }),
+                        );
+                      }),
                     );
                     if (Option.isSome(pendingContinuation)) {
                       yield* dispatchContinuationReservation(pendingContinuation.value);

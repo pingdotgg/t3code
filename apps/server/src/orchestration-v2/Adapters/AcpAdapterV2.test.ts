@@ -12111,6 +12111,117 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect(
+    "preserves post-activation frame order when draining is interrupted and the same session is retried",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-drain-interrupt");
+        const threadA = ThreadId.make("thread-drain-a");
+        const threadB = ThreadId.make("thread-drain-b");
+        const notify =
+          yield* Deferred.make<
+            Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+          >();
+        const drainStarted = yield* Deferred.make<void>();
+        let stallFirstDrain = true;
+        const observedCommands: Array<ReadonlyArray<string>> = [];
+        const send = (sessionId: string, update: EffectAcpSchema.SessionUpdate) =>
+          Deferred.await(notify).pipe(Effect.flatMap((handler) => handler({ sessionId, update })));
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            onAvailableCommandsUpdate: (commands) =>
+              Effect.gen(function* () {
+                const names = commands.map((command) => command.name);
+                if (stallFirstDrain) {
+                  stallFirstDrain = false;
+                  yield* Deferred.succeed(drainStarted, undefined);
+                  return yield* Effect.never;
+                }
+                observedCommands.push(names);
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Deferred.succeed(notify, handler).pipe(
+                    Effect.andThen(runtime.handleSessionUpdate(handler)),
+                  ),
+                isSessionLoadInFlight: () => Effect.succeed(false),
+                loadSession: (sessionId) =>
+                  Effect.gen(function* () {
+                    yield* send(sessionId, {
+                      sessionUpdate: "available_commands_update",
+                      availableCommands: [{ name: "first", description: "first" }],
+                    });
+                    yield* send(sessionId, {
+                      sessionUpdate: "available_commands_update",
+                      availableCommands: [{ name: "second", description: "second" }],
+                    });
+                    return {
+                      sessionId,
+                      initializeResult: {
+                        protocolVersion: 1 as const,
+                        agentCapabilities: { loadSession: true },
+                      },
+                      sessionSetupResult: {},
+                      modelConfigId: undefined,
+                    };
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" };
+        const runtime = yield* adapter.openSession({
+          threadId: threadA,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("session-drain-interrupt"),
+        });
+        const providerThreadA = yield* runtime.ensureThread({
+          threadId: threadA,
+          modelSelection,
+          runtimePolicy,
+        });
+        const peerB = {
+          ...providerThreadA,
+          id: ProviderThreadId.make("provider-session-b"),
+          appThreadId: threadB,
+          nativeThreadRef: {
+            driver: ACP_TEST_DRIVER,
+            nativeId: "session-b",
+            strength: "strong" as const,
+          },
+        };
+
+        const firstResume = yield* runtime
+          .resumeThread({ providerThread: peerB })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(drainStarted);
+        yield* Fiber.interrupt(firstResume);
+        assert.isEmpty(observedCommands);
+
+        // Retrying the same session drains the restored frames before any later live update.
+        yield* runtime.resumeThread({ providerThread: peerB });
+        yield* send("session-b", {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "third", description: "third" }],
+        });
+        assert.deepEqual(observedCommands, [["first"], ["second"], ["third"]]);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("projects completed-root carryover eagerly and drain cannot resurrect it", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
