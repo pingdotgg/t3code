@@ -7,6 +7,7 @@ import {
   closeLayoutTab,
   closeLayoutTabs,
   closedLayoutTabIds,
+  createLayoutLauncherContent,
   moveLayoutTabToNewWorkspace,
   createLayoutState,
   decodePersistedLayoutState,
@@ -981,6 +982,23 @@ describe("closeLayoutTabs", () => {
     const blank = closeLayoutTabs(after, [t0!.id, t3!.id]);
     expect(blank.workspaces[0]!.columns[0]!.panes[0]!.tabs).toHaveLength(1);
     expect(blank.workspaces[0]!.columns[0]!.panes[0]!.tabs[0]!.content.kind).toBe("launcher");
+  });
+
+  it("collapses multiple blank launchers in the lone workspace down to one when all close", () => {
+    let layout = createLayoutState();
+    layout = openLayoutTab(layout, createLayoutLauncherContent(null), {
+      placement: "active-pane",
+      position: "end",
+    });
+    const tabs = layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+    expect(tabs).toHaveLength(2);
+
+    const after = closeLayoutTabs(
+      layout,
+      tabs.map((tab) => tab.id),
+    );
+    expect(after.workspaces[0]!.columns[0]!.panes[0]!.tabs).toHaveLength(1);
+    expect(after.workspaces[0]!.columns[0]!.panes[0]!.tabs[0]!.content.kind).toBe("launcher");
   });
 });
 

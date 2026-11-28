@@ -1795,7 +1795,8 @@ export function closeLayoutTabs(state: LayoutState, tabIds: readonly string[]): 
   // (or close a blank workspace), matching `closeLayoutTab`.
   if (workspaceTabCount(first.workspace) === closingInPane.length) {
     if (closingInPane.every((tab) => tab.content.kind === "launcher")) {
-      return closeLayoutBlankWorkspace(state, first.workspace);
+      const closedWorkspace = closeLayoutBlankWorkspace(state, first.workspace);
+      if (closedWorkspace !== state) return closedWorkspace;
     }
     const blank = createLayoutTab(createLayoutLauncherContent(null));
     return normalizeLayout(
