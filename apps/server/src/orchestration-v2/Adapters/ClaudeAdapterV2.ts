@@ -394,10 +394,8 @@ const CLAUDE_BOOT_TIMEOUT = "5 minutes";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
-// Claude Code flushes transcript writes every 100 ms, so a workflow member's
-// reply can land after the progress frame that settles it. Its transcript
-// stays the source of its answer this long after it settles.
-const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
+// Claude Code flushes transcript writes every 100 ms; allow for writes after settlement.
+const CLAUDE_TRANSCRIPT_FLUSH_MS = 500;
 // A steer waits at most this long, from its request, for its foreground
 // subagents to move to the background before it is sent.
 const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
@@ -978,9 +976,8 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
-  /** The model a subagent's transcript says it ran on. */
   readonly subagentModel: (
-    input: ClaudeAgentSdkSubagentLookupInput,
+    input: ClaudeAgentSdkSubagentLookupInput & { readonly environment: NodeJS.ProcessEnv },
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -1564,6 +1561,10 @@ function claudeTranscriptHasUnseenMessages(
   return anchored ? claudeMessagesBeforeTrailingAborts(unseen) > 0 : undefined;
 }
 
+const decodeClaudeSubagentModel = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.NullOr(Schema.String)),
+);
+
 const claudeConfigDirOf = (
   path: Path.Path,
   environment: NodeJS.ProcessEnv,
@@ -1573,9 +1574,9 @@ const claudeConfigDirOf = (
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
 const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
-  readonly method: "forkSession" | "getSessionMessages";
+  readonly method: "forkSession" | "getSessionMessages" | "getSubagentModel";
   readonly sessionId: string;
-  readonly options?: ForkSessionOptions;
+  readonly options?: ForkSessionOptions & { readonly agentId?: string };
   readonly environment: NodeJS.ProcessEnv;
 }) {
   const path = yield* Path.Path;
@@ -2385,9 +2386,35 @@ export const layerQueryRunner: Layer.Layer<
           return toolUseId;
         },
       ),
-      subagentModel: Effect.fn("ClaudeAgentSdkQueryRunner.subagentModel")(function* (
-        input: ClaudeAgentSdkSubagentLookupInput,
-      ) {
+      subagentModel: Effect.fn("ClaudeAgentSdkQueryRunner.subagentModel")(function* (input) {
+        const homeDirectory = yield* HostProcess.HomeDirectory;
+        const environment = input.environment.CLAUDE_CONFIG_DIR
+          ? {
+              ...input.environment,
+              CLAUDE_CONFIG_DIR: path.resolve(
+                input.dir ?? ".",
+                input.environment.CLAUDE_CONFIG_DIR,
+              ),
+            }
+          : input.environment;
+        const usesHostConfig =
+          claudeConfigDirOf(path, environment, homeDirectory) ===
+          claudeConfigDirOf(path, hostEnvironment, homeDirectory);
+        if (!usesHostConfig) {
+          const result = yield* runClaudeWorker({
+            method: "getSubagentModel",
+            sessionId: input.sessionId,
+            environment,
+            options: { agentId: input.agentId, ...(input.dir === null ? {} : { dir: input.dir }) },
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError((cause) => queryRunnerError(cause, "getSubagentModel")),
+          );
+          return yield* decodeClaudeSubagentModel(result).pipe(
+            Effect.mapError((cause) => queryRunnerError(cause, "getSubagentModel")),
+          );
+        }
         const messages = yield* Effect.tryPromise({
           try: () =>
             getSubagentMessages(
@@ -2395,15 +2422,16 @@ export const layerQueryRunner: Layer.Layer<
               input.agentId,
               input.dir === null ? {} : { dir: input.dir },
             ),
-          catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
+          catch: (cause) => queryRunnerError(cause, "getSubagentModel"),
         });
         return (
           messages
-            .toReversed()
-            .flatMap((message) =>
-              message.type === "assistant" ? [text(field(message.message, "model"))] : [],
-            )
-            .find((model) => model !== undefined) ?? null
+            .flatMap((message) => {
+              const model =
+                message.type === "assistant" ? text(field(message.message, "model")) : undefined;
+              return model === undefined || model === "<synthetic>" ? [] : [model];
+            })
+            .at(-1) ?? null
         );
       }),
       assertComplete: Effect.void,
@@ -8078,41 +8106,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // A `context: fork` skill, or a foreground subagent whose replies were never streamed,
-        // leaves no model on any frame; only its transcript records it, written once it finishes.
-        const transcriptModel = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          nativeThreadId: string,
-          taskId: string,
-        ) {
-          const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
-          if (
-            registered === undefined ||
-            registered.task.model !== null ||
-            registered.task.status === "running"
-          ) {
-            return undefined;
-          }
-          const model = yield* queryRunner
-            .subagentModel({
-              sessionId: nativeThreadId,
-              agentId: taskId,
-              dir: context.input.runtimePolicy.cwd,
-              threadId: context.input.threadId,
-              providerSessionId: input.providerSessionId,
-            })
-            .pipe(
-              Effect.catch(() =>
-                Effect.logWarning("orchestration-v2.claude-subagent-model-lookup-failed", {
-                  taskId,
-                }).pipe(Effect.as(null)),
-              ),
-            );
-          return model === null || model === "<synthetic>"
-            ? undefined
-            : canonicalClaudeSubagentModel(modelCatalog, model);
-        });
-
         // Resume frames reference the launch call, but task_started names SendMessage; recover the mapping from CLI storage.
         const recoverResumedClaudeSubagent = Effect.fnUntraced(function* (resume: {
           readonly context: ActiveClaudeTurnContext;
@@ -8484,7 +8477,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const flushWindowLeft = (at: DateTime.Utc) =>
               completedAt === null
                 ? 0
-                : WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS -
+                : CLAUDE_TRANSCRIPT_FLUSH_MS -
                   (DateTime.toEpochMillis(at) - DateTime.toEpochMillis(completedAt));
             // Drain capped reads; settled replies can lie beyond the cap.
             let transcriptDrained = true;
@@ -8718,7 +8711,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           // A completed subagent can settle before its first reply is flushed; wait out the flush once.
           if ((yield* read()) && completed && metadata.messageId === undefined) {
-            yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+            yield* Effect.sleep(CLAUDE_TRANSCRIPT_FLUSH_MS);
             yield* read();
           }
           return metadata.effort;
@@ -8752,10 +8745,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // The process that ran it exited, which confirms the outcome as a native one would.
           readonly processExited?: true;
           readonly onlyIfRunningInRun?: RunId | null;
-        }) {
+          readonly onlyIfUnreportedOutcome?: ProviderAdapter.ProviderAdapterV2SubagentOutcome;
+        }): Effect.fn.Return<void> {
           const registeredSubagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
           const existingSubagent =
-            input.onlyIfRunningInRun !== undefined
+            input.onlyIfRunningInRun !== undefined || input.onlyIfUnreportedOutcome !== undefined
               ? registeredSubagent
               : (input.context.subagentsByTaskId.get(input.taskId) ??
                 (input.toolUseId === undefined
@@ -8769,6 +8763,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.onlyIfRunningInRun !== undefined &&
             (existingSubagent?.task.status !== "running" ||
               existingSubagent.task.runId !== input.onlyIfRunningInRun)
+          )
+            return;
+          if (
+            input.onlyIfUnreportedOutcome !== undefined &&
+            (existingSubagent?.confirmedOutcome !== input.onlyIfUnreportedOutcome ||
+              existingSubagent.task.model !== null)
           )
             return;
           // Only task_started may reopen a terminal task id on resume; late task_progress must not.
@@ -8836,7 +8836,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : (existingSubagent.effort ??
                 (lifecycleChanged &&
                 input.status !== "running" &&
-                existingSubagent.task.modelSelection !== undefined &&
+                (existingSubagent.task.modelSelection !== undefined ||
+                  existingSubagent.childThread?.modelUnreported === true) &&
                 (input.nativeTaskType ?? existingSubagent.nativeTaskType) !==
                   CLAUDE_WORKFLOW_TASK_TYPE
                   ? yield* readSubagentTranscriptEffort(
@@ -8848,6 +8849,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const model = input.model ?? priorTask?.model ?? null;
           const movesToCurrentRun =
             input.reopen === true && input.status === "running" && existingSubagent !== undefined;
+          const childModelSelection = claudeSubagentModelSelection(
+            modelCatalog,
+            input.context.input.modelSelection.instanceId,
+            model ?? input.context.input.modelSelection.model,
+            effort,
+          );
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -8876,16 +8883,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             model,
-            ...(existingSubagent === undefined || existingSubagent.task.modelSelection !== undefined
-              ? {
-                  modelSelection: claudeSubagentModelSelection(
-                    modelCatalog,
-                    input.context.input.modelSelection.instanceId,
-                    model || input.context.input.modelSelection.model,
-                    effort,
-                  ),
-                }
-              : {}),
+            modelSelection: model === null ? undefined : childModelSelection,
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
@@ -8937,6 +8935,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (input.onlyIfRunningInRun !== undefined &&
                 (registered?.task.status !== "running" ||
                   registered.task.runId !== input.onlyIfRunningInRun)) ||
+              (input.onlyIfUnreportedOutcome !== undefined &&
+                (registered !== existingSubagent ||
+                  registered?.confirmedOutcome !== input.onlyIfUnreportedOutcome ||
+                  registered.task.model !== null)) ||
               (registered !== undefined &&
                 registered.task.status !== "running" &&
                 input.status === "running" &&
@@ -8947,7 +8949,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, new Map(current).set(input.taskId, subagent)] as const;
           });
           if (!accepted) return;
-          if (input.nativeOutcome !== undefined) appliedSubagentOutcomes.add(input.nativeOutcome);
+          if (input.nativeOutcome !== undefined) {
+            appliedSubagentOutcomes.add(input.nativeOutcome);
+            // Before the settle event, so the run keeps ingesting until the lookup ends.
+            yield* recoverForkModel({
+              context: input.context,
+              nativeThreadId: input.context.nativeThreadId,
+              taskId: input.taskId,
+            });
+          }
           if (existingSubagent !== undefined && input.status !== "running") {
             const openCalls = [...subagentToolCalls.values()].filter(
               (toolCall) => toolCall.threadId === existingSubagent.childThreadId,
@@ -8974,26 +8984,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (subagent.childThread === null) {
-            const childThread = makeSubagentChildThread({
-              parentThread: input.context.input.appThread,
-              childThreadId,
-              parentNodeId: nodeId,
-              activeProviderThreadId: null,
-              providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection: task.modelSelection ?? input.context.input.modelSelection,
-              title: subagentThreadTitle({
-                parentTitle: input.context.input.appThread.title,
-                prompt: task.prompt,
-                title:
-                  workflowWithThreads === undefined
-                    ? task.title
-                    : `Workflow · ${workflowWithThreads.name ?? task.title ?? "Untitled"}`,
-                ordinal: input.context.subagentsByTaskId.size,
+            const childThread = {
+              ...makeSubagentChildThread({
+                parentThread: input.context.input.appThread,
+                childThreadId,
+                parentNodeId: nodeId,
+                activeProviderThreadId: null,
+                providerInstanceId: input.context.input.modelSelection.instanceId,
+                modelSelection: childModelSelection,
+                title: subagentThreadTitle({
+                  parentTitle: input.context.input.appThread.title,
+                  prompt: task.prompt,
+                  title:
+                    workflowWithThreads === undefined
+                      ? task.title
+                      : `Workflow · ${workflowWithThreads.name ?? task.title ?? "Untitled"}`,
+                  ordinal: input.context.subagentsByTaskId.size,
+                }),
+                now,
+                createdBy: "agent",
+                creationSource: "provider",
               }),
-              now,
-              createdBy: "agent",
-              creationSource: "provider",
-            });
+              ...(model === null && workflowWithThreads === undefined
+                ? { modelUnreported: true }
+                : {}),
+            };
             // Recovery cannot tell whether the child thread was already persisted.
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -9842,7 +9857,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The fork's report is only in its transcript (the stream never sends it) and can land
             // just after the task_notification.
             if (located !== undefined && !turnEnded) {
-              yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+              yield* Effect.sleep(CLAUDE_TRANSCRIPT_FLUSH_MS);
               yield* drain();
             }
             return;
@@ -11555,6 +11570,109 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return subagent?.task.status === "running" ? settled : null;
         });
 
+        // Counted per turn: the run consumer keeps one pending flag per provider turn.
+        const forkModelLookupsByProviderTurn = new Map<
+          ActiveClaudeTurnContext["providerTurnId"],
+          number
+        >();
+
+        // These per-task helpers share the SDK frame handler’s tracing boundary.
+        const readForkModel = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly subagent: ActiveClaudeSubagent | undefined;
+          readonly nativeThreadId: string;
+          readonly taskId: string;
+        }) {
+          if (
+            input.subagent?.childThread?.modelUnreported !== true ||
+            input.subagent.task.model !== null
+          )
+            return undefined;
+          const model = yield* queryRunner
+            .subagentModel({
+              sessionId: input.nativeThreadId,
+              agentId: input.taskId,
+              dir: input.context.input.runtimePolicy.cwd,
+              environment: adapterOptions.environment,
+              threadId: input.context.input.threadId,
+              providerSessionId: session.id,
+            })
+            .pipe(Effect.orElseSucceed(() => null));
+          return model === null ? undefined : canonicalClaudeSubagentModel(modelCatalog, model);
+        });
+
+        const recoverForkModel = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeThreadId: string;
+          readonly taskId: string;
+        }) {
+          const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
+          const outcome = subagent?.confirmedOutcome;
+          if (
+            subagent === undefined ||
+            outcome === undefined ||
+            subagent.childThread?.modelUnreported !== true ||
+            subagent.task.model !== null
+          )
+            return;
+
+          const lookup = Effect.gen(function* () {
+            const model = yield* readForkModel({ ...input, subagent });
+            if (model !== undefined) return model;
+            yield* Effect.sleep(CLAUDE_TRANSCRIPT_FLUSH_MS);
+            const current = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
+            if (current?.confirmedOutcome !== outcome || current.task.model !== null) return;
+            return yield* readForkModel({ ...input, subagent: current });
+          }).pipe(
+            Effect.timeout("30 seconds"),
+            Effect.orElseSucceed(() => undefined),
+          );
+
+          const { providerTurnId } = input.context;
+          const pending = forkModelLookupsByProviderTurn.get(providerTurnId) ?? 0;
+          forkModelLookupsByProviderTurn.set(providerTurnId, pending + 1);
+          if (pending === 0) {
+            yield* emitProviderEvent({
+              type: "background_work.updated",
+              driver: CLAUDE_PROVIDER,
+              providerTurnId,
+              pending: true,
+            });
+          }
+          const settleLookup = Effect.suspend(() => {
+            const remaining = (forkModelLookupsByProviderTurn.get(providerTurnId) ?? 1) - 1;
+            if (remaining > 0) {
+              forkModelLookupsByProviderTurn.set(providerTurnId, remaining);
+              return Effect.void;
+            }
+            forkModelLookupsByProviderTurn.delete(providerTurnId);
+            return emitProviderEvent({
+              type: "background_work.updated",
+              driver: CLAUDE_PROVIDER,
+              providerTurnId,
+              pending: false,
+            });
+          });
+
+          yield* lookup.pipe(
+            Effect.flatMap((model) =>
+              model === undefined
+                ? Effect.void
+                : sdkMessageLock.withPermits(1)(
+                    updateClaudeSubagentNode({
+                      context: input.context,
+                      taskId: input.taskId,
+                      model,
+                      status: outcome.status,
+                      onlyIfUnreportedOutcome: outcome,
+                    }),
+                  ),
+            ),
+            Effect.ensuring(settleLookup),
+            Effect.forkIn(sessionScope),
+          );
+        });
+
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -13082,16 +13200,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.delete(context.providerTurnId);
               return next;
             });
-            for (const taskId of context.subagentsByTaskId.keys()) {
-              const model = yield* transcriptModel(context, liveQuery.nativeThreadId, taskId);
-              const status = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status;
-              if (
-                model !== undefined &&
-                (status === "completed" || status === "failed" || status === "cancelled")
-              ) {
-                yield* updateClaudeSubagentNode({ context, taskId, model, status });
-              }
-            }
             if (!isClaudeProviderContinuationTurn(context.input)) {
               yield* markAbsorbedWake(liveQuery.nativeThreadId);
             }

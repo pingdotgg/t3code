@@ -1906,14 +1906,20 @@ function ThreadDetailBody(
                       <ProviderSubagentBar
                         provider={providerSubagentProvider ?? null}
                         modelLabel={
-                          providerSubagentCatalogModel?.name ??
-                          formatModelSlugName(props.selectedThread.modelSelection.model)
+                          props.selectedThread.modelUnreported === true
+                            ? gt("Not reported")
+                            : (providerSubagentCatalogModel?.name ??
+                              formatModelSlugName(props.selectedThread.modelSelection.model))
                         }
-                        effortLabel={formatModelSelectionEffort(
-                          props.selectedThread.modelSelection,
-                          providerSubagentProvider?.models,
-                          reportedModelSelection,
-                        )}
+                        effortLabel={
+                          props.selectedThread.modelUnreported === true
+                            ? null
+                            : formatModelSelectionEffort(
+                                props.selectedThread.modelSelection,
+                                providerSubagentProvider?.models,
+                                reportedModelSelection,
+                              )
+                        }
                         status={props.providerSubagentStatus ?? null}
                         inspect={
                           providerSubagentProvider?.driver === "antigravity"
