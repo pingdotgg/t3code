@@ -183,6 +183,30 @@ it.each(["left", "right", "bottom"] as const)(
   },
 );
 
+it("gives an untitled inline group no section header", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  act(() =>
+    root!.render(
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Menu title="Select diff">
+          <NativeHeaderToolbar.Menu inline>
+            <NativeHeaderToolbar.MenuAction onPress={() => {}}>
+              Changes
+            </NativeHeaderToolbar.MenuAction>
+            <NativeHeaderToolbar.MenuAction onPress={() => {}}>
+              Uncommitted
+            </NativeHeaderToolbar.MenuAction>
+          </NativeHeaderToolbar.Menu>
+        </NativeHeaderToolbar.Menu>
+      </NativeHeaderToolbar>,
+    ),
+  );
+  const menu = harness.renderedItems[0];
+  if (menu?.type !== "menu") throw new Error("Expected the native menu");
+  expect(menu.menu.items[0]).toMatchObject({ type: "submenu", inline: true, label: "" });
+});
+
 it("applies a custom header element rendered inside a navigation container", () => {
   renderConnecting("Connecting");
   expect(renderedCustomLabel()).toBe("Connecting");

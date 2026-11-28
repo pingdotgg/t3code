@@ -52,6 +52,17 @@ const readKeybindingsConfig = (configPath: string) =>
     return yield* decodeKeybindingsConfigJson(rawConfig);
   });
 
+function scriptBindingsAtChatNewCutoff(hiddenChatNewBindings: 0 | 1) {
+  const defaults = SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS;
+  const firstChatNew = defaults.findIndex((binding) => binding.command === "chat.new");
+  assert.isAtLeast(firstChatNew, 0);
+  const visibleDefaults = defaults.length - firstChatNew - hiddenChatNewBindings;
+  return Array.from({ length: MAX_KEYBINDINGS_COUNT - visibleDefaults }, (_, index) => ({
+    key: "mod+alt+f1",
+    command: `script.filler-${index}.run` as const,
+  }));
+}
+
 it.layer(NodeServices.layer)("keybindings", (it) => {
   it.effect("parses shortcuts including plus key", () =>
     Effect.sync(() => {
@@ -533,13 +544,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       const keybindings = yield* Keybindings.Keybindings;
-      yield* writeKeybindingsConfig(
-        keybindingsConfigPath,
-        Array.from({ length: 210 }, (_, index) => ({
-          key: "mod+alt+f1",
-          command: `script.filler-${index}.run` as const,
-        })),
-      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, scriptBindingsAtChatNewCutoff(1));
 
       const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
       const local = { ...target, key: "mod+shift+n", command: "chat.newLocal" } as const;
@@ -566,13 +571,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         const keybindings = yield* Keybindings.Keybindings;
-        yield* writeKeybindingsConfig(
-          keybindingsConfigPath,
-          Array.from({ length: 209 }, (_, index) => ({
-            key: "mod+alt+f1",
-            command: `script.filler-${index}.run` as const,
-          })),
-        );
+        yield* writeKeybindingsConfig(keybindingsConfigPath, scriptBindingsAtChatNewCutoff(0));
 
         const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
         const sibling = { ...target, key: "mod+shift+o" };

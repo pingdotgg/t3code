@@ -165,6 +165,36 @@ describe("compactDynamicToolOutput", () => {
       threadId: "known",
     });
   });
+
+  it("keeps pull request summary outcomes without private details", () => {
+    expect(
+      compactDynamicToolOutput({
+        number: 42,
+        url: "https://github.com/acme/app/pull/42",
+        created: false,
+        state: "merged",
+      }),
+    ).toEqual({ created: false, state: "merged" });
+    expect(
+      compactDynamicToolOutput({
+        guides: [
+          { number: 1, outcome: "started", detail: null },
+          { number: 2, outcome: "failed", detail: "Private error" },
+        ],
+        checks: [{ name: "external", rerun: false, detail: "Private refusal" }],
+      }),
+    ).toEqual({
+      guides: [{ outcome: "started" }, { outcome: "failed" }],
+      checks: [{ rerun: false }],
+    });
+    expect(
+      compactDynamicToolOutput({
+        state: "draft",
+        guides: [{ outcome: "started" }, { outcome: "unknown" }],
+        checks: [{ rerun: true }, { name: "missing-rerun" }],
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {

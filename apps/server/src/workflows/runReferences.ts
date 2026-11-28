@@ -45,6 +45,14 @@ export const noteReference = (reference: ReferenceInput): Effect.Effect<void> =>
     current._tag === "None" ? Effect.void : current.value.note(reference),
   );
 
+/** Keep what `runId` is about, among what it touched too, so it opens as they do. */
+export const subjectSet = (
+  store: WorkflowStore["Service"],
+  runId: string,
+  subject: ReferenceInput,
+): Effect.Effect<void> =>
+  Effect.andThen(store.runSubject(runId, subject), noteFor(store, runId, null, subject));
+
 export const stepReferences = (
   store: WorkflowStore["Service"],
   runId: string,

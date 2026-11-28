@@ -1065,7 +1065,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // A resumed replay that dies (an event this client cannot decode) dies the same
   // way from the same cursor, so later attempts reload the full snapshot until one applies.
   const resuming = yield* Ref.make(false);
-  const forceSnapshot = yield* Ref.make(false);
+  // A subagent can settle on the server without an event a replay would carry, so a cached
+  // live subagent opens with a snapshot rather than resuming from the saved cursor.
+  const forceSnapshot = yield* Ref.make(
+    Option.exists(cachedThread, (thread) =>
+      thread.subagents.some((subagent) => isOrchestrationV2WorkActive(subagent.status)),
+    ),
+  );
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>

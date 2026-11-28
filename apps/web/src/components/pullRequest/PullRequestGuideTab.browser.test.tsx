@@ -5,7 +5,7 @@ import {
   type PullRequestReviewGuide,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("./guide/useReviewGuideWriter"), () => ({ useReviewGuideWriter: vi.fn() }));
 vi.mock(import("./guide/useGuideDiffFiles"), () => ({
@@ -13,9 +13,11 @@ vi.mock(import("./guide/useGuideDiffFiles"), () => ({
 }));
 
 import { render } from "../../../test/render";
+import { RightPanelSheet } from "../RightPanelSheet";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { useChatShortcuts } from "../chat/useChatShortcuts";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
+import { GuideTour } from "./guide/GuideTour";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
 
 const reference: PullRequestRef = {
@@ -185,4 +187,58 @@ it("steps with J and K beside a chat, also after a stop button or while the chat
   await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
   await userEvent.keyboard("a");
   expect(composerKeys).toEqual(["a"]);
+});
+
+it("leaves J and K to floating layers, side chats, and IME while stepping inside a panel sheet", async () => {
+  await using _screen = await render(
+    <RightPanelSheet open animationDurationMs={0} onClose={() => {}}>
+      <GuideTour
+        environmentId={EnvironmentId.make("environment")}
+        reference={{ ...reference, number: 2 }}
+        guide={threeStopGuide}
+        banner={null}
+        active
+        commenting={null}
+        onAsk={null}
+        onFinish={null}
+        onOpenFile={() => {}}
+      />
+      <div role="dialog">
+        <button>Dialog action</button>
+      </div>
+      <div role="menu">
+        <button role="menuitem">Menu action</button>
+      </div>
+      <div data-slot="select-popup">
+        <button>Popup action</button>
+      </div>
+      <div data-side-chat-pane>
+        <button>Side chat action</button>
+      </div>
+      <button>IME action</button>
+    </RightPanelSheet>,
+  );
+  await expect.element(page.getByRole("dialog", { name: "Workspace panel" })).toBeVisible();
+  page.getByRole("button", { name: "Next stop" }).element().focus();
+  await userEvent.keyboard("j");
+  await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();
+
+  for (const [name, role, keyCode] of [
+    ["Dialog action", "button", 0],
+    ["Menu action", "menuitem", 0],
+    ["Popup action", "button", 0],
+    ["Side chat action", "button", 0],
+    ["IME action", "button", 229],
+  ] as const) {
+    const target = page.getByRole(role, { name }).element();
+    target.focus();
+    for (const key of ["j", "k"]) {
+      const event = new KeyboardEvent("keydown", { key, keyCode, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented, `${name}: ${key}`).toBe(false);
+    }
+  }
+  page.getByRole("button", { name: "Next stop" }).element().focus();
+  await userEvent.keyboard("j");
+  await expect.element(page.getByText("Prose for the third stop.")).toBeVisible();
 });

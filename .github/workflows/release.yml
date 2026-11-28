@@ -601,6 +601,15 @@ jobs:
           T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && needs.preflight.outputs.release_channel || 'dev' }}
         run: vp run ${{ steps.bundle_build.outputs.script }}
 
+      # Upload only the expected hidden file, without opting all build outputs into hidden uploads.
+      - name: Stage web asset manifest
+        shell: bash
+        run: |
+          manifest=apps/server/dist/client/.vite/manifest.json
+          if [[ -f "$manifest" ]]; then
+            cp "$manifest" apps/server/dist/client/vite-manifest.release.json
+          fi
+
       # Two paths under apps/ so the artifact root is apps/; consumers download
       # into `apps` to restore both at their original locations.
       - name: Upload JS bundle
@@ -1471,6 +1480,8 @@ jobs:
             --token "$VERCEL_TOKEN" \
             --scope "${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
 
+  # Commits the version bump as the Release App. It installs nothing and runs no
+  # dependency code, so that token never shares a runner with any.
   finalize:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
@@ -1478,13 +1489,14 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
+      # No owner input: the token covers this repository only, with contents write.
       - id: app_token
         name: Mint release app token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          permission-contents: write
 
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1508,32 +1520,19 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup dependencies
-        uses: ./.github/actions/setup-ci-deps
-        with:
-          install-args: --filter=@t3tools/scripts... --filter=@t3tools/oxlint-plugin-t3code...
-
-      - id: update_versions
-        name: Update version strings
+      # Rewrites the version string in place: the manifests stay formatted, and
+      # the lockfile records no workspace package version.
+      - name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION" --github-output
-
-      - name: Format package.json files
-        if: steps.update_versions.outputs.changed == 'true'
-        run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
-
-      - name: Refresh lockfile
-        if: steps.update_versions.outputs.changed == 'true'
-        run: vp install --lockfile-only --ignore-scripts
+        run: node .github/scripts/set-release-version.cjs "$RELEASE_VERSION"
 
       - name: Commit and push version bump
-        if: steps.update_versions.outputs.changed == 'true'
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -1541,7 +1540,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
 
           # main moves while this job runs, so a rejected push rebases and retries.

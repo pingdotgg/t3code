@@ -9,7 +9,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 
 // Asks to close twice when told to, and answers only the first teardown, so
 // the second one is left to finish on the host's timeout.
-const APP_HTML = `<script>
+const APP_HTML = injectMcpAppDocumentBootstrap(`<script>
 let answered = false;
 addEventListener("message", (event) => {
   const message = event.data;
@@ -22,7 +22,7 @@ addEventListener("message", (event) => {
   }
 });
 parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*");
-</script>`;
+</script>`);
 
 const sizeChanged = (height: number) =>
   `parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: ${height} } }, "*");`;
@@ -38,10 +38,32 @@ addEventListener("message", (event) => {
 parent.postMessage({ jsonrpc: "2.0", id: "init", method: "ui/initialize", params: {} }, "*");
 </script>`);
 
+// What an app asks its host for: a resource, a tool call and a model-context update.
+const HOST_REQUESTS = `
+const ask = (id, method, params) => parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+ask("init", "ui/initialize", {});
+ask(1, "resources/read", { uri: "ui://demo/other" });
+ask(2, "tools/call", { name: "list", arguments: {} });
+ask(3, "ui/update-model-context", { content: [{ type: "text", text: "note" }] });
+${sizeChanged(777)}`;
+const REQUESTING_URL = `data:text/html,${encodeURIComponent(`<script>${HOST_REQUESTS}</script><iframe srcdoc="x"></iframe>`)}`;
+
 const asset = vi.hoisted(() => ({ html: "" }));
+const commands = vi.hoisted(() => ({ labels: [] as Array<string> }));
 const setup = (html: string) => {
   asset.html = html;
+  commands.labels = [];
 };
+
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: ((command: { readonly label: string }) => async () => {
+    commands.labels.push(command.label);
+    return {
+      _tag: "Success",
+      value: { callable: true, readOnly: true, content: [], contents: [] },
+    };
+  }) as never,
+}));
 
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
   useLongLivedAssetUrl: () => ({
@@ -126,5 +148,72 @@ describe("McpAppFrame", () => {
       .element(screen.getByText("The Demo app left its page and was stopped"))
       .toBeInTheDocument();
     expect(row.style.height).toBe("321px");
+  });
+
+  // A server that predates the document bootstrap serves the app without it.
+  it.each([
+    ["the app's own page", `<script>${HOST_REQUESTS}</script>`],
+    [
+      "a page the app navigated to",
+      `<script>location.href = ${JSON.stringify(REQUESTING_URL)};</script>`,
+    ],
+  ])("gives no bridge to %s when the document bootstrap is missing", async (_page, html) => {
+    setup(html);
+    await using screen = await render(
+      <McpAppFrame
+        environmentId={EnvironmentId.make("environment")}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+
+    await expect
+      .element(
+        screen.getByText(
+          "The Demo app needs a newer T3 Code server on this environment. Update the server to use it.",
+        ),
+      )
+      .toBeInTheDocument();
+    expect(screen.getByTitle("Demo app").query()).toBeNull();
+    expect(commands.labels).toEqual([]);
+  });
+
+  it("answers an app whose document carries the bootstrap", async () => {
+    setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`));
+    await using screen = await render(
+      <McpAppFrame
+        environmentId={EnvironmentId.make("environment")}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+    const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
+    await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
+    await vi.waitFor(() =>
+      expect(commands.labels.toSorted()).toEqual([
+        "environment-command:mcp-apps:call-tool",
+        "environment-command:mcp-apps:read-resource",
+        "environment-command:mcp-apps:tool-info",
+        "environment-command:mcp-apps:update-model-context",
+      ]),
+    );
   });
 });

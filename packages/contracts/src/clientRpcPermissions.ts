@@ -72,6 +72,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
+  // The server runs an approved layout command: approving one is running code there, as a terminal does.
+  [WS_METHODS.workspaceApproveLayoutCommands]: AuthTerminalOperateScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
@@ -134,6 +136,10 @@ export function clientRpcRequiredScopes(
   }
   if (method === WS_METHODS.guestShareCreate) {
     return [AuthAccessWriteScope, AuthOrchestrationReadScope];
+  }
+  // Checking a secret source resolves a caller-named reference and applies it to providers.
+  if (method === WS_METHODS.serverCheckSecretSource) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
   }
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]

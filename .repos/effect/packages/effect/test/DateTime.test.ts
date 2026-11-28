@@ -411,6 +411,25 @@ describe("DateTime", () => {
       })
       strictEqual(updated.toJSON(), "2023-06-25T00:00:00.000Z")
     })
+
+    it("preserves valid offset across DST transitions", () => {
+      const secondOneThirty = DateTime.makeZonedUnsafe("2025-11-02T06:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(
+        DateTime.formatIso(DateTime.setParts(secondOneThirty, { second: 0, millisecond: 0 })),
+        "2025-11-02T06:30:00.000Z"
+      )
+      const afterRepeated = DateTime.makeZonedUnsafe("2025-11-02T08:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(DateTime.formatIso(DateTime.setParts(afterRepeated, { hour: 1 })), "2025-11-02T06:30:15.250Z")
+      strictEqual(DateTime.formatIso(DateTime.setParts(secondOneThirty, { day: 1 })), "2025-11-01T05:30:15.250Z")
+      const afterGap = DateTime.makeZonedUnsafe("2025-03-10T06:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(DateTime.formatIso(DateTime.setParts(afterGap, { day: 9 })), "2025-03-09T07:30:15.250Z")
+    })
   })
 
   describe("formatIso", () => {

@@ -47,6 +47,14 @@ export function useActiveRowReveal(
   const revealRow = (row: HTMLElement | null, rowKey: string): (() => void) | undefined => {
     if (row === null) return undefined;
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return undefined;
+    const revealInPlace = reveal.pendingKey === rowKey && reveal.pendingInPlace === true;
+    // A row under the pointer was just clicked, so it is in view. Both cases skip the scroll,
+    // so settle them before measuring: this runs mid-commit, where a measure forces layout.
+    if (revealInPlace || row.matches(":hover")) {
+      completeSidebarRouteReveal(reveal);
+      mountRevealOwed.current = false;
+      return undefined;
+    }
     // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
     // re-render them, so wait for the row to get a box before spending the reveal.
     if (row.getClientRects().length === 0) {
@@ -57,12 +65,9 @@ export function useActiveRowReveal(
       });
       return stopWaiting;
     }
-    const revealInPlace = reveal.pendingKey === rowKey && reveal.pendingInPlace === true;
     completeSidebarRouteReveal(reveal);
     mountRevealOwed.current = false;
-    // A row under the pointer was just clicked, so it is in view; scrolling it would force a
-    // layout mid-commit. Keyboard activation can come from a focused row scrolled out of view.
-    if (revealInPlace || row.matches(":hover")) return undefined;
+    // Keyboard activation can come from a focused row scrolled out of view.
     row.scrollIntoView({ block: "nearest" });
     return undefined;
   };

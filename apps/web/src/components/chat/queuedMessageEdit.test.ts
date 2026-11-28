@@ -3,6 +3,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  ProviderInstanceId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -27,6 +28,11 @@ import {
 const environmentId = EnvironmentId.make("remote-environment");
 const threadTarget = scopeThreadRef(environmentId, ThreadId.make("thread:edit"));
 const editTarget = DraftId.make("queued-edit:test");
+const originalModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "original-model",
+};
+const changedModelSelection = { ...originalModelSelection, model: "changed-model" };
 const originalMessage = {
   editTarget,
   threadTarget,
@@ -154,6 +160,20 @@ describe("queued message file edits", () => {
 
   it.each([
     {
+      edit: "changed model",
+      originalReplyTo: null,
+      replyTo: null,
+      modelSelection: changedModelSelection,
+      result: "kept",
+    },
+    {
+      edit: "unchanged model",
+      originalReplyTo: null,
+      replyTo: null,
+      modelSelection: originalModelSelection,
+      result: "clean",
+    },
+    {
       edit: "added reply",
       originalReplyTo: null,
       replyTo: reply,
@@ -169,13 +189,25 @@ describe("queued message file edits", () => {
     },
   ])(
     "reports $result for a queued edit with $edit",
-    ({ originalReplyTo, replyTo, originalText = "Original message", result }) => {
+    ({ originalReplyTo, replyTo, originalText = "Original message", modelSelection, result }) => {
       const store = useComposerDraftStore.getState();
       store.setPrompt(editTarget, originalText);
       store.setReplyTo(editTarget, replyTo);
+      if (modelSelection) store.setModelSelection(editTarget, modelSelection, { explicit: true });
       expect(
-        recoverQueuedMessageEdit({ editTarget, threadTarget, originalText, originalReplyTo }),
+        recoverQueuedMessageEdit({
+          editTarget,
+          threadTarget,
+          originalText,
+          originalReplyTo,
+          originalModelSelection,
+        }),
       ).toBe(result);
+      if (result === "kept" && modelSelection) {
+        expect(
+          store.getComposerDraft(threadTarget)?.modelSelectionByProvider[modelSelection.instanceId],
+        ).toEqual(modelSelection);
+      }
       expect(store.getComposerDraft(editTarget)).toBeNull();
       expect(store.getComposerDraft(threadTarget)).toEqual(
         result === "kept" ? expect.objectContaining({ prompt: originalText, replyTo }) : null,

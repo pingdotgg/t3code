@@ -55,6 +55,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectMonogram": {
+      "types": "./src/projectMonogram.ts",
+      "import": "./src/projectMonogram.ts"
+    },
     "./mobileSourceMaps": {
       "types": "./src/mobileSourceMaps.ts",
       "import": "./src/mobileSourceMaps.ts"
@@ -107,6 +111,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./appImageRuntimeEnv": {
+      "types": "./src/appImageRuntimeEnv.ts",
+      "import": "./src/appImageRuntimeEnv.ts"
+    },
     "./windowsSystem": {
       "types": "./src/windowsSystem.ts",
       "import": "./src/windowsSystem.ts"
@@ -143,6 +151,10 @@
       "types": "./src/schemaYaml.ts",
       "import": "./src/schemaYaml.ts"
     },
+    "./grepOutput": {
+      "types": "./src/grepOutput.ts",
+      "import": "./src/grepOutput.ts"
+    },
     "./toolActivity": {
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
@@ -150,6 +162,10 @@
     "./terminalOutput": {
       "types": "./src/terminalOutput.ts",
       "import": "./src/terminalOutput.ts"
+    },
+    "./notebookOutput": {
+      "types": "./src/notebookOutput.ts",
+      "import": "./src/notebookOutput.ts"
     },
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
@@ -214,6 +230,10 @@
     "./desktopBootstrapToken": {
       "types": "./src/desktopBootstrapToken.ts",
       "import": "./src/desktopBootstrapToken.ts"
+    },
+    "./desktopReadinessProof": {
+      "types": "./src/desktopReadinessProof.ts",
+      "import": "./src/desktopReadinessProof.ts"
     },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
@@ -698,6 +718,8 @@
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",
+    "remark-cjk-friendly": "catalog:",
+    "remark-cjk-friendly-gfm-strikethrough": "catalog:",
     "remark-gfm": "catalog:",
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",

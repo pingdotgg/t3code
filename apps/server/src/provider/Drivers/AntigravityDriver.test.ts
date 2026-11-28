@@ -4,21 +4,28 @@ import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   EnvironmentId,
+  MessageId,
+  NodeId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  RunAttemptId,
+  RunId,
   ThreadId,
   type AntigravitySettings,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -284,12 +291,6 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  Layer.provideMerge(
-    Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make(() => Effect.die("Unexpected quota request")),
-    ),
-  ),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -312,6 +313,25 @@ const layerTest = ProviderHostLive.layer.pipe(
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "reports an incompatible managed runtime during a health check",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const installed = yield* h.makeExecutable("1.5.0", { agentVersion: "1.5.0" });
+        h.controls.selected = installed;
+        const rejected = yield* h.refresh().pipe(Effect.flip);
+        expect(rejected.detail).toContain("Update it in Antigravity setup");
+
+        expect(yield* h.instance.snapshot.refresh).toMatchObject({
+          status: "error",
+          version: "1.5.0",
+          message: rejected.detail,
+        });
+      }),
+  );
+
   it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
@@ -535,41 +555,52 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "refuses to open a session on a PATH executable older than 1.5",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        const old = yield* h.makeExecutable("runtime old", { agentVersion: "1.4.5" });
-        h.controls.selected = { ...old, source: "path", version: null };
-        const threadId = ThreadId.make("thread-antigravity-old-runtime");
-        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
-        const error = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-old-runtime-" });
-            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-              runtimeMode: "approval-required",
-              interactionMode: "default",
-              cwd: workspace,
-            });
-            const session = yield* h.instance.orchestrationAdapter.openSession({
-              threadId,
-              providerSessionId: ProviderSessionId.make("provider-session-antigravity-old-runtime"),
-              modelSelection,
-              runtimePolicy,
-            });
-            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-          }),
-        ).pipe(Effect.flip);
-        const message = `Antigravity 1.4.5 does not work with this T3 Code release. Update the Antigravity executable at ${old.executablePath} to >=1.5.12 <2, then retry.`;
-        expect(knownProviderFailureMessage(error)).toBe(message);
-        expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(message);
-        const methods = (yield* h.readRequests).map((request) => request.method);
-        expect(methods).toContain("initialize");
-        expect(methods).not.toContain("session/new");
-        yield* h.assertClosed;
-      }),
-  );
+  for (const [agentVersion, expected] of [
+    ["1.4.5", "does not work with this T3 Code release"],
+    // 1.5.0 offers Claude and GPT only to allowlisted editors such as Zed.
+    ["1.5.0", "only serves allowlisted editors, not T3 Code"],
+  ] as const) {
+    it.effect.skipIf(windowsHost)(
+      `refuses to open a session on a PATH executable at ${agentVersion}`,
+      () =>
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          const old = yield* h.makeExecutable("runtime old", { agentVersion });
+          h.controls.selected = { ...old, source: "path", version: null };
+          const threadId = ThreadId.make("thread-antigravity-old-runtime");
+          const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+          const error = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const workspace = yield* h.fs.makeTempDirectoryScoped({
+                prefix: "t3-ag-old-runtime-",
+              });
+              const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                cwd: workspace,
+              });
+              const session = yield* h.instance.orchestrationAdapter.openSession({
+                threadId,
+                providerSessionId: ProviderSessionId.make(
+                  "provider-session-antigravity-old-runtime",
+                ),
+                modelSelection,
+                runtimePolicy,
+              });
+              yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+            }),
+          ).pipe(Effect.flip);
+          const target = agentVersion === "1.4.5" ? ">=1.5.12 <2" : "1.5.1 or newer";
+          const message = `Antigravity ${agentVersion} ${expected}. Update the Antigravity executable at ${old.executablePath} to ${target}, then retry.`;
+          expect(knownProviderFailureMessage(error)).toBe(message);
+          expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(message);
+          const methods = (yield* h.readRequests).map((request) => request.method);
+          expect(methods).toContain("initialize");
+          expect(methods).not.toContain("session/new");
+          yield* h.assertClosed;
+        }),
+    );
+  }
 
   it.effect.skipIf(windowsHost)(
     "closes refresh processes and clears account metadata when Google sign-in is required",
@@ -598,7 +629,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       const before = yield* h.instance.snapshot.getSnapshot;
       h.controls.failResolution = true;
       const error = yield* h.refresh().pipe(Effect.flip);
-      expect(error.detail).toContain("previous model list is unchanged");
+      expect(error.detail).toBe("Fixture resolution failed.");
       const after = yield* h.instance.snapshot.getSnapshot;
       expect(after.models).toEqual(before.models);
       expect(after.auth).toEqual(before.auth);
@@ -701,6 +732,163 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps catalog default thinking levels when a chat session selects another level",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          environment: [
+            { name: "T3_ACP_ANTIGRAVITY_THOUGHT_LEVEL", value: "1" },
+            { name: "T3_ACP_RESUME_THOUGHT_LEVEL", value: "xhigh" },
+          ],
+        });
+        yield* h.refresh();
+        const levelOf = (snapshot: ServerProvider, slug: string) => {
+          const option = snapshot.models
+            .find((model) => model.slug === slug)
+            ?.capabilities?.optionDescriptors?.find(
+              (descriptor) => descriptor.id === "thought_level",
+            );
+          return option?.type === "select" ? option.currentValue : undefined;
+        };
+
+        const refreshed = yield* h.instance.snapshot.getSnapshot;
+        expect(levelOf(refreshed, "gemini-test-low")).toBe("high");
+        expect(levelOf(refreshed, "gemini-test-high")).toBe("medium");
+
+        const threadId = ThreadId.make("thread-antigravity-thought-level");
+        const xhighSelection = {
+          instanceId: h.instance.instanceId,
+          model: "gemini-test-low",
+          options: [{ id: "thought_level", value: "xhigh" }],
+        };
+        const nativeSessionId = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-thought-" });
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make(
+                "provider-session-antigravity-thought-level",
+              ),
+              modelSelection: xhighSelection,
+              runtimePolicy,
+            });
+            const providerThread = yield* session.ensureThread({
+              threadId,
+              modelSelection: xhighSelection,
+              runtimePolicy,
+            });
+            const now = yield* DateTime.now;
+            yield* session.startTurn({
+              appThread: {
+                createdBy: "user",
+                creationSource: "web",
+                id: threadId,
+                projectId: ProjectId.make("project-antigravity-thought-level"),
+                title: "Antigravity thought level",
+                providerInstanceId: h.instance.instanceId,
+                modelSelection: xhighSelection,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                activeProviderThreadId: providerThread.id,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+              threadId,
+              runId: RunId.make("run-antigravity-thought-level"),
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: RunAttemptId.make("attempt-antigravity-thought-level"),
+              rootNodeId: NodeId.make("node-antigravity-thought-level"),
+              providerThread,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make("message-antigravity-thought-level"),
+                text: "Say ok.",
+                attachments: [],
+              },
+              modelSelection: xhighSelection,
+              runtimePolicy,
+            });
+            yield* session.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runDrain,
+            );
+            const nativeId = providerThread.nativeThreadRef?.nativeId;
+            if (!nativeId) {
+              return yield* Effect.die("Expected Antigravity session to have a native thread id");
+            }
+            return nativeId;
+          }),
+        );
+
+        const afterLiveSession = yield* h.instance.snapshot.getSnapshot;
+        expect(levelOf(afterLiveSession, "gemini-test-low")).toBe("high");
+        expect(levelOf(afterLiveSession, "gemini-test-high")).toBe("medium");
+        expect(
+          afterLiveSession.models.find((model) => model.slug === "gemini-test-low")?.isDefault,
+        ).toBe(true);
+        expect(
+          (yield* h.readRequests)
+            .filter(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "thought_level",
+            )
+            .map((request) => request.params?.value),
+        ).toEqual(["xhigh"]);
+
+        // Resuming a session whose saved level is xhigh must also keep the catalog default.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({
+              prefix: "t3-ag-thought-resume-",
+            });
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const resumed = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make(
+                "provider-session-antigravity-thought-level-resumed",
+              ),
+              modelSelection: xhighSelection,
+              runtimePolicy,
+              initialNativeThreadId: nativeSessionId,
+            });
+            yield* resumed.ensureThread({
+              threadId,
+              modelSelection: xhighSelection,
+              runtimePolicy,
+            });
+          }),
+        );
+        expect(levelOf(yield* h.instance.snapshot.getSnapshot, "gemini-test-low")).toBe("high");
+        yield* h.assertClosed;
       }),
   );
 });

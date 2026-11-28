@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: web-preview-${{ github.event.pull_request.number }}
@@ -39,6 +38,9 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'preview:web')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

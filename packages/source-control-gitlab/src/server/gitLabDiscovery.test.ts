@@ -7,13 +7,18 @@ import {
   refineUnknownRemoteProvider,
 } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+
+const onPath = (command: string) => `/usr/bin/${command}`;
 
 it("reads the account from glab output without status marks", () => {
   const auth = GitLabSourceControlProvider.discovery.parseAuth(
@@ -51,7 +56,57 @@ ${defaultHostOnly}`;
     assert.strictEqual(item.auth.status, "authenticated");
     assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
     assert.deepStrictEqual(item.auth.host, Option.some("gitlab.com"));
-  }),
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
+it.effect("reports a glab on PATH that fails to start as missing, ignoring its auth answer", () =>
+  Effect.gen(function* () {
+    const spawned: Array<string> = [];
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ operation, command, args, cwd }) => {
+          spawned.push([command, ...args].join(" "));
+          return Effect.fail(
+            new VcsProcessSpawnError({
+              operation,
+              command,
+              cwd,
+              cause: PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                pathOrDescriptor: command,
+              }),
+            }),
+          );
+        },
+      },
+    });
+    assert.strictEqual(item.status, "missing");
+    assert.strictEqual(item.auth.status, "unknown");
+    assert.include(spawned, "glab --version");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
+it.effect("spawns nothing for a glab that is not on PATH", () =>
+  Effect.gen(function* () {
+    const spawned: Array<string> = [];
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ command, args }) => {
+          spawned.push([command, ...args].join(" "));
+          return Effect.succeed(processOutput("glab 1.124.0\n"));
+        },
+      },
+    });
+    assert.strictEqual(item.status, "missing");
+    assert.strictEqual(item.auth.status, "unknown");
+    assert.deepStrictEqual(spawned, []);
+  }).pipe(Effect.provideService(SpawnExecutableResolution, () => undefined)),
 );
 
 it.effect("skips --all when the current glab host is signed in", () =>
@@ -75,7 +130,7 @@ it.effect("skips --all when the current glab host is signed in", () =>
     });
     assert.strictEqual(item.auth.status, "authenticated");
     assert.isFalse(asked.some((args) => args.includes("--all")));
-  }),
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
 it.effect("keeps glab's own sign-out detail when glab predates --all", () =>
@@ -105,7 +160,7 @@ it.effect("keeps glab's own sign-out detail when glab predates --all", () =>
       item.auth.detail,
       Option.some("No GitLab instances have been authenticated with glab."),
     );
-  }),
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
 it.effect("sends the environment token only to glab's default host while probing", () =>
@@ -143,7 +198,10 @@ it.effect("sends the environment token only to glab's default host while probing
       ["auth status --hostname gitlab.com", {}],
       ["auth status --hostname self-hosted.example.test", withheld],
     ]);
-  }).pipe(Effect.provideService(HostProcess.Environment, { GITLAB_TOKEN: "default-host-token" })),
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, { GITLAB_TOKEN: "default-host-token" }),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
 );
 
 it.effect.each([

@@ -102,6 +102,9 @@ interface BranchToolbarBranchSelectorProps {
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
+// Both branch pickers for a draft share the latest selection.
+const latestDraftPicks = new Map<DraftId, { token: symbol; stop: () => void }>();
+
 // Picker checkouts by environment and checkout: null while in flight, then the branch it landed
 // on. Shared because a draft thread mounts two selectors on one checkout, and the switch's own
 // settle reloads refs for both.
@@ -449,10 +452,40 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const latestSelectionRef = useRef<symbol | null>(null);
+  const beginBranchPick = () => {
+    const token = Symbol();
+    latestSelectionRef.current = token;
+    if (hasServerThread) return () => latestSelectionRef.current === token;
+    const store = useComposerDraftStore.getState();
+    const target = draftId ?? threadRef;
+    const targetId = draftId ?? store.getDraftIdByRef(threadRef);
+    if (!targetId) return () => latestSelectionRef.current === token;
+    latestDraftPicks.get(targetId)?.stop();
+    // Watches the draft for the pick's own lifetime, not the selector's: closing Thread Details
+    // must not drop a checkout that lands later, but any workspace change in between must.
+    let previous = store.getDraftThread(target);
+    const stop = useComposerDraftStore.subscribe((state) => {
+      const current = state.getDraftThread(target);
+      if (
+        current?.environmentId !== previous?.environmentId ||
+        current?.projectId !== previous?.projectId ||
+        current?.envMode !== previous?.envMode ||
+        current?.worktreePath !== previous?.worktreePath ||
+        current?.promotedTo !== previous?.promotedTo
+      ) {
+        stop();
+        if (latestDraftPicks.get(targetId)?.token === token) latestDraftPicks.delete(targetId);
+      }
+      previous = current;
+    });
+    latestDraftPicks.set(targetId, { token, stop });
+    return () => latestDraftPicks.get(targetId)?.token === token;
+  };
+
   // The picker's list, and the server's coalesced ref listing, can predate a checkout an agent
   // ran itself. Only the claimed worktree's live HEAD confirms the claim; an unconfirmed one
   // falls back to a real checkout, which Git refuses if the branch is checked out elsewhere.
-  const latestSelectionIdRef = useRef(0);
   const readSelectedRef = async (worktreePath: string, listedRef: VcsRef): Promise<VcsRef> => {
     const result = await readRefs({
       environmentId,
@@ -463,7 +496,7 @@ export function BranchToolbarBranchSelector({
 
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
-    const selectionId = ++latestSelectionIdRef.current;
+    const isCurrentPick = beginBranchPick();
 
     let latest = readLatestThreadState();
     if (isSelectingWorktreeBase) {
@@ -481,7 +514,7 @@ export function BranchToolbarBranchSelector({
       ? await readSelectedRef(listedRef.worktreePath, listedRef)
       : listedRef;
     // A later pick made while this one was confirming its worktree wins.
-    if (selectionId !== latestSelectionIdRef.current) return;
+    if (!isCurrentPick()) return;
     latest = readLatestThreadState();
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
@@ -508,7 +541,7 @@ export function BranchToolbarBranchSelector({
     }
 
     const selectedBranchName = refName.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(refName.name)
+      ? deriveLocalBranchNameFromRemoteRef(refName.name, refName.remoteName)
       : refName.name;
 
     runBranchAction(async () => {
@@ -530,15 +563,17 @@ export function BranchToolbarBranchSelector({
         pickerCheckouts.set(checkoutKey, nextBranchName);
         const movesCheckout = selectionTarget.checkoutCwd !== branchCwd;
         let hold: BranchHold | null = null;
-        const applied = setThreadBranch(
-          nextBranchName,
-          selectionTarget.nextWorktreePath,
-          false,
-          // A failed move leaves the thread in its old checkout, which never had the new branch.
-          movesCheckout
-            ? () => setBranchHold((current) => (current === hold ? null : current))
-            : undefined,
-        );
+        const applied =
+          (hasServerThread || isCurrentPick()) &&
+          setThreadBranch(
+            nextBranchName,
+            selectionTarget.nextWorktreePath,
+            false,
+            // A failed move leaves the thread in its old checkout, which never had the new branch.
+            movesCheckout
+              ? () => setBranchHold((current) => (current === hold ? null : current))
+              : undefined,
+          );
         if (applied) {
           hold = {
             branch: nextBranchName,
@@ -579,7 +614,7 @@ export function BranchToolbarBranchSelector({
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
-    latestSelectionIdRef.current++;
+    const isCurrentPick = beginBranchPick();
 
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
@@ -600,7 +635,9 @@ export function BranchToolbarBranchSelector({
       if (createBranchResult._tag === "Success") {
         const nextBranchName = createBranchResult.value.refName;
         pickerCheckouts.set(checkoutKey, nextBranchName);
-        const applied = setThreadBranch(nextBranchName, activeWorktreePath);
+        const applied =
+          (hasServerThread || isCurrentPick()) &&
+          setThreadBranch(nextBranchName, activeWorktreePath);
         if (applied) {
           setBranchHold({
             branch: nextBranchName,
@@ -742,7 +779,7 @@ export function BranchToolbarBranchSelector({
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
-      latestSelectionIdRef.current++;
+      beginBranchPick();
       handleOpenChange(false);
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);

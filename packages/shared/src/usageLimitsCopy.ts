@@ -70,6 +70,9 @@ export function limitsNotice(
   limits: ServerProviderUsageLimits,
   resolve: MFunctionType = mFallback,
 ): string | null {
+  if (limits.needsUsageAccess) {
+    return resolve(msg("Allow usage access to show this agent's limits."));
+  }
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? resolve(msg("This account has no subscription limits."));
   }
@@ -107,7 +110,19 @@ export function collectLimitNotices(
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
+      } else if (source.accounts.length === 0 && source.unreadProviders?.length) {
+        notices.add(
+          resolve(
+            msg("{source}: No Codex, Claude, or Grok accounts. Skipped {providers}.", {
+              source: label(environmentLabel, source.label),
+              providers: source.unreadProviders.join(", "),
+            }),
+          ),
+        );
+      } else if (
+        (source.kind === "http" ? (source.quotaAccounts?.length ?? 0) : source.accounts.length) ===
+        0
+      ) {
         notices.add(
           resolve(
             msg("{source}: No accounts reported.", {

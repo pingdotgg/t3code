@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -67,7 +68,7 @@ export function IntervalSecondsField({
     >
       <NumberFieldGroup>
         <NumberFieldDecrement aria-label={labels.decrease} />
-        <NumberFieldInput aria-label={labels.input} />
+        <NumberFieldInput aria-label={labels.input} onKeyDown={commitNumberFieldOnEnter} />
         <NumberFieldIncrement aria-label={labels.increase} />
       </NumberFieldGroup>
     </NumberField>

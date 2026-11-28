@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+// Git's own removal and the checks that mirror it share one bound.
+export const WORKTREE_REMOVE_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * git-annex replaces a linked worktree's `.git` file with a symlink to its admin
@@ -46,9 +48,10 @@ export const isLinkedWorktree = Effect.fn("WorktreeRemoval.isLinkedWorktree")(fu
 });
 
 /**
- * Git for Windows before 2.54 follows NTFS junctions; newer Git leaves them behind.
- * On Windows, mirror Git's removal checks, then delete with Node's `rm`, which
- * unlinks junctions without following them. Git then removes the worktree metadata.
+ * Git drops a worktree's metadata even when it fails to delete the folder partway, leaving a
+ * folder no repository lists; Git for Windows before 2.54 also follows NTFS junctions. So mirror
+ * Git's removal checks, delete with Node's `rm`, which unlinks junctions without following them,
+ * and only then let Git remove the metadata.
  */
 export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorktree")(function* <
   A,
@@ -60,11 +63,14 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   readonly worktreePath: string;
   readonly force: boolean;
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
-  readonly run: (args: ReadonlyArray<string>) => Effect.Effect<A, E, R>;
+  readonly run: (args: ReadonlyArray<string>, cwd: string) => Effect.Effect<A, E, R>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const worktreePath = input.worktreePath;
+  // Deleting through a symlink would only unlink the alias and leave the checkout.
+  const worktreePath = yield* fileSystem
+    .realPath(input.worktreePath)
+    .pipe(Effect.orElseSucceed(() => input.worktreePath));
   const gitFile = path.join(worktreePath, ".git");
   // Git refuses to remove a worktree with untracked files unless forced, but
   // its check honors `status.showUntrackedFiles=no` and would delete them.
@@ -102,21 +108,22 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       Effect.mapError((cause) => refuse(`failed to replace '${gitFile}'`, cause)),
     );
   }
-  const linked =
-    (yield* HostProcess.isWindows) &&
-    (yield* fileSystem.stat(gitFile).pipe(
-      Effect.map((info) => info.type === "File"),
-      Effect.orElseSucceed(() => false),
-    ));
+  const linked = yield* fileSystem.stat(gitFile).pipe(
+    Effect.map((info) => info.type === "File"),
+    Effect.orElseSucceed(() => false),
+  );
   if (!linked) {
-    return yield* input.run([
-      ...statusConfig,
-      "worktree",
-      "remove",
-      ...(input.force ? ["--force"] : []),
-      "--",
-      worktreePath,
-    ]);
+    return yield* input.run(
+      [
+        ...statusConfig,
+        "worktree",
+        "remove",
+        ...(input.force ? ["--force"] : []),
+        "--",
+        worktreePath,
+      ],
+      input.cwd,
+    );
   }
 
   const gitOutput = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
@@ -126,14 +133,28 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
         cwd,
         args,
         maxOutputBytes: INDEX_LIST_MAX_BYTES,
+        timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,
         ...(env === undefined ? {} : { env }),
       })
       .pipe(Effect.map((result) => result.stdout));
-  const samePath = (left: string, right: string) =>
-    Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
-      Effect.map(([a, b]) => a.toLowerCase() === b.toLowerCase()),
-      Effect.orElseSucceed(() => false),
-    );
+  // Windows paths ignore case. Elsewhere two repositories' paths can differ only in case,
+  // so the files themselves are compared.
+  const samePath = (yield* HostProcess.isWindows)
+    ? (left: string, right: string) =>
+        Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
+          Effect.map(([a, b]) => a.toLowerCase() === b.toLowerCase()),
+          Effect.orElseSucceed(() => false),
+        )
+    : (left: string, right: string) =>
+        Effect.all([fileSystem.stat(left), fileSystem.stat(right)]).pipe(
+          Effect.map(
+            ([a, b]) =>
+              a.dev === b.dev &&
+              Option.isSome(a.ino) &&
+              a.ino.value === Option.getOrUndefined(b.ino),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
 
   // A registered worktree of this repository: its `.git` file names an admin
   // directory under the common `worktrees/`, whose `gitdir` points back.
@@ -142,14 +163,20 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     worktreePath,
     (yield* gitOutput(worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
       Effect.mapError(() => notAWorktree),
-    )).trim(),
+    )).replace(/\n$/, ""),
   );
   const commonDir = path.resolve(
     input.cwd,
-    (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).trim(),
+    (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).replace(/\n$/, ""),
   );
   const pointsBack = yield* fileSystem.readFileString(path.join(adminDir, "gitdir")).pipe(
-    Effect.flatMap((gitdir) => samePath(path.resolve(adminDir, gitdir.trim()), gitFile)),
+    // Folders, not `.git` files: a hard-linked copy of the checkout shares its `.git` file.
+    Effect.flatMap((gitdir) => {
+      const backlink = path.resolve(adminDir, gitdir.trim());
+      return path.basename(backlink) === ".git"
+        ? samePath(path.dirname(backlink), worktreePath)
+        : Effect.succeed(false);
+    }),
     Effect.orElseSucceed(() => false),
   );
   if (!pointsBack || !(yield* samePath(path.dirname(adminDir), path.join(commonDir, "worktrees"))))
@@ -202,15 +229,38 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       );
   }
 
-  // A file held open can stop the delete partway. Putting `.git` back, when
-  // that works, leaves a worktree that a retry can remove.
+  // A file held open can stop the delete partway, so `.git` goes last and a retry still
+  // finds the worktree. Node's recursive `rm` reports the first error while sibling
+  // deletes still run, so `.git` must not be among them.
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
+  const failedToDelete = (cause: unknown) => refuse(`failed to delete '${worktreePath}'`, cause);
+  for (const name of yield* fileSystem
+    .readDirectory(worktreePath)
+    .pipe(Effect.mapError(failedToDelete))) {
+    if (name === ".git") continue;
+    yield* fileSystem
+      .remove(path.join(worktreePath, name), { recursive: true })
+      .pipe(Effect.mapError(failedToDelete));
+  }
+  yield* fileSystem.remove(gitFile).pipe(Effect.mapError(failedToDelete));
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
     Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
-    Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
+    Effect.mapError(failedToDelete),
   );
-  // The folder is gone, so Git only drops the worktree's metadata.
-  return yield* input.run(["worktree", "remove", "--force", "--force", "--", worktreePath]);
+  // The folder is gone, so Git only drops the worktree's metadata. The caller's `cwd` may
+  // have been inside it; the common Git directory survives, and is named explicitly
+  // because `safe.bareRepository=explicit` refuses to discover it.
+  return yield* input.run(
+    [
+      `--git-dir=${commonDir}`,
+      "worktree",
+      "remove",
+      ...(input.force ? ["--force"] : []),
+      "--",
+      worktreePath,
+    ],
+    commonDir,
+  );
 }, Effect.scoped);

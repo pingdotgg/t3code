@@ -12,7 +12,13 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -65,6 +71,19 @@ export function routeEntry(
   route: ConnectionRoute,
 ): ConnectionCatalogEntry {
   return entryWithRoutes(entry, [route]);
+}
+
+export function targetWithLabel(target: ConnectionTarget, label: string): ConnectionTarget {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return new PrimaryConnectionTarget({ ...target, label });
+    case "BearerConnectionTarget":
+      return new BearerConnectionTarget({ ...target, label });
+    case "RelayConnectionTarget":
+      return new RelayConnectionTarget({ ...target, label });
+    case "SshConnectionTarget":
+      return new SshConnectionTarget({ ...target, label });
+  }
 }
 
 export function routeHttpBaseUrl(route: ConnectionRoute): string | null {
@@ -475,6 +494,20 @@ export function routesAfterRemoving(
     }
     return credentialConnectionId(connectionRouteId(route.target)) !== removedId;
   });
+}
+
+/**
+ * A route is offered for removal only when removing it leaves a route behind.
+ * A learned route would be learned again, and the last route a learned route
+ * borrows from would take the whole environment with it.
+ */
+export function canRemoveRoute(
+  routes: ReadonlyArray<ConnectionRoute>,
+  route: ConnectionRoute,
+): boolean {
+  return (
+    !isLearned(route) && routesAfterRemoving(routes, connectionRouteId(route.target)).length > 0
+  );
 }
 
 /**

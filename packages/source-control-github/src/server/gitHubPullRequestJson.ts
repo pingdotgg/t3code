@@ -227,6 +227,7 @@ const RawWorkflowRunsSchema = Schema.Struct({
   workflow_runs: Schema.Array(
     Schema.Struct({
       id: Schema.Int,
+      pull_requests: Schema.optional(Schema.Array(Schema.Struct({ number: Schema.Int }))),
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
       status: Schema.optional(Schema.NullOr(Schema.String)),
@@ -388,6 +389,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
 }
 
 export interface GitHubWorkflowRunApproval {
+  readonly pullRequestNumbers: ReadonlyArray<number>;
   readonly id: number;
   readonly name: string;
   readonly url: string | null;
@@ -1175,6 +1177,7 @@ export function decodeWorkflowRunsJson(
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   return Result.succeed({
     runs: decoded.success.workflow_runs.map((run) => ({
+      pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
       id: run.id,
       name: trimmed(run.name) ?? `Workflow run ${run.id}`,
       url: trimmed(run.html_url),
@@ -1202,6 +1205,7 @@ export function decodeUnfinishedWorkflowRunsJson(
     decoded.success.workflow_runs
       .filter((run) => UNFINISHED_WORKFLOW_RUN_STATUSES.has(run.status ?? ""))
       .map((run) => ({
+        pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
         id: run.id,
         name: trimmed(run.name) ?? `Workflow run ${run.id}`,
         url: trimmed(run.html_url),
@@ -1273,6 +1277,9 @@ export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) 
               {
                 additions: Math.max(0, commit.additions),
                 deletions: Math.max(0, commit.deletions),
+                ...(commit.changedFilesIfAvailable === null
+                  ? {}
+                  : { changedFiles: Math.max(0, commit.changedFilesIfAvailable) }),
               },
             ] as const,
           ]
@@ -1859,10 +1866,11 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
     const hunks = value.patch ?? "";
     const status = value.status?.trim().toLowerCase();
     if (hunks.length === 0) {
-      // Hunkless renames are complete; omitted binary changes leave a patch gap.
+      // Hunkless renames are complete; omitted binary changes leave a patch gap. GitHub's
+      // larger file pages also drop a modified file's patch and report it as 0/0.
       const additions = value.additions ?? 0;
       const deletions = value.deletions ?? 0;
-      if (additions + deletions > 0) {
+      if (additions + deletions > 0 || status === "modified") {
         truncated = true;
         omittedFileStats.push({ path: value.filename, additions, deletions });
       }
