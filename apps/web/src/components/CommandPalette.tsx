@@ -72,6 +72,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  KeyboardIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -1846,6 +1847,18 @@ function OpenCommandPaletteDialog(props: {
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:keybindings",
+    searchTerms: ["keybindings", "keyboard", "shortcuts", "hotkeys", "keys"],
+    title: gt("Open keyboard shortcuts"),
+    icon: <KeyboardIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "keybindings.open",
+    run: async () => {
+      await navigate({ to: "/settings/keybindings" });
     },
   });
 
