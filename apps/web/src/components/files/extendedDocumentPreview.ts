@@ -466,6 +466,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     skip: false,
     deleted: false,
     hiddenText: false,
+    inTable: false,
     bold: false,
     italic: false,
     underline: false,
@@ -492,6 +493,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
+  // A table cell's lines share its column, so the row stays on one line.
+  const lineBreak = () => (state.inTable ? " " : "<br>");
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const decodeBytes = () => {
@@ -571,7 +574,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if (next === "\n" || next === "\r") {
           if (fallback > 0) fallback--;
-          else if (!hidden()) html += "<br>";
+          else if (!hidden()) html += lineBreak();
         }
         i++;
         continue;
@@ -661,6 +664,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
+      // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
+      else if (word === "intbl" || word === "pard") state.inTable = word === "intbl";
       else if (word === "plain")
         state = {
           ...state,
@@ -678,16 +683,13 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
         else if (!hidden()) {
           flush();
-          html += "<br>";
+          html += lineBreak();
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (
-        (!state.skip && word === "row") ||
-        (!hidden() && (word === "par" || word === "line"))
-      )
-        html += "<br>";
+      else if (!state.skip && word === "row") html += "<br>";
+      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";
