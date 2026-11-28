@@ -93,6 +93,29 @@ describe("continueIssuePage", () => {
   });
 });
 
+describe("holdIssuePages", () => {
+  it("keeps the rows loaded with Load more when the first page is read again", () => {
+    const cursors = { "github.com acme/api": "c1" };
+    const first = answer({
+      entries: [entry({ key: "1" }), entry({ key: "2" })],
+      nextCursors: cursors,
+    });
+    const held = holdIssuePages([[environmentId, first]], new Map());
+    const more = continueIssuePage(
+      held.get(environmentId)!,
+      answer({ entries: [entry({ key: "3" }), entry({ key: "4" })] }),
+      cursors,
+    );
+    // Closing #1 in the detail panel refreshes the list, which reads the first page again.
+    const refreshed = answer({ entries: [entry({ key: "2" })], nextCursors: cursors });
+    const after = holdIssuePages(
+      [[environmentId, refreshed]],
+      new Map([[environmentId, more]]),
+    ).get(environmentId)!;
+    expect(after.entries.map((issue) => issue.key)).toEqual(["2", "3", "4"]);
+  });
+});
+
 describe("issueFilterScopes", () => {
   const tracker = (overrides: Partial<IssueTrackerSummary>): IssueTrackerSummary =>
     ({
