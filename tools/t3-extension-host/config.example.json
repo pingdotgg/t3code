@@ -18,9 +18,9 @@
   // Modes: idle, working, waiting (the agent needs your answer), editing. Only list what you change.
   // "language" uses the file-type icon; image names like "ts" use Discord Presence's images.
   "discordLargeImages": {
-    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-idle-512.png",
-    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-working-512.png",
-    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-waiting-512.png",
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-idle-512.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-working-512.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-waiting-512.png",
     "editing": "language"
   },
   // One image or text for every mode, or one per mode.

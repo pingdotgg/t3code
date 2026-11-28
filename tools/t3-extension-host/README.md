@@ -84,14 +84,14 @@ Optional files in `%APPDATA%\t3-extension-host\`:
 | `ignoreProjects` | `[]` | T3 project titles to ignore completely, e.g. `["No project"]` |
 | `reconnectDiscordSeconds` | `30` | Retry Discord automatically if it wasn't running when T3 started (`0` to disable) |
 | `discordClientId` | `null` | Application ID of your own Discord application. Discord shows that application's name (for example "T3 Code") instead of "Visual Studio Code". Language images keep working |
-| `discordLargeImages` | T3 idle, T3 working, T3 waiting, `"language"` | Large image per mode (see below). `"language"` uses the file-type icon. Values are image links, or VS Code Discord Presence image names such as `"ts"` |
+| `discordLargeImages` | Moon, sparkle, speech bubble, `"language"` | Large image per mode (see below). `"language"` uses the file-type icon. Values are image links, or VS Code Discord Presence image names such as `"ts"` |
 | `discordSmallImage` | Round T3 Code logo | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
 | `discordSmallText` | `"T3 Code · {model}"` (`"T3 Code"` when idle) | Hover text of the small image: one text, or one per mode |
 | `discordLanguageImages` | `{}` | Your own file-type images, keyed by file extension (`".ts"`) or language ID (`"typescript"`). Files without an entry keep Discord Presence's icon |
 | `discordSwapImages` | `false` | Swap the large and small images and their hover texts, like Discord Presence's `swapBigAndSmallImage` |
 | `discordStatus` | see `config.example.json` | `details`, `state` and `largeText` per mode. Placeholders: `{project}`, `{thread}`, `{file}`, `{language}`, `{model}`, `{agent}`. A mode set to `null` keeps the extension's own texts. Thread titles are hidden for projects in `ignoreProjects` |
 
-The Discord modes are `idle` (no agent running), `working` (an agent is running), `waiting` (the agent is waiting for your answer or approval) and `editing` (the agent just edited a file). Partial settings merge with the defaults, so `{ "discordLargeImages": { "idle": "https://…" } }` changes only the idle image. The default images are in `assets/` and are served from the `discord-assets` branch of the fork.
+The Discord modes are `idle` (no agent running), `working` (an agent is running), `waiting` (the agent is waiting for your answer or approval) and `editing` (the agent just edited a file). Partial settings merge with the defaults, so `{ "discordLargeImages": { "idle": "https://…" } }` changes only the idle image. The default large images show only the state (the T3 logo is already the small image). They are in `assets/` and are served from the `discord-assets` branch of the fork.
 | `logLevel` | `"info"` | `debug`, `info`, `warn` or `error` |
 
 ## Limitations

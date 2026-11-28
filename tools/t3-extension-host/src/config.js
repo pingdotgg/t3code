@@ -68,9 +68,9 @@ const DEFAULTS = {
     editing: 'T3 Code · {model}',
   },
   discordLargeImages: {
-    idle: `${ASSETS_URL}/t3-idle-512.png`,
-    working: `${ASSETS_URL}/t3-working-512.png`,
-    waiting: `${ASSETS_URL}/t3-waiting-512.png`,
+    idle: `${ASSETS_URL}/state-idle-512.png`,
+    working: `${ASSETS_URL}/state-working-512.png`,
+    waiting: `${ASSETS_URL}/state-waiting-512.png`,
     editing: 'language',
   },
   discordLanguageImages: {},
