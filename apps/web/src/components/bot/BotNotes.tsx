@@ -26,10 +26,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { noteSlugFromTitle } from "./BotNotes.logic";
 
@@ -197,71 +195,66 @@ function NoteForm(props: {
   };
   const readOnly = !props.canWrite;
   return (
-    <form className="flex flex-col gap-2" onSubmit={save}>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="bot-note-title">
-          <T>Title</T>
-        </Label>
-        <Input
-          id="bot-note-title"
+    <form className="flex flex-col gap-1" onSubmit={save}>
+      <div className="flex flex-col rounded-lg bg-muted/40 transition-colors focus-within:bg-muted/60">
+        <input
           name="title"
-          size="sm"
+          aria-label={gt("Title")}
+          placeholder={gt("Title")}
           maxLength={120}
           defaultValue={props.note?.title ?? ""}
           readOnly={readOnly}
           autoFocus={props.note === null}
+          className="w-full bg-transparent px-2.5 pt-2 text-sm font-medium text-foreground outline-none placeholder:text-muted-foreground"
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="bot-note-summary">
-          <T>Summary</T>
-        </Label>
-        <Input
-          id="bot-note-summary"
+        <input
           name="summary"
-          size="sm"
+          aria-label={gt("Summary")}
+          placeholder={gt("One line, so the Bot knows when to read it.")}
           maxLength={300}
           defaultValue={props.note?.summary ?? ""}
           readOnly={readOnly}
-          placeholder={gt("One line, so the Bot knows when to read it.")}
+          className="w-full bg-transparent px-2.5 pt-0.5 pb-2 text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/70"
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="bot-note-body">
-          <T>Note</T>
-        </Label>
-        <Textarea
-          id="bot-note-body"
+        <textarea
           name="body"
-          rows={8}
-          size="sm"
+          aria-label={gt("Note")}
+          placeholder={gt("Note")}
+          rows={6}
           maxLength={BOT_FILE_MAX_CHARS}
           defaultValue={props.note?.body ?? ""}
           readOnly={readOnly}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+          className="field-sizing-content block max-h-96 min-h-24 w-full resize-none border-t border-border/60 bg-transparent px-2.5 pt-2 pb-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
+        {readOnly ? null : (
+          <div className="flex items-center justify-end gap-1.5 px-1.5 pb-1.5">
+            {props.note === null ? null : (
+              <Button
+                type="button"
+                variant="ghost-destructive"
+                size="xs"
+                disabled={busy}
+                onClick={() => void remove()}
+              >
+                <T>Delete</T>
+              </Button>
+            )}
+            <Button type="submit" size="xs" disabled={busy}>
+              <T>Save</T>
+            </Button>
+          </div>
+        )}
       </div>
       {error === null ? null : (
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
-      )}
-      {readOnly ? null : (
-        <div className="flex items-center justify-end gap-2">
-          {props.note === null ? null : (
-            <Button
-              type="button"
-              variant="destructive-outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void remove()}
-            >
-              <T>Delete</T>
-            </Button>
-          )}
-          <Button type="submit" size="sm" disabled={busy}>
-            <T>Save</T>
-          </Button>
-        </div>
       )}
     </form>
   );
