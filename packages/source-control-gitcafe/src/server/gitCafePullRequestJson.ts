@@ -125,7 +125,6 @@ const GitCafeComment = Schema.Struct({
   author: Actor,
   body: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
-  updatedAt: Schema.optional(IsoDateTime),
   path: Schema.NullOr(Schema.String),
   // Only positive lines anchor review threads; the API allows any integer.
   line: Schema.NullOr(Schema.Int),
@@ -491,10 +490,6 @@ export function toActivity(input: {
     author: toActor(comment.author, host),
     body: comment.body ?? "",
     createdAt: comment.createdAt,
-    ...(comment.updatedAt !== undefined &&
-    Date.parse(comment.updatedAt) > Date.parse(comment.createdAt)
-      ? { editedAt: comment.updatedAt }
-      : {}),
     url: null,
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
     ...(reactions === undefined ? {} : { reactions: reactions.byComment.get(comment.id) ?? [] }),

@@ -1051,8 +1051,10 @@ Review triggered.
         body: codeRabbitReply("Review finished."),
         editedAt: "2026-10-02T12:07:00Z",
       };
-      const finished = evaluatePullRequestWatch(progress.next, detail(), [outcome]);
-      assert.deepEqual(finished.changes, [{ kind: "remarks", remarks: [outcome] }]);
+      const editing = evaluatePullRequestWatch(progress.next, detail(), [outcome]);
+      assert.deepEqual(editing.changes, []);
+      const finished = evaluatePullRequestWatch(editing.next, detail(), [outcome]);
+      assert.deepEqual(finished.changes, [{ kind: "remarks", remarks: [outcome], edited: true }]);
       assert.equal(finished.next.wakes, 3);
       assert.deepEqual(evaluatePullRequestWatch(finished.next, detail(), [outcome]).changes, []);
 
