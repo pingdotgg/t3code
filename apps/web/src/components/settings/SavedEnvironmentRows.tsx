@@ -513,7 +513,7 @@ export function LocalEnvironmentMcpUrlRow({ entry }: { readonly entry: Connectio
                   })
       }
       control={
-        <Button size="sm" variant="outline" onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
+        <Button size="sm" variant="secondary" onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
           <T>Copy</T>
         </Button>
       }

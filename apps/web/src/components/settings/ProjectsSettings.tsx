@@ -47,7 +47,7 @@ export function ProjectsSettings() {
             control={
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 render={<Link to="/welcome" hash={`projects:${environment.environmentId}`} />}
               >
                 <T context="verb, opens a page">Open</T>
