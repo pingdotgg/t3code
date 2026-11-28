@@ -44,13 +44,26 @@ const VIDEO_TAG_MAX_LINES = 8;
 
 // A tab after up to three spaces still reaches the fourth column.
 const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
+const HTML_COMMENT_START_PATTERN = /^ {0,3}<!--/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
 const MARKDOWN_LINK_PATTERN = /^\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
 // Stops at the next `<`, so matching stays linear in the length of the line.
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+
+function videoTagSource(html: string): string | undefined {
+  for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
+    for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+      if (attribute[1]!.toLowerCase() !== "src") continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
@@ -287,6 +300,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const markdown: string[] = [];
   let markdownStart = 0;
   let openFence: { readonly marker: string; readonly flushLeft: boolean } | null = null;
+  let openComment = false;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
@@ -311,6 +325,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
+    if (openComment) {
+      if (line.includes("-->")) {
+        openComment = false;
+      }
+      markdown.push(line);
+      continue;
+    }
     const fenceMatch = FENCE_PATTERN.exec(line);
     // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
     // A span that runs past this line is left an opener, so its lines stay out of media.
@@ -339,6 +360,11 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       continue;
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
+      markdown.push(line);
+      continue;
+    }
+    if (HTML_COMMENT_START_PATTERN.test(line)) {
+      openComment = !line.includes("-->");
       markdown.push(line);
       continue;
     }
@@ -371,7 +397,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
+      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
       : undefined;
     if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();

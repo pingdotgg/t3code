@@ -1179,9 +1179,18 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         let startupPhase: string | undefined;
+        // `launch` describes the next turn, so an open turn (one being stopped too) never shows it.
+        const nextTurnLaunches = () => {
+          const live = Ref.getUnsafe(liveAgent);
+          return (
+            Ref.getUnsafe(activeTurn) === null &&
+            (live === null || live.session.isAlive?.() === false)
+          );
+        };
         const emitStartupPhase = Effect.fn("CursorAdapterV2.emitStartupPhase")(function* (
-          phase: string | undefined,
+          requested: string | undefined,
         ) {
+          const phase = requested ?? (nextTurnLaunches() ? "launch" : undefined);
           if (phase === startupPhase) return;
           startupPhase = phase;
           yield* emitProviderEvent({
@@ -1194,6 +1203,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             },
           });
         });
+        const reportAgentGone = Effect.suspend(() =>
+          startupPhase === undefined ? emitStartupPhase(undefined) : Effect.void,
+        );
 
         const emitProviderThread = Effect.fn("CursorAdapterV2.emitProviderThread")(function* (
           providerThread: OrchestrationV2ProviderThread,
@@ -2768,6 +2780,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          yield* reportAgentGone;
           yield* Deferred.succeed(input.context.completed, undefined);
         });
 
@@ -2825,6 +2838,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
           readonly agentId?: string;
           readonly storeCwd?: string | undefined;
+          readonly reportLaunch?: boolean;
         }) {
           const existing = yield* Ref.get(liveAgent);
           const cwd = openInput.runtimePolicy.cwd ?? process.cwd();
@@ -2868,6 +2882,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               "Cursor cannot sandbox the filesystem on Windows; this thread runs without filesystem isolation.",
             );
           }
+          if (openInput.reportLaunch === true) {
+            yield* emitStartupPhase("launch");
+          }
           const sdkSession = yield* runner
             .open({
               operation: openInput.operation,
@@ -2877,13 +2894,22 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
             })
-            .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
+            .pipe(
+              Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)),
+              Effect.onError(() => emitStartupPhase(undefined)),
+            );
           const next = {
             nativeThreadId: sdkSession.agentId,
             storeCwd,
             session: sdkSession,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
+          if (sdkSession.ended !== undefined) {
+            yield* sdkSession.ended.pipe(
+              Effect.andThen(reportAgentGone),
+              Effect.forkIn(sessionScope),
+            );
+          }
           return next;
         });
 
@@ -3029,6 +3055,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: turnInput.threadId,
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
+              reportLaunch: true,
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const known = yield* Ref.get(told);
@@ -3357,6 +3384,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           },
           (effect, turnInput) =>
             effect.pipe(
+              Effect.ensuring(Effect.suspend(() => emitStartupPhase(undefined))),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterTurnStartError({
@@ -3392,7 +3420,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CursorAgentSdk.CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          get providerSession() {
+            const phase = startupPhase ?? (nextTurnLaunches() ? "launch" : undefined);
+            return phase === undefined ? session : { ...session, startupPhase: phase };
+          },
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
               ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])
@@ -3414,6 +3445,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 threadId: threadInput.threadId,
                 modelSelection: threadInput.modelSelection,
                 runtimePolicy: threadInput.runtimePolicy,
+                reportLaunch: true,
               });
               const now = yield* DateTime.now;
               return makeProviderThread({
@@ -3448,6 +3480,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 threadId: threadInput.providerThread.appThreadId ?? input.threadId,
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
+                reportLaunch: true,
               });
               const now = yield* DateTime.now;
               return {
