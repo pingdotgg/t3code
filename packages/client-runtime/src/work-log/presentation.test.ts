@@ -10,6 +10,7 @@ import {
   summarizeToolGroup,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
+  type WorkLogToolLifecycleStatus,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntriesViewedImagePaths,
@@ -355,5 +356,41 @@ describe("summarizeToolGroup read counts", () => {
         read("b", "/repo/src/b.ts"),
       ]).summary,
     ).toBe("Read 2 files");
+  });
+});
+
+describe("summarizeToolGroup edit counts", () => {
+  const edit = (
+    id: string,
+    filePath: string,
+    toolLifecycleStatus: WorkLogToolLifecycleStatus,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-11-27T00:00:00.000Z",
+    label: filePath,
+    tone: "tool",
+    itemType: "file_change",
+    toolLifecycleStatus,
+    changedFiles: [filePath],
+  });
+
+  it("does not report a declined or stopped edit as a change", () => {
+    expect(summarizeToolGroup([edit("a", "/repo/a.ts", "failed")]).summary).toBe(
+      "Tried to change 1 file",
+    );
+    expect(
+      summarizeToolGroup([edit("a", "/repo/a.ts", "declined"), edit("b", "/repo/b.ts", "stopped")])
+        .summary,
+    ).toBe("Tried to change 2 files");
+  });
+
+  it("counts only the edits that went through", () => {
+    expect(
+      summarizeToolGroup([
+        edit("a", "/repo/a.ts", "declined"),
+        edit("b", "/repo/b.ts", "completed"),
+        edit("c", "/repo/c.ts", "completed"),
+      ]).summary,
+    ).toBe("Changed 2 files");
   });
 });

@@ -975,6 +975,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {Verificou os pull requests vinculados} other {Verificou os pull requests vinculados {count} vezes}}",
   "857e92a89b6b6257": "{count, plural, one {Leu {count} arquivo} other {Leu {count} arquivos}}",
   "466ac7fcdb97bb76": "{count, plural, one {Alterou {count} arquivo} other {Alterou {count} arquivos}}",
+  "9369ade1ceea1f86": "{count, plural, one {Tentou alterar {count} arquivo} other {Tentou alterar {count} arquivos}}",
   "85e7e6dd7b82b428": "{count, plural, one {Executou {count} comando} other {Executou {count} comandos}}",
   "2f32bc94342dfe05": "{count, plural, one {Pesquisou na web {count} vez} other {Pesquisou na web {count} vezes}}",
   "7e912e12cb98dc12": "{count, plural, one {Pesquisou no código {count} vez} other {Pesquisou no código {count} vezes}}",

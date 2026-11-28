@@ -974,6 +974,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {연결된 풀 리퀘스트 확인함} other {연결된 풀 리퀘스트 {count}번 확인함}}",
   "857e92a89b6b6257": "{count, plural, other {파일 {count}개 읽음}}",
   "466ac7fcdb97bb76": "{count, plural, other {파일 {count}개 변경함}}",
+  "9369ade1ceea1f86": "{count, plural, other {파일 {count}개 변경 시도함}}",
   "85e7e6dd7b82b428": "{count, plural, other {명령 {count}개 실행함}}",
   "2f32bc94342dfe05": "{count, plural, other {웹 {count}번 검색함}}",
   "7e912e12cb98dc12": "{count, plural, other {코드 {count}번 검색함}}",

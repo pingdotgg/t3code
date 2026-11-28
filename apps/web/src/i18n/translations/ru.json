@@ -975,6 +975,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {Проверены привязанные пул-реквесты} one {Привязанные пул-реквесты проверены {count} раз} few {Привязанные пул-реквесты проверены {count} раза} many {Привязанные пул-реквесты проверены {count} раз} other {Привязанные пул-реквесты проверены {count} раза}}",
   "857e92a89b6b6257": "{count, plural, one {Прочитан {count} файл} few {Прочитано {count} файла} many {Прочитано {count} файлов} other {Прочитано {count} файла}}",
   "466ac7fcdb97bb76": "{count, plural, one {Изменён {count} файл} few {Изменено {count} файла} many {Изменено {count} файлов} other {Изменено {count} файла}}",
+  "9369ade1ceea1f86": "{count, plural, one {Попытка изменить {count} файл} few {Попытка изменить {count} файла} many {Попытка изменить {count} файлов} other {Попытка изменить {count} файла}}",
   "85e7e6dd7b82b428": "{count, plural, one {Выполнена {count} команда} few {Выполнено {count} команды} many {Выполнено {count} команд} other {Выполнено {count} команды}}",
   "2f32bc94342dfe05": "{count, plural, one {Поиск в интернете: {count} раз} few {Поиск в интернете: {count} раза} many {Поиск в интернете: {count} раз} other {Поиск в интернете: {count} раза}}",
   "7e912e12cb98dc12": "{count, plural, one {Поиск по коду: {count} раз} few {Поиск по коду: {count} раза} many {Поиск по коду: {count} раз} other {Поиск по коду: {count} раза}}",

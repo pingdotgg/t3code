@@ -974,6 +974,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {已检查关联的 pull request } other {已检查关联的 pull request {count} 次}}",
   "857e92a89b6b6257": "{count, plural, other {已读取 {count} 个文件}}",
   "466ac7fcdb97bb76": "{count, plural, other {已更改 {count} 个文件}}",
+  "9369ade1ceea1f86": "{count, plural, other {尝试更改 {count} 个文件}}",
   "85e7e6dd7b82b428": "{count, plural, other {已运行 {count} 条命令}}",
   "2f32bc94342dfe05": "{count, plural, other {已搜索网页 {count} 次}}",
   "7e912e12cb98dc12": "{count, plural, other {已搜索代码 {count} 次}}",
