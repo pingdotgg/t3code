@@ -197,7 +197,10 @@ const credentialFromGetResult = (data: Extract<GetCredentialResult, { success: t
 const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
-/** Keep conditional requests native so autofill and upgrades cannot open a modal sheet unprompted. */
+// Conditional and silent requests must never show UI, so the browser handles them instead of the sheet.
+const opensSheet = (mediation: CredentialMediationRequirement | undefined) =>
+  mediation !== "conditional" && mediation !== "silent";
+
 export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {
     return;
@@ -240,7 +243,7 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     container,
     "create",
     function create(this: CredentialsContainer, options?: CreationOptions) {
-      return options?.publicKey && options.mediation !== "conditional"
+      return options?.publicKey && opensSheet(options.mediation)
         ? run(PASSKEY_CREATE_CHANNEL, options.publicKey, options.signal)
         : Reflect.apply(nativeCreate, this, [options]);
     },
@@ -249,7 +252,7 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     container,
     "get",
     function get(this: CredentialsContainer, options?: CredentialRequestOptions) {
-      return options?.publicKey && options.mediation !== "conditional"
+      return options?.publicKey && opensSheet(options.mediation)
         ? run(PASSKEY_GET_CHANNEL, options.publicKey, options.signal)
         : Reflect.apply(nativeGet, this, [options]);
     },
