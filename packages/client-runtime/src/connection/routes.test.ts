@@ -251,6 +251,76 @@ describe("learned routes", () => {
     ).toBeNull();
   });
 
+  it("persists Tailscale network flag updates on IPv6 and MagicDNS routes", () => {
+    const ipv6Origin = "http://[fd7a:115c:a1e0::1]:3773";
+    const magicDnsOrigin = "http://box.tail1234.ts.net:3773";
+    const ipv6Learned = learned(`learned:${ENVIRONMENT_ID}:${ipv6Origin}@public`, `${ipv6Origin}/`);
+    const magicDnsLearned = learned(
+      `learned:${ENVIRONMENT_ID}:${magicDnsOrigin}@public`,
+      `${magicDnsOrigin}/`,
+    );
+    const entry = entryWithRoutes(relayOnly, [ipv6Learned, magicDnsLearned, PUBLIC, RELAY]);
+    expect(ids(usableRoutes(entry))).toEqual(["public", "relay"]);
+
+    const reported = [
+      { kind: "tailnet", httpBaseUrl: `${ipv6Origin}/` },
+      { kind: "tailnet", httpBaseUrl: `${magicDnsOrigin}/` },
+    ];
+    const updated = mergeLearnedRoutes({
+      entry,
+      activeRoute: PUBLIC,
+      reported,
+      allowInsecure: true,
+    });
+    expect(updated).not.toBeNull();
+    expect(profileOf(updated![0]!)).toMatchObject({ network: "tailscale" });
+    expect(profileOf(updated![1]!)).toMatchObject({ network: "tailscale" });
+    const persisted = entryWithRoutes(entry, updated!);
+    expect(ids(usableRoutes(persisted))).toEqual([
+      `learned:${ENVIRONMENT_ID}:${ipv6Origin}@public`,
+      `learned:${ENVIRONMENT_ID}:${magicDnsOrigin}@public`,
+      "public",
+      "relay",
+    ]);
+    expect(
+      mergeLearnedRoutes({
+        entry: persisted,
+        activeRoute: PUBLIC,
+        reported,
+        allowInsecure: true,
+      }),
+    ).toBeNull();
+
+    const savedIpv6 = direct("ts6", `${ipv6Origin}/`);
+    const cleared = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [
+        {
+          target: savedIpv6.target,
+          profile: Option.some(
+            new BearerConnectionProfile({
+              ...(profileOf(savedIpv6) as BearerConnectionProfile),
+              network: "tailscale",
+            }),
+          ),
+        },
+        RELAY,
+      ]),
+      activeRoute: RELAY,
+      reported: [{ kind: "lan", httpBaseUrl: `${ipv6Origin}/` }],
+      allowInsecure: true,
+    });
+    expect(cleared).not.toBeNull();
+    expect(profileOf(cleared![0]!)).not.toHaveProperty("network");
+    expect(
+      mergeLearnedRoutes({
+        entry: entryWithRoutes(relayOnly, cleared!),
+        activeRoute: RELAY,
+        reported: [{ kind: "lan", httpBaseUrl: `${ipv6Origin}/` }],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
+  });
+
   it("leaves user routes alone and does not learn an address already saved", () => {
     const entry: ConnectionCatalogEntry = {
       target: LAN.target,
