@@ -1,4 +1,5 @@
 {
+  "2efbbd9bb89efd31": "Abrir no {editor}",
   "035aab5e99159bd8": "{count, plural, one {… {hidden} caractere do meio não é exibido.} other {… {hidden} caracteres do meio não são exibidos.}} O texto termina com:",
   "4bcfa3b976a421cf": "Chat paralelo",
   "23be753133ae6950": "Thread",
@@ -5745,6 +5746,5 @@
   "bb9866823586b67a": "Banco de dados de uso e chave do Go",
   "8380d6f1828fe191": "Histórico de conversas",
   "1f2036cf25caaf16": "Uso da conta obtido da Cursor",
-  "51aa7700c1f967d2": "Histórico de sessões",
-  "2efbbd9bb89efd31": "Abrir no {editor}"
+  "51aa7700c1f967d2": "Histórico de sessões"
 }

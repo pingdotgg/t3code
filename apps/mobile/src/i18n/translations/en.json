@@ -1,4 +1,5 @@
 {
+  "2efbbd9bb89efd31": "Open in {editor}",
   "035aab5e99159bd8": "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
   "4bcfa3b976a421cf": "Side chat",
   "23be753133ae6950": "Thread",
@@ -5753,6 +5754,5 @@
   "bb9866823586b67a": "Usage database and Go key",
   "8380d6f1828fe191": "Conversation history",
   "1f2036cf25caaf16": "Account usage from Cursor",
-  "51aa7700c1f967d2": "Session history",
-  "2efbbd9bb89efd31": "Open in {editor}"
+  "51aa7700c1f967d2": "Session history"
 }

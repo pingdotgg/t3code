@@ -1,4 +1,5 @@
 {
+  "2efbbd9bb89efd31": "In {editor} öffnen",
   "035aab5e99159bd8": "{count, plural, one {… {hidden} Zeichen in der Mitte wird nicht angezeigt.} other {… {hidden} Zeichen in der Mitte werden nicht angezeigt.}} Der Text endet mit:",
   "4bcfa3b976a421cf": "Nebenchat",
   "23be753133ae6950": "Thread",
@@ -5751,6 +5752,5 @@
   "bb9866823586b67a": "Nutzungsdatenbank und Go-Schlüssel",
   "8380d6f1828fe191": "Gesprächsverlauf",
   "1f2036cf25caaf16": "Kontonutzung von Cursor",
-  "51aa7700c1f967d2": "Sitzungsverlauf",
-  "2efbbd9bb89efd31": "In {editor} öffnen"
+  "51aa7700c1f967d2": "Sitzungsverlauf"
 }

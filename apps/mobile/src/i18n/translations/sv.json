@@ -1,4 +1,5 @@
 {
+  "2efbbd9bb89efd31": "Öppna i {editor}",
   "035aab5e99159bd8": "{count, plural, one {… {hidden} tecken i mitten visas inte.} other {… {hidden} tecken i mitten visas inte.}} Texten slutar med:",
   "4bcfa3b976a421cf": "Sidochatt",
   "23be753133ae6950": "Tråd",
@@ -5751,6 +5752,5 @@
   "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
   "8380d6f1828fe191": "Konversationshistorik",
   "1f2036cf25caaf16": "Kontots användning från Cursor",
-  "51aa7700c1f967d2": "Sessionshistorik",
-  "2efbbd9bb89efd31": "Öppna i {editor}"
+  "51aa7700c1f967d2": "Sessionshistorik"
 }

@@ -1,4 +1,5 @@
 {
+  "2efbbd9bb89efd31": "Otwórz w {editor}",
   "035aab5e99159bd8": "{count, plural, one {… {hidden} znak w środku nie jest wyświetlany.} few {… {hidden} znaki w środku nie są wyświetlane.} many {… {hidden} znaków w środku nie jest wyświetlanych.} other {… {hidden} znaków w środku nie jest wyświetlanych.}} Tekst kończy się na:",
   "4bcfa3b976a421cf": "Czat boczny",
   "23be753133ae6950": "Wątek",
@@ -5753,6 +5754,5 @@
   "bb9866823586b67a": "Baza danych użycia i klucz Go",
   "8380d6f1828fe191": "Historia konwersacji",
   "1f2036cf25caaf16": "Użycie konta z Cursor",
-  "51aa7700c1f967d2": "Historia sesji",
-  "2efbbd9bb89efd31": "Otwórz w {editor}"
+  "51aa7700c1f967d2": "Historia sesji"
 }
