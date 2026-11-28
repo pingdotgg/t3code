@@ -302,9 +302,9 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,
     // and accepts the first setting on the section header's own line.
-    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](.*)$/i.exec(line);
+    const header = /^\[\s*remote(?:\s+"((?:\\.|[^"\\])+)"|\.([^\]\s]+))\s*\](.*)$/i.exec(line);
     if (header) {
-      section = header[1] ?? header[2]?.toLowerCase() ?? null;
+      section = header[1]?.replace(/\\(.)/g, "$1") ?? header[2]?.toLowerCase() ?? null;
       line = header[3]!.trim();
     } else if (line.startsWith("[")) {
       section = null;

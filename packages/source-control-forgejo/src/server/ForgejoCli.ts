@@ -1,8 +1,10 @@
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
@@ -10,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Semaphore from "effect/Semaphore";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
 import * as NodePath from "node:path";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -21,6 +23,42 @@ import type { SourceControlProviderContext } from "@t3tools/source-control-core/
 
 // A Gitea list page can hold 50 pull request bodies; gt's output is otherwise capped at 1 MB.
 const API_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+const UNTRUSTED_CERTIFICATE_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+// Node's fetch wraps TLS and socket error codes inside generic TypeErrors.
+function nodeErrorCode(cause: unknown): string | undefined {
+  let current = cause;
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null; depth += 1) {
+    if (
+      Predicate.hasProperty(current, "code") &&
+      typeof current.code === "string" &&
+      /^[A-Z0-9_]{1,64}$/.test(current.code)
+    ) {
+      return current.code;
+    }
+    current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+  }
+  return undefined;
+}
+
+// Keep fj transport details bounded to failure kind or Node code so tokens never leak.
+function describeFjRequestFailure(error: unknown): string {
+  if (Cause.isTimeoutError(error)) return "Forgejo API request timed out.";
+  if (HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError") {
+    const code = nodeErrorCode(error.reason.cause);
+    if (code !== undefined && UNTRUSTED_CERTIFICATE_CODES.has(code)) {
+      return `Forgejo TLS certificate is not trusted (${code}). If this server uses a private CA, add that CA to NODE_EXTRA_CA_CERTS.`;
+    }
+    if (code !== undefined) return `Forgejo API request failed (${code}).`;
+  }
+  return "Forgejo API request failed.";
+}
 
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
@@ -561,7 +599,7 @@ export const make = Effect.gen(function* () {
             : new ForgejoCliError({
                 command: "fj",
                 cwd: input.cwd,
-                detail: "Forgejo API request failed or timed out.",
+                detail: describeFjRequestFailure(error),
               }),
         ),
       ),

@@ -595,6 +595,31 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+// Pasted lines land as if typed: the first continues the caret's line, the last runs into the text after it.
+it.each([
+  {
+    value: "Fix this error: ",
+    caret: "Fix this error: ".length,
+    expected: "Fix this error: foo\nbar",
+  },
+  { value: "before after", caret: "before ".length, expected: "before foo\nbarafter" },
+])("pastes two lines into $value at $caret", async ({ value, caret, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "foo\nbar");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "!");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected.replace("bar", "bar!"));
+});
+
 // regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
 it.each([
   // Shown bold like the same paste; the sent text stays verbatim.
@@ -658,6 +683,37 @@ it("keeps the destination of a link dropped from a web page", async () => {
   expect(serializeEditorDoc(editor.state.doc).value).toBe(
     "[Setup guide](https://example.com/setup)",
   );
+});
+
+it.each([
+  {
+    label: "inside inline code as plain text",
+    value: "`sumBy` after",
+    caret: "su".length,
+    pasted: "`suGuidemBy` after",
+  },
+  {
+    label: "as a link in italic text that also holds inline code",
+    value: "*`a` bold* after",
+    caret: "a bo".length,
+    pasted: "*`a` bo[Guide](https://example.com/guide)ld* after",
+  },
+])("pastes a linked word $label", async ({ value, caret, pasted }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+  });
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Guide");
+    clipboardData.setData("text/html", '<a href="https://example.com/guide">Guide</a>');
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
 it("keeps a pasted web link beside an imported thread chip", async () => {

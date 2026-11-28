@@ -29,6 +29,7 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
+  projectScriptIdsInEnvironment,
   releaseClaimedRoles,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -64,6 +65,7 @@ export function useProjectScriptEditing(input: {
     nextScripts: ReadonlyArray<ProjectScript>;
     keybinding: NewProjectScriptInput["keybinding"];
     keybindingCommand: KeybindingCommand | null;
+    onSettingsSaved?: () => void;
   }): Promise<AtomCommandResult<void, unknown>> => {
     const serverConfig = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
     const previousKeybinding = keybindingValueForCommand(
@@ -120,6 +122,7 @@ export function useProjectScriptEditing(input: {
       return updateResult;
     }
 
+    input.onSettingsSaved?.();
     if (!changesKeybinding) return updateResult;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
       return AsyncResult.failure(
@@ -192,14 +195,18 @@ export function useProjectScriptEditing(input: {
   };
   const saveProjectScript = async (
     input: NewProjectScriptInput,
+    onActionCreated?: (scriptId: string) => void,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const nextId = nextProjectScriptId(
-      input.name,
-      scripts.map((script) => script.id),
-    );
+    const nextId = nextProjectScriptId(input.name, [
+      ...scripts.map((script) => script.id),
+      ...projectScriptIdsInEnvironment(
+        settings,
+        allProjects.filter((other) => other.environmentId === environmentId),
+      ),
+    ]);
     const nextScript = buildProjectScript(nextId, input);
     const nextScripts = [
       ...scripts.map((script) => releaseClaimedRoles(script, input)),
@@ -213,29 +220,34 @@ export function useProjectScriptEditing(input: {
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(nextId),
+      // The editor needs the ID even if writing the shortcut fails.
+      onSettingsSaved: () => onActionCreated?.(nextId),
     });
   };
   const updateProjectScript = async (
     scriptId: string,
     input: NewProjectScriptInput,
+    retryingCreation = false,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const existingScript = scripts.find((script) => script.id === scriptId);
-    if (!existingScript) {
+    const hasScript = scripts.some((script) => script.id === scriptId);
+    if (!hasScript && !retryingCreation) {
       return AsyncResult.failure(Cause.fail(new Error(m(msg("Script not found.")))));
     }
 
-    const updatedScript = buildProjectScript(existingScript.id, input);
-    const nextScripts = scripts.map((script) =>
+    const updatedScript = buildProjectScript(scriptId, input);
+    // A retry has a confirmed ID even if the settings subscription is still behind.
+    const currentScripts = hasScript ? scripts : [...scripts, updatedScript];
+    const nextScripts = currentScripts.map((script) =>
       script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
     );
 
     return persistProjectScripts({
       projectId: project.id,
       projectCwd: project.workspaceRoot,
-      previousScripts: scripts,
+      previousScripts: currentScripts,
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(scriptId),

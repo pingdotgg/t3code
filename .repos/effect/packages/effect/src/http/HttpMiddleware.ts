@@ -608,7 +608,7 @@ export const cors = (options?: {
     ? { "access-control-expose-headers": opts.exposedHeaders.join(",") }
     : undefined
 
-  const maxAge = opts.maxAge
+  const maxAge = opts.maxAge === 0 || opts.maxAge
     ? { "access-control-max-age": opts.maxAge.toString() }
     : undefined
 
