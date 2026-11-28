@@ -1,5 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { msg, T, useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -26,7 +26,11 @@ import { environmentPresentations } from "../../state/presentation";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
-import { environmentStatusText } from "./environmentStatusText";
+import {
+  PAUSED_SWITCH_OPACITY,
+  environmentStatusText,
+  offStatusText,
+} from "./environmentStatusText";
 import type { MessageResolver } from "../../i18n/messages";
 
 function connectionStatusLabel(
@@ -34,7 +38,7 @@ function connectionStatusLabel(
   resolve: MessageResolver,
 ): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
-    return resolve(msg("Off", { $context: "environment is switched off" }));
+    return offStatusText(environment, resolve);
   }
   return environmentStatusText(
     {
@@ -79,6 +83,7 @@ export function ConnectionEnvironmentRow(props: {
     presentation,
   );
   const enabled = props.environment.isEnabled && !unsupported;
+  const switchedOn = (enabled || props.environment.isPausedByFocus) && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment, m);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
@@ -123,6 +128,9 @@ export function ConnectionEnvironmentRow(props: {
         <Pressable
           className="min-w-0 flex-1 gap-0.5 active:opacity-70"
           accessibilityRole="button"
+          accessibilityHint={
+            props.environment.isPausedByFocus ? (statusLabel ?? undefined) : undefined
+          }
           accessibilityLabel={toggleLabel}
           onPress={props.onToggle}
         >
@@ -188,13 +196,19 @@ export function ConnectionEnvironmentRow(props: {
         </Pressable>
 
         <ThemedSwitch
+          accessibilityHint={
+            props.environment.isPausedByFocus ? (statusLabel ?? undefined) : undefined
+          }
           accessibilityLabel={gt("Enable {environment}", {
             environment: props.environment.environmentLabel,
           })}
-          style={{ alignSelf: "center" }}
+          style={{
+            alignSelf: "center",
+            opacity: props.environment.isPausedByFocus ? PAUSED_SWITCH_OPACITY : 1,
+          }}
           disabled={unsupported && !canRetry}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
-          value={enabled}
+          value={switchedOn}
         />
         <Pressable
           accessible={false}

@@ -7,6 +7,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
   return {
     isLoadingConnections: false,
     hasConnections: true,
+    isPausedByFocus: false,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
     hasSyncingConnectedEnvironment: false,
@@ -42,6 +43,7 @@ describe("workspace connection status", () => {
                   displayUrl: "",
                   isRelayManaged: false,
                   isEnabled: true,
+                  isPausedByFocus: false,
                   connectionState,
                   connectionError,
                   connectionErrorTraceId: null,
@@ -66,6 +68,7 @@ describe("workspace connection status", () => {
           displayUrl: "",
           isRelayManaged: false,
           isEnabled: true,
+          isPausedByFocus: false,
           connectionState: "reconnecting",
           connectionError: "Could not reach sleeping laptop",
           connectionErrorTraceId: null,

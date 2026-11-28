@@ -18,7 +18,8 @@ export function deriveHomeEmptyState(
   const emptyState = deriveEmptyState(catalogState, projectCount, resolve);
   return {
     ...emptyState,
-    showsAddEnvironment: !emptyState.loading && !catalogState.hasReadyEnvironment,
+    showsAddEnvironment:
+      !emptyState.loading && !catalogState.hasReadyEnvironment && !catalogState.isPausedByFocus,
   };
 }
 
@@ -39,6 +40,16 @@ function deriveEmptyState(
     return {
       title: resolve(msg("No environments connected")),
       detail: resolve(msg("Add an environment to load projects and start coding sessions.")),
+      loading: false,
+    };
+  }
+
+  if (catalogState.isPausedByFocus) {
+    return {
+      title: resolve(
+        msg("Paused by Focus", { $context: "an iOS Focus filter leaves this environment out" }),
+      ),
+      detail: resolve(msg("Change or turn off your Focus filter to reconnect your environments.")),
       loading: false,
     };
   }

@@ -42,6 +42,7 @@ function environment(
     displayUrl: "",
     isRelayManaged: false,
     isEnabled,
+    isPausedByFocus: false,
     connectionState,
     connectionError: null,
     connectionErrorTraceId: null,

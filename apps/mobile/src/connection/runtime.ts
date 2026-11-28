@@ -12,6 +12,7 @@ import type { FoundationHotModule } from "../lib/foundation-fast-refresh";
 import { hotSwappableAtomRuntime } from "../lib/hot-swappable-atom-runtime";
 import * as Runtime from "../lib/runtime";
 import { appAtomRegistry } from "../state/atom-registry";
+import * as FocusFilter from "../features/focus-filter/focusFilter";
 import * as BackgroundActivity from "./background-activity";
 import * as ConnectionPlatform from "./platform";
 
@@ -32,7 +33,8 @@ type ConnectionLayerSource =
   | typeof Runtime.layer
   | typeof ConnectionPlatform.layer
   | typeof BackgroundActivity.layerObserver
-  | typeof BackgroundActivity.layerReporter;
+  | typeof BackgroundActivity.layerReporter
+  | typeof FocusFilter.layer;
 
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(
@@ -46,6 +48,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       // and 15 s with no frame: within 25 s of the last frame (20 s at the 5 s default),
       // and a host stalled for 10 s can lose the socket (15 s at the default).
       pingInterval: "10 seconds",
+      initialFocusAllowlist: FocusFilter.initialAllowlist,
     }),
   ),
   Layer.provideMerge(
@@ -57,7 +60,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   ),
 );
 
-const layerConnection = BackgroundActivity.layerReporter.pipe(
+const layerConnection = Layer.mergeAll(BackgroundActivity.layerReporter, FocusFilter.layer).pipe(
   Layer.provideMerge(layerProvidedClientConnection),
 );
 

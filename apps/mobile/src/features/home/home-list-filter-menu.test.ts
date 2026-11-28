@@ -15,6 +15,7 @@ function environment(
     displayUrl: "",
     isRelayManaged: false,
     isEnabled,
+    isPausedByFocus: false,
     connectionState: isEnabled ? "connected" : "available",
     connectionError: null,
     connectionErrorTraceId: null,
