@@ -488,6 +488,7 @@ function makeMockRuntime(input: {
     | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
   readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
   readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
+  readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
   // Also opts into replay-idle readiness, which runtimes leave off by default.
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly ownDescendantProcessGroups?: boolean;
@@ -530,6 +531,7 @@ function makeMockRuntime(input: {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
+          ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
           ...(input.sessionLoadReplayIdleGap === undefined
             ? {}
             : {
@@ -6733,6 +6735,404 @@ describe("AcpAdapterV2", () => {
       assert.equal(delivered?.status, "completed");
       assert.equal(promptCalls, 3);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("finalizes the turn when the start effect is cancelled mid-start", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const holdBeforePrompt = yield* Deferred.make<void, never>();
+      const reachedBeforePrompt = yield* Deferred.make<void, never>();
+      const instanceId = ProviderInstanceId.make("acp-start-cancelled");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: () => ({}),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          beforePromptDispatch: () =>
+            Deferred.succeed(reachedBeforePrompt, undefined).pipe(
+              Effect.andThen(Deferred.await(holdBeforePrompt)),
+            ),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-start-cancelled");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-start-cancelled"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const start = yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(reachedBeforePrompt);
+      // Cancelling the in-flight start effect interrupts its fiber, the same
+      // path an interrupt-before-provider-start takes through the effect worker.
+      yield* Fiber.interrupt(start);
+      yield* Deferred.succeed(holdBeforePrompt, undefined);
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+      );
+      const terminals = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.map((events) =>
+          Array.from(events, (event) => {
+            if (event.type !== "turn.terminal") throw new Error("Expected a turn terminal");
+            return event;
+          }),
+        ),
+      );
+      assert.equal(terminals[0]?.status, "interrupted");
+      assert.equal(terminals[1]?.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("does not dispatch the prompt of a turn interrupted before registration", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const holdPrompt = yield* Deferred.make<void>();
+      const cancelSignalled = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("acp-interrupted-before-dispatch");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: () => ({}),
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, options) =>
+                Deferred.await(holdPrompt).pipe(
+                  Effect.andThen(() => runtime.prompt(payload, options)),
+                ),
+              cancel: Deferred.succeed(cancelSignalled, undefined).pipe(
+                Effect.andThen(() => runtime.cancel),
+              ),
+            }),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const threadId = ThreadId.make("thread-acp-interrupted-before-dispatch");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-interrupted"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          messageText: "interrupted prompt",
+        }),
+      );
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId })
+        .pipe(Effect.forkScoped);
+      // The cancel reaches the runtime while the prompt is still parked
+      // ahead of registration, the race the stopped check must close.
+      yield* Deferred.await(cancelSignalled);
+      yield* Deferred.succeed(holdPrompt, undefined);
+      yield* Fiber.join(interrupt);
+      const firstTerminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.map((events) =>
+          Array.from(events, (event) => {
+            if (event.type !== "turn.terminal") throw new Error("Expected a turn terminal");
+            return event;
+          }),
+        ),
+      );
+      assert.equal(firstTerminal[0]?.status, "interrupted");
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 2,
+          messageText: "second prompt",
+        }),
+      );
+      const secondTerminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.map((events) =>
+          Array.from(events, (event) => {
+            if (event.type !== "turn.terminal") throw new Error("Expected a turn terminal");
+            return event;
+          }),
+        ),
+      );
+      assert.equal(secondTerminal[0]?.status, "completed");
+      const logged = yield* Queue.takeAll(protocolEvents);
+      const dispatchedPrompts = logged.filter(
+        (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+      );
+      assert.equal(dispatchedPrompts.length, 1);
+      assert.isTrue(
+        typeof dispatchedPrompts[0]?.payload === "string" &&
+          dispatchedPrompts[0].payload.includes("second prompt"),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["interrupt", "wait-for-prompt"] as const)(
+    "replaces the runtime when a registered prompt fails to cancel during start (%s)",
+    (cancelBehavior) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+        const cancelMeta: NonNullable<EffectAcpSchema.CancelNotification["_meta"]> = {
+          get circular() {
+            return cancelMeta;
+          },
+        };
+        const instanceId = ProviderInstanceId.make("acp-start-cancel-failed");
+        const threadId = ThreadId.make("thread-acp-start-cancel-failed");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              cancelBehavior,
+              cancelMeta,
+              environment: (ordinal) =>
+                ordinal === 1 ? { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "execute" } : {},
+              wrapRuntime: (runtime) => {
+                natives.push(runtime);
+                return runtime;
+              },
+            }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+          testHooks: { afterPromptFork: () => (natives.length === 1 ? Effect.never : Effect.void) },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-start-cancel-failed"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const cancelWhileIdle = yield* natives[0]!.cancel.pipe(Effect.flip);
+        assert.equal(cancelWhileIdle._tag, "AcpProtocolParseError");
+
+        const now = yield* DateTime.now;
+        const startTurn = (ordinal: number) =>
+          runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+        const start = yield* startTurn(1).pipe(Effect.forkScoped);
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call",
+          ),
+          Stream.runHead,
+        );
+        assert.lengthOf(natives, 1);
+        yield* Fiber.interrupt(start);
+        yield* startTurn(2);
+        assert.lengthOf(natives, 2);
+
+        const terminals = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.take(2),
+          Stream.runCollect,
+        );
+        assert.deepEqual(
+          terminals.map((event) => (event.type === "turn.terminal" ? event.status : undefined)),
+          ["interrupted", "completed"],
+        );
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["superseded", "failed"] as const)(
+    "releases a %s steer's dispatch wait",
+    (outcome) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const instanceId = ProviderInstanceId.make("acp-steer-superseded-wait");
+        const threadId = ThreadId.make("thread-acp-steer-superseded-wait");
+        const steerOneAttempted = yield* Deferred.make<void>();
+        const holdInitialPrompt = yield* Deferred.make<
+          EffectAcpSchema.PromptResponse,
+          EffectAcpErrors.AcpError
+        >();
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            steersWithPrompt: () => true,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                prompt: (payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    const text = payload.prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n");
+                    if (text.includes("steer one")) {
+                      // Park the first steer in the busy retry so the second
+                      // steer can supersede it. A refusal is not a registration,
+                      // so nothing settles the dispatched wait for this attempt.
+                      yield* Deferred.succeed(steerOneAttempted, undefined);
+                      return yield* EffectAcpErrors.AcpRequestError.internalError(
+                        outcome === "superseded"
+                          ? "Agent is already processing. Use steer() or followUp() to queue messages."
+                          : "Prompt failed before registration",
+                      );
+                    }
+                    if (promptOptions?.dispatched) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    if (text.includes("steer two")) {
+                      return { stopReason: "end_turn" as const };
+                    }
+                    return yield* Deferred.await(holdInitialPrompt);
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-steer-superseded-wait"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            messageText: "Start turn 1",
+          }),
+        );
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        });
+        const steer = (ordinal: number, text: string) =>
+          runtime.steerTurn({
+            threadId,
+            runId: RunId.make(`run:${threadId}:${ordinal}`),
+            providerThread,
+            providerTurnId,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`steer-${ordinal}`),
+              text,
+              attachments: [],
+            },
+            appContext: [],
+          });
+        const firstSteer = yield* steer(1, "steer one").pipe(Effect.forkScoped);
+        yield* Deferred.await(steerOneAttempted);
+        if (outcome === "superseded") {
+          yield* steer(2, "steer two");
+          yield* TestClock.adjust("2 seconds");
+        }
+        yield* Fiber.join(firstSteer);
+        const terminal = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          ),
+        );
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Expected a turn terminal");
+        assert.equal(terminal.status, outcome === "superseded" ? "completed" : "failed");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
