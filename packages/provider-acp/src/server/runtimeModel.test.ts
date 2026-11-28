@@ -1723,6 +1723,11 @@ describe("extractMcpToolCallIdentity", () => {
           'cd /tmp && env ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
         expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
       },
+      {
+        name: "here-string before fallback call",
+        command: 'cat <<< ignored\n"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
     ] as const;
 
     for (const testCase of cases) {

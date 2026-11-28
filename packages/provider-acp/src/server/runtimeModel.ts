@@ -1263,8 +1263,12 @@ function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>>
       }
       continue;
     }
-    if (char === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+    if (char === "<" && command[index + 1] === "<") {
       pushWord();
+      if (command[index + 2] === "<") {
+        index += 3;
+        continue;
+      }
       index += 2;
       const stripTabs = command[index] === "-";
       if (stripTabs) index += 1;
