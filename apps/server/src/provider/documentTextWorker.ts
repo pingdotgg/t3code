@@ -113,6 +113,7 @@ interface XmlNode {
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   wordMergeCovered?: boolean;
+  wordHorizontalMerge?: string;
   wordStyleAttrs?: Record<string, string>;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -321,7 +322,7 @@ function xml(
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
           return (extension === ".epub" &&
             (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
-            ((odf || wordStyles !== undefined) && local === "xmlns")
+            ((odf || extension === ".docx") && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -417,6 +418,27 @@ function xml(
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "hMerge" && parent.name === "tcPr") {
+      const scope = [...stack, node];
+      if (WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, scope) ?? "")) {
+        const value = Object.entries(tag.attributes).find(
+          ([name]) =>
+            name.endsWith(":val") &&
+            WORDPROCESSINGML_NAMESPACES.has(namespaceOf(name, scope) ?? ""),
+        )?.[1];
+        parent.wordHorizontalMerge ??= value?.trim() ?? "continue";
+      }
+    }
+    if (
+      extension === ".docx" &&
+      node.wordHorizontalMerge !== undefined &&
+      parent.name === "tc" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      parent.wordHorizontalMerge ??= node.wordHorizontalMerge;
+      const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+      if (table) wordMergeTables.add(table);
+    }
     if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
       const table = stack.findLast((ancestor) => ancestor.name === "tbl");
       if (table) wordMergeTables.add(table);
@@ -960,6 +982,7 @@ function markWordMergeContinuations(table: XmlNode) {
   // Empty cells and rows still participate in the Word table grid.
   for (const row of all(table, "tr")) {
     let column = wordSkippedColumns(row);
+    let horizontalMerge = false;
     for (const cell of all(row, "tc")) {
       const properties = childNamed(cell, "tcPr");
       const span = wordColumnSpan(properties);
@@ -969,10 +992,24 @@ function markWordMergeContinuations(table: XmlNode) {
         if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
         if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
       }
+      const value = cell.wordHorizontalMerge;
+      if (value === "continue" && horizontalMerge) {
+        cell.wordMergeCovered = true;
+      } else {
+        horizontalMerge = value === "restart";
+      }
       column += span;
     }
     previous.clear();
     [previous, current] = [current, previous];
+  }
+}
+
+function* wordNoteParagraphs(node: XmlNode): Generator<XmlNode, void> {
+  for (const child of children(node)) {
+    if (child.wordMergeCovered) continue;
+    if (child.name === "p") yield child;
+    else yield* wordNoteParagraphs(child);
   }
 }
 
@@ -1654,7 +1691,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         if (!notePath || !has(notePath)) continue;
         const bodies = new Map<string, string>();
         for (const note of all(read(notePath, styleRunHidden), kind)) {
-          const body = Array.from(all(note, "p"), (paragraph) =>
+          const body = Array.from(wordNoteParagraphs(note), (paragraph) =>
             [...text(paragraph)].filter((part) => typeof part === "string").join(""),
           )
             .join("\n")
