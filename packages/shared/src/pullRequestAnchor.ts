@@ -62,6 +62,13 @@ function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
   }
 }
 
+// Azure DevOps names a pull request's tab in the `_a` query, not the path. Its provider states
+// no commit list, so `_a=commits` has nothing to open.
+function azureDevOpsQueryTab({ pathname, searchParams }: URL): PullRequestAnchor | null {
+  if (!/\/pullrequest\/\d+\/?$/i.test(pathname)) return null;
+  return searchParams.get("_a")?.toLowerCase() === "files" ? { kind: "code" } : null;
+}
+
 const isLine = (line: number) => Number.isSafeInteger(line) && line >= 1;
 
 function gitLabLine(
@@ -118,7 +125,7 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
   } catch {
     return null;
   }
-  const fallback = pullRequestPathTab(parsed.pathname);
+  const fallback = pullRequestPathTab(parsed.pathname) ?? azureDevOpsQueryTab(parsed);
   const anchor = pullRequestUrlHash(url);
   const gitLab = gitLabDiffAnchor(
     anchor,
