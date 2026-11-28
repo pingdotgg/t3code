@@ -1040,6 +1040,32 @@ describe("rendered Markdown select all", () => {
   });
 });
 
+describe("table preview select all", () => {
+  it("selects only the table in a CSV preview", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    state.file = {
+      relativePath: "cities.csv",
+      contents: "name,city\nAda,London\nBob,Paris\n",
+      byteLength: 31,
+      truncated: false,
+    };
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {sized(filePreview("cities.csv"))}
+      </>,
+    );
+    await userEvent.click(screen.getByText("London"));
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("London");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
+  });
+});
+
 describe("rendered Markdown relative images", () => {
   it.each([
     ["2026-11-23T14:05/README.md", "/workspace/2026-11-23T14:05/diagram.png"],
