@@ -10894,6 +10894,7 @@
   "d6845667c3278af2": "Nicht authentifiziert",
   "7813f10f3f534004": "Status unbekannt",
   "4f3c3b40b25cac07": "Sichtbarkeit des Versionskontrollkontos umschalten",
+  "fc3bfdc366686e4b": "Sichtbarkeit des Versionskontrollkontos umschalten: {account}",
   "16ffdd2f02752973": "Details zu {label} umschalten",
   "b98fef2c26258e7b": "{label} beim Hinzufügen oder Veröffentlichen eines Projekts anbieten",
   "516da46e1bc929e2": "Server-Umgebung",
