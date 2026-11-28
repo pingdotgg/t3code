@@ -217,10 +217,16 @@ function orderByImports(
 
 // `a.logic.test.ts` covers `a.logic.ts` while `a.browser.test.ts` covers `a.ts`, so the longest
 // dotted prefix that names a source file wins.
-function testedSourcePosition(path: string, sourcePositions: ReadonlyMap<string, number>): number {
+// A source beside the test wins over one of the same name in another folder.
+function testedSourcePosition(
+  path: string,
+  sourcePositions: ReadonlyMap<string, number>,
+  pathPositions: ReadonlyMap<string, number>,
+): number {
+  const directory = path.slice(0, path.lastIndexOf("/") + 1);
   let name = (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "");
   while (true) {
-    const position = sourcePositions.get(name);
+    const position = pathPositions.get(directory + name) ?? sourcePositions.get(name);
     if (position !== undefined) return position;
     const dot = name.lastIndexOf(".");
     if (dot <= 0) return Number.MAX_SAFE_INTEGER;
@@ -264,16 +270,18 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
   const orderedSource = orderByImports(sourcePaths, imports);
 
   const sourcePositions = new Map<string, number>();
+  const pathPositions = new Map<string, number>();
   orderedSource.forEach((path, index) => {
     const base = baseName(path);
     if (!sourcePositions.has(base)) sourcePositions.set(base, index);
+    pathPositions.set(stripExtension(path), index);
   });
   const orderedTests = [...byPath.keys()]
     .filter((path) => tiers.get(path) === "test")
     .sort((left, right) => {
       return (
-        testedSourcePosition(left, sourcePositions) -
-          testedSourcePosition(right, sourcePositions) || left.localeCompare(right)
+        testedSourcePosition(left, sourcePositions, pathPositions) -
+          testedSourcePosition(right, sourcePositions, pathPositions) || left.localeCompare(right)
       );
     });
 
