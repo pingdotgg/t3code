@@ -84,7 +84,7 @@ test(
     await browser.keyboard.press("Enter");
     const reply = browser.locator("html[data-scenario-create-reply=ready]");
     await reply.waitFor();
-    t3.trackProject?.((await reply.getAttribute("data-scenario-create-project-id"))!);
+    t3.trackProject((await reply.getAttribute("data-scenario-create-project-id"))!);
     await browser.keyboard.press("Escape");
     await palette.waitFor({ state: "hidden" });
     await browser.keyboard.press("Control+k");
