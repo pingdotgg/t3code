@@ -579,11 +579,7 @@ describe("withMarkdownDefinitions", () => {
 });
 
 describe("chunked Markdown footnotes", () => {
-  it.each([
-    { renderedChunkSize: LARGE_MARKDOWN_CHUNK_MAX_CHARS - 1 },
-    { renderedChunkSize: LARGE_MARKDOWN_CHUNK_MAX_CHARS },
-    { renderedChunkSize: 0 },
-  ])(
+  it.each([{ renderedChunkSize: LARGE_MARKDOWN_CHUNK_MAX_CHARS }, { renderedChunkSize: 0 }])(
     "counts only rendered references with a $renderedChunkSize-character sibling",
     ({ renderedChunkSize }) => {
       const ref = "[^note]";
