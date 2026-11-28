@@ -4,18 +4,24 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
+import { GROK_USAGE_URL } from "./usageLimits.ts";
 import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -278,5 +284,139 @@ it.layer(layerTest)("GrokDriver", (it) => {
       });
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
+});
+
+const layerUsageTest = TestProviderHost.layer().pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
+);
+
+it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "re-reads usage limits on the refresh interval and starts the CLI only to renew a rejected key",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+        const launches = path.join(home, "launches");
+        yield* fs.writeFileString(launches, "");
+        yield* fs.writeFileString(
+          path.join(home, "auth.json"),
+          JSON.stringify({
+            "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+              key: "session-token",
+              auth_mode: "oidc",
+            },
+          }),
+        );
+        const agentPath = yield* path.fromFileUrl(
+          new URL("./testFixtures/grok-model-selection-agent.mjs", import.meta.url),
+        );
+        const binaryPath = writeFakeCli({
+          directory: home,
+          name: "grok",
+          source: [
+            'import { appendFileSync } from "node:fs";',
+            'import { pathToFileURL } from "node:url";',
+            `appendFileSync(${JSON.stringify(launches)}, ".");`,
+            'if (process.argv[2] === "--version") {',
+            '  process.stdout.write("grok 1.0.13\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] === "models") {',
+            '  process.stdout.write("You are logged in with grok.com.\\n\\nAvailable models:\\n  * grok-4.6 (default)\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] !== "agent") process.exit(1);',
+            `await import(pathToFileURL(${JSON.stringify(agentPath)}).href);`,
+          ].join("\n"),
+        });
+        // Each billing request takes the next answer: a used percent, or 401 for a rejected key.
+        const billing: Array<number | 401> = [97, 9, 401, 401, 401, 12, 401, 30, 401, 40, 401, 50];
+        const served = yield* Queue.unbounded<void>();
+        const httpClient = HttpClient.make((request) => {
+          // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
+          if (request.url !== GROK_USAGE_URL) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+            );
+          }
+          const answer = billing.shift();
+          return Queue.offer(served, undefined).pipe(
+            Effect.as(
+              HttpClientResponse.fromWeb(
+                request,
+                answer === 401
+                  ? Response.json({ error: "unauthorized" }, { status: 401 })
+                  : Response.json({ config: { creditUsagePercent: answer } }),
+              ),
+            ),
+          );
+        });
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-usage"),
+          displayName: "Grok test",
+          enabled: true,
+          environment: [
+            { name: "GROK_HOME", value: home, sensitive: false },
+            { name: "XAI_API_KEY", value: "", sensitive: false },
+          ],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        const launchCount = fs.readFileString(launches).pipe(Effect.map((text) => text.length));
+        // Waits for the billing requests a step makes; a full check reads billing after its CLI
+        // runs, so the launch count is settled once its request arrives.
+        const readingAfter = (adjust: Effect.Effect<void>, requests: number, percent: number) =>
+          Effect.gen(function* () {
+            const reading = yield* instance.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) =>
+                  snapshot.status === "ready" &&
+                  snapshot.usageLimits?.windows[0]?.usedPercent === percent,
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* adjust;
+            for (let request = 0; request < requests; request++) yield* Queue.take(served);
+            yield* Fiber.join(reading);
+            return yield* launchCount;
+          });
+        const nextInterval = TestClock.adjust("5 minutes");
+
+        const started = yield* readingAfter(Effect.void, 1, 97);
+        expect(yield* readingAfter(nextInterval, 1, 9)).toBe(started);
+
+        // A rejected key runs the full check, which starts the CLI to renew it; here it stays rejected.
+        const renewed = yield* readingAfter(nextInterval, 2, 9);
+        expect(renewed).toBeGreaterThan(started);
+        // While reads keep failing, the CLI is not started again.
+        expect(yield* readingAfter(nextInterval, 1, 9)).toBe(renewed);
+        expect(yield* readingAfter(nextInterval, 1, 12)).toBe(renewed);
+
+        // Once a read succeeds, the next rejection runs the full check again, and so does the
+        // rejection after a full check that read successfully.
+        const renewedAgain = yield* readingAfter(nextInterval, 2, 30);
+        expect(renewedAgain).toBeGreaterThan(renewed);
+        const renewedThird = yield* readingAfter(nextInterval, 2, 40);
+        expect(renewedThird).toBeGreaterThan(renewedAgain);
+
+        // A manual refresh that meets the first rejection renews the key the same way.
+        const refreshUsage = Effect.orDie(instance.snapshot.refreshUsage ?? Effect.void);
+        expect(yield* readingAfter(refreshUsage, 2, 50)).toBeGreaterThan(renewedThird);
+        expect(billing).toEqual([]);
+      }),
   );
 });

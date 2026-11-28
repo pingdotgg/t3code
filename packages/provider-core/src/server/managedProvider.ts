@@ -85,6 +85,11 @@ function unpackUsageLimitsProbe(result: UsageLimitsProbeResult) {
   return { usageLimits: result, auth: undefined };
 }
 
+type UsageProbeUpdate = readonly [
+  { readonly accepted: boolean; readonly next: ServerProvider | null },
+  ProviderSnapshotState,
+];
+
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
@@ -97,6 +102,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkUsageLimits?: Effect.Effect<UsageLimitsProbeResult>;
   /** While usage reads probeFailed, the interval reruns only `checkUsageLimits`, not the full check. */
   readonly recoverUsageOnInterval?: boolean;
+  /**
+   * Re-read usage with `checkUsageLimits` on every interval, not only after a failed probe.
+   * A failed read after a successful one also runs the full check.
+   */
+  readonly pollUsageLimits?: boolean;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -116,6 +126,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const refreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
+  const lastUsageReadFailed = yield* Ref.make(false);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -225,6 +236,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const probedSnapshot = yield* input.checkProvider.pipe(
       Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
     );
+    if (probedSnapshot.usageLimits !== undefined) {
+      yield* Ref.set(
+        lastUsageReadFailed,
+        probedSnapshot.usageLimits.unavailable?.reason === "probeFailed",
+      );
+    }
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -285,7 +302,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
-        ] as const;
+        ];
       },
     );
     yield* Ref.set(settingsRef, nextSettings);
@@ -355,21 +372,23 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     checkUsageLimits: Effect.Effect<UsageLimitsProbeResult>,
   ) {
     const { snapshot: before } = yield* Ref.get(snapshotStateRef);
-    if (!canRefreshUsage(before)) return;
+    if (!canRefreshUsage(before)) return false;
     const { usageLimits: probed, auth: probedAuth } = unpackUsageLimitsProbe(
       yield* checkUsageLimits,
     );
-    if (probed === undefined) return;
-    const next = yield* Ref.modify(snapshotStateRef, (state) => {
+    if (probed === undefined) return false;
+    const failed = probed.unavailable?.reason === "probeFailed";
+    const { accepted, next } = yield* Ref.modify(snapshotStateRef, (state): UsageProbeUpdate => {
+      const rejected = { accepted: false, next: null };
       if (!state.snapshot.enabled || state.snapshot.auth.status === "unauthenticated") {
-        return [null, state] as const;
+        return [rejected, state];
       }
       const differs = (a: string | undefined, b: string | undefined) =>
         a !== undefined && b !== undefined && a !== b;
       const concurrentSwitch =
         differs(state.snapshot.auth.email?.toLowerCase(), before.auth.email?.toLowerCase()) ||
         differs(state.snapshot.auth.workspaceId, before.auth.workspaceId);
-      if (concurrentSwitch) return [null, state] as const;
+      if (concurrentSwitch) return [rejected, state];
       const probedSwitched =
         probedAuth !== undefined &&
         (differs(probedAuth.email?.toLowerCase(), state.snapshot.auth.email?.toLowerCase()) ||
@@ -415,15 +434,22 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ? undefined
         : (probedAuth?.label ?? state.usageAuthLabel);
       if (Equal.equals(state.snapshot, snapshot) && usageAuthLabel === state.usageAuthLabel) {
-        return [null, state] as const;
+        return [{ accepted: true, next: null }, state];
       }
       // Enrichment still running for the previous account must not republish its auth.
       const enrichmentGeneration = state.enrichmentGeneration + (probedSwitched ? 1 : 0);
-      return [snapshot, { ...state, snapshot, usageAuthLabel, enrichmentGeneration }] as const;
+      return [
+        { accepted: true, next: snapshot },
+        { ...state, snapshot, usageAuthLabel, enrichmentGeneration },
+      ];
     });
     if (next !== null) {
       yield* PubSub.publish(changesPubSub, next);
     }
+    // A result dropped for a concurrent account change says nothing about the current account.
+    if (!accepted) return false;
+    const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
+    return failed && !failedBefore;
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
@@ -440,9 +466,26 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             ? Effect.void
             : restore(
                 checkUsageLimits
-                  ? usageRefreshSemaphore.withPermits(1)(
-                      release.pipe(Effect.andThen(applyUsageLimitsProbe(checkUsageLimits))),
-                    )
+                  ? usageRefreshSemaphore
+                      .withPermits(1)(
+                        release.pipe(Effect.andThen(applyUsageLimitsProbe(checkUsageLimits))),
+                      )
+                      .pipe(
+                        // Reads that just started failing may mean an expired session, which
+                        // only the full check renews, as on the interval.
+                        Effect.flatMap((startedFailing) =>
+                          startedFailing && input.pollUsageLimits === true
+                            ? refreshSemaphore.withPermits(1)(
+                                input.getSettings.pipe(
+                                  Effect.flatMap((settings) =>
+                                    applySnapshotBase(settings, { forceRefresh: true }),
+                                  ),
+                                  Effect.asVoid,
+                                ),
+                              )
+                            : Effect.void,
+                        ),
+                      )
                   : refreshSemaphore.withPermits(1)(
                       release.pipe(
                         Effect.andThen(input.invalidateUsageCache ?? Effect.void),
@@ -458,12 +501,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   });
 
-  const needsUsageRecovery = (snapshot: ServerProvider) =>
-    input.recoverUsageOnInterval === true &&
+  const needsUsageCheck = (snapshot: ServerProvider) =>
+    input.checkUsageLimits !== undefined &&
     snapshot.installed &&
     snapshot.status === "ready" &&
     snapshot.auth.status === "authenticated" &&
-    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
+    (input.pollUsageLimits === true ||
+      (input.recoverUsageOnInterval === true &&
+        snapshot.usageLimits?.unavailable?.reason === "probeFailed"));
 
   const needsProviderRefresh = (snapshot: ServerProvider) =>
     input.refreshOnInterval !== false &&
@@ -474,13 +519,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    if (!needsUsageCheck(snapshot) || !input.checkUsageLimits) {
       if (needsProviderRefresh(snapshot)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
       }
       return;
     }
-    yield* applyUsageLimitsProbe(input.checkUsageLimits);
+    const startedFailing = yield* applyUsageLimitsProbe(input.checkUsageLimits);
+    // A failed read can mean the stored session expired or was revoked, which only the full
+    // check can renew or detect. Run it when reads start failing, not on every interval. The
+    // recheck a deferred failure scheduled (deferFailure is false then) always runs it.
+    if (input.pollUsageLimits === true && (!deferFailure || startedFailing)) {
+      yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
+    }
   });
 
   const shouldRefreshOnInterval = Effect.gen(function* () {
@@ -489,7 +540,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
+      (!needsUsageCheck(state.snapshot) && !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }
@@ -534,7 +585,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    Effect.all([getRefreshInterval, Ref.getAndSet(recheckPendingRef, false)]).pipe(
+    Effect.all([getRefreshInterval, Ref.get(recheckPendingRef)]).pipe(
       Effect.flatMap(([configuredInterval, recheckPending]) => {
         const refreshInterval = recheckPending ? FAILED_CHECK_RECHECK_DELAY : configuredInterval;
         // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
@@ -551,7 +602,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               ? shouldRefreshOnInterval.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh
-                      ? refreshSemaphore.withPermits(1)(refreshOnInterval(!recheckPending))
+                      ? // A pending recheck survives a tick skipped for lack of demand.
+                        Ref.getAndSet(recheckPendingRef, false).pipe(
+                          Effect.flatMap((pending) =>
+                            refreshSemaphore.withPermits(1)(refreshOnInterval(!pending)),
+                          ),
+                        )
                       : Effect.void,
                   ),
                 )

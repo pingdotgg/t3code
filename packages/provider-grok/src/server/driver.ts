@@ -269,6 +269,10 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
+      // Usage is one HTTP request, so a ready instance still re-reads it on the interval. The key
+      // it sends expires after a few hours and only the CLI renews it, which the full check that
+      // follows a failed read does.
+      pollUsageLimits: true,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
