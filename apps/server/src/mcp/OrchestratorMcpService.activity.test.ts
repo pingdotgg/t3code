@@ -468,6 +468,164 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("readThread includes completed user input answers in activity text", async () => {
+  const requestId = "request-mcp-user-input";
+  const questions = [
+    {
+      id: "choice",
+      header: "Choice",
+      question: "Choose a color",
+      options: [{ label: "Blue", description: "Use blue" }],
+    },
+  ];
+  const attachment = {
+    type: "file",
+    id: "attachment-mcp-user-input",
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 12,
+    source: { _tag: "pasted-text" },
+  };
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const pendingItemId = TurnItemId.make("turn-item-mcp-user-input-pending");
+  const completedItemId = TurnItemId.make("turn-item-mcp-user-input-completed");
+  const emptyAttachmentsItemId = TurnItemId.make("turn-item-mcp-user-input-empty-attachments");
+  const item = (itemId: TurnItemId, questionAnswer?: unknown) => ({
+    position: itemId === pendingItemId ? 0 : itemId === completedItemId ? 1 : 2,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: itemId,
+    item: {
+      type: "user_input_request",
+      runId: activeRunId,
+      status: questionAnswer === undefined ? "waiting" : "completed",
+      title: "User input",
+      requestId,
+      questions,
+      ...(questionAnswer === undefined ? {} : { questionAnswer }),
+      updatedAt: now,
+    },
+  });
+  const rows = [
+    item(pendingItemId),
+    item(completedItemId, {
+      requestId,
+      answers: { choice: "blue" },
+      attachmentsByQuestionId: { choice: [attachment] },
+      questionTextById: { choice: "Choose a color" },
+    }),
+    item(emptyAttachmentsItemId, {
+      requestId,
+      answers: { choice: "red" },
+      attachmentsByQuestionId: {},
+    }),
+  ];
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, options) => {
+            const filtered = rows.filter(
+              (row) =>
+                (options.itemId === undefined || row.sourceItemId === options.itemId) &&
+                row.position > (options.afterPosition ?? -1) &&
+                row.position < (options.beforePosition ?? Number.POSITIVE_INFINITY),
+            );
+            return Effect.succeed({
+              items: filtered.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: false,
+              hasEarlier: false,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const pending = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: pendingItemId,
+      maxCharsPerItem: 5_000,
+    });
+    expect(pending.items[0]?.text).toBe(JSON.stringify(questions, null, 2));
+
+    const completed = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: completedItemId,
+      maxCharsPerItem: 5_000,
+    });
+    const answer = JSON.parse(completed.items[0]?.text ?? "{}");
+    // Answers lead so a truncated first page still shows them.
+    expect(Object.keys(answer)[0]).toBe("answers");
+    expect(answer).toEqual({
+      answers: { choice: "blue" },
+      attachmentsByQuestionId: {
+        choice: [
+          {
+            type: "file",
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+          },
+        ],
+      },
+      questions,
+    });
+
+    const emptyAttachments = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: emptyAttachmentsItemId,
+      maxCharsPerItem: 5_000,
+    });
+    expect(JSON.parse(emptyAttachments.items[0]?.text ?? "{}")).toEqual({
+      answers: { choice: "red" },
+      questions,
+    });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
 it("readThread does not attribute the /compact T3 Code sends before a stale send to the user", async () => {
   const compactRunId = RunId.make("run-mcp-compact-on-return");
   const sendRunId = RunId.make("run-mcp-held-send");

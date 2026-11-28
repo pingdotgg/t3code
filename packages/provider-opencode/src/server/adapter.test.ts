@@ -231,6 +231,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       compatibility: () => Effect.undefined,
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
+    Effect.provide(NodeServices.layer),
   );
   const runtime = yield* adapter.openSession({
     threadId,
@@ -728,6 +729,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async () => ({
             data: {
               id: "root",
+              directory: "/workspace",
               permission: openCodePermissionRules(fullAccess),
               time: { created: 1, updated: 1 },
             },
@@ -763,6 +765,66 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect("prompts a session bound to the thread's cwd after a worktree handoff", () =>
+    Effect.gen(function* () {
+      // OpenCode 1.x runs a session in the directory it was created in and publishes its
+      // events on that directory's /event stream, not the one the adapter subscribed to.
+      const directories = new Map<string, string>();
+      const prompted: string[] = [];
+      let created = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("worktree-handoff", "root", {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async () => {
+            // The first session predates the handoff and lives in the repository root.
+            const id = created++ === 0 ? "root" : `ses_worktree_${created}`;
+            directories.set(id, id === "root" ? "/repo" : "/workspace");
+            return {
+              data: { id, directory: directories.get(id), time: { created: 1, updated: 1 } },
+            };
+          },
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: {
+              id: sessionID,
+              directory: directories.get(sessionID),
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          update: async (input: { sessionID: string }) => ({
+            data: { id: input.sessionID, time: { created: 1, updated: 2 } },
+          }),
+          promptAsync: async ({ sessionID }: { sessionID: string }) => {
+            prompted.push(sessionID);
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+        path: { get: async () => ({ data: { directory: "/workspace" } }) },
+        client: {
+          post: async (input: {
+            url: string;
+            body: { sessionID: string; destination: { directory: string } };
+          }) => {
+            assert.equal(input.url, "/experimental/control-plane/move-session");
+            directories.set(input.body.sessionID, input.body.destination.directory);
+            return { data: undefined };
+          },
+        },
+      });
+      assert.equal(directories.get("root"), "/repo");
+
+      const resumed = yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: harness.policy,
+      });
+      yield* harness.startTurn("continue in the worktree", resumed);
+
+      assert.equal(prompted.length, 1);
+      assert.equal(directories.get(prompted[0]!), harness.policy.cwd);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("applies a changed runtime policy to existing subagent sessions", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -788,6 +850,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async ({ sessionID }: { sessionID: string }) => ({
             data: {
               id: sessionID,
+              directory: "/workspace",
               ...(sessionID === child ? { parentID: root } : {}),
               permission: nativePermissions.get(sessionID),
               time: { created: 1, updated: 1 },
@@ -1125,7 +1188,9 @@ describe("OpenCodeAdapterV2", () => {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({
+            data: { id: "root", directory: "/workspace", time: { created: 1, updated: 1 } },
+          }),
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };
@@ -2410,7 +2475,9 @@ describe("OpenCodeAdapterV2", () => {
                 create: async () => ({
                   data: { id: "ses_replacement", time: { created: 1, updated: 1 } },
                 }),
-                get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+                get: async () => ({
+                  data: { id: root, directory: "/workspace", time: { created: 1, updated: 1 } },
+                }),
                 messages: async () => ({
                   data: [
                     {
@@ -3850,6 +3917,7 @@ describe("OpenCodeAdapterV2", () => {
           resolveAttachmentPath: () => null,
           compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
+        Effect.provide(NodeServices.layer),
       );
       const threadId = ThreadId.make("thread-opencode-admission-race");
       const providerSessionId = ProviderSessionId.make("session-opencode-admission-race");
@@ -4420,13 +4488,25 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  it.effect("interrupts an initial prompt while its SDK request is pending", () =>
+  it.effect.each(["preparing", "submitted"])("stops a pending prompt (%s)", (stage) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const promptStarted = promiseGate<void>();
       const abortCalled = promiseGate<void>();
       let abortCalls = 0;
+      let promptCalls = 0;
       const client = {
+        command: {
+          list: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            promptStarted.resolve();
+            await new Promise<void>((resolve) => {
+              const signal = options?.signal;
+              if (signal?.aborted) resolve();
+              else signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            return { data: [] };
+          },
+        },
         event: {
           subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
             options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
@@ -4441,6 +4521,7 @@ describe("OpenCodeAdapterV2", () => {
             data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
           }),
           promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            promptCalls += 1;
             promptStarted.resolve();
             await new Promise<void>((_resolve, reject) => {
               const signal = options?.signal;
@@ -4455,7 +4536,10 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => ({
             data: { "native-opencode-initial-stop": { type: "idle" as const } },
           }),
-          messages: async () => ({ data: [] }),
+          message: async () => ({
+            response: { status: 404 },
+            error: { name: "NotFoundError" },
+          }),
           children: async () => ({ data: [] }),
           abort: async () => {
             abortCalls += 1;
@@ -4480,6 +4564,7 @@ describe("OpenCodeAdapterV2", () => {
           resolveAttachmentPath: () => null,
           compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
+        Effect.provide(NodeServices.layer),
       );
       const threadId = ThreadId.make("thread-opencode-initial-stop");
       const providerSessionId = ProviderSessionId.make("session-opencode-initial-stop");
@@ -4543,7 +4628,7 @@ describe("OpenCodeAdapterV2", () => {
             createdBy: "user",
             creationSource: "web",
             messageId: MessageId.make("message-opencode-initial-stop"),
-            text: "hello",
+            text: stage === "preparing" ? "/hello" : "hello",
             attachments: [],
           },
           modelSelection,
@@ -4573,8 +4658,14 @@ describe("OpenCodeAdapterV2", () => {
       const events = Array.from(yield* Fiber.join(terminalEvents));
       const terminals = events.filter((event) => event.type === "turn.terminal");
       assert.equal(abortCalls, 1);
+      assert.equal(promptCalls, stage === "preparing" ? 0 : 1);
       assert.lengthOf(terminals, 1);
       assert.equal(terminals[0]?.status, "interrupted");
+      assert.equal(terminals[0]?.promptDropped, stage === "preparing" ? true : undefined);
+      const finalTurn = events
+        .filter((event) => event.type === "provider_turn.updated")
+        .findLast((event) => event.providerTurn.status === "interrupted");
+      assert.equal(finalTurn?.providerTurn.promptDropped, stage === "preparing" ? true : undefined);
       assert.isNull(terminals[0]?.failure ?? null);
       assert.isFalse(
         events.some(
@@ -5026,6 +5117,7 @@ describe("OpenCodeAdapterV2", () => {
         Layer.mergeAll(
           IdAllocator.layer,
           McpProviderSessions.layer,
+          NodeServices.layer,
           TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),

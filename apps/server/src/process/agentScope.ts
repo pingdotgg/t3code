@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import {
+  type AgentControlGroups,
   AgentScope,
   agentScopeCommand,
   type AgentScopeShape,
@@ -117,6 +118,11 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcess.Platform, platform),
     );
+
+  // Termux and similar hosts have no /bin/sh, only an `sh` on PATH.
+  const shell = (yield* fileSystem.exists("/bin/sh").pipe(Effect.orElseSucceed(() => false)))
+    ? "/bin/sh"
+    : ((yield* resolve("sh", hostEnvironment)) ?? "/bin/sh");
 
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);
@@ -416,6 +422,43 @@ export const make = Effect.gen(function* () {
     return killed._tag === "Some" && killed.value.code === 0;
   });
 
+  let sliceControlGroup: string | undefined;
+  const controlGroups: AgentScopeShape["controlGroups"] = Effect.gen(function* () {
+    const scope = yield* systemd;
+    if (scope === undefined) return undefined;
+    if (sliceControlGroup === undefined) {
+      const shown = yield* run(scope.systemctl, [
+        "--user",
+        "show",
+        AGENT_SLICE,
+        "--property=ControlGroup",
+      ]);
+      const controlGroup =
+        shown._tag === "Some" ? parseKeyValues(shown.value.stdout).get("ControlGroup") : undefined;
+      // Empty until the first agent starts the slice.
+      if (controlGroup === undefined || controlGroup.length === 0) return undefined;
+      sliceControlGroup = controlGroup;
+    }
+    const ownedControlGroup = path.join(sliceControlGroup, ownedSlice);
+    const entries = yield* fileSystem
+      .readDirectory(path.join("/sys/fs/cgroup", ownedControlGroup))
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const threadByUnit = new Map(
+      [...scopeByThread].flatMap(([threadId, tracked]) =>
+        tracked.shared ? [] : [[tracked.unit, threadId] as const],
+      ),
+    );
+    return {
+      slice: sliceControlGroup,
+      scopes: entries.flatMap((unit) => {
+        const agent = /^t3code-(.+)-[0-9a-f]{8}\.scope$/.exec(unit)?.[1];
+        return agent === undefined
+          ? []
+          : [{ path: path.join(ownedControlGroup, unit), threadId: threadByUnit.get(unit), agent }];
+      }),
+    } satisfies AgentControlGroups;
+  });
+
   const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
     if (!scopeByThread.has(threadId)) return;
     const scope = yield* systemd;
@@ -435,7 +478,7 @@ export const make = Effect.gen(function* () {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved, args, shell });
       yield* scope.applyMemoryLimits;
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
@@ -465,13 +508,14 @@ export const make = Effect.gen(function* () {
         ? resolved
         : `${process.cwd()}${path.sep}${resolved}`;
       return {
-        ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
+        ...agentScopeCommand({ command: executable, args, scope: systemdScope, shell }),
         unit,
       };
     }),
     oomKilled,
     stop,
     kill,
+    controlGroups,
     clear,
   } satisfies AgentScopeShape;
 });

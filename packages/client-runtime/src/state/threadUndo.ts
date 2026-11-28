@@ -81,10 +81,22 @@ export function planThreadUndo(
 
 /**
  * True when a step cancelled a change that was still waiting to sync. The server never applied
- * it, so the rest of the plan has nothing to restore and would fail against the offline host.
+ * it, so the rest of the plan has nothing to restore; see `restoresAfterDeviceCancel`.
  */
 export function cancelledOnDevice(value: unknown): boolean {
   return typeof value === "object" && value !== null && "cancelledOnDevice" in value;
+}
+
+/**
+ * Whether a step still runs after the change it undoes was cancelled on the device. Only a
+ * snooze can: the cancelled settle replaced a snooze queued on the device, which went with it.
+ * `current` is the thread as shown now; a snooze it still holds needs nothing.
+ */
+export function restoresAfterDeviceCancel(
+  step: ThreadUndoStep,
+  current: { readonly snoozedUntil?: string | null } | null | undefined,
+): boolean {
+  return step.action === "snooze" && current?.snoozedUntil !== step.snoozedUntil;
 }
 
 export async function executeThreadUndo<Result>(

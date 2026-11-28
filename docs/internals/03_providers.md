@@ -54,6 +54,9 @@ and permission claims match what the protocol can enforce.
   awaited request with one meaning, never a timer. Clear it the moment the provider can be doing
   something else. Clients show it until the run's first output. A session that serves several
   threads names the one it describes with `startupPhaseThreadId`.
+  Before a turn opens, even before the server has the send, clients show "Starting" only when the
+  session is not live or reports a phase. A live session with no process reports `launch` while no
+  turn is open; an open turn, even one being stopped, would read it as starting.
   Nothing an adapter emits during `openSession` is visible, because the session is not attached yet.
   Turn start republishes `runtime.providerSession`, so a phase that spans it must be on that record.
 - **Reject conversation rollback before touching files** when the provider cannot roll back its

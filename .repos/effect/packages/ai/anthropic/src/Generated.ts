@@ -14560,9 +14560,9 @@ export const BetaStopReason = Schema.Literals([
 export type BetaRefusalStopDetails = {
   readonly "category": BetaRefusalCategory | null
   readonly "explanation": string | null
-  readonly "fallback_credit_token": string | null
-  readonly "fallback_has_prefill_claim": boolean | null
-  readonly "recommended_model": string | null
+  readonly "fallback_credit_token"?: string | null
+  readonly "fallback_has_prefill_claim"?: boolean | null
+  readonly "recommended_model"?: string | null
   readonly "type": "refusal"
 }
 
@@ -14578,24 +14578,30 @@ export const BetaRefusalStopDetails = Schema.Struct({
       "Human-readable explanation of the refusal.\n\nThis text is not guaranteed to be stable. `null` when no explanation is available for the category.",
     "default": null
   }),
-  "fallback_credit_token": Schema.Union([Schema.String, Schema.Null]).annotate({
-    "title": "Fallback Credit Token",
-    "description":
-      "Opaque code that refunds the cache-miss cost when retrying this refused\nrequest on the fallback model. Pass it as `fallback_credit_token` on the\nretry request. Expires 5 minutes after the refusal.\n\nThe retry is sent either with the same request body (`system`, `messages`,\n`tools`, and other render-shaping fields), or with the same body plus one\nappended `assistant` message whose content is the partial text (with any\ntrailing whitespace stripped from the final text block) and paired\nserver-tool blocks from this refusal — which also authorizes that\nappended turn as an assistant-prefill continuation on models that otherwise\ndisallow prefill. A token minted mid-server-tool-loop whose partial content\nwas continuable may only be redeemed the second way — if a same-body retry\nis rejected with a 400 saying the token must be redeemed by continuing the\npartial response, retry the second way instead. Either way: same workspace,\nsame platform; a mismatch is a 400. Resending a token for an already-warm\nprefix is permitted but yields no additional credit.\n\n`null` when the refused model isn't eligible for a fallback credit.",
-    "default": null
-  }),
-  "fallback_has_prefill_claim": Schema.Union([Schema.Boolean, Schema.Null]).annotate({
-    "title": "Fallback Has Prefill Claim",
-    "description":
-      "Whether the accompanying `fallback_credit_token` may be redeemed with the\nappended-assistant retry form. Only set when `fallback_credit_token` is\npresent.\n\n`true`: retry by resending the same request body plus one appended\n`assistant` message whose content is this response's `content` with any\ntrailing whitespace stripped from the final text block and unpaired\n`tool_use` blocks omitted (the same appended-turn shape described on\n`fallback_credit_token`), with the token attached. `false`: retry by\nresending the original request body unchanged, with the token attached —\nthe appended-assistant form is not available for this refusal (no\ncontinuable partial content, or the request uses `output_format` or a\n`tool_choice` that forces tool use). One exception: when the request used\n`output_format` or a forced `tool_choice` and the refusal arrived after\nserver tools (including MCP connector tools) had already executed, the\ntoken may not be redeemable by either retry form; if the exact-body retry\nis then rejected with a 400 saying the token must be redeemed by\ncontinuing the partial response, discard the token and retry without it.\n\nAdvisory: if an appended-assistant retry is rejected with a 400 despite\n`true`, fall back to resending the original request body with the token.",
-    "default": null
-  }),
-  "recommended_model": Schema.Union([Schema.String, Schema.Null]).annotate({
-    "title": "Recommended Model",
-    "description":
-      "The server's suggested retry target for this refusal. Populated when a fallback attempt could not be made (the fallback model's rate limit was exhausted, or it was overloaded); names the fallback model the caller can retry directly. Null otherwise.",
-    "default": null
-  }),
+  "fallback_credit_token": Schema.optionalKey(
+    Schema.Union([Schema.String, Schema.Null]).annotate({
+      "title": "Fallback Credit Token",
+      "description":
+        "Opaque code that refunds the cache-miss cost when retrying this refused\nrequest on the fallback model. Pass it as `fallback_credit_token` on the\nretry request. Expires 5 minutes after the refusal.\n\nThe retry is sent either with the same request body (`system`, `messages`,\n`tools`, and other render-shaping fields), or with the same body plus one\nappended `assistant` message whose content is the partial text (with any\ntrailing whitespace stripped from the final text block) and paired\nserver-tool blocks from this refusal — which also authorizes that\nappended turn as an assistant-prefill continuation on models that otherwise\ndisallow prefill. A token minted mid-server-tool-loop whose partial content\nwas continuable may only be redeemed the second way — if a same-body retry\nis rejected with a 400 saying the token must be redeemed by continuing the\npartial response, retry the second way instead. Either way: same workspace,\nsame platform; a mismatch is a 400. Resending a token for an already-warm\nprefix is permitted but yields no additional credit.\n\n`null` when the refused model isn't eligible for a fallback credit.",
+      "default": null
+    })
+  ),
+  "fallback_has_prefill_claim": Schema.optionalKey(
+    Schema.Union([Schema.Boolean, Schema.Null]).annotate({
+      "title": "Fallback Has Prefill Claim",
+      "description":
+        "Whether the accompanying `fallback_credit_token` may be redeemed with the\nappended-assistant retry form. Only set when `fallback_credit_token` is\npresent.\n\n`true`: retry by resending the same request body plus one appended\n`assistant` message whose content is this response's `content` with any\ntrailing whitespace stripped from the final text block and unpaired\n`tool_use` blocks omitted (the same appended-turn shape described on\n`fallback_credit_token`), with the token attached. `false`: retry by\nresending the original request body unchanged, with the token attached —\nthe appended-assistant form is not available for this refusal (no\ncontinuable partial content, or the request uses `output_format` or a\n`tool_choice` that forces tool use). One exception: when the request used\n`output_format` or a forced `tool_choice` and the refusal arrived after\nserver tools (including MCP connector tools) had already executed, the\ntoken may not be redeemable by either retry form; if the exact-body retry\nis then rejected with a 400 saying the token must be redeemed by\ncontinuing the partial response, discard the token and retry without it.\n\nAdvisory: if an appended-assistant retry is rejected with a 400 despite\n`true`, fall back to resending the original request body with the token.",
+      "default": null
+    })
+  ),
+  "recommended_model": Schema.optionalKey(
+    Schema.Union([Schema.String, Schema.Null]).annotate({
+      "title": "Recommended Model",
+      "description":
+        "The server's suggested retry target for this refusal. Populated when a fallback attempt could not be made (the fallback model's rate limit was exhausted, or it was overloaded); names the fallback model the caller can retry directly. Null otherwise.",
+      "default": null
+    })
+  ),
   "type": Schema.Literal("refusal").annotate({ "title": "Type", "default": "refusal" })
 }).annotate({
   "title": "RefusalStopDetails",

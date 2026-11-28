@@ -9,6 +9,7 @@ import type {
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
+  IssueCommentAudience,
   IssueCommentsPage,
   IssueCreateResult,
   IssueEvent,
@@ -89,6 +90,7 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly states: ReadonlyArray<IssueState>;
   readonly reactions?: ReadonlyArray<IssueReaction>;
   readonly comments: ReadonlyArray<IssueComment>;
+  readonly commentAudiences?: boolean | undefined;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
@@ -155,9 +157,12 @@ export interface IssueTrackerApi {
     },
   ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
 
-  /** Only called when `capabilities.comment` is true. */
+  /** Only called when `capabilities.comment` is true; an internal audience only with `internalComments`. */
   readonly comment?: (
-    input: IssueTarget & { readonly body: string },
+    input: IssueTarget & {
+      readonly body: string;
+      readonly audience?: IssueCommentAudience | undefined;
+    },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**
@@ -200,8 +205,14 @@ export interface IssueTrackerApi {
 
   /** Only called when `capabilities.labels` or `capabilities.assignees` is true. */
   readonly listCandidates?: (
-    input: IssueScopeTarget,
+    input: IssueScopeTarget & { readonly query?: string | undefined },
   ) => Effect.Effect<IssueCandidates, IssueTrackerError>;
+}
+
+/** What a user saved to reach a standalone tracker: the secret, and the descriptor's fields. */
+export interface IssueTrackerCredential {
+  readonly token: string;
+  readonly fields: Readonly<Record<string, string>>;
 }
 
 /**
@@ -218,7 +229,7 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (token: string) => Effect.Effect<
+  readonly probeCredential: (credential: IssueTrackerCredential) => Effect.Effect<
     {
       readonly account: string;
       /** What the tracker's issue URLs name the credential's workspace by, where they name one. */

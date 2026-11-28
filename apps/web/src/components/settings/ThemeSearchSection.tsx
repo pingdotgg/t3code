@@ -31,12 +31,9 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useFormattingLocale } from "../../i18n/I18nProvider";
 import { m } from "../../i18n/messages";
 
-const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
 const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = [
   { value: "downloadCount", label: msg("Most downloaded") },
@@ -243,6 +240,10 @@ export function ThemeSearchSection({
 }) {
   const messages = useMessages();
   const gt = useGT();
+  const downloadFormat = new Intl.NumberFormat(useFormattingLocale(), {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  });
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<OpenVsxThemeSort>("downloadCount");
   const [results, setResults] = useState<ReadonlyArray<OpenVsxThemeExtension> | null>(null);
@@ -447,8 +448,14 @@ export function ThemeSearchSection({
                     <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                       <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
+                        {extension.publisher} ·{" "}
+                        {gt(
+                          "{count, plural, one {{formatted} download} other {{formatted} downloads}}",
+                          {
+                            count: extension.downloadCount,
+                            formatted: downloadFormat.format(extension.downloadCount),
+                          },
+                        )}
                       </p>
                     </div>
                   </div>

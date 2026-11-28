@@ -23,8 +23,10 @@ const MAX_BARS = 7;
  */
 export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string | null) {
   const special = new Set([...(descriptor.promptInjectedValues ?? []), ...NAMED_LEVELS]);
-  const levels = descriptor.options.filter((option) => !special.has(option.id));
-  if (levels.length < 2 || levels.length > MAX_BARS || current === null) return null;
+  const listed = descriptor.options.filter((option) => !special.has(option.id));
+  if (listed.length < 2 || listed.length > MAX_BARS || current === null) return null;
+  // ACP agents may list levels high to low; an off level last marks that order.
+  const levels = OFF_LEVELS.has(listed.at(-1)!.id) ? listed.toReversed() : listed;
   const startsAtOff = OFF_LEVELS.has(levels[0]!.id);
   const count = startsAtOff ? levels.length - 1 : levels.length;
   if (special.has(current)) {

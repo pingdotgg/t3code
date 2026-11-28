@@ -72,6 +72,9 @@ enum Command {
         request_id: String,
     },
     ProcessTable {
+        #[cfg(target_os = "macos")]
+        #[serde(default)]
+        identities: bool,
         version: u32,
         request_id: String,
     },
@@ -79,6 +82,10 @@ enum Command {
         version: u32,
         request_id: String,
         window_ms: u64,
+    },
+    MemoryPressure {
+        version: u32,
+        request_id: String,
     },
     Shutdown {
         version: u32,
@@ -95,6 +102,7 @@ impl Command {
             | Self::SampleNow { version, .. }
             | Self::ProcessTable { version, .. }
             | Self::ReadHistory { version, .. }
+            | Self::MemoryPressure { version, .. }
             | Self::Shutdown { version } => *version,
         }
     }
@@ -115,6 +123,18 @@ struct Capabilities {
     io_bytes: bool,
     process_start_time: bool,
     process_tree: bool,
+    process_identities: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryPressureEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    /// macOS `kern.memorystatus_vm_pressure_level`: 1 normal, 2 warning, 4 critical.
+    level: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,12 +186,96 @@ struct ProcessTableEntry {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProcessTableEvent<'a> {
+struct ProcessTableEvent<'a, T> {
     version: u32,
     #[serde(rename = "type")]
     event_type: &'static str,
     request_id: &'a str,
-    processes: Vec<ProcessTableEntry>,
+    processes: Vec<T>,
+}
+
+#[cfg(target_os = "macos")]
+mod mac_process_identities {
+    use serde::Serialize;
+    use std::ffi::{CStr, c_char, c_void};
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Identity {
+        pid: i32,
+        ppid: i32,
+        pgid: i32,
+        start_time_micros: i64,
+        name: String,
+    }
+
+    unsafe extern "C" {
+        fn t3_process_identities(
+            context: *mut c_void,
+            visit: extern "C" fn(*mut c_void, i32, i32, i32, i64, *const c_char),
+        ) -> i32;
+    }
+
+    extern "C" fn visit(
+        context: *mut c_void,
+        pid: i32,
+        ppid: i32,
+        pgid: i32,
+        start_time_micros: i64,
+        name: *const c_char,
+    ) {
+        // The C function calls back synchronously with the vector passed by read().
+        let rows = unsafe { &mut *context.cast::<Vec<Identity>>() };
+        rows.push(Identity {
+            pid,
+            ppid,
+            pgid,
+            start_time_micros,
+            name: unsafe { CStr::from_ptr(name) }
+                .to_string_lossy()
+                .into_owned(),
+        });
+    }
+
+    pub fn read() -> Vec<Identity> {
+        let mut rows = Vec::<Identity>::new();
+        if unsafe { t3_process_identities((&raw mut rows).cast(), visit) } != 0 {
+            rows.clear();
+        }
+        rows
+    }
+    #[test]
+    fn reports_the_same_process_group_and_start_second_as_ps() {
+        use std::process::{Command, id};
+        let row = read()
+            .into_iter()
+            .find(|row| row.pid == id() as i32)
+            .unwrap();
+        let output = Command::new("ps")
+            .env("TZ", "UTC0")
+            .env("LC_ALL", "C")
+            .args(["-p", &id().to_string(), "-o", "ppid=,pgid=,lstart="])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        let mut fields = text.split_whitespace();
+        assert_eq!(fields.next().unwrap().parse::<i32>().unwrap(), row.ppid);
+        assert_eq!(fields.next().unwrap().parse::<i32>().unwrap(), row.pgid);
+        let date = Command::new("date")
+            .env("LC_ALL", "C")
+            .args([
+                "-u",
+                "-r",
+                &(row.start_time_micros / 1_000_000).to_string(),
+                "+%a %b %e %T %Y",
+            ])
+            .output()
+            .unwrap();
+        assert!(date.status.success());
+        let utc = String::from_utf8(date.stdout).unwrap();
+        assert!(fields.eq(utc.split_whitespace()));
+    }
 }
 
 impl ProcessSample {
@@ -941,6 +1045,39 @@ fn sample_now_deadline(
     current.or_else(|| interval.map(|duration| now + duration))
 }
 
+// A syscall, not a spawned `sysctl`: under memory pressure a new process may not start at all.
+#[cfg(target_os = "macos")]
+fn memory_pressure_level() -> Option<u32> {
+    use std::ffi::{c_char, c_int, c_void};
+    unsafe extern "C" {
+        fn sysctlbyname(
+            name: *const c_char,
+            oldp: *mut c_void,
+            oldlenp: *mut usize,
+            newp: *mut c_void,
+            newlen: usize,
+        ) -> c_int;
+    }
+    let mut level: c_int = 0;
+    let mut size = std::mem::size_of::<c_int>();
+    // SAFETY: the name is NUL-terminated and `level` is an int buffer of `size` bytes.
+    let status = unsafe {
+        sysctlbyname(
+            c"kern.memorystatus_vm_pressure_level".as_ptr(),
+            (&raw mut level).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (status == 0 && level > 0).then_some(level as u32)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn memory_pressure_level() -> Option<u32> {
+    None
+}
+
 fn write_event<T: Serialize>(writer: &mut impl Write, event: &T) -> io::Result<()> {
     serde_json::to_writer(&mut *writer, event)?;
     writer.write_all(b"\n")?;
@@ -1018,6 +1155,7 @@ fn main() -> io::Result<()> {
                 io_bytes: true,
                 process_start_time: true,
                 process_tree: true,
+                process_identities: cfg!(target_os = "macos"),
             },
         },
     )?;
@@ -1145,6 +1283,22 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    #[cfg(target_os = "macos")]
+                    Command::ProcessTable {
+                        identities: true,
+                        request_id,
+                        ..
+                    } => {
+                        write_event(
+                            &mut writer,
+                            &ProcessTableEvent {
+                                version: PROTOCOL_VERSION,
+                                event_type: "processTable",
+                                request_id: &request_id,
+                                processes: mac_process_identities::read(),
+                            },
+                        )?;
+                    }
                     Command::ProcessTable { request_id, .. } => {
                         let event = ProcessTableEvent {
                             version: PROTOCOL_VERSION,
@@ -1171,6 +1325,17 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    Command::MemoryPressure { request_id, .. } => {
+                        write_event(
+                            &mut writer,
+                            &MemoryPressureEvent {
+                                version: PROTOCOL_VERSION,
+                                event_type: "memoryPressure",
+                                request_id: &request_id,
+                                level: memory_pressure_level(),
+                            },
+                        )?;
+                    }
                     Command::Shutdown { .. } => return Ok(()),
                 }
             }
@@ -1183,6 +1348,27 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_memory_pressure_level_only_on_macos() {
+        let command: Command = serde_json::from_str(
+            r#"{"version":3,"type":"memoryPressure","requestId":"pressure-1"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(command, Command::MemoryPressure { ref request_id, .. } if request_id == "pressure-1")
+        );
+
+        let level = memory_pressure_level();
+        if cfg!(target_os = "macos") {
+            assert!(
+                matches!(level, Some(1 | 2 | 4)),
+                "unexpected level {level:?}"
+            );
+        } else {
+            assert_eq!(level, None);
+        }
+    }
 
     #[test]
     fn selects_roots_and_all_descendants() {

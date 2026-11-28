@@ -21,12 +21,14 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import { providerOptionDescriptors, refuseAgentModePick } from "../../delegatedTaskModes.ts";
+import { firstLineTitle } from "../../firstLineTitle.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -201,6 +203,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
+          const title = firstLineTitle(input.title);
           const result = yield* threads
             .dispatch({
               type: "thread.fork",
@@ -208,7 +211,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               sourceThreadId: projection.thread.id,
               targetThreadId,
               sourcePoint,
-              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(title === undefined ? {} : { title }),
               createdBy: "agent",
               creationSource: "mcp",
             })
@@ -313,10 +316,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               ? new OrchestratorMcpFailure({
                   code: "invalid_request",
                   // The agent wrote the value, so it is told what in it did not fit.
-                  message:
-                    error.cause instanceof Error
-                      ? `${error.message}\n${error.cause.message.slice(0, 2000)}`
-                      : error.message,
+                  message: rejectionText(error),
                 })
               : unavailable(),
           ),

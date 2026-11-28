@@ -22,10 +22,22 @@ describe("PR attachments", () => {
       { uri: "https://drop.example.com/demo.mp4", caption: "Video", kind: "video" },
       {
         uri: "https://github.com/user-attachments/assets/123-abc",
-        caption: "Video",
-        kind: "video",
+        caption: "123-abc",
+        kind: "unknown",
       },
     ]);
+  });
+
+  it("captions image links with their decoded file name", () => {
+    const media = splitPullRequestBody(
+      "https://drop.example.com/My%20Screenshot.png\n\nhttps://drop.example.com/caf%C3%A9.png\n\nhttps://drop.example.com/100%.png",
+      markdownReferenceDefinitions,
+    );
+    expect(
+      pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments.map(
+        (attachment) => attachment.caption,
+      ),
+    ).toEqual(["My Screenshot.png", "café.png", "100%.png"]);
   });
 
   it("collects videos from a before/after table", () => {

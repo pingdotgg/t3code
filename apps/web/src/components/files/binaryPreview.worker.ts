@@ -1,3 +1,4 @@
+import { previewUnlock } from "./previewUnlock";
 import type { Database } from "sql.js";
 
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
@@ -11,7 +12,7 @@ import {
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
-import { PreviewError, previewFailure } from "./previewFailure";
+import { PreviewError } from "./previewFailure";
 
 let database: Database | null = null;
 let tables: string[] = [];
@@ -50,6 +51,14 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
     const value = text(offset, length).trim();
     if (!/^[0-7]*$/.test(value)) throw new PreviewError({ code: "tar-numeric-format" });
     return Number.parseInt(value || "0", 8);
+  };
+  const timestamp = (offset: number, length: number) => {
+    const first = bytes[offset]!;
+    if ((first & 0x80) === 0) return number(offset, length);
+    let value = BigInt(first & 0x40 ? first - 0x100 : first & 0x7f);
+    for (let index = 1; index < length; index++)
+      value = (value << 8n) | BigInt(bytes[offset + index]!);
+    return Number(value);
   };
   let longPath: string | null = null;
   let longLink: string | null = null;
@@ -133,7 +142,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
       if (attributes.mtime && !/^[+-]?\d+(?:\.\d+)?$/.test(attributes.mtime))
         throw new PreviewError({ code: "tar-metadata-damaged" });
       const modified =
-        (attributes.mtime ? Number(attributes.mtime) : number(offset + 136, 12)) * 1000;
+        (attributes.mtime ? Number(attributes.mtime) : timestamp(offset + 136, 12)) * 1000;
       const date = new Date(modified);
       const linked = type === "1" ? files.get(linkpath) : undefined;
       entries.push({
@@ -155,7 +164,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
   return entries;
 }
 
-async function handle(input: BinaryWorkerRequest) {
+async function handle(input: Exclude<BinaryWorkerRequest, { type: "unlock" }>, password?: string) {
   if (input.type === "entry") {
     const bytes = files.get(input.path);
     if (bytes === undefined) throw new PreviewError({ code: "archive-entry-unavailable" });
@@ -230,14 +239,16 @@ async function handle(input: BinaryWorkerRequest) {
       (input.bytes.byteLength >= 4 &&
         [0x04034b50, 0x06054b50].includes(new DataView(input.bytes).getUint32(0, true)))
     ) {
-      const archive = await boundedZip(input.bytes, BINARY_PREVIEW_MAX_BYTES);
+      const archive = await boundedZip(input.bytes, BINARY_PREVIEW_MAX_BYTES, { password });
       entries = [...archive].map(([path, file]) => {
         files.set(path, file.bytes);
         return {
           path,
           size: file.bytes.length,
           directory: file.directory,
-          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString(),
+          // ZIP stores wall-clock time without a zone, while JSZip reads those fields as UTC.
+          // Omitting "Z" marks the timestamp as wall-clock so the viewer formats its calendar date.
+          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString().slice(0, -1),
         };
       });
     } else if (/\.(gz|tgz)$/i.test(input.name) || new Uint8Array(input.bytes)[0] === 0x1f) {
@@ -256,8 +267,7 @@ async function handle(input: BinaryWorkerRequest) {
   }
 }
 
+const receive = previewUnlock(handle, reply, "preview-failed");
 self.addEventListener("message", (event: MessageEvent<BinaryWorkerRequest>) => {
-  void handle(event.data).catch((cause: unknown) =>
-    reply({ type: "error", ...previewFailure(cause, "preview-failed") }),
-  );
+  void receive(event.data);
 });

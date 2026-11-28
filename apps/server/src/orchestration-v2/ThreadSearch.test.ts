@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -34,7 +35,7 @@ import * as ThreadSearch from "./ThreadSearch.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
-  ProjectionStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
   ProjectStore.layer,
 ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
@@ -292,7 +293,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectIds: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -957,7 +958,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             mention,
             "heron-mention",
             "user",
-            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py) and [\_café\_.py](pkg/_caf%C3%A9_.py)`,
+            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py), [\_café\_.py](pkg/_caf%C3%A9_.py), [\~\~draft\~\~.md](./notes/~~draft~~.md), [&#91;TODO&#93;.md](notes/%5BTODO%5D.md), and [\&#91;lit\&#93;.md](./notes/%26%2391;lit%26%2393;.md)`,
           ),
         ],
         projections.apply,
@@ -968,13 +969,21 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         matches.map((match) => [match.threadId, match.snippet]),
         [[labeled, "See the heron plan now"]],
       );
-      for (const query of ["__init__.py", "_café_.py"]) {
+      for (const query of [
+        "__init__.py",
+        "_café_.py",
+        "~~draft~~.md",
+        "[TODO",
+        "[TODO].md",
+        "&#91;lit&#93;.md",
+      ]) {
         const mentions = yield* search.search({ query });
         assert.deepEqual(
-          mentions.matches.map((match) => [match.threadId, match.snippet]),
-          [[mention, "Fix __init__.py and _café_.py"]],
+          mentions.matches.map((match) => [match.threadId, match.snippet.includes(query)]),
+          [[mention, true]],
         );
       }
+      assert.deepEqual((yield* search.search({ query: "[lit" })).matches, []);
     }),
   );
 
@@ -1325,7 +1334,9 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
       const search = yield* ThreadSearch.ThreadSearch;
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:plover");
+      const otherProject = ProjectId.make("project:plover-other");
       yield* createProject(project);
+      yield* createProject(otherProject);
       const old = ThreadId.make("thread:plover-old");
       const recent = ThreadId.make("thread:plover-recent");
       yield* Effect.forEach(
@@ -1363,18 +1374,40 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
         titles.threads?.map((row) => row.id),
         [old],
       );
-      // Without the cut it is the plain message search.
-      assert.isUndefined(
-        (yield* ThreadSearch.searchThreadsWithOlderSettledRows({
-          request: { query: "plover" },
+      yield* Effect.forEach(
+        Array.from({ length: 50 }, (_, index) => {
+          const other = ThreadId.make(`thread:plover-other-${index}`);
+          return [
+            thread(other, otherProject),
+            message(other, `plover-other-${index}`, "user", "plover", { minute: 3 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const searchMessages = (projectIds?: ReadonlyArray<ProjectId>) =>
+        ThreadSearch.searchThreadsWithOlderSettledRows({
+          request: { query: "plover", ...(projectIds === undefined ? {} : { projectIds }) },
           search: search.search,
           searchOlderSettled: search.searchOlderSettled,
           sql,
           readThreads: (threadIds) =>
             projections.readShellSnapshot({ location: "active", threadIds }),
           latestSequence: Effect.succeed(7),
-        })).threads,
+        });
+      // Without the cut it is the plain message search.
+      const unscoped = yield* searchMessages();
+      assert.isUndefined(unscoped.threads);
+      assert.lengthOf(unscoped.matches, 50);
+      assert.notInclude(
+        unscoped.matches.map((match) => match.threadId),
+        recent,
       );
+      assert.deepEqual(
+        (yield* searchMessages([project])).matches.map((match) => match.threadId),
+        [recent],
+      );
+      assert.deepEqual((yield* searchMessages([])).matches, []);
     }),
   );
 });
@@ -1407,6 +1440,37 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       assert.include(
         matches.map((match) => match.threadId),
         messageOnly,
+      );
+    }),
+  );
+
+  it.effect("keeps a better title match over a weaker one found by its messages", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:heron");
+      yield* createProject(project);
+      // Six titled threads that each also name the word in a message.
+      yield* Effect.forEach(
+        Array.from({ length: 6 }, (_, index) => {
+          const id = ThreadId.make(`thread:heron-${index + 1}`);
+          return [
+            thread(id, project, { title: `Heron ${index + 1}` }),
+            message(id, `heron-${index + 1}`, "user", "a heron sighting", { minute: 2 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const byTitle = (yield* search.searchThreads({ query: "heron", limit: 6 })).matches;
+      assert.deepStrictEqual(
+        byTitle.map((match) => match.source),
+        Array.from({ length: 6 }, () => "title"),
+      );
+      const { matches } = yield* search.searchThreads({ query: "heron", limit: 5 });
+      assert.deepStrictEqual(
+        matches.map((match) => match.threadId),
+        byTitle.slice(0, 5).map((match) => match.threadId),
       );
     }),
   );
@@ -1544,7 +1608,7 @@ it.effect("searches on the reader worker while the writer is busy", () =>
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-search-" });
     const layerFile = Layer.mergeAll(
       ThreadSearch.layer,
-      ProjectionStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
       ProjectStore.layer,
     ).pipe(
       Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),

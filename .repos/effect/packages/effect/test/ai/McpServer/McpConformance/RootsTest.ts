@@ -22,7 +22,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            yield* peer.wireClient["roots/list"](undefined)
+            yield* peer.reverseClient.listRoots()
 
             assert.strictEqual((yield* peer.takeRequest).method, "roots/list")
           }))
@@ -37,7 +37,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            yield* peer.wireClient["roots/list"](undefined)
+            yield* peer.reverseClient.listRoots()
 
             assert.strictEqual((yield* peer.takeRequest).method, "roots/list")
           }))
@@ -57,7 +57,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const result = yield* peer.wireClient["roots/list"](undefined)
+            const result = yield* peer.reverseClient.listRoots()
 
             assert.deepStrictEqual(
               result.roots.map((root) => ({
@@ -81,7 +81,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const result = yield* peer.wireClient["roots/list"](undefined)
+            const result = yield* peer.reverseClient.listRoots()
 
             assert.deepStrictEqual(result.roots, [])
           }))
@@ -101,11 +101,11 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const error = yield* peer.wireClient["roots/list"](undefined).pipe(Effect.flip)
+            const error = yield* peer.reverseClient.listRoots().pipe(Effect.flip)
 
-            assert.isTrue("code" in error)
-            if ("code" in error) assert.strictEqual(error.code, McpSchema.INTERNAL_ERROR_CODE)
-            assert.strictEqual(error.message, "Roots unavailable")
+            assert.instanceOf(error, McpSchema.McpReverseOperationError)
+            assert.strictEqual(error.operation, "roots/list")
+            assert.deepInclude(error.cause, { code: McpSchema.INTERNAL_ERROR_CODE, message: "Roots unavailable" })
           }))
       })
     })

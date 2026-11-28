@@ -8,22 +8,35 @@ const natives = [
   [Uint8Array.prototype, "toHex"]
 ] as const
 
-// Registers `suite` twice: once as is, and once with the native methods
-// removed, so the fallbacks are covered on runtimes that ship them. The copies
-// run sequentially, since the removal is global and the tests run concurrently.
-export const describeWithFallback = (name: string, suite: () => void): void => {
-  describe(name, { concurrent: false }, suite)
-  describe(`${name} without native methods`, { concurrent: false }, () => {
-    const descriptors = natives.map(([target, key]) => Object.getOwnPropertyDescriptor(target, key))
+// Registers `suite` with `properties` removed. It runs sequentially, since the
+// removal is global and the tests run concurrently.
+const describeWithout = (
+  name: string,
+  properties: ReadonlyArray<readonly [target: object, key: PropertyKey]>,
+  suite: () => void
+): void => {
+  describe(name, { concurrent: false }, () => {
+    const descriptors = properties.map(([target, key]) => Object.getOwnPropertyDescriptor(target, key))
     beforeAll(() => {
-      for (const [target, key] of natives) Reflect.deleteProperty(target, key)
+      for (const [target, key] of properties) Reflect.deleteProperty(target, key)
     })
     afterAll(() => {
-      natives.forEach(([target, key], i) => {
+      properties.forEach(([target, key], i) => {
         const descriptor = descriptors[i]
         if (descriptor !== undefined) Reflect.defineProperty(target, key, descriptor)
       })
     })
     suite()
   })
+}
+
+// Registers `suite` with the native methods removed and `Buffer` left in
+// place, so the `Buffer` fallback is covered on runtimes that ship them.
+export const describeWithoutNatives = (name: string, suite: () => void): void => describeWithout(name, natives, suite)
+
+// Registers `suite` twice: once as is, and once with the native methods and
+// `Buffer` removed, so the JavaScript fallbacks are covered on every runtime.
+export const describeWithFallback = (name: string, suite: () => void): void => {
+  describe(name, { concurrent: false }, suite)
+  describeWithout(`${name} without native methods`, [...natives, [globalThis, "Buffer"]], suite)
 }

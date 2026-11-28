@@ -1,9 +1,8 @@
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, MessageId, ProjectId } from "@t3tools/contracts";
 
-import { msg } from "gt-react-native";
 import { m, type MessageResolver } from "../i18n/messages";
-import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
+import { deriveUnsentThreadTitle } from "../lib/projectThreadStartTurn";
 import {
   isQueuedThreadCreationSendable,
   resolveThreadOutboxDeliveryAction,
@@ -45,17 +44,6 @@ export interface PendingDraftTask {
 
 function composerDraftHasUserContent(draft: ComposerDraft): boolean {
   return draft.text.trim().length > 0 || draft.attachments.length > 0;
-}
-
-function draftTitle(draft: ComposerDraft, resolve: MessageResolver): string {
-  if (draft.text.trim().length > 0) {
-    return deriveThreadTitleFromPrompt(draft.text);
-  }
-  return resolve(
-    msg("{count, plural, one {{count} attachment} other {{count} attachments}}", {
-      count: draft.attachments.length,
-    }),
-  );
 }
 
 /** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
@@ -122,7 +110,7 @@ export function isQueuedCreationSending(
   );
 }
 
-/** Render callers pass `useMessages()` so draft titles follow a language switch. */
+/** Render callers pass `useMessages()` so titles follow a language switch. */
 export function buildPendingNewTasks(
   input: {
     readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -145,7 +133,7 @@ export function buildPendingNewTasks(
       projectTitle: message.creation.projectTitle,
       projectCwd: message.creation.projectCwd,
       branch: message.creation.branch,
-      title: deriveThreadTitleFromPrompt(message.text),
+      title: deriveUnsentThreadTitle(message, resolve),
       createdAt: message.createdAt,
       message,
       creation: message.creation,
@@ -162,7 +150,7 @@ export function buildPendingNewTasks(
       projectId: draft.project.projectId,
       projectTitle: undefined,
       projectCwd: undefined,
-      title: draftTitle(draft, resolve),
+      title: deriveUnsentThreadTitle(draft, resolve),
       createdAt: draft.project.createdAt,
       draftKey,
       draft,

@@ -307,6 +307,31 @@ function extractReviewCommentBody(rawBody: string): {
   };
 }
 
+/** A stored "12 to 18" range label in the UI language, as the web chip shows it. */
+export function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
+  const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
+  return range === null
+    ? rangeLabel
+    : resolve(
+        msg("{start} to {end}", {
+          $context: "a range of lines in a file or diff",
+          start: range[1]!,
+          end: range[2]!,
+        }),
+      );
+}
+
+/** A review comment chip's stored "app.ts +3 to +5" label with its range in the UI language. */
+export function reviewCommentChipLabel(
+  label: string,
+  rangeLabel: string,
+  resolve: MessageResolver,
+): string {
+  return label.endsWith(` ${rangeLabel}`)
+    ? `${label.slice(0, -rangeLabel.length)}${reviewCommentRangeText(rangeLabel, resolve)}`
+    : label;
+}
+
 function parseReviewInlineComment(
   rawAttributes: string,
   rawBody: string,
@@ -316,8 +341,8 @@ function parseReviewInlineComment(
   const attributes = readReviewCommentAttributes(rawAttributes);
   const startIndex = readNonNegativeInteger(attributes.startIndex);
   const endIndex = readNonNegativeInteger(attributes.endIndex);
-  const filePath = attributes.filePath?.trim();
-  const sectionId = attributes.sectionId?.trim();
+  const filePath = attributes.filePath;
+  const sectionId = attributes.sectionId;
   if (!filePath || !sectionId || startIndex === null || endIndex === null) {
     return null;
   }
@@ -332,8 +357,9 @@ function parseReviewInlineComment(
     filePath,
     startIndex: Math.min(startIndex, endIndex),
     endIndex: Math.max(startIndex, endIndex),
-    rangeLabel:
-      attributes.rangeLabel?.trim() || resolve(msg("line", { $context: "review comment range" })),
+    rangeLabel: attributes.rangeLabel?.trim()
+      ? reviewCommentRangeText(attributes.rangeLabel.trim(), resolve)
+      : resolve(msg("line", { $context: "review comment range" })),
     text: body.text,
     diff: body.contents,
     fenceLanguage: body.language,
@@ -417,7 +443,7 @@ export function parseReviewInlineComments(
       filePath: record.filePath,
       startIndex: record.startIndex,
       endIndex: record.endIndex,
-      rangeLabel: record.rangeLabel,
+      rangeLabel: reviewCommentRangeText(record.rangeLabel, resolve),
       text: record.text,
       diff: record.diff,
       ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),

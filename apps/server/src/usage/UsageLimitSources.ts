@@ -202,7 +202,12 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const { unreadProviders } = accounts.success;
+    return {
+      ...base,
+      accounts: accounts.success.accounts,
+      ...(unreadProviders.length > 0 ? { unreadProviders } : {}),
+    };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
@@ -226,7 +231,7 @@ export const make = Effect.gen(function* () {
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
-      { concurrency: 4 },
+      { concurrency: "unbounded" },
     );
     yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));

@@ -386,6 +386,53 @@ it("highlights a code block's own source when an earlier block of the same lengt
   await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(second));
 });
 
+describe("Markdown fence previews", () => {
+  it.each(["markdown", "md"])(
+    "switches a %s fence between source and rendered Markdown",
+    async (language) => {
+      setup();
+      const source = "# Release notes\n\nThis is **ready**.";
+      const text = [`\`\`\`${language}`, source, "```"].join("\n");
+      const message = (isStreaming: boolean) => (
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={text}
+          isStreaming={isStreaming}
+          previewMarkdownFences
+        />
+      );
+
+      await using screen = await render(message(true));
+      const showPreview = screen.getByRole("button", { name: "Show rendered markdown" });
+      const heading = screen.getByRole("heading", { name: "Release notes" });
+      await expect.element(showPreview).not.toBeInTheDocument();
+
+      await screen.rerender(message(false));
+      await expect.element(heading).not.toBeInTheDocument();
+      await showPreview.click();
+      await expect.element(heading).toBeVisible();
+      expect(screen.container.querySelector("strong")?.textContent).toBe("ready");
+
+      using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      await screen.getByRole("button", { name: "Copy code" }).click();
+      expect(write).toHaveBeenCalledWith(source);
+
+      await screen.getByRole("button", { name: "Show markdown source" }).click();
+      await expect.element(heading).not.toBeInTheDocument();
+      await expect.element(showPreview).toBeVisible();
+    },
+  );
+
+  it("only offers previews for Markdown fences in enabled messages", async () => {
+    setup();
+    const text = "```md\n# Example\n```\n\n```text\n# Plain text\n```";
+    await using screen = await renderText(text);
+    expect(buttonsLabelled(screen.container, "Show rendered markdown")).toHaveLength(0);
+    await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={text} previewMarkdownFences />);
+    expect(buttonsLabelled(screen.container, "Show rendered markdown")).toHaveLength(1);
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();
@@ -748,6 +795,24 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps user-content in authored fragments distinct from the sanitizer prefix", async () => {
+    setup();
+    await using screen = await renderText(
+      "[Open deployment](#deployment)\n\n" +
+        "[Open user content deployment](#user-content-deployment)\n\n" +
+        "## Deployment\n\n## User Content Deployment",
+    );
+    const [deployment, userContentDeployment] = screen.container.querySelectorAll("h2");
+    using scrollDeployment = vi.spyOn(deployment!, "scrollIntoView");
+    using scrollUserContentDeployment = vi.spyOn(userContentDeployment!, "scrollIntoView");
+
+    await userEvent.click(screen.getByRole("link", { name: "Open deployment" }));
+    await userEvent.click(screen.getByRole("link", { name: "Open user content deployment" }));
+
+    expect(scrollDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+    expect(scrollUserContentDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+  });
+
   it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
     setup();
     const rule = "─".repeat(20);
@@ -1158,6 +1223,79 @@ describe("ChatMarkdown copy", () => {
       [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
     ).toEqual(["Configure", "Deploy"]);
   });
+
+  it.each([
+    {
+      label: "the full table",
+      from: "Name",
+      to: "20",
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      cells: 9,
+    },
+    {
+      label: "cells in one row",
+      from: "Alice",
+      to: "Engineer",
+      text: "| Alice | Engineer |\n| --- | :---: |",
+      cells: 2,
+    },
+    {
+      label: "a row whose selection stops at the start of the next row",
+      from: "Name",
+      to: "Alice",
+      skipTo: true,
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |",
+      cells: 3,
+    },
+    {
+      label: "one cell whose selection stops at the start of the next cell, as plain text",
+      from: "Alice",
+      to: "Engineer",
+      skipTo: true,
+      text: "Alice",
+      cells: 0,
+    },
+    {
+      label: "an empty cell the selection ends in",
+      source: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      from: "Item",
+      to: "",
+      text: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      cells: 4,
+    },
+  ])(
+    "copies $label from a rendered table",
+    async ({
+      source = "| Name | Role | Score |\n| :--- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      from,
+      to,
+      skipTo,
+      text,
+      cells,
+    }) => {
+      setup();
+      await using screen = await renderText(source);
+      const cellNode = (shown: string) => {
+        const cell = [...screen.container.querySelectorAll("th, td")].find(
+          (cell) => cell.textContent === shown,
+        )!;
+        return cell.firstChild ?? cell;
+      };
+      const end = cellNode(to);
+      const range = document.createRange();
+      range.setStart(cellNode(from), 0);
+      range.setEnd(end, skipTo ? 0 : end.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+      expect(serializeRenderedMarkdownFragment(pasted.body)).toBe(text);
+      expect(pasted.querySelectorAll("table th, table td")).toHaveLength(cells);
+    },
+  );
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
@@ -1263,5 +1401,33 @@ describe("ChatMarkdown host media", () => {
       expect(screen.container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE),
     );
     expect(screen.container.textContent).not.toContain("Retry video");
+  });
+});
+
+describe("ChatMarkdown copy of line breaks", () => {
+  it.each([
+    { text: "first line\nsecond line", user: true },
+    { text: "first line  \nsecond line", user: false },
+    { text: "first line\\\nsecond line", user: false },
+  ])("copies each line break once: $text", async ({ text, user }) => {
+    setup();
+    await using screen = await renderText(
+      text,
+      user
+        ? {
+            className: "user-message-markdown",
+            lineBreaks: true,
+            parseRawHtml: false,
+            extensions: { userMessage: true, leadingWhitespace: true },
+          }
+        : undefined,
+    );
+    const range = document.createRange();
+    range.selectNodeContents(screen.container);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("first line\nsecond line");
   });
 });

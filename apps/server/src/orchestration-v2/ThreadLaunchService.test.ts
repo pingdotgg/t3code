@@ -65,6 +65,7 @@ import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -81,6 +82,12 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as AcpRegistrySessions from "../provider/AcpRegistrySessions.ts";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
+import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -290,6 +297,8 @@ function makeHarness(options: HarnessOptions = {}) {
         layerLaunchThreads,
         layerReceipts,
         layerOrchestrator,
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
+        NodeServices.layer,
         IdAllocator.layer,
         options.getLaunchSettings === undefined
           ? Layer.empty
@@ -383,6 +392,26 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+const forkSideChat = (
+  threads: ThreadManagement.ThreadManagementService["Service"],
+  sourceThreadId: ThreadId,
+  suffix: string,
+) => {
+  const targetThreadId = ThreadId.make(`thread:side-chat:${suffix}`);
+  return threads
+    .dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make(`fork:side-chat:${suffix}`),
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "latest_stable" },
+      sideChat: true,
+      createdBy: "user",
+      creationSource: "web",
+    })
+    .pipe(Effect.as(targetThreadId));
+};
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
@@ -2724,6 +2753,62 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("imports a native ACP session again after its T3 thread is deleted", () => {
+  const instanceId = ProviderInstanceId.make("acpRegistry");
+  const driver = ProviderDriverKind.make("acpRegistry");
+  const harness = makeHarness({
+    adapters: [{ ...adapter, instanceId, driver }],
+    serverSettings: { providerInstances: { [instanceId]: { driver, enabled: true } } },
+  });
+  const instance = {
+    driverKind: driver,
+    snapshot: { getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true } }) },
+    acpSessionManagement: {},
+  } as unknown as ProviderInstance;
+  const importLayer = AcpRegistrySessions.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        harness.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(instance),
+        }),
+        Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+          withSessionMutation: (effect) => effect,
+        }),
+        Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
+          enqueueCommand: (effect) => effect,
+        }),
+        Layer.mock(AgentSessionImporter.AgentSessionImporter)({
+          importNativeHistory: () => Effect.succeed(1),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const sessions = yield* AcpRegistrySessions.AcpRegistrySessions;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = { projectId, instanceId, sessionId: "native-session-kept-after-delete" };
+    const first = yield* sessions.importSession(input);
+    yield* threads.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("command:delete-imported-session"),
+      threadId: first.threadId,
+    });
+    assert.isNull(yield* threads.getThreadShell(first.threadId));
+    assert.isNull(yield* sessions.findOwner({ driver, instanceId, sessionId: input.sessionId }));
+
+    const second = yield* sessions.importSession(input).pipe(
+      Effect.match({
+        onFailure: (error) => error.message,
+        onSuccess: (result) => result.imported,
+      }),
+    );
+    assert.strictEqual(second, true);
+  }).pipe(Effect.provide(importLayer));
+});
+
 it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {
   const harness = makeHarness();
   const layerFiles = ServerConfig.layerTest(process.cwd(), { prefix: "t3-message-intake-" }).pipe(
@@ -3461,7 +3546,13 @@ it.effect(
   },
 );
 
-it.live("launches into a task folder and leaves nothing behind when its setup is cancelled", () => {
+const concurrentTaskFolderUses = [
+  "side chat",
+  "side chat without a run",
+  "independent launch",
+] as const;
+
+it.live.each(concurrentTaskFolderUses)("cancels task folder setup with %s", (concurrent) => {
   const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
   const layerGit = GitVcsDriver.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-folders-" })),
@@ -3499,9 +3590,13 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       name: path.basename(folder),
     }));
     const entered = yield* Deferred.make<void>();
+    const parentId = ThreadId.make("thread:task-folder");
     const harness = makeHarness({
       taskFolders: layerTaskFolders,
-      runSetup: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      runSetup: ({ threadId }) =>
+        threadId === parentId
+          ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+          : Effect.succeed({ status: "no-script" }),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -3511,14 +3606,20 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       const launched = yield* launches.launch(
         launchInput({
           command: "launch:task-folder",
-          thread: "thread:task-folder",
-          message: "Start",
+          thread: parentId,
+          ...(concurrent === "side chat without a run" ? {} : { message: "Start" }),
           workspace: { type: "worktree", baseRef: "main", branch: "feature/launch" },
         }),
       );
       yield* Deferred.await(entered);
 
-      const { thread } = yield* threads.getThreadProjection(launched.threadId);
+      const { thread, runs } = yield* threads.getThreadProjection(launched.threadId);
+      if (concurrent === "side chat without a run") {
+        assert.isEmpty(runs);
+      } else {
+        assert.equal(runs[0]?.status, "preparing");
+        assert.equal(runs[0]?.workspacePreparation?.type, "worktree");
+      }
       const taskFolder = yield* taskFolders.find(thread.worktreePath!);
       assert.equal(thread.worktreePath, taskFolder?.projectPath);
       assert.equal(thread.branch, "feature/launch");
@@ -3545,6 +3646,36 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       );
       assert.match(stages[1]?.detail ?? "", /\(2 of 2\)$/);
 
+      if (concurrent === "independent launch") {
+        const checkoutPath = taskFolder!.repositories[0]!.worktreePath;
+        const sentinel = path.join(checkoutPath, "sentinel.txt");
+        const shared = yield* launches.launch(
+          launchInput({
+            command: "launch:existing-checkout",
+            thread: "thread:existing-checkout",
+            workspace: { type: "existing_worktree", worktreePath: checkoutPath },
+          }),
+        );
+        assert.equal(shared.projection.thread.worktreePath, checkoutPath);
+        yield* fileSystem.writeFileString(sentinel, "edit");
+        assert.isTrue(yield* tracker.cancel(launched.threadId));
+        assert.equal(yield* fileSystem.readFileString(sentinel), "edit");
+        assert.equal((yield* taskFolders.find(taskFolder!.root))?.root, taskFolder!.root);
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+          taskFolder!.projectPath,
+        );
+        const sideChatId = yield* forkSideChat(threads, launched.threadId, "after-cancellation");
+        assert.equal(
+          (yield* threads.getThreadProjection(sideChatId)).thread.worktreePath,
+          taskFolder!.projectPath,
+        );
+        return;
+      }
+      const refused = yield* forkSideChat(threads, launched.threadId, "during-setup").pipe(
+        Effect.flip,
+      );
+      assert.equal(refused._tag, "OrchestratorDispatchError");
       assert.isTrue(yield* tracker.cancel(launched.threadId));
 
       assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath);
@@ -3919,6 +4050,11 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
       const running = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(running.runs[0]?.status, "starting");
       assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+      const sideChatId = yield* forkSideChat(threads, launched.threadId, "released-async-setup");
+      assert.equal(
+        (yield* threads.getThreadProjection(sideChatId)).thread.worktreePath,
+        running.thread.worktreePath,
+      );
       yield* Deferred.succeed(completion, { exitCode, durationMs: 1 });
       yield* tracker.stream(launched.threadId).pipe(
         Stream.filter((snapshot) => snapshot?.phase === "done"),

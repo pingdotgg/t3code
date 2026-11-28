@@ -68,16 +68,20 @@ const withFakeSystemd = <A, E>(
     stopFails = false,
     leftovers = false,
     liveOwner = false,
+    noBinSh = false,
+    noScopes = false,
   }: {
     readonly oomPolicy?: boolean;
     readonly stopFails?: boolean;
     readonly leftovers?: boolean;
     readonly liveOwner?: boolean;
+    readonly noBinSh?: boolean;
+    readonly noScopes?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
-    for (const name of ["systemd-run", "systemctl", "agent"]) {
+    for (const name of ["systemd-run", "systemctl", "agent", "sh"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
     const cgroupRoot = NodePath.join(bin, "cgroup");
@@ -130,13 +134,20 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(ProviderProcesses.ProviderProcesses, { hasOtherLiveOwner: liveOwner }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(
+        HostProcess.Environment,
+        noScopes ? { PATH: bin } : { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" },
+      ),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
+        exists: (path) =>
+          noBinSh && path === "/bin/sh" ? Effect.succeed(false) : fileSystem.exists(path),
         readFileString: (path, encoding) =>
           path === "/proc/meminfo"
             ? Effect.sync(() => `MemTotal:       16384 kB\nSwapTotal:      ${memory.swapKb} kB\n`)
             : fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+        readDirectory: (path, options) =>
+          fileSystem.readDirectory(path.replace("/sys/fs/cgroup", cgroupRoot), options),
         writeFileString: (path, data, options) =>
           fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),
@@ -202,6 +213,29 @@ const launchCodex = (
   );
 
 describe("AgentScope service", () => {
+  it.effect("launches through sh from PATH when the host has no /bin/sh", () =>
+    Effect.gen(function* () {
+      const withScopes = yield* withFakeSystemd(({ scope }) =>
+        scope.wrap({ command: "agent", args: [], name: "t" }),
+      );
+      expect(withScopes.command).toBe("/bin/sh");
+      const scoped = yield* withFakeSystemd(
+        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
+        { noBinSh: true },
+      );
+      const unscoped = yield* withFakeSystemd(
+        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
+        { noBinSh: true, noScopes: true },
+      );
+      for (const launch of [scoped, unscoped]) {
+        expect(NodePath.basename(launch.command)).toBe("sh");
+        expect(launch.command).not.toBe("/bin/sh");
+        expect(NodePath.basename(String(launch.args.at(-1)))).toBe("agent");
+      }
+      expect(unscoped.args).not.toContain("--scope");
+    }),
+  );
+
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
     withFakeSystemd(({ scope, units }) =>
       Effect.gen(function* () {
@@ -310,6 +344,37 @@ describe("AgentScope service", () => {
           }),
         { oomPolicy },
       ),
+  );
+
+  it.effect("reports each live agent scope's cgroup with the thread that owns it", () =>
+    withFakeSystemd(({ scope, units, cgroupRoot, stateDir }) =>
+      Effect.gen(function* () {
+        expect(yield* scope.controlGroups).toBeUndefined();
+        units.set("app-t3code-agents.slice", {
+          activeState: "active",
+          result: "success",
+          controlGroup: "/agents",
+        });
+        const agent = yield* scope.wrap({
+          command: "agent",
+          args: [],
+          name: "claude",
+          threadId: "a",
+        });
+        const codex = yield* launchCodex(scope, "b");
+        const owned = NodePath.join("/agents", ownedAgentSlice(stateDir));
+        for (const unit of [unitOf(agent), unitOf(codex)]) {
+          NodeFS.mkdirSync(NodePath.join(cgroupRoot, owned, unit), { recursive: true });
+        }
+
+        const groups = yield* scope.controlGroups;
+        expect(groups?.slice).toBe("/agents");
+        expect(groups?.scopes.toSorted((a, b) => a.agent.localeCompare(b.agent))).toEqual([
+          { path: NodePath.join(owned, unitOf(agent)), threadId: "a", agent: "claude" },
+          { path: NodePath.join(owned, unitOf(codex)), threadId: undefined, agent: "codex" },
+        ]);
+      }),
+    ),
   );
 
   it.effect("keeps a running scope while hundreds of other threads launch", () =>

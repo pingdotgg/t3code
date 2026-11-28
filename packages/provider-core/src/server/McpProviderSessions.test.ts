@@ -104,6 +104,35 @@ describe("McpProviderSessions tool results", () => {
       }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
+  it.effect("drops the oldest screenshot and its same-input siblings once a thread is full", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const shot = (fill: string) => ({
+        content: [{ type: "image", mimeType: "image/png", data: fill.repeat(12 * 1024 * 1024) }],
+      });
+      const phone = { deviceId: "phone" };
+      const tablet = { deviceId: "tablet" };
+      const watch = { deviceId: "watch" };
+      const take = (thread: ThreadId, input: unknown) =>
+        sessions.takeToolResult(thread, "device_screenshot", input);
+
+      yield* sessions.recordToolResult(threadId, "device_screenshot", phone, shot("A"));
+      yield* sessions.recordToolResult(threadId, "device_screenshot", tablet, shot("B"));
+      yield* sessions.recordToolResult(threadId, "device_screenshot", watch, shot("C"));
+      assert.isUndefined(yield* take(threadId, phone));
+      assert.deepEqual(yield* take(threadId, tablet), shot("B"));
+      assert.deepEqual(yield* take(threadId, watch), shot("C"));
+
+      // Keeping the second phone shot alone would hand it to the first phone call.
+      const siblings = ThreadId.make("thread-tool-results-siblings");
+      yield* sessions.recordToolResult(siblings, "device_screenshot", phone, shot("A"));
+      yield* sessions.recordToolResult(siblings, "device_screenshot", tablet, shot("B"));
+      yield* sessions.recordToolResult(siblings, "device_screenshot", phone, shot("C"));
+      assert.isUndefined(yield* take(siblings, phone));
+      assert.deepEqual(yield* take(siblings, tablet), shot("B"));
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+
   it.effect("drops stale-session writes and clears unconsumed results on clearToolResults", () =>
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
