@@ -44,6 +44,11 @@ export function EpubNarration(props: {
     mark(undefined);
   }
 
+  function fail() {
+    finish();
+    setFailed(true);
+  }
+
   function play(cue: EpubNarrationCue, resume: boolean) {
     const player = audio.current;
     if (!player) return;
@@ -53,8 +58,7 @@ export function EpubNarration(props: {
     if (!resume || !sameSource) player.currentTime = cue.begin;
     void player.play().catch(() => {
       if (command !== request.current) return;
-      finish();
-      setFailed(true);
+      fail();
     });
   }
 
@@ -135,6 +139,10 @@ export function EpubNarration(props: {
         ref={audio}
         preload="none"
         onTimeUpdate={synchronize}
+        onError={({ currentTarget: player }) => {
+          if (!player.error || !player.hasAttribute("src")) return;
+          fail();
+        }}
         onEnded={() => {
           if (!active.current || !audio.current?.ended) return;
           advance();
