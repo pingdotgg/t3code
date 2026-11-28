@@ -93,6 +93,14 @@ const STATUS_QUOTA_ERROR = Buffer.concat([
     "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4m42s.",
   ),
 ]);
+const UNAUTHENTICATED_MESSAGE =
+  "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.";
+const STATUS_UNAUTHENTICATED_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0xec, 0x01]),
+  Buffer.from(
+    `UNAUTHENTICATED (code 401): ${UNAUTHENTICATED_MESSAGE}\u001a\u0098\u0005HTTP 401 Unauthorized\n\n{"error":{"code":401,"message":"${UNAUTHENTICATED_MESSAGE}","status":"UNAUTHENTICATED"}}`,
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -236,8 +244,13 @@ describe("watchAntigravityPromptOutcome", () => {
         ))?.failure.resetAt,
         "2026-11-09T01:05:00.000Z",
       );
-      // A 404 after the turn already reached the model is a transient edge error, not a bad model.
-      for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {
+      // After the turn reached the model, a 404 is a transient edge error and a 401 an OAuth
+      // refresh race; before, they are a bad model and a signed-out session.
+      for (const [error, message, code] of [
+        [NOT_FOUND_ERROR, "Requested entity was not found.", "NOT_FOUND"],
+        [STATUS_NOT_FOUND_ERROR, "Requested entity was not found.", "NOT_FOUND"],
+        [STATUS_UNAUTHENTICATED_ERROR, UNAUTHENTICATED_MESSAGE, "UNAUTHENTICATED"],
+      ] as const) {
         assert.deepEqual(
           yield* turn([
             [USER_INPUT, input],
@@ -246,24 +259,18 @@ describe("watchAntigravityPromptOutcome", () => {
             [ERROR_MESSAGE, error],
           ]),
           {
-            ...reusable({
-              class: "provider_error",
-              message: "Requested entity was not found.",
-              code: "NOT_FOUND",
-              retryable: true,
-            }),
+            ...reusable({ class: "provider_error", message, code, retryable: true }),
             resumeWith: "continue",
           },
         );
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, error],
+          ]),
+          reusable({ class: "provider_error", message, code, retryable: false }),
+        );
       }
-      // A 404 before the model answered is an unknown or unentitled model.
-      assert.equal(
-        (yield* turn([
-          [USER_INPUT, input],
-          [ERROR_MESSAGE, STATUS_NOT_FOUND_ERROR],
-        ]))?.failure.retryable,
-        false,
-      );
       // Google account verification errors surface the verified continuation link on both
       // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
       for (const [url, compact, accepted] of [

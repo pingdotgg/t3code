@@ -270,16 +270,18 @@ function turnFailure(
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  // A 404 before the model answered is an unknown or unentitled model; after, a transient edge error.
-  const transientNotFound = httpStatus === "404" && step?.reachedModel === true;
+  // Before the model answered, a 404 is an unknown model and a 401 a signed-out session. After,
+  // they are a transient edge error and an OAuth token refresh race.
+  const transientMidTurn =
+    (httpStatus === "404" || httpStatus === "401") && step?.reachedModel === true;
   const failure = makeProviderFailure({
     class: rateLimited ? "usage_limit" : "provider_error",
     message: message!.trim(),
     code: status ?? null,
-    retryable: rateLimited || transientNotFound || Number(httpStatus) >= 500,
+    retryable: rateLimited || transientMidTurn || Number(httpStatus) >= 500,
     resetAt: resetAtFrom(text, now) ?? null,
   });
-  return transientNotFound
+  return transientMidTurn
     ? { failure, threadDisposition: "reusable", resumeWith: "continue" }
     : reusable(failure);
 }
