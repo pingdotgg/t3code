@@ -4835,7 +4835,7 @@
   "815ffddea40766e1": "Deine Nachricht hat sich geändert und wurde daher nicht gesendet.",
   "16aa57835b1ee840": "Eine Genehmigung wird bereits beantwortet, daher wurde deine Nachricht nicht gesendet.",
   "cdfced17f0576311": "Eine weitere Genehmigung ist eingegangen, daher wurde deine Nachricht nicht gesendet.",
-  "08a5b53649784fe8": "{count, plural, one {Der Prompt liegt {excess} Zeichen über dem Limit von {limit} Zeichen. Kürze oder teile ihn vor dem Senden.} other {Der Prompt liegt {excess} Zeichen über dem Limit von {limit} Zeichen. Kürze oder teile ihn vor dem Senden.}}",
+  "16a39fc93c52a04b": "{count, plural, one {Der Prompt hat {length} Zeichen und liegt über dem Limit von {limit}. Entferne {excess} Zeichen oder teile ihn vor dem Senden.} other {Der Prompt hat {length} Zeichen und liegt über dem Limit von {limit}. Entferne {excess} Zeichen oder teile ihn vor dem Senden.}}",
   "507265b36dfc57fd": "Das Kopieren von Snapshots erfordert eine sichere Browserverbindung.",
   "4bd2f44a35e591ca": "Im Systembrowser öffnen",
   "202e13f15a3dcd30": "Link kopieren",

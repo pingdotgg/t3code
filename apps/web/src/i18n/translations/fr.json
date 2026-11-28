@@ -4833,7 +4833,7 @@
   "815ffddea40766e1": "Votre message a changé, il n’a donc pas été envoyé.",
   "16aa57835b1ee840": "Une réponse à une approbation est déjà en cours, votre message n’a donc pas été envoyé.",
   "cdfced17f0576311": "Une autre approbation est arrivée, votre message n’a donc pas été envoyé.",
-  "08a5b53649784fe8": "{count, plural, one {Le prompt dépasse de {excess} caractère la limite de {limit} caractères. Raccourcissez-le ou divisez-le avant l’envoi.} other {Le prompt dépasse de {excess} caractères la limite de {limit} caractères. Raccourcissez-le ou divisez-le avant l’envoi.}}",
+  "16a39fc93c52a04b": "{count, plural, one {Le prompt fait {length} caractères, au-delà de la limite de {limit}. Supprimez {excess} caractère ou divisez-le avant l’envoi.} other {Le prompt fait {length} caractères, au-delà de la limite de {limit}. Supprimez {excess} caractères ou divisez-le avant l’envoi.}}",
   "507265b36dfc57fd": "La copie de l’instantané nécessite une connexion sécurisée du navigateur.",
   "4bd2f44a35e591ca": "Ouvrir dans le navigateur du système",
   "202e13f15a3dcd30": "Copier le lien",

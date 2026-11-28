@@ -4832,7 +4832,7 @@
   "815ffddea40766e1": "Tu mensaje cambió, así que no se envió.",
   "16aa57835b1ee840": "Ya se está respondiendo a una aprobación, así que tu mensaje no se envió.",
   "cdfced17f0576311": "Llegó otra aprobación, así que tu mensaje no se envió.",
-  "08a5b53649784fe8": "{count, plural, one {El prompt supera en {excess} carácter el límite de {limit} caracteres. Acórtalo o divídelo antes de enviarlo.} other {El prompt supera en {excess} caracteres el límite de {limit} caracteres. Acórtalo o divídelo antes de enviarlo.}}",
+  "16a39fc93c52a04b": "{count, plural, one {El prompt tiene {length} caracteres y supera el límite de {limit}. Elimina {excess} carácter o divídelo antes de enviarlo.} other {El prompt tiene {length} caracteres y supera el límite de {limit}. Elimina {excess} caracteres o divídelo antes de enviarlo.}}",
   "507265b36dfc57fd": "Copiar instantáneas requiere una conexión segura del navegador.",
   "4bd2f44a35e591ca": "Abrir en el navegador del sistema",
   "202e13f15a3dcd30": "Copiar enlace",

@@ -4833,7 +4833,7 @@
   "815ffddea40766e1": "Ditt meddelande ändrades, så det skickades inte.",
   "16aa57835b1ee840": "Ett godkännande håller redan på att besvaras, så ditt meddelande skickades inte.",
   "cdfced17f0576311": "Ett annat godkännande kom in, så ditt meddelande skickades inte.",
-  "08a5b53649784fe8": "{count, plural, one {Prompten är {excess} tecken över gränsen på {limit} tecken. Korta ned eller dela upp den innan du skickar.} other {Prompten är {excess} tecken över gränsen på {limit} tecken. Korta ned eller dela upp den innan du skickar.}}",
+  "16a39fc93c52a04b": "{count, plural, one {Prompten är {length} tecken, över gränsen på {limit}. Ta bort {excess} tecken eller dela upp den innan du skickar.} other {Prompten är {length} tecken, över gränsen på {limit}. Ta bort {excess} tecken eller dela upp den innan du skickar.}}",
   "507265b36dfc57fd": "Kopiering av ögonblicksbilder kräver en säker webbläsaranslutning.",
   "4bd2f44a35e591ca": "Öppna i systemets webbläsare",
   "202e13f15a3dcd30": "Kopiera länk",

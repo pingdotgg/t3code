@@ -4834,7 +4834,7 @@
   "815ffddea40766e1": "Your message changed, so it wasn't sent.",
   "16aa57835b1ee840": "An approval is already being answered, so your message wasn't sent.",
   "cdfced17f0576311": "Another approval arrived, so your message wasn't sent.",
-  "08a5b53649784fe8": "{count, plural, one {Prompt is {excess} character over the {limit}-character limit. Shorten or split it before sending.} other {Prompt is {excess} characters over the {limit}-character limit. Shorten or split it before sending.}}",
+  "16a39fc93c52a04b": "{count, plural, one {Prompt is {length} characters, over the {limit} limit. Remove {excess} character or split it before sending.} other {Prompt is {length} characters, over the {limit} limit. Remove {excess} characters or split it before sending.}}",
   "507265b36dfc57fd": "Snapshot copying requires a secure browser connection.",
   "4bd2f44a35e591ca": "Open in system browser",
   "202e13f15a3dcd30": "Copy Link",

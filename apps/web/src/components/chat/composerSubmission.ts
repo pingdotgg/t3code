@@ -27,9 +27,10 @@ export function getComposerPromptLengthValidationMessage(
 
   return resolve(
     msg(
-      "{count, plural, one {Prompt is {excess} character over the {limit}-character limit. Shorten or split it before sending.} other {Prompt is {excess} characters over the {limit}-character limit. Shorten or split it before sending.}}",
+      "{count, plural, one {Prompt is {length} characters, over the {limit} limit. Remove {excess} character or split it before sending.} other {Prompt is {length} characters, over the {limit} limit. Remove {excess} characters or split it before sending.}}",
       {
         count: excessCharacters,
+        length: inputLength.toLocaleString(locale),
         excess: excessCharacters.toLocaleString(locale),
         limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString(locale),
       },
