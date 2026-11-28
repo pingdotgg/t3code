@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   TrimmedNonEmptyString,
+  trimAsciiWhitespace,
   type ChangeRequest,
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
@@ -518,8 +519,9 @@ function trimmed(value: string): string | null {
 function toPullRequestRecord(node: PullRequestNode): NormalizedGitHubPullRequestRecord | null {
   const title = trimmed(node.title);
   const url = trimmed(node.url);
-  const baseRefName = trimmed(node.baseRefName);
-  const headRefName = trimmed(node.headRefName);
+  // Git allows Unicode whitespace such as U+3000 at the edges of a branch name.
+  const baseRefName = trimAsciiWhitespace(node.baseRefName) || null;
+  const headRefName = trimAsciiWhitespace(node.headRefName) || null;
   const updatedAt = DateTime.make(node.updatedAt);
   if (node.number < 1 || !title || !url || !baseRefName || !headRefName) return null;
   if (Option.isNone(updatedAt)) return null;
@@ -665,8 +667,9 @@ export const make = Effect.gen(function* () {
         : parseGitHubRepositorySelector(input.repository, base.host);
     if (locator === null) return yield* failure(`${input.repository} is not a GitHub repository.`);
     const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
-    const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(input.headSelector.trim());
-    const headRefName = ownerMatch?.[2] ?? input.headSelector.trim();
+    const headSelector = trimAsciiWhitespace(input.headSelector);
+    const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(headSelector);
+    const headRefName = ownerMatch?.[2] ?? headSelector;
     if (ownerMatch) {
       // GraphQL cannot filter heads by owner, and names like a fork's `main` match thousands.
       const query = new URLSearchParams({
