@@ -1720,6 +1720,7 @@ describe("DesktopWindow", () => {
           copyEmail,
           `no "Copy Email Address" item in ${JSON.stringify(template.map((item) => item.label ?? item.role ?? item.type))}`,
         );
+        assert.equal(template.length, 1);
         copyEmail?.click?.(
           {} as Electron.MenuItem,
           fakeWindow.window,
@@ -1728,6 +1729,99 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Deferred.await(copied), "restaurant@example.com");
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "omits the context menu on non-editable empty surfaces while keeping editable and browser menus",
+    () =>
+      Effect.gen(function* () {
+        const main = makeFakeBrowserWindow();
+        const guest = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const menus = yield* Queue.unbounded<ElectronMenu.ElectronMenuTemplateInput>();
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const mainContextMenu = main.webContentsListeners.get("context-menu");
+          if (!mainContextMenu) {
+            return yield* Effect.die("context-menu listener was not registered");
+          }
+
+          const attach = main.webContentsListeners.get("did-attach-webview");
+          if (!attach) return yield* Effect.die("did-attach-webview listener was not registered");
+          attach({}, guest.window.webContents);
+          const guestContextMenu = guest.webContentsListeners.get("context-menu");
+          if (!guestContextMenu) {
+            return yield* Effect.die("guest context-menu listener was not registered");
+          }
+
+          // Non-editable empty surface (only Select All enabled): no menu should open.
+          mainContextMenu(
+            { preventDefault: vi.fn() },
+            {
+              isEditable: false,
+              selectionText: "",
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              linkURL: "",
+              mediaType: "none",
+              editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+            },
+          );
+          assert.equal(yield* Queue.size(menus), 0);
+
+          // Editable field with empty clipboard still opens the edit menu.
+          mainContextMenu(
+            { preventDefault: vi.fn() },
+            {
+              isEditable: true,
+              selectionText: "",
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              linkURL: "",
+              mediaType: "none",
+              editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+            },
+          );
+          const editableMenu = yield* Queue.take(menus);
+          assert.deepEqual(
+            editableMenu.template.map((item) => item.role),
+            ["cut", "copy", "paste", "selectAll"],
+          );
+
+          // Embedded browser webviews still offer Reload and edit items on empty space.
+          guestContextMenu(
+            { preventDefault: vi.fn() },
+            {
+              isEditable: false,
+              selectionText: "",
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              linkURL: "",
+              mediaType: "none",
+              editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+            },
+          );
+          const guestMenu = yield* Queue.take(menus);
+          assert.equal(guestMenu.template[0]?.label, "Reload");
+          assert.deepEqual(
+            guestMenu.template.filter((item) => item.role).map((item) => item.role),
+            ["cut", "copy", "paste", "selectAll"],
+          );
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: main.window,
+              createCount,
+              mainWindow,
+              onPopupTemplate: (menu) => Queue.offer(menus, menu).pipe(Effect.asVoid),
+            }),
+          ),
+        );
+      }),
   );
 
   it.effect(

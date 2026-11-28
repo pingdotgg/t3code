@@ -676,8 +676,6 @@ export const make = Effect.gen(function* () {
       contents.on("context-menu", (event, params) => {
         event.preventDefault();
         if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
-        // Right-clicking a guest may leave native editing roles targeting the host renderer.
-        contents.focus();
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
@@ -748,28 +746,45 @@ export const make = Effect.gen(function* () {
           menuTemplate.push({ type: "separator" });
         }
 
-        menuTemplate.push(
-          {
-            role: "cut",
-            label: m(msg("Cut", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canCut,
-          },
-          {
-            role: "copy",
-            label: m(msg("Copy", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canCopy,
-          },
-          {
-            role: "paste",
-            label: m(msg("Paste", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canPaste,
-          },
-          {
-            role: "selectAll",
-            label: m(msg("Select All", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canSelectAll,
-          },
-        );
+        const hasEditContext =
+          isBrowserContents ||
+          params.isEditable ||
+          Boolean(params.selectionText?.trim()) ||
+          params.editFlags.canCut ||
+          params.editFlags.canCopy ||
+          params.editFlags.canPaste;
+
+        if (menuTemplate.length === 0 && !hasEditContext) return;
+
+        // Right-clicking a guest may leave native editing roles targeting the host renderer.
+        contents.focus();
+
+        if (hasEditContext) {
+          menuTemplate.push(
+            {
+              role: "cut",
+              label: m(msg("Cut", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canCut,
+            },
+            {
+              role: "copy",
+              label: m(msg("Copy", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canCopy,
+            },
+            {
+              role: "paste",
+              label: m(msg("Paste", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canPaste,
+            },
+            {
+              role: "selectAll",
+              label: m(msg("Select All", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canSelectAll,
+            },
+          );
+        } else if (menuTemplate.at(-1)?.type === "separator") {
+          menuTemplate.pop();
+        }
 
         void runPromise(
           electronMenu.popupTemplate({
