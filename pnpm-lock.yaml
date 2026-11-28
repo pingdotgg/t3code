@@ -401,7 +401,7 @@ pnpmfileChecksum: sha256-G0L7+qfid3Wo9BlLIlMyF/+fqBnAnqHKSe0HlWAtlg8=
 patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.8': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
-  '@cursor/sdk@1.5.2': 0d4a0be1e981e950963d8322c6320e227fa32981db069a59b84959df0ff16abc
+  '@cursor/sdk@1.5.2': 38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a
   '@effect/platform-node-shared@4.1.6': f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed
   '@effect/vitest@4.1.6': f87ba071dd4f5cfa3b1ba14d5d59363e64372cd49af4d8282c322939e6bf3af2
   '@exodus/bytes@1.15.1': ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8
@@ -902,7 +902,7 @@ importers:
         version: 0.3.321(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)
       '@cursor/sdk':
         specifier: 1.5.2
-        version: 1.5.2(patch_hash=0d4a0be1e981e950963d8322c6320e227fa32981db069a59b84959df0ff16abc)(zod@4.6.7)
+        version: 1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)
       '@effect/platform-node':
         specifier: 4.1.6
         version: 4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -1853,7 +1853,7 @@ importers:
     dependencies:
       '@cursor/sdk':
         specifier: 1.5.2
-        version: 1.5.2(patch_hash=0d4a0be1e981e950963d8322c6320e227fa32981db069a59b84959df0ff16abc)(zod@4.6.7)
+        version: 1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -14528,7 +14528,7 @@ snapshots:
   '@cursor/sdk-win32-x64@1.5.2':
     optional: true
 
-  '@cursor/sdk@1.5.2(patch_hash=0d4a0be1e981e950963d8322c6320e227fa32981db069a59b84959df0ff16abc)(zod@4.6.7)':
+  '@cursor/sdk@1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)':
     dependencies:
       '@statsig/js-client': 3.31.0
       zod: 4.6.7
