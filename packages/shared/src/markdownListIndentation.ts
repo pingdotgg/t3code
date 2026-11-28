@@ -7,7 +7,7 @@ import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrder
 interface MarkdownPosition {
   readonly start?: {
     readonly line?: number;
-    readonly offset?: number;
+    readonly offset?: number | undefined;
   };
 }
 
