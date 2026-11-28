@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as ChildProcess from "effect/process/ChildProcess";
 
-import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
+import { createMuseSdkHost, makeMuseEnvironment, MuseSdkError } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import {
   discoverMuseModels,
@@ -147,7 +147,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       auth: { status: "unknown" },
       message:
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
-      timedOut: Result.isSuccess(catalog) && Option.isNone(catalog.success),
+      timedOut: Result.isFailure(catalog)
+        ? catalog.failure instanceof MuseSdkError &&
+          catalog.failure.reason === "initializationTimeout"
+        : true,
     });
   }
   const models = catalog.success.value;

@@ -19,11 +19,14 @@ import * as Schema from "effect/Schema";
 export class MuseSdkError extends Schema.TaggedError<MuseSdkError>()("MuseSdkError", {
   operation: Schema.String,
   cause: Schema.Defect(),
+  reason: Schema.optionalKey(Schema.Literal("initializationTimeout")),
 }) {
   override get message(): string {
     return `Muse SDK ${this.operation} failed.`;
   }
 }
+
+class MuseInitializationTimeout extends Error {}
 
 export interface MuseSdkHost {
   readonly connection: Pick<
@@ -195,7 +198,7 @@ export async function createMuseSdkHost(
   options.signal?.addEventListener("abort", onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
   const timer = setTimeout(
-    () => rejectStartup(new Error("Muse SDK initialization timed out.")),
+    () => rejectStartup(new MuseInitializationTimeout("Muse SDK initialization timed out.")),
     options.startupTimeoutMs ?? 20_000,
   );
   timer.unref();
@@ -246,7 +249,12 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
       startup = createHost({ ...hostOptions, signal });
       return startup;
     },
-    catch: (cause) => new MuseSdkError({ operation: "start", cause }),
+    catch: (cause) =>
+      new MuseSdkError({
+        operation: "start",
+        cause,
+        ...(cause instanceof MuseInitializationTimeout ? { reason: "initializationTimeout" } : {}),
+      }),
   }).pipe(
     Effect.onInterrupt(() =>
       Effect.promise(async () => {
