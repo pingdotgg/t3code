@@ -3337,6 +3337,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   (!hasDeferredBackgroundWork(held) && !held.replyOpen)
                 )
                   return;
+                // Releasing the request hold below would let a sleeping deferred finalize
+                // complete this turn before it is failed, so stale that timer first.
+                held.backgroundFinalizeGeneration += 1;
                 agentRequests.clear();
                 yield* Ref.set(wakeBuffer, []);
                 yield* Ref.set(continuationRequested, false);
