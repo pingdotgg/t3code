@@ -129,6 +129,9 @@ const LOGIN_SHELL_ENV_NAMES = [
   "__MISE_DIFF",
   "JAVA_HOME",
   "PNPM_HOME",
+  "AZURE_CONFIG_DIR",
+  "GH_CONFIG_DIR",
+  "GLAB_CONFIG_DIR",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = [
   "PATH",
@@ -565,6 +568,10 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "NODE_EXTRA_CA_CERTS",
       "JAVA_HOME",
       "PNPM_HOME",
+      // Source-control CLIs read their login and defaults from these.
+      "AZURE_CONFIG_DIR",
+      "GH_CONFIG_DIR",
+      "GLAB_CONFIG_DIR",
       "T3CODE_TELEMETRY_ENABLED",
       "DO_NOT_TRACK",
       "T3CODE_FEATURE_FLAGS",
