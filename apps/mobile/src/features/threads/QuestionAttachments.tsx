@@ -140,7 +140,7 @@ export function QuestionAttachments(props: {
     props.question.id,
   );
   const attachments = drafts[key]?.attachments ?? [];
-  const pick = async (kind: "media" | "files") => {
+  const pick = async (kind: "library" | "camera" | "files") => {
     const scope = pickerScope.current;
     const picked = await settlePromise(async () => {
       const result = await pickQuestionAttachments({
@@ -164,7 +164,7 @@ export function QuestionAttachments(props: {
         <ComposerAttachmentButton
           disabled={props.disabled}
           supportsFiles
-          onPickMedia={() => pick("media")}
+          onPickMedia={pick}
           onPickFiles={() => pick("files")}
         />
       ) : null}

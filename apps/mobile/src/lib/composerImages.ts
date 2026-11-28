@@ -434,6 +434,7 @@ export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
   readonly acceptSelection?: () => boolean;
+  readonly source?: "library" | "camera";
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -460,23 +461,38 @@ export async function pickComposerMedia(input: {
     };
   }
 
-  // Android pickers report background state; guard against deferred restarts mid-pick.
+  // Android pickers and permission prompts report background state; guard against deferred restarts mid-pick.
   const endHandoff = beginForegroundHandoff();
   let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
   try {
-    result = await imagePicker.launchImageLibraryAsync({
-      mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
-      allowsMultipleSelection: true,
-      selectionLimit: remainingSlots,
-      // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
-      base64: false,
-      quality: 1,
-      shouldDownloadFromNetwork: true,
-    });
+    if (input.source === "camera" && !(await imagePicker.requestCameraPermissionsAsync()).granted) {
+      return {
+        attachments: [],
+        error: m(msg("Camera access was denied for this app. Open Settings to enable it.")),
+      };
+    }
+    result =
+      input.source === "camera"
+        ? await imagePicker.launchCameraAsync()
+        : await imagePicker.launchImageLibraryAsync({
+            mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
+            allowsMultipleSelection: true,
+            selectionLimit: remainingSlots,
+            // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
+            base64: false,
+            quality: 1,
+            shouldDownloadFromNetwork: true,
+          });
   } catch (error) {
     return {
       attachments: [],
-      error: errorDisplayMessage(error, m) ?? m(msg("Could not open the photo library.")),
+      error:
+        errorDisplayMessage(error, m) ??
+        m(
+          input.source === "camera"
+            ? msg("Could not open the camera.")
+            : msg("Could not open the photo library."),
+        ),
     };
   } finally {
     endHandoff();
