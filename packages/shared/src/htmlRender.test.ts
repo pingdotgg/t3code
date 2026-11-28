@@ -57,6 +57,36 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
   });
 
+  it.each([
+    '<meta data-name="viewport" content="card">',
+    '<meta name="viewport-fit" content="cover">',
+    "<meta name='viewport-fit' content='cover'>",
+    "<meta name=viewport-fit content=cover>",
+  ])("injects a default viewport when metadata is only viewport-like: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected).toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    );
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
+  it.each([
+    '<meta name="viewport" content="width=600">',
+    "<meta name='viewport' content='width=600'>",
+    '<meta name=viewport content="width=600">',
+    "<meta name=viewport>",
+    "<meta name=viewport />",
+    '<meta name="viewport"/>',
+    '<meta data-x="1"name="viewport" content="width=600">',
+    '<meta data-if="a>b" name="viewport" content="width=600">',
+  ])("preserves a genuine viewport declaration: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected).not.toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    );
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
   it.each(["textarea", "iframe", "plaintext"])("keeps the bootstrap outside %s content", (tag) => {
     const fragment = `<${tag}><head><meta name="viewport"></head></${tag}>`;
     const injected = injectHtmlRenderBootstrap(fragment);
