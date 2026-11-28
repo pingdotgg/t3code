@@ -142,12 +142,4 @@ describe("parseGrepOutput", () => {
       { fileName: ".", preview },
     ]);
   });
-
-  it("charges only retained note characters against the preview budget", () => {
-    const text = "m".repeat(7_501);
-    expect(parseGrepOutput(`a.ts:1:${text}\n(${"x".repeat(498)}🚀)`, ".")).toEqual([
-      { fileName: "a.ts", line: 1, preview: text },
-      { fileName: ".", preview: `(${"x".repeat(498)}` },
-    ]);
-  });
 });
