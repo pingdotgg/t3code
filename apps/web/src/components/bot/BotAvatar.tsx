@@ -3,7 +3,7 @@ import {
   botAvatarFor,
 } from "@t3tools/client-runtime/state/bot-avatar";
 import type { BotAvatarChoice } from "@t3tools/contracts";
-import { renderAvatarSvg, type AvatarState } from "open-bot-avatar";
+import { renderAvatarSvg, type AvatarMood, type AvatarState } from "open-bot-avatar";
 import { mountAvatar, type MountedAvatar } from "open-bot-avatar/dom";
 import { useEffect, useRef } from "react";
 
@@ -19,13 +19,14 @@ const STILL_TIME: Record<AvatarState, number> = {
 
 const stillFrames = new Map<string, string>();
 
-function stillFrame(avatar: BotAvatarDefinition, state: AvatarState): string {
-  const key = `${avatar.definition.id}:${avatar.color}:${state}`;
+function stillFrame(avatar: BotAvatarDefinition, state: AvatarState, mood: AvatarMood): string {
+  const key = `${avatar.definition.id}:${avatar.color}:${state}:${mood}`;
   let frame = stillFrames.get(key);
   if (frame === undefined) {
     const svg = renderAvatarSvg(avatar.definition, {
       color: avatar.color,
       state,
+      mood,
       time: STILL_TIME[state],
     });
     frame = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -37,18 +38,20 @@ function stillFrame(avatar: BotAvatarDefinition, state: AvatarState): string {
 function LiveAvatar(props: {
   avatar: BotAvatarDefinition;
   state: AvatarState;
+  mood: AvatarMood;
   size: number;
   followPointer: boolean;
 }) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const mountedRef = useRef<MountedAvatar | null>(null);
-  const { avatar, state, followPointer } = props;
+  const { avatar, state, mood, followPointer } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the package's DOM renderer and destroys it on unmount
   useEffect(() => {
     const mounted = mountAvatar(hostRef.current!, {
       definition: avatar.definition,
       color: avatar.color,
       state,
+      mood,
       followPointer,
       label: "",
     });
@@ -61,8 +64,8 @@ function LiveAvatar(props: {
   }, [avatar, followPointer]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the state into the mounted renderer, which eases to the new pose
   useEffect(() => {
-    mountedRef.current?.update({ state });
-  }, [state]);
+    mountedRef.current?.update({ state, mood });
+  }, [state, mood]);
   return (
     <span
       ref={hostRef}
@@ -79,6 +82,8 @@ export function BotAvatar(props: {
   /** The avatar the Bot chose; absent picks one from its thread id. */
   choice?: BotAvatarChoice | null | undefined;
   state: AvatarState;
+  /** How the Bot feels; happy shows ^^ eyes. */
+  mood?: AvatarMood;
   size: number;
   live?: boolean;
   followPointer?: boolean;
@@ -89,6 +94,7 @@ export function BotAvatar(props: {
       <LiveAvatar
         avatar={avatar}
         state={props.state}
+        mood={props.mood ?? "neutral"}
         size={props.size}
         followPointer={props.followPointer === true}
       />
@@ -99,7 +105,7 @@ export function BotAvatar(props: {
       alt=""
       aria-hidden
       draggable={false}
-      src={stillFrame(avatar, props.state)}
+      src={stillFrame(avatar, props.state, props.mood ?? "neutral")}
       className="block shrink-0"
       width={props.size}
       height={props.size}

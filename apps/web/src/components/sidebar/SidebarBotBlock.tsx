@@ -71,6 +71,7 @@ function BotRow(props: {
       threadId={props.bot.id}
       choice={props.bot.botConfig?.avatar}
       state={status.state}
+      mood={status.mood}
       size={20}
       live={hovered || reactingTo !== null}
     />
@@ -126,7 +127,7 @@ function BotRow(props: {
           <span className="shrink-0 text-2xs text-destructive-foreground">
             <T>Stopped</T>
           </span>
-        ) : status.state === "working" ? (
+        ) : status.state === "working" || status.state === "thinking" ? (
           <span className="shrink-0 text-2xs text-sidebar-muted-foreground">
             <T>Working</T>
           </span>
