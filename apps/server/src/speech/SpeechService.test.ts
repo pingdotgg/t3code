@@ -612,6 +612,13 @@ it.effect.each([
     text: "First um\r\n\r\nuh Second.",
     expected: "First\r\n\r\nSecond.",
   },
+  {
+    cue: undefined,
+    remove: true,
+    language: "de",
+    text: "Hm, Dr. " + "Böhm".normalize("NFD"),
+    expected: "Dr. " + "Böhm".normalize("NFD"),
+  },
   { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
   {
     cue: "uh no",
@@ -644,13 +651,13 @@ it.effect.each([
     expected: "Uh, Make it red, um, blue.",
   },
 ])(
-  "preserves only an explicit correction cue during batch and stream filler removal: $cue / $remove",
-  ({ cue, remove, text, expected }) =>
+  "batch and stream filler removal: $text (cue: $cue, remove: $remove)",
+  ({ cue, remove, language = "en", text, expected }) =>
     Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
       const options = {
         ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        speechLanguage: "en",
+        speechLanguage: language,
         speechRemoveFillerWords: remove,
         speechCustomWords: [{ term: "um", aliases: [] }],
         ...(cue === undefined ? {} : { speechCorrectionWord: cue }),
