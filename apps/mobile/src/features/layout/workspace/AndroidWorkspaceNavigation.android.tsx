@@ -85,6 +85,8 @@ export function AndroidWorkspaceNavigation(props: {
   readonly onSelect?: () => void;
   /** The rail needs the whole workspace while it widens over the list. */
   readonly onOverlayChange?: (overlay: boolean) => void;
+  /** Split sidebar tabs move up with the list. Phone tabs still leave while the IME is open. */
+  readonly visibleWithKeyboard?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const gt = useGT();
@@ -118,7 +120,7 @@ export function AndroidWorkspaceNavigation(props: {
     (props.paneWidth ?? window.width) -
     (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
-  if (!rail && keyboardVisible) return null;
+  if (!rail && keyboardVisible && !props.visibleWithKeyboard) return null;
 
   return (
     <View
@@ -195,6 +197,7 @@ export function FloatingWorkspaceTabs(props: {
   readonly onNewThread: () => void;
   readonly paneWidth?: number;
   readonly onSelect?: () => void;
+  readonly visibleWithKeyboard?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   return (

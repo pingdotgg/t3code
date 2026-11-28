@@ -6,6 +6,7 @@ export function AndroidWorkspaceNavigation(_props: {
   readonly paneWidth?: number;
   readonly onSelect?: () => void;
   readonly onOverlayChange?: (overlay: boolean) => void;
+  readonly visibleWithKeyboard?: boolean;
 }) {
   return null;
 }
@@ -17,6 +18,7 @@ export function FloatingWorkspaceTabs(_props: {
   readonly onNewThread: () => void;
   readonly paneWidth?: number;
   readonly onSelect?: () => void;
+  readonly visibleWithKeyboard?: boolean;
 }) {
   return null;
 }
