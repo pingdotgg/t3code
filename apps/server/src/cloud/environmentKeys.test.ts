@@ -61,6 +61,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }).pipe(Effect.provide(layerServerSecretStore())),
     );
 
+    it.effect("treats an empty keypair record as missing and recovers the legacy keypair", () =>
+      Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.set("cloud-link-ed25519-key-pair", new Uint8Array());
+        yield* secretStore.set(
+          "cloud-link-ed25519-private-key",
+          new TextEncoder().encode("private"),
+        );
+        yield* secretStore.set("cloud-link-ed25519-public-key", new TextEncoder().encode("public"));
+
+        const signingKey = yield* EnvironmentSigningKey.pipe(Effect.provide(layer));
+        assert.strictEqual(signingKey.publicKey, "public");
+      }).pipe(Effect.provide(layerServerSecretStore())),
+    );
+
+    it.effect("builds the layer when the keypair record is cut short", () =>
+      Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.set(
+          "cloud-link-ed25519-key-pair",
+          new TextEncoder().encode('{"privateKey":"-----BEGIN PRIV'),
+        );
+
+        yield* EnvironmentSigningKey.pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(layerServerSecretStore())),
+    );
+
     it.effect("uses the persisted keypair when a concurrent creator wins", () =>
       Effect.gen(function* () {
         const winner = new TextEncoder().encode(
