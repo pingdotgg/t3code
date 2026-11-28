@@ -660,7 +660,11 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     }
     if (substitutionDepth > 0 || parameterExpansionDepth > 0) continue;
 
-    if (character === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+    if (character === "<" && command[index + 1] === "<") {
+      if (command[index + 2] === "<") {
+        index += 2;
+        continue;
+      }
       const stripTabs = command[index + 2] === "-";
       const delimiter = readHeredocDelimiter(command, index + (stripTabs ? 3 : 2), stripTabs);
       if (delimiter === null) {
