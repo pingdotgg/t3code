@@ -22,5 +22,6 @@ module.exports = {
       filePath: "../../native/apple-speech/AppleSpeechEngine.swift",
       reasons: ["appleSpeech"],
     },
+    { type: "file", filePath: "plugins/ios/T3AppIntents.swift", reasons: ["iosAppIntents"] },
   ],
 };

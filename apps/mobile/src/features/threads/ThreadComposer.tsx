@@ -178,6 +178,7 @@ export interface ThreadComposerProps {
   readonly canSteerActiveTurn: boolean;
   readonly hidden: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
+  readonly takeDictationRequest?: () => boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
@@ -465,6 +466,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  const startRequestedDictation = useEffectEvent(() => {
+    if (props.takeDictationRequest?.()) voiceInput.start();
+  });
+  const hasDictationRequest = props.takeDictationRequest !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a Start Dictation shortcut opens this draft already listening, once
+  useEffect(() => {
+    if (hasDictationRequest && voiceInput.isAvailable) startRequestedDictation();
+  }, [hasDictationRequest, voiceInput.isAvailable]);
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const voicePresentation = resolveVoiceComposerPresentation(

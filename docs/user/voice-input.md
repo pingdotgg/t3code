@@ -21,6 +21,7 @@ In **Settings → Voice → Transcription**, filter by language, download a mode
 - Press the microphone button or `mod+shift+d` to start/stop (`Esc` discards; max recording length: **5 minutes**).
 - Configure tap vs. hold behavior in **Settings → Voice → Dictation shortcut** (**Auto**, **Hold**, or **Toggle**), or remap the chord in [Keybindings](./keybindings.md).
 - Pressing **Send** (or Save/Comment/Submit) while recording finishes transcription and submits automatically.
+- **iPhone**: The **Start Dictation** action opens a new thread that is already listening. Run it from the Shortcuts app, the Action button, or Siri ("Start dictation in T3 Code"). It uses the project a new thread from the app would use, or shows the project picker first when there is none.
 
 ## Improve recognition and cleanup
 
