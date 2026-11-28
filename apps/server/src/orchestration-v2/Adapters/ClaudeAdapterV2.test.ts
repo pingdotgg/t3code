@@ -19291,6 +19291,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* harness.offerAndWait(wakeAssistant);
+        assert.deepEqual(
+          (
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks ?? []
+          ).map((task) => task.taskId),
+          emptyLevel === "sibling" ? [secondTaskId] : [],
+          "the wake run must drop the command it reports while it is still running",
+        );
         yield* harness.offerAndWait(wakeResult);
         yield* harness.awaitTerminal(2);
 
