@@ -27,6 +27,7 @@ import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
+import { cn } from "../../lib/cn";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
@@ -183,7 +184,7 @@ function HandoffEndpoint(props: {
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={gt("Show provider account")}
-      className="min-h-6 max-w-full flex-row items-center justify-center gap-1.5"
+      className={cn("min-h-6 max-w-full flex-row items-center justify-center", showBadge && "mr-3")}
       hitSlop={{ top: 8, bottom: 8 }}
       onPress={() =>
         Dialog.alert(
@@ -192,26 +193,29 @@ function HandoffEndpoint(props: {
         )
       }
     >
-      {showBadge && provider !== undefined ? (
-        <ProviderInstanceIcon
-          provider={provider.driver}
-          iconUrl={provider.iconUrl}
-          size={14}
-          displayName={resolveProviderInstanceDisplayName(provider)}
-          accentColor={provider.accentColor}
-          showBadge
-          surfaceColor={props.surfaceColor}
-        />
-      ) : (
-        <ProviderIcon
-          provider={provider?.driver ?? props.instanceId}
-          iconUrl={provider?.iconUrl}
-          size={12}
-        />
-      )}
       <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
         {label}
       </Text>
+      <View className="self-start">
+        {showBadge && provider !== undefined ? (
+          <ProviderInstanceIcon
+            provider={provider.driver}
+            iconUrl={provider.iconUrl}
+            size={10}
+            displayName={resolveProviderInstanceDisplayName(provider)}
+            accentColor={provider.accentColor}
+            showBadge
+            badgeBeside
+            surfaceColor={props.surfaceColor}
+          />
+        ) : (
+          <ProviderIcon
+            provider={provider?.driver ?? props.instanceId}
+            iconUrl={provider?.iconUrl}
+            size={10}
+          />
+        )}
+      </View>
     </Pressable>
   );
 }

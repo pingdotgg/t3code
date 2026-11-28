@@ -174,6 +174,8 @@ export function ProviderInstanceIcon(props: {
   readonly displayName: string;
   readonly accentColor?: string;
   readonly showBadge?: boolean;
+  /** Puts the badge beside the icon, for icons too small to carry it on a corner. */
+  readonly badgeBeside?: boolean;
   readonly surfaceColor?: string;
 }) {
   const accentColor = normalizeProviderAccentColor(props.accentColor);
@@ -186,7 +188,17 @@ export function ProviderInstanceIcon(props: {
         // An absolute badge alone is capped at icon width and clips initials.
         <View
           pointerEvents="none"
-          style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
+          style={
+            props.badgeBeside
+              ? {
+                  position: "absolute",
+                  left: (props.size ?? 16) - 3,
+                  bottom: -3,
+                  width: 32,
+                  alignItems: "flex-start",
+                }
+              : { position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }
+          }
         >
           <View
             className={cn(!accentColor && "bg-card", !props.surfaceColor && "border-screen")}

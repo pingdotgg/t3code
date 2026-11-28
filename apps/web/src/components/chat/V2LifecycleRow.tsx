@@ -745,9 +745,19 @@ function HandoffEndpoint(props: {
       render={
         <span
           tabIndex={0}
-          className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className={cn(
+            "relative inline-flex min-w-0 items-center rounded-sm pr-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            showBadge && "mr-3",
+          )}
         >
+          <span
+            className={cn("truncate font-medium", labelColor.className)}
+            style={labelColor.style}
+          >
+            {label}
+          </span>
           <ProviderInstanceIcon
+            className="absolute -top-1 right-0"
             driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
             displayName={entry?.displayName ?? props.instanceId}
             accentColor={entry?.accentColor}
@@ -755,15 +765,11 @@ function HandoffEndpoint(props: {
             acpRegistryIconUrl={entry?.acpRegistryIconUrl}
             showBadge={showBadge}
             size="compact"
-            iconClassName={cn(showBadge && "opacity-60")}
+            iconClassName={cn("size-2.5", showBadge && "opacity-60")}
+            // Anchored left: the compact badge offset would cover an icon this small.
+            badgeClassName="right-auto bottom-[-0.1875rem] left-[0.4375rem]"
             indicatorBackground="var(--background)"
           />
-          <span
-            className={cn("truncate font-medium", labelColor.className)}
-            style={labelColor.style}
-          >
-            {label}
-          </span>
         </span>
       }
       label={
