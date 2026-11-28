@@ -24,6 +24,7 @@ import {
 
 const TABLE_PREVIEW_MAX_ROWS = 500;
 const TABLE_PREVIEW_MAX_COLUMNS = 50;
+const NOTEBOOK_KERNEL_LANGUAGES = new Map<unknown, string>([["python3", "python"]]);
 
 function base64ImageFits(base64: string) {
   return (
@@ -442,8 +443,14 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
   const metadata = record(notebook.metadata);
+  const kernelspec = record(metadata.kernelspec);
   const language =
-    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
+    String(
+      record(metadata.language_info).name ||
+        kernelspec.language ||
+        NOTEBOOK_KERNEL_LANGUAGES.get(kernelspec.name) ||
+        "",
+    )
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
