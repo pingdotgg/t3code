@@ -1186,6 +1186,59 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Agents report the real path of a project the user registered through a symlink.
+  it.effect.skipIf(!symlinksSupported)(
+    "previews a page opened by its real path when the workspace root is a symlink",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const realRoot = path.join(directory, "real");
+        const root = path.join(directory, "link");
+        yield* fs.makeDirectory(path.join(realRoot, "site", "shared"), { recursive: true });
+        yield* fs.symlink(realRoot, root);
+        yield* fs.writeFileString(path.join(realRoot, "site", "index.html"), "<!doctype html>");
+        yield* fs.writeFileString(path.join(realRoot, "site", "style.css"), "site");
+        yield* fs.writeFileString(path.join(realRoot, "site", "shared", "page.html"), "<p>");
+        yield* fs.writeFileString(path.join(realRoot, "site", "shared", "style.css"), "shared");
+        // A linked page loads the files next to the link, not the ones next to its target.
+        yield* fs.symlink(
+          path.join(realRoot, "site", "shared", "page.html"),
+          path.join(realRoot, "site", "linked.html"),
+        );
+        yield* fs.writeFileString(path.join(directory, "outside.html"), "<!doctype html>");
+
+        for (const name of ["index.html", "linked.html"]) {
+          const result = yield* issueAssetUrl({
+            resource: {
+              _tag: "workspace-file",
+              threadId: ThreadId.make("thread-1"),
+              path: path.join(realRoot, "site", name),
+            },
+            workspaceRoot: root,
+          });
+          const suffix = result.relativeUrl.slice(ASSET_ROUTE_PREFIX.length + 1);
+          expect(suffix.slice(suffix.indexOf("/") + 1)).toBe(name);
+          expect(yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), "style.css")).toEqual({
+            kind: "file",
+            path: path.join(realRoot, "site", "style.css"),
+            renderIntent: "file-preview",
+          });
+        }
+
+        const outside = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(directory, "outside.html"),
+          },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+        expect(outside._tag).toBe("AssetWorkspacePathValidationError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "validates canonical sibling assets for previews in dot-prefixed folders",
     () =>

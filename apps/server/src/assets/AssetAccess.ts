@@ -502,6 +502,37 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
   },
 );
 
+/**
+ * A project registered through a symlink is linked by either spelling of its root, so a path
+ * that is not below the root as written is compared again with both sides resolved. Only the
+ * file's folder is resolved: a linked page keeps its own name and its own folder's siblings.
+ */
+const workspaceRelativePath = Effect.fn("AssetAccess.workspaceRelativePath")(function* (input: {
+  readonly workspaceRoot: string;
+  readonly requestedPath: string;
+}) {
+  const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const requestedPath = path.resolve(input.requestedPath);
+  const asWritten = path.relative(input.workspaceRoot, requestedPath);
+  // Resolving a network path outside the project would sign Windows in to its host.
+  if (
+    isWithinRoot(path, requestedPath, input.workspaceRoot) ||
+    isNetworkPath(input.requestedPath)
+  ) {
+    return asWritten;
+  }
+  const [canonicalRoot, canonicalFolder] = yield* Effect.all([
+    ProjectFaviconResolver.optionOnNotFound(fileSystem.realPath(input.workspaceRoot)),
+    ProjectFaviconResolver.optionOnNotFound(fileSystem.realPath(path.dirname(requestedPath))),
+  ]);
+  if (Option.isNone(canonicalRoot) || Option.isNone(canonicalFolder)) return asWritten;
+  return path.join(
+    path.relative(canonicalRoot.value, canonicalFolder.value),
+    path.basename(requestedPath),
+  );
+});
+
 const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileAsset")(
   function* (input: {
     readonly workspaceRoot: string;
@@ -513,7 +544,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const relativePath = path.isAbsolute(input.requestedPath)
-      ? path.relative(input.workspaceRoot, input.requestedPath)
+      ? yield* workspaceRelativePath(input).pipe(
+          Effect.mapError(
+            (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+          ),
+        )
       : input.requestedPath;
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot({ workspaceRoot: input.workspaceRoot, relativePath })
