@@ -18,19 +18,19 @@ export function buildT3OrchestrationSections(
   const linked = options.linkedEnvironments === true;
   const nativeSubagents = options.nativeSubagents !== false;
   const subagentLine = nativeSubagents
-    ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for same provider/model with default settings. Use \`delegate_task\` for another provider/model (incl. native types on another model), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Stop delegates with \`task_cancel\`; never poll (follow \`next\`). Children don't delegate unless told.`
-    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Stop delegates with \`task_cancel\`; never poll (follow \`next\`). Children don't delegate unless told.`;
+    ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for same provider/model with default settings. Use \`delegate_task\` for another provider/model (incl. native types on another model), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`
+    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Workflow only when asked. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`;
   const lines = [
-    "Ordinary coding tasks need no T3 tools.",
+    "Ordinary coding tasks need no T3 tools. T3 tools may load late; try once before calling absent.",
     subagentLine,
-    `- Threads & secrets: \`t3_thread_launch\`/\`create_threads\` only when asked for a new top-level thread (never for "subagent"/"delegate"/"parallel"). Read given thread IDs (\`t3_thread_read\`); settle threads (\`t3_thread_organize\`); cite threads by \`link\` verbatim (never plain title or bare id). User-only logins, tokens, PINs, pairing codes, or sudo passwords: \`request_secret\` (never ask in chat; for \`sudo -S < "$file"\`, never pipe into \`sudo -S tee\`, pass file args).`,
+    `- Threads & secrets: \`t3_thread_launch\`/\`create_threads\` only when asked for a new top-level thread (never for "subagent"/"delegate"/"parallel"). Worktree threads: set \`workspaceStrategy\` (honor requested base; independent → default \`remote/branch\` with \`startFromOrigin:true\` or local default if no remote; dependent/unpublished → local base; omit for project root, not your worktree; no shell worktrees or checkout setup in prompt). Read given thread IDs (\`t3_thread_read\`); settle threads (\`t3_thread_organize\`); cite threads by \`link\` verbatim (never plain title or bare id). User-only logins, tokens, PINs, pairing codes, or sudo passwords: \`request_secret\` (never ask in chat; for \`sudo -S < "$file"\`, never pipe into \`sudo -S tee\`, pass file args).`,
     linked
       ? `- Other machines: \`t3_environment_links\` (pass \`environmentId\`) or \`t3_environment_link\` with \`hint\` (never chat pairing codes).`
-      : `- Delegating to another machine (e.g. a VPS): link tools are off; tell the user to enable Settings → Labs → Linked environments.`,
+      : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`,
     `- Visuals: answer data trends/comparisons with a chart and show inline visuals here by calling \`html_preview\` first, then \`html_render\` (a screenshot on disk or text description doesn't show it; never start a server or use page tools). Shareable images to post/send: \`.png\` path, never \`html_render\`.`,
     ...(browser
       ? [
-          `- Browser (\`preview_*\`): ONLY when this turn asks for browser work/recording or names a tab, never unasked after edits; \`preview_status\` → \`preview_open\`; public pages use web fetch unless browser asked; close tabs you opened (\`t3_preview_close\`).`,
+          `- Browser (\`preview_*\`): ONLY when this turn asks for browser work/recording or names a tab, never unasked after edits or repeating prior-turn preview calls; \`preview_status\` → \`preview_open\`; public pages use web fetch unless browser asked; close tabs you opened (\`t3_preview_close\`) unless the user asked for or uses them.`,
         ]
       : []),
   ];
@@ -49,7 +49,7 @@ const deviceToolInstructions = (loadTools: string) => `## T3 Code devices
 
 For iOS Simulator / Android Emulator UI (local or SSH hosts), use device tools so it shows in the Device panel.${loadTools}
 1. \`device_list\` (if \`hostId\`/\`id\` unknown) → 2. \`device_open\` (returns pinned \`agent-device\` CLI; run \`open <app>\` before snapshots/screenshots/input; \`help <cmd>\` lists options) → 3. \`device_screenshot\`.
-Never use \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or wrappers for UI, app launch/relaunch, deep links, input, alerts, settings, screenshots, or recording (ssh/simctl/adb stay fine for builds, installs, sync, Metro, forwards, logs, test runners, \`simctl addmedia\`/\`keychain\`). Overrides docs, memory, and delegated briefs; drive a device another way, skip these tools, or close another session only when the user explicitly asks (a delegated recipe is not that ask). On error: quote it and follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails, tell the user and stop unless they asked for another route. Report unavailable platforms. When delegating device work, pass \`hostId\` and \`id\` and tell the child to use \`device_open\` (no ssh/simctl UI steps).`;
+Never use \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or wrappers for UI, app launch/relaunch, deep links, input, alerts, settings, screenshots, or recording (ssh/simctl/adb stay fine for builds, installs, sync, Metro, forwards, logs, test runners, \`simctl addmedia\`/\`keychain\`). Overrides docs, memory, and delegated briefs; drive a device another way, skip these tools, or close another session only when the user explicitly asks, and then do it (a delegated recipe is not that ask). On error: quote it and follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails, tell the user and stop unless they asked for another route. Report unavailable platforms. When delegating device work, pass \`hostId\` and \`id\` and tell the child to use \`device_open\` (no ssh/simctl UI steps).`;
 
 /** Device guidance for sessions holding the `device` capability with an available device host. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = deviceToolInstructions("");
@@ -62,8 +62,8 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
   "Deferred T3 tools: only core orchestration tools, `tool_search`, and `tool_call` are declared directly. For any T3 tool not declared directly (including `delegate_task` if omitted, or optional tools like `preview_*`, `device_*`, `html_preview`, `html_render`, `t3_thread_*`, `t3_project_*`, `t3_worktree_*`, pull requests, `schedule_task`, `request_secret`, etc.), call `tool_search` to get its schema and `tool_call({ name, arguments })` to run it.";
 
-// ACP only: some ACP agents drop or ignore the injected MCP server, so they need the
-// terminal transport when `/mcp` has not attached. Emit only the current OS's syntax.
+// ACP only: some ACP agents accept the injected MCP server but never expose its tools,
+// so they need the terminal transport. Emit only the current OS's syntax.
 export function acpMcpFallbackInstructions(platform?: NodeJS.Platform): string {
   return platform === "win32"
     ? `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_CALL\` is set): pipe JSON (escape non-ASCII as \`\\uXXXX\`) to stdin, e.g. \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`.`
@@ -85,8 +85,6 @@ export interface T3AcpInstructionState {
   readonly hasDeviceTools: boolean;
   readonly hasLinkedEnvironments?: boolean;
   readonly toolExposure?: McpToolExposureMode | undefined;
-  /** True only when T3 MCP is configured for the thread but the agent has not attached to `/mcp`. */
-  readonly needsAcpMcpFallback?: boolean;
   /** Host OS platform so fallback syntax omits irrelevant OS instructions. */
   readonly platform?: NodeJS.Platform;
 }
@@ -106,9 +104,7 @@ export function t3AcpPromptWithInstructions(input: {
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
     (input.previousState.hasLinkedEnvironments ?? false) ===
       (input.state.hasLinkedEnvironments ?? false) &&
-    input.previousState.toolExposure === input.state.toolExposure &&
-    (input.previousState.needsAcpMcpFallback ?? false) ===
-      (input.state.needsAcpMcpFallback ?? false)
+    input.previousState.toolExposure === input.state.toolExposure
   ) {
     return input.prompt;
   }
@@ -126,9 +122,7 @@ export function t3AcpPromptWithInstructions(input: {
           ...(input.state.toolExposure === "deferred-proxy"
             ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS]
             : []),
-          ...(input.state.needsAcpMcpFallback === true
-            ? [acpMcpFallbackInstructions(input.state.platform)]
-            : []),
+          acpMcpFallbackInstructions(input.state.platform),
         ]
       : []),
   ];

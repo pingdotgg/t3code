@@ -13,11 +13,13 @@ export function materializeReplayTranscriptRuntimeInstructions(
         ? "Grok"
         : runtime.driver === "kiro"
           ? "Kiro"
-          : runtime.driver === "acpRegistry"
-            ? "acpRegistry"
-            : runtime.driver === "fx"
-              ? "fx"
-              : undefined;
+          : runtime.driver === "muse"
+            ? "Muse Code"
+            : runtime.driver === "acpRegistry"
+              ? "acpRegistry"
+              : runtime.driver === "fx"
+                ? "fx"
+                : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   // The notes name the model, so each prompt expects the ones for its session's current model.
@@ -232,6 +234,41 @@ export function materializeReplayTranscriptRuntimeInstructions(
               frame: {
                 ...frame,
                 message: frame.message.length === 0 ? expected : `${frame.message}\n\n${expected}`,
+              },
+            };
+          }
+        }
+        return entry;
+      }
+      if (
+        runtime.driver === "muse" &&
+        "method" in frame &&
+        frame.method === "turn/start" &&
+        "params" in frame &&
+        isRecord(frame.params) &&
+        Array.isArray(frame.params.input)
+      ) {
+        const inputParts: ReadonlyArray<unknown> = frame.params.input;
+        const firstText = promptPartText(inputParts[0]);
+        if (firstText?.startsWith("<runtime_info>") === true) {
+          const modelMatch = firstText.match(
+            /, as (.+?)(?: with ([^\s\n]+) reasoning effort)?\.(?:\s|<\/runtime_info>)/,
+          );
+          const expectedMuse = buildRuntimeInstructions({
+            harness,
+            model: modelMatch?.[1] ?? runtime.model,
+            ...(modelMatch?.[2] === undefined ? {} : { reasoningEffort: modelMatch[2] }),
+            pullRequestLinking: firstText.includes("<pull_request_linking>"),
+          });
+          if (firstText !== expectedMuse) {
+            return {
+              ...entry,
+              frame: {
+                ...frame,
+                params: {
+                  ...frame.params,
+                  input: [{ type: "text", text: expectedMuse }, ...inputParts.slice(1)],
+                },
               },
             };
           }

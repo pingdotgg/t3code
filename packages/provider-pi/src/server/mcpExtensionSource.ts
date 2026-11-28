@@ -565,10 +565,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     for (let depth = 0; depth < 64; depth += 1) {
       if (NodeFs.existsSync(NodePath.join(current, ".git"))) return true;
       const parent = NodePath.dirname(current);
-      if (parent === current) break;
+      if (parent === current) return false;
       current = parent;
     }
-    return false;
+    return true;
   };
 
   // Keep guidance in the system prompt so leading slash commands still expand.

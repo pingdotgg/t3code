@@ -166,10 +166,10 @@ export const layerFromProjectStore: Layer.Layer<
         for (let depth = 0; depth < 64; depth += 1) {
           if (yield* exists(path.join(current, ".git"))) return true;
           const parent = path.dirname(current);
-          if (parent === current) break;
+          if (parent === current) return false;
           current = parent;
         }
-        return false;
+        return undefined;
       });
     };
     // The same ceiling the orchestrator enforces, fixed for the server's life.

@@ -713,7 +713,6 @@ export const layerWithOptions = (
                   ...credential.config,
                   deviceHostsAvailable,
                   linkedEnvironmentsAvailable,
-                  isConnected: mcpSessionRegistry.isConnected(credential.config.providerSessionId),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(
@@ -740,8 +739,11 @@ export const layerWithOptions = (
                   existing.deviceHostsAvailable !== deviceHostsAvailable ||
                   existing.linkedEnvironmentsAvailable !== linkedEnvironmentsAvailable
                 ) {
+                  // Re-check after async reads so a concurrent detach cannot be overwritten with a revoked session.
+                  const current = yield* mcpSessions.read(threadId);
+                  if (current?.providerSessionId !== existing.providerSessionId) return;
                   yield* mcpSessions.set({
-                    ...existing,
+                    ...current,
                     deviceHostsAvailable,
                     linkedEnvironmentsAvailable,
                   });

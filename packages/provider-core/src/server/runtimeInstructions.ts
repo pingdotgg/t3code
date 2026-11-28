@@ -11,7 +11,7 @@ export const AGENT_FEEDBACK_INSTRUCTIONS = {
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
-Use \`pull_request_*\`/\`ci_logs\`/\`ci_rerun\` over \`gh\`/\`cafe\` when listed (\`pull_request_create\` auto-links). Link created/pushed/taken-over PRs (\`link_pull_request\`/\`link_pull_requests\`, full URL, every stack layer; report failures); skip read/review/background PRs. For PR waits/monitoring: push first, call \`watch_pull_request\`, end turn (no sleep/loops/\`gh --watch\`/Monitor/ScheduleWakeup; \`unwatch_pull_request\` before handback). Children never watch; end PR replies with \`PR <full URL>, head <SHA>, checks and reviews <state>\`. Link worked/filed issues (\`link_issue\`); skip read-only.
+Use \`pull_request_*\`/\`ci_logs\`/\`ci_rerun\` over \`gh\`/\`cafe\` when listed (\`pull_request_create\` auto-links). Link created/pushed/taken-over PRs (\`link_pull_request\`/\`link_pull_requests\`, full URL, every stack layer; report failures); skip read/review/background PRs. For PR waits/monitoring (even after an earlier unwatch): push first, call \`watch_pull_request\`, end turn (no sleep/loops/\`gh --watch\`/Monitor/ScheduleWakeup; \`unwatch_pull_request\` before handback). Children never watch (even if the brief says babysit); end PR replies with \`PR <full URL>, head <SHA>, checks and reviews <state>\`. Link worked/filed issues (\`link_issue\`); skip read-only.
 </pull_request_linking>`;
 
 /** Omit model and effort when the harness manages them dynamically. */

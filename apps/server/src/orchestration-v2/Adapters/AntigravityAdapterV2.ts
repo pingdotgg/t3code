@@ -156,29 +156,10 @@ export function makeAntigravityAcpAdapterFlavor(
   const { profileDirectory } = options;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
-  const isGitWorkspace = Effect.fn("AntigravityAdapterV2.isGitWorkspace")(function* (
-    cwd: string | null,
-  ) {
-    if (cwd === null) return true;
-    const exists = (target: string) =>
-      options.fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
-    // Synthetic test paths do not exist on disk; preserve default git behavior for them.
-    if (!(yield* exists(cwd))) return true;
-    let current = yield* options.fileSystem
-      .realPath(cwd)
-      .pipe(Effect.orElseSucceed(() => options.path.resolve(cwd)));
-    for (let depth = 0; depth < 64; depth += 1) {
-      if (yield* exists(options.path.join(current, ".git"))) return true;
-      const parent = options.path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-    return false;
-  });
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
-      const includePullRequestLinking = yield* isGitWorkspace(input.cwd);
+      const includePullRequestLinking = input.runtimePolicy.isGitRepository !== false;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),

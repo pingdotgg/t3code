@@ -35,8 +35,6 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
-  /** True once the provider's MCP client has connected to `/mcp` with this session's token. */
-  readonly isConnected?: Effect.Effect<boolean>;
 }
 
 export function withAgentDeviceEnvironment(

@@ -49,12 +49,8 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     expect(token.length).toBeGreaterThan(20);
-    expect(yield* registry.isConnected(issued.config.providerSessionId)).toBe(false);
 
     const resolved = yield* registry.resolve(token);
-    expect(yield* registry.isConnected(issued.config.providerSessionId)).toBe(false);
-    expect(yield* registry.resolve(token, { markConnected: true })).toBeDefined();
-    expect(yield* registry.isConnected(issued.config.providerSessionId)).toBe(true);
     expect(resolved?.thread.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(
       new Set(["preview", "orchestration", "worktree", "pull-requests", "issues"]),

@@ -4135,9 +4135,16 @@ export function claudeEffectiveQueryPolicyKey(
   },
   // Folders are fixed when a query starts, so a changed list needs a new one.
   workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
+  // System prompt append depends on git and tool-host availability; rotate if they change.
+  instructionFlags?: {
+    readonly isGitRepository?: boolean;
+    readonly deviceToolsAvailable?: boolean;
+    readonly linkedEnvironmentsAvailable?: boolean;
+  },
 ): string {
   return JSON.stringify({
     workspace,
+    ...(instructionFlags === undefined ? {} : { instructionFlags }),
     runtimePolicy: claudeRuntimeQueryPolicyKey({
       ...queryPolicy,
       ...(mcpOverrides.allowedTools === undefined
@@ -14083,6 +14090,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             queryPolicy,
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
+            {
+              isGitRepository: turnInput.runtimePolicy.isGitRepository !== false,
+              deviceToolsAvailable:
+                mcpSession?.capabilities?.has("device") === true &&
+                mcpSession.deviceHostsAvailable !== false,
+              linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
+            },
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

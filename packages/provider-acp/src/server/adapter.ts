@@ -10065,8 +10065,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-          const mcpConnected =
-            mcpSession?.isConnected === undefined ? undefined : yield* mcpSession.isConnected;
           const platform = yield* HostProcess.Platform;
           const toolExposure = mcpToolExposureMode(flavor.deferMcpTools);
           const instructionState = {
@@ -10078,8 +10076,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               mcpSession.deviceHostsAvailable !== false,
             hasLinkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
             ...(toolExposure === undefined ? {} : { toolExposure }),
-            // Only inject the terminal fallback when T3 MCP is configured but the agent did not attach to `/mcp`.
-            needsAcpMcpFallback: mcpSession !== undefined && mcpConnected === false,
             platform,
           } satisfies T3AcpInstructionState;
           const userText =

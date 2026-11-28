@@ -33,20 +33,18 @@ describe("T3 orchestration gating", () => {
     assert.notInclude(noNativeSubagents, "spawn_agent");
   });
 
-  it("gates ACP fallback on unattached MCP and emits only the current OS syntax", () => {
-    const attached = t3AcpPromptWithInstructions({
+  it("emits only the current OS syntax for ACP fallback when MCP is attached", () => {
+    const noMcp = t3AcpPromptWithInstructions({
       prompt: "Hello.",
       state: {
         interactionMode: "default",
-        hasT3Mcp: true,
+        hasT3Mcp: false,
         hasDeviceTools: false,
-        needsAcpMcpFallback: false,
         platform: "linux",
       },
     });
-    assert.notInclude(attached, "ACP fallback");
-    assert.notInclude(attached, "acp-mcp-call");
-    assert.notInclude(attached, "PowerShell");
+    assert.notInclude(noMcp, "ACP fallback");
+    assert.notInclude(noMcp, "acp-mcp-call");
 
     const linuxFallback = t3AcpPromptWithInstructions({
       prompt: "Hello.",
@@ -54,7 +52,6 @@ describe("T3 orchestration gating", () => {
         interactionMode: "default",
         hasT3Mcp: true,
         hasDeviceTools: false,
-        needsAcpMcpFallback: true,
         platform: "linux",
       },
     });
@@ -68,7 +65,6 @@ describe("T3 orchestration gating", () => {
         interactionMode: "default",
         hasT3Mcp: true,
         hasDeviceTools: false,
-        needsAcpMcpFallback: true,
         platform: "win32",
       },
     });

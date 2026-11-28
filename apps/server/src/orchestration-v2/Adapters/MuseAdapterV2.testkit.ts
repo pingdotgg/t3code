@@ -87,19 +87,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isStandaloneRuntimeInstructions(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.startsWith("<runtime_info>") &&
-    (value.endsWith("</runtime_info>") || value.endsWith("</pull_request_linking>"))
-  );
-}
-
 function replayValueMatches(expected: unknown, actual: unknown): boolean {
   if (expected === MUSE_REPLAY_ANY) return true;
-  if (isStandaloneRuntimeInstructions(expected) && isStandaloneRuntimeInstructions(actual)) {
-    return true;
-  }
   if (Array.isArray(expected)) {
     return (
       Array.isArray(actual) &&
