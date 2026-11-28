@@ -5662,6 +5662,7 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "26ce83a4d282d42d": "Startar",
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
   "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt.",

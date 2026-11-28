@@ -5662,6 +5662,7 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "26ce83a4d282d42d": "Wird gestartet",
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren.",

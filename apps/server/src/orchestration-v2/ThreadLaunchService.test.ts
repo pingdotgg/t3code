@@ -89,6 +89,8 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
+const isProjectNotFoundError = Schema.is(ProjectService.ProjectNotFoundError);
+
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
@@ -412,6 +414,22 @@ const forkSideChat = (
     })
     .pipe(Effect.as(targetThreadId));
 };
+
+it.effect("retains a typed cause for a nonexistent project on a root launch", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const result = yield* launches
+      .launch({
+        ...launchInput({ command: "command:missing-project", thread: "thread:missing-project" }),
+        projectId: ProjectId.make("project:missing"),
+      })
+      .pipe(Effect.result);
+    assert.ok(Result.isFailure(result));
+    assert.ok(result.failure._tag === "ThreadLaunchError");
+    assert.ok(isProjectNotFoundError(result.failure.cause));
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
