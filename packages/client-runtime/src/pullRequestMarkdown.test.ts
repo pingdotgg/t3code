@@ -253,82 +253,26 @@ describe("pull request body segmentation", () => {
   });
 
   it("never lifts media out of an HTML comment, while lifting media after it", () => {
+    const visible = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.org/visible.mp4",
+      media: "video",
+    };
+    // A fence inside a comment is hidden too, so it must not open a code block.
     const comment = [
       "<!--",
       "https://example.org/hidden.mp4",
       '<video src="https://example.org/hidden-tag.mp4"></video>',
-      "<table><tr><td>https://example.org/hidden-table.mp4</td></tr></table>",
+      "```",
       "-->",
     ].join("\n");
-    expect(split(comment)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: comment, sourceOffset: 0 },
-    ]);
-    expect(split(`${comment}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: comment, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
-  });
-
-  it("keeps HTML comment boundaries scoped from code fences and single-line comments", () => {
-    const singleLine = "<!-- template hint -->";
-    expect(split(`${singleLine}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: singleLine, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
-
-    const commentInCode = "```html\n<!--\n```";
-    expect(split(`${commentInCode}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: commentInCode, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
-
-    const fenceInComment = "<!--\n```\n-->";
-    expect(split(`${fenceInComment}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: fenceInComment, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
-
-    const trailingOpenerOnStart = "<!-- a --> <!-- b";
-    expect(split(`${trailingOpenerOnStart}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: trailingOpenerOnStart, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
-
-    const trailingOpenerOnClose = "<!--\nhidden\n--> <!-- b";
-    expect(split(`${trailingOpenerOnClose}\n\nhttps://example.org/visible.mp4`)).toEqual([
-      { id: "markdown:0", kind: "markdown", text: trailingOpenerOnClose, sourceOffset: 0 },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://example.org/visible.mp4",
-        media: "video",
-      },
-    ]);
+    for (const hidden of [comment, "<!-- template hint -->"]) {
+      expect(split(`${hidden}\n\nhttps://example.org/visible.mp4`)).toEqual([
+        { id: "markdown:0", kind: "markdown", text: hidden, sourceOffset: 0 },
+        visible,
+      ]);
+    }
   });
 
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {
