@@ -28,17 +28,22 @@ export function normalizeMarkdownFragmentId(hrefOrId: string): string {
 
 function findMarkdownFragmentTarget(anchor: HTMLAnchorElement, href: string): HTMLElement | null {
   const decodedId = decodeMarkdownFragmentId(href);
+  // Add the sanitizer prefix without stripping prefixes that belong to the authored slug.
+  const sanitizedId = `${SANITIZED_FRAGMENT_PREFIX}${decodedId}`;
   const normalizedId = normalizeSanitizedFragmentId(decodedId);
   const matchesFragment = (element: HTMLElement) =>
     element.id === decodedId || normalizeSanitizedFragmentId(element.id) === normalizedId;
   const markdownRoot = anchor.closest<HTMLElement>(".chat-markdown");
   if (markdownRoot) {
     const localTargets = Array.from(markdownRoot.querySelectorAll<HTMLElement>("[id]"));
-    const localTarget = localTargets.find(matchesFragment);
+    const localTarget =
+      localTargets.find((element) => element.id === sanitizedId) ??
+      localTargets.find(matchesFragment);
     if (localTarget) return localTarget;
   }
 
   return (
+    document.getElementById(sanitizedId) ??
     document.getElementById(decodedId) ??
     Array.from(document.querySelectorAll<HTMLElement>("[id]")).find(matchesFragment) ??
     null
@@ -84,7 +89,7 @@ export function githubHeadingSlug(text: string): string {
 
 /**
  * Like the sanitizer's ids, they carry the `user-content-` prefix so they cannot clobber app
- * element ids; fragment lookup strips it.
+ * element ids; fragment lookup accounts for it.
  */
 export function rehypeHeadingIds() {
   return (tree: HeadingHastNode) => {
