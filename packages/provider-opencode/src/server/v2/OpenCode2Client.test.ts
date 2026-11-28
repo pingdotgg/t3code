@@ -7,8 +7,10 @@ import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as UrlParams from "effect/http/UrlParams";
 import * as HttpClient from "effect/http/HttpClient";
@@ -81,6 +83,71 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
+    }),
+  );
+});
+
+describe("OpenCode2Client execution failures", () => {
+  const firstFailure = (retryAfterMs: unknown) =>
+    Effect.gen(function* () {
+      const frame = {
+        id: "evt_failed0000",
+        created: 1,
+        type: "session.execution.failed",
+        data: {
+          sessionID: "ses_repro",
+          error: {
+            type: "provider.free-limit",
+            message: "Free usage limit reached.",
+            retryAfterMs,
+          },
+        },
+        durable: { aggregateID: "ses_repro", seq: 1, version: 1 },
+      };
+      const transport = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(`data: ${JSON.stringify(frame)}\n\n`, {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
+      );
+      const { events } = yield* opencode.connect({
+        baseUrl: "http://127.0.0.1:4096",
+        password: "test-password",
+      });
+      const event = Option.getOrThrow(yield* events.pipe(Effect.flatMap(Stream.runHead)));
+      assert.strictEqual(event.type, "session.execution.failed");
+      return event.type === "session.execution.failed" ? event.data.error : undefined;
+    }).pipe(Effect.scoped);
+
+  // The bundled 2.0.28 schema strips retryAfterMs, which carries a free-tier limit's reset.
+  it.effect("keeps retryAfterMs on a failed execution event", () =>
+    Effect.gen(function* () {
+      const expected = {
+        type: "provider.free-limit",
+        message: "Free usage limit reached.",
+        retryAfterMs: 21_486_000,
+      };
+      assert.deepEqual(yield* firstFailure(expected.retryAfterMs), expected);
+    }),
+  );
+
+  it.effect.each(["invalid-delay", -1000])("drops a retryAfterMs of %s", (retryAfterMs) =>
+    Effect.gen(function* () {
+      const error = yield* firstFailure(retryAfterMs);
+      assert.deepEqual(error, {
+        type: "provider.free-limit",
+        message: "Free usage limit reached.",
+      });
     }),
   );
 });

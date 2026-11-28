@@ -640,7 +640,16 @@ const isUsageLimit = (error: {
 }) =>
   (error.type === "provider.quota" && error.status !== 402) ||
   error.type === "provider.rate-limit" ||
+  error.type === "provider.free-limit" ||
   claudeUsageLimit(error.message) !== undefined;
+
+const retryAfterResetAt = (created: number, retryAfterMs: unknown) =>
+  typeof retryAfterMs === "number"
+    ? Option.match(DateTime.make(created + retryAfterMs), {
+        onNone: () => null,
+        onSome: DateTime.formatIso,
+      })
+    : null;
 
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
@@ -3091,13 +3100,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
+          const retryAfterMs =
+            "retryAfterMs" in event.data.error ? event.data.error.retryAfterMs : undefined;
+          const usageLimit = isUsageLimit(event.data.error);
+          const resetAt = usageLimit
+            ? (claudeUsageLimit(message)?.resetAt ?? retryAfterResetAt(event.created, retryAfterMs))
+            : null;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
-              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
+              class: usageLimit ? "usage_limit" : "provider_error",
+              resetAt,
             }),
           });
         }

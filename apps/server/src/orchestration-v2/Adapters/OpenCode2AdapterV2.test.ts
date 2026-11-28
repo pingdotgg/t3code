@@ -757,6 +757,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "a provider.free-limit without retryAfterMs (429)",
+      failureClass: "usage_limit",
+      error: { type: "provider.free-limit", message: "Free usage limit reached.", status: 429 },
+    },
+    {
       name: "a Claude limit without a reset timestamp",
       failureClass: "usage_limit",
       error: {
@@ -835,6 +840,43 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           resetAt: "2026-11-02T20:00:00.000Z",
         });
       }),
+  );
+
+  // The delay counts from the event's own time (created = 1 ms), not the test clock.
+  it.effect.each([
+    {
+      name: "resets after retryAfterMs",
+      retryAfterMs: 21_486_000,
+      resetAt: "1970-01-01T05:58:06.001Z",
+    },
+    { name: "has no reset past the date range", retryAfterMs: Number.MAX_SAFE_INTEGER },
+  ] as const)("classifies a free-tier limit that $name", (row) =>
+    Effect.gen(function* () {
+      const message = "Free usage limit reached.";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: {
+            type: "provider.free-limit",
+            message,
+            status: 429,
+            retryAfterMs: row.retryAfterMs,
+          },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.deepEqual(ended?.failure, {
+        class: "usage_limit",
+        code: "provider.free-limit",
+        message,
+        retryable: null,
+        ...("resetAt" in row ? { resetAt: row.resetAt } : {}),
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
