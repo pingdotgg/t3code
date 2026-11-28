@@ -27,6 +27,7 @@ import { __setClientSettingsForTests } from "~/hooks/useSettings";
 const DEFAULT_TAB_STATE = {
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   colorScheme: DEFAULT_PREVIEW_APPEARANCE,
+  audioMuted: false,
 };
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 

@@ -1259,6 +1259,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("agent opens browser device simulator pop into view hide")],
   },
   {
+    id: "browser-default-audio-muted",
+    title: "Mute preview tabs by default",
+    to: "/settings/browser",
+    searchTerms: ["browser audio sound silence speaker volume new tabs"],
+  },
+  {
     id: "automatic-pull",
     title: msg("Automatically pull"),
     to: "/settings/source-control",
