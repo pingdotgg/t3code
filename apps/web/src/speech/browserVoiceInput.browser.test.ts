@@ -198,6 +198,106 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   expect(platform.recorder.uri).toBeNull();
 });
 
+it("keeps recording when the environment refuses the live stream and transcribes the kept audio", async () => {
+  using microphone = capture();
+  // What a busy or failing environment sends for a stream it cannot run (speech/stream.ts).
+  const refusal = "Live transcription failed. Please try recording again.";
+  const refused = Promise.withResolvers<void>();
+  using _socket = stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+      send(data: unknown) {
+        if (typeof data !== "string" || !data.includes('"start"')) return;
+        queueMicrotask(() => {
+          this.dispatchEvent(
+            new MessageEvent("message", {
+              data: JSON.stringify({ type: "error", message: refusal }),
+            }),
+          );
+          this.dispatchEvent(new Event("close"));
+          refused.resolve();
+        });
+      }
+      close() {}
+    },
+  );
+  const requests: Uint8Array[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === `${prepared.httpBaseUrl}/api/voice/status`) return Response.json(status);
+    if (request.url.includes("/api/auth/websocket-ticket/"))
+      return Response.json({ ticket: "stream-ticket", expiresAt: "2030-01-01T00:00:00.000Z" });
+    if (request.url === `${prepared.httpBaseUrl}/api/voice/transcribe`) {
+      requests.push(decodeSpeechPcmRequest(new Uint8Array(await request.arrayBuffer())).pcm);
+      return requests.length === 1
+        ? new Response(null, { status: 503 })
+        : Response.json({ text: "hello" });
+    }
+    return fetch(input, init);
+  });
+  let controller!: VoiceInputController;
+  const platform = createBrowserVoiceInputPlatform({
+    prepared,
+    hasAudioConsent: () => true,
+    getStreamingEnabled: () => true,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    // Wired as in voiceInputSession.ts.
+    onError: (message, code) => void controller.interruptRecording(message, null, code),
+  });
+  const commitDraft = vi.fn();
+  controller = new VoiceInputController({
+    recorder: platform.recorder,
+    retryFailedRecording: true,
+    getTranscriber: () => platform.transcriber,
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => {},
+    releaseRecording: async () => platform.cancelRecording(),
+    deleteRecording: platform.deleteRecording,
+    readDraft: () => ({
+      ownerKey: "draft",
+      text: "",
+      selection: { start: 0, end: 0 },
+      revision: 0,
+    }),
+    commitDraft,
+    onStateChange() {},
+  });
+  using _controller = { [Symbol.dispose]: () => controller.dispose() };
+
+  await controller.start();
+  expect(controller.currentState.phase).toBe("recording");
+  microphone.feed(new Float32Array([0.1, 0.2]));
+  // The refusal arrives while the person is still speaking.
+  await refused.promise;
+  expect(controller.currentState).toMatchObject({ phase: "recording", error: null });
+  microphone.feed(new Float32Array([0.3]));
+
+  await controller.stop();
+  expect(controller.currentState).toMatchObject({
+    phase: "error",
+    errorCode: "transcription-failed",
+  });
+  await controller.start();
+  expect(commitDraft).toHaveBeenCalledWith("hello", { start: 5, end: 5 });
+  expect(requests).toHaveLength(2);
+  for (const pcm of requests)
+    expect([...new Float32Array(pcm.slice().buffer)]).toEqual([
+      Math.fround(0.1),
+      Math.fround(0.2),
+      Math.fround(0.3),
+    ]);
+  expect(platform.recorder.uri).toBeNull();
+});
+
 it.each([
   ["fr", ["en-US"], "fr"],
   ["auto", ["nl-NL", "en-US"], "en-US"],
@@ -289,7 +389,8 @@ it("streams the opening audio in order when the destination becomes ready during
   microphone.feed(continuing);
   await platform.recorder.stop();
   expect(feed.mock.calls).toEqual([[opening], [continuing]]);
-  expect(platform.recorder.uri).toBeNull();
+  // Streamed audio is kept too, so a failed stream can be transcribed from the recording.
+  expect(platform.recorder.uri).not.toBeNull();
   await expect(transcription.streaming?.finish({ signal: abort.signal })).resolves.toBe("hello");
 });
 

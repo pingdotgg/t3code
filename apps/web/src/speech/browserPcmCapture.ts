@@ -119,8 +119,9 @@ export function createBrowserPcmCapture(
             input.onLevel(data);
             return;
           }
-          if (feed) feed(data);
-          else chunks.push(data);
+          // Streamed audio is kept too, so a failed live transcription can retry the recording.
+          chunks.push(data);
+          feed?.(data);
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error(m(msg("Microphone processing failed."))));
@@ -166,7 +167,7 @@ export function createBrowserPcmCapture(
       worklet.port.postMessage("stop");
       try {
         await pending;
-        if (!feed && chunks.length) {
+        if (chunks.length) {
           const blob = new Blob(chunks, { type: "application/octet-stream" });
           recordingUri = URL.createObjectURL(blob);
         }
@@ -201,8 +202,8 @@ export function createBrowserPcmCapture(
             if (canStream() && prepared.streaming) {
               streaming = prepared.streaming;
               feed = prepared.streaming.feed;
+              // The opening audio stays in chunks: it belongs to the kept recording too.
               for (const chunk of chunks) feed(chunk);
-              chunks = [];
             }
             return prepared;
           })

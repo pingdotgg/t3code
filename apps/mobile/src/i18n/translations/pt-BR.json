@@ -936,6 +936,7 @@
   "ade1c07a7b86bc75": "Executando ação de controle de versão",
   "bd89398fa7d11169": "A ação de controle de versão falhou.",
   "fac0a7eeb4021001": "Executando {hook}...",
+  "fa6a84f05e3ec11c": "Não foi possível transcrever esta gravação. Ela foi mantida para uma nova tentativa.",
   "8822e2c36699fc5d": "É necessário acesso ao microfone para a entrada de voz. Permita o acesso nas configurações do navegador ou do sistema e tente novamente.",
   "124a9122bc3ecf5c": "A transcrição de voz ainda está terminando. Tente novamente em instantes.",
   "a4727d05b33fe336": "A transcrição de voz não está disponível para este idioma.",

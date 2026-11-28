@@ -936,6 +936,7 @@
   "ade1c07a7b86bc75": "Exécution de l’action de gestion de versions",
   "bd89398fa7d11169": "Échec de l’action de gestion de versions.",
   "fac0a7eeb4021001": "Exécution de {hook}...",
+  "fa6a84f05e3ec11c": "Impossible de transcrire cet enregistrement. Il a été conservé pour une nouvelle tentative.",
   "8822e2c36699fc5d": "L’accès au micro est nécessaire pour la saisie vocale. Autorisez-le dans les paramètres de votre navigateur ou de votre système, puis réessayez.",
   "124a9122bc3ecf5c": "La transcription vocale n’est pas encore terminée. Réessayez dans un instant.",
   "a4727d05b33fe336": "La transcription vocale n’est pas disponible pour cette langue.",
