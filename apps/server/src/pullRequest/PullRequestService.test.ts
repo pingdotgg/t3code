@@ -10,6 +10,9 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Scope from "effect/Scope";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type {
@@ -36,6 +39,7 @@ import {
   PullRequestProviderError,
   type ProviderChangeRequest,
   type PullRequestProviderApi,
+  PullRequestCheckoutRemote,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
@@ -322,18 +326,26 @@ const sshAliasHost = {
 
 function makeService(input: {
   readonly settings?: ServerSettings;
+  readonly settingsChanges?: Stream.Stream<ServerSettings>;
+  readonly settingsRead?: Effect.Effect<ServerSettings>;
+  readonly subscribeSettings?: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
   readonly onProjectRead?: () => void;
+  readonly failProjectList?: () => boolean;
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
     Layer.build(
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
-          getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+          getSettings:
+            input.settingsRead ?? Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+          streamChanges: input.settingsChanges ?? Stream.empty,
+          subscribeChanges:
+            input.subscribeSettings ?? Effect.succeed(input.settingsChanges ?? Stream.empty),
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,
@@ -350,12 +362,19 @@ function makeService(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           listShells: (options) =>
-            Effect.sync(() => {
-              input.onProjectRead?.();
-              return input.projects.filter(
-                (project) => options?.projectIds?.includes(project.id) ?? true,
-              );
-            }),
+            input.failProjectList?.()
+              ? Effect.fail(
+                  new ProjectService.ProjectOperationError({
+                    operation: "list-projects",
+                    cause: "unavailable",
+                  }),
+                )
+              : Effect.sync(() => {
+                  input.onProjectRead?.();
+                  return input.projects.filter(
+                    (project) => options?.projectIds?.includes(project.id) ?? true,
+                  );
+                }),
           getShell: (projectId) =>
             Effect.sync(() => {
               input.onProjectRead?.();
@@ -2130,6 +2149,377 @@ it.effect("keeps two hosts of one provider kind as two accounts", () =>
       "github.acme.dev",
       "github.com",
     ]);
+  }),
+);
+
+it.effect("keeps scoped Azure viewers separate from the host viewer", () =>
+  Effect.gen(function* () {
+    const remotes = {
+      acme: "https://dev.azure.com/acme/p/_git/web",
+      globex: "https://dev.azure.com/globex/p/_git/web",
+      unscoped: "http://dev.azure.com/legacy/p/_git/web",
+    };
+    const viewerFor: Record<string, string> = {
+      "/acme": "ana@acme.dev",
+      "/globex": "gus@globex.dev",
+      "/legacy": "legacy@dev.example",
+    };
+    const listedAs: Record<string, string> = {};
+    const usedRemotes: Record<string, string | undefined> = {};
+    const azure = SourceControlProviderKind.make("azure-devops");
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "acme",
+          workspaceRoot: "/acme",
+          repository: "acme/p/web",
+          remoteUrl: remotes.acme,
+          provider: azure,
+          host: "dev.azure.com",
+        }),
+        project({
+          id: "p2",
+          title: "globex",
+          workspaceRoot: "/globex",
+          repository: "globex/p/web",
+          remoteUrl: remotes.globex,
+          provider: azure,
+          host: "dev.azure.com",
+        }),
+        project({
+          id: "p3",
+          title: "legacy",
+          workspaceRoot: "/legacy",
+          repository: "legacy/p/web",
+          remoteUrl: remotes.unscoped,
+          provider: azure,
+          host: "dev.azure.com",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(azure, {
+          ...keyedByCanonicalKey,
+          viewerScope: ({ remoteUrl }) => {
+            const url = new URL(remoteUrl);
+            return url.protocol === "https:" ? (url.pathname.split("/")[1] ?? null) : null;
+          },
+          getViewer: ({ cwd, remoteUrl }) =>
+            Effect.sync(() => {
+              usedRemotes[cwd] = remoteUrl;
+              return viewerFor[cwd] ?? "unknown";
+            }),
+          getChangeRequest: () =>
+            Effect.gen(function* () {
+              assert.equal(yield* PullRequestCheckoutRemote, remotes.acme);
+              return hostedChangeRequest("Acme detail");
+            }),
+          listChangeRequests: (input) =>
+            Effect.gen(function* () {
+              assert.equal(yield* PullRequestCheckoutRemote, usedRemotes[input.cwd]);
+              listedAs[input.cwd] = input.viewer;
+              return {
+                items: [
+                  {
+                    ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                    author: { login: input.viewer, name: null, avatarUrl: null },
+                  },
+                ],
+                truncated: false,
+                continues: true,
+              };
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open", involvement: "authored" });
+
+    assert.deepStrictEqual(listedAs, viewerFor);
+    assert.deepStrictEqual(usedRemotes, {
+      "/acme": remotes.acme,
+      "/globex": remotes.globex,
+      "/legacy": remotes.unscoped,
+    });
+    assert.equal(result.viewers["dev.azure.com"], "legacy@dev.example");
+    assert.deepStrictEqual(
+      result.entries.map((entry) => [entry.projectTitle, entry.viewer]).toSorted(),
+      [
+        ["acme", "ana@acme.dev"],
+        ["globex", "gus@globex.dev"],
+        ["legacy", undefined],
+      ],
+    );
+    assert.strictEqual(result.providers.length, 1);
+    assert.isTrue(result.providers[0]!.configured);
+    const row = result.entries.find((entry) => entry.projectTitle === "acme")!;
+    const detail = yield* service.detail({
+      projectId: row.projectId,
+      repository: row.repository,
+      number: row.number,
+    });
+    assert.equal(detail.body, "Acme detail");
+  }),
+);
+
+// Settings changes the service reads one at a time. Each pull first acknowledges the change before
+// it, so taking an acknowledgement after an offer means the service has finished with that change.
+const settingsFeed = Effect.gen(function* () {
+  const changes = yield* Queue.unbounded<ServerSettings>();
+  const acks = yield* Queue.unbounded<void>();
+  const stream = Stream.fromPull(
+    Effect.succeed(
+      Queue.offer(acks, undefined).pipe(
+        Effect.andThen(Queue.take(changes)),
+        Effect.map((settings) => [settings] as const),
+      ),
+    ),
+  );
+  const offer = (settings: ServerSettings) => Queue.offer(changes, settings);
+  const acknowledged = Queue.take(acks);
+  const change = (settings: ServerSettings) => offer(settings).pipe(Effect.andThen(acknowledged));
+  return { stream, ready: acknowledged, offer, acknowledged, change };
+});
+
+const withToken = (token: string): ServerSettings => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  sourceControlHosts: { github: { tokens: { "github.com": token } } },
+});
+
+it.effect.each(["token", "provider"] as const)(
+  "resolves the viewer again after a %s changes",
+  (kind) =>
+    Effect.gen(function* () {
+      const feed = yield* settingsFeed;
+      let viewerCalls = 0;
+      const service = yield* makeService({
+        settingsChanges: feed.stream,
+        projects: [
+          project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () => Effect.sync(() => `viewer-${++viewerCalls}`),
+            listChangeRequests: () =>
+              Effect.succeed({ items: [], truncated: false, continues: true }),
+          }),
+        ],
+      });
+      yield* feed.ready;
+
+      assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
+        "github.com": "viewer-1",
+      });
+      // An unrelated settings change keeps the viewer.
+      yield* feed.change(DEFAULT_SERVER_SETTINGS);
+      assert.deepStrictEqual((yield* service.list({ state: "open", limit: 5 })).viewers, {
+        "github.com": "viewer-1",
+      });
+      yield* feed.change(
+        kind === "token"
+          ? withToken("new-token")
+          : {
+              ...DEFAULT_SERVER_SETTINGS,
+              secretProviders: {
+                homelab: { kind: "onepassword", config: { account: "other-account" } },
+              } as ServerSettings["secretProviders"],
+            },
+      );
+      assert.deepStrictEqual((yield* service.list({ state: "open", limit: 6 })).viewers, {
+        "github.com": "viewer-2",
+      });
+    }),
+);
+
+it.effect("captures credential changes between subscription and the initial snapshot", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<ServerSettings>();
+    const invalidated = yield* Deferred.make<void>();
+    let subscribed = false;
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+      forgetChangeRequestReads: () => Deferred.succeed(invalidated, undefined).pipe(Effect.asVoid),
+    });
+    yield* makeService({
+      projects: [],
+      providers: [provider],
+      settingsChanges: Stream.fromPubSub(changes),
+      subscribeSettings: PubSub.subscribe(changes).pipe(
+        Effect.map((subscription) => {
+          subscribed = true;
+          return Stream.fromSubscription(subscription);
+        }),
+      ),
+      settingsRead: Effect.gen(function* () {
+        assert.isTrue(subscribed);
+        yield* PubSub.publish(changes, withToken("changed-during-initial-read"));
+        return DEFAULT_SERVER_SETTINGS;
+      }),
+    });
+    yield* Deferred.await(invalidated);
+  }),
+);
+
+it.effect("keeps a viewer lookup started before a token change out of the cache", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let viewerCalls = 0;
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getViewer: () =>
+            Effect.gen(function* () {
+              const call = ++viewerCalls;
+              if (call === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return `viewer-${call}`;
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+        }),
+      ],
+    });
+    yield* feed.ready;
+
+    const first = yield* Effect.forkChild(service.list({ state: "open" }));
+    yield* Deferred.await(started);
+    yield* feed.change(withToken("new-token"));
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(first);
+
+    assert.deepStrictEqual((yield* service.list({ state: "open", limit: 5 })).viewers, {
+      "github.com": "viewer-2",
+    });
+  }),
+);
+
+it.effect("reads a pull request again after a saved token changes", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    let reads = 0;
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest(`read ${reads}`);
+            }),
+        }),
+      ],
+    });
+    yield* feed.ready;
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.detail(ref);
+    yield* service.detail(ref);
+    assert.strictEqual(reads, 1);
+    yield* feed.change(withToken("new-token"));
+    yield* service.detail(ref);
+    assert.strictEqual(reads, 2);
+  }),
+);
+
+it.effect("keeps a read made while a token change is clearing caches out of the new keys", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    const clearing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let phase = "before";
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () => Effect.sync(() => hostedChangeRequest(phase)),
+          forgetChangeRequestReads: () =>
+            Deferred.succeed(clearing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        }),
+      ],
+    });
+    yield* feed.ready;
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.detail(ref);
+    yield* feed.offer(withToken("new-token"));
+    yield* Deferred.await(clearing);
+    phase = "during";
+    yield* service.detail(ref);
+    phase = "after";
+    yield* Deferred.succeed(release, undefined);
+    yield* feed.acknowledged;
+
+    assert.strictEqual((yield* service.detail(ref)).body, "after");
+  }),
+);
+
+it.effect("reads a stored summary again after a saved token changes", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    let reads = 0;
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest(`read ${reads}`);
+            }),
+        }),
+      ],
+    });
+    yield* feed.ready;
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.summary({ ...ref, allowStale: false });
+    yield* service.summary({ ...ref, allowStale: false });
+    assert.strictEqual(reads, 1);
+    yield* feed.change(withToken("new-token"));
+    yield* service.summary({ ...ref, allowStale: false });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
+it.effect("clears stored reads on the next settings change when a token change could not", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    let reads = 0;
+    let projectListDown = false;
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      failProjectList: () => projectListDown,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest(`read ${reads}`);
+            }),
+        }),
+      ],
+    });
+    yield* feed.ready;
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.summary({ ...ref, allowStale: false });
+    projectListDown = true;
+    yield* feed.change(withToken("new-token"));
+    projectListDown = false;
+    yield* feed.change(withToken("new-token"));
+    yield* service.summary({ ...ref, allowStale: false });
+    assert.strictEqual(reads, 2);
   }),
 );
 

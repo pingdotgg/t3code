@@ -11010,7 +11010,10 @@
   "027d70661a6fc7ac": "Rescan Git and hosting integrations",
   "847dfcd39ed0f9a5": "Connect an environment to inspect its version control tools and hosting integrations.",
   "7b09564f31eb8171": "read and write access to pull requests and contents",
+  "42b7faef3ecc8a28": "the Code (Read & write) scope in that organization",
+  "e23fba27fc82e29e": "each organization signs in with its own token, in az and in direct reads",
   "8dd881ec9fd8c074": "{host} token",
+  "db39b9e0061ef6b2": "Not recognized. Try {example}.",
   "4f7ff2645d23d463": "No token saved; the server uses {envVar} or the {cliName} login.",
   "8ea7a295f2739627": "Saved for {hosts}.",
   "36c33a32cfe8dc68": [
@@ -11059,7 +11062,47 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "A token saved here is used before",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "and the",
+    " ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    " ",
+    "login, so ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Give it ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Create a token",
+  "0c66be22365ace69": "Organization",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "Commit messages and pull request titles and descriptions match each project's history.",
   "f512a778a446d715": "Conventional Commit prefixes, with short pull request titles and descriptions.",

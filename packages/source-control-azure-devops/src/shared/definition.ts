@@ -1,9 +1,10 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
 import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
   defineSourceControl,
+  hostCredentialSettingsFields,
   isChangeRequestAuthorityOfProject,
   parseChangeRequestPath,
   parseIssuePath,
@@ -11,6 +12,7 @@ import {
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
+import { azureDevOpsOrganizationKey } from "./organization.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
@@ -88,6 +90,9 @@ function checkoutCommandId(args: string): string | null {
 
 const KIND = SourceControlProviderKind.make("azure-devops");
 
+/** Tokens are saved per organization, keyed `dev.azure.com/{organization}`. */
+export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
+
 export const definition = defineSourceControl({
   kind: KIND,
   label: "Azure DevOps",
@@ -100,6 +105,21 @@ export const definition = defineSourceControl({
     plural: "pull requests",
   },
   repositoryPathHint: "project/repository",
+  settings,
+  credentials: {
+    cliName: "az",
+    cliLabel: "Azure CLI",
+    loginCommand: "az login",
+    tokenEnvVar: "AZURE_DEVOPS_EXT_PAT",
+    tokenAccess: "the Code (Read & write) scope in that organization",
+    newTokenUrl: (organization) => `https://${organization}/_usersSettings/tokens`,
+    tokenKey: {
+      label: "Organization",
+      placeholder: "dev.azure.com/organization",
+      normalize: azureDevOpsOrganizationKey,
+    },
+    savedTokenUse: "each organization signs in with its own token, in az and in direct reads",
+  },
   // `az repos` reads need the checkout's organization and project, so a bare hostname names no
   // repository this client can act on.
   publicHost: null,

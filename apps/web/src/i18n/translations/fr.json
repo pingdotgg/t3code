@@ -11001,7 +11001,10 @@
   "027d70661a6fc7ac": "Analyser à nouveau Git et les intégrations d’hébergement",
   "847dfcd39ed0f9a5": "Connectez un environnement pour inspecter ses outils de gestion de versions et ses intégrations d’hébergement.",
   "7b09564f31eb8171": "accès en lecture et en écriture aux pull requests et au contenu",
+  "42b7faef3ecc8a28": "l’autorisation Code (Read & write) dans cette organisation",
+  "e23fba27fc82e29e": "chaque organisation s’authentifie avec son propre jeton dans az et lors des lectures directes",
   "8dd881ec9fd8c074": "Jeton {host}",
+  "db39b9e0061ef6b2": "Valeur non reconnue. Essayez {example}.",
   "4f7ff2645d23d463": "Aucun jeton enregistré ; le serveur utilise {envVar} ou l’identifiant {cliName}.",
   "8ea7a295f2739627": "Enregistré pour {hosts}.",
   "36c33a32cfe8dc68": [
@@ -11050,7 +11053,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "Un jeton enregistré ici a priorité sur ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " et sur la connexion à ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". Ainsi, ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Accordez-lui ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Créer un jeton",
+  "0c66be22365ace69": "Organisation",
   "ded875ce84c22d60": "Jeton",
   "c31cd9e1037af9f9": "Les messages de commit ainsi que les titres et descriptions des pull requests suivent l’historique de chaque projet.",
   "f512a778a446d715": "Préfixes Conventional Commits, avec des titres et descriptions de pull request courts.",

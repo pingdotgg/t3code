@@ -80,6 +80,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -98,6 +99,7 @@ import {
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
   PullRequestProviderError,
+  PullRequestCheckoutRemote,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
@@ -365,10 +367,15 @@ export interface SupportedProject {
   readonly kind: SourceControlProviderKind;
   readonly repository: string;
   readonly host: string;
+  /** What the viewer is resolved under: the host, or the host and the provider's viewer scope. */
+  readonly viewerKey: string;
+  readonly viewerRemoteUrl?: string;
   /** Unlike Azure repository names, remotes are unique across an organization. */
   readonly remote: string;
   readonly repositoryKey: string | null;
 }
+
+type ViewerCheckout = { readonly cwd: string; readonly remoteUrl?: string };
 
 interface WorkspaceProjects {
   /** Every project read, with its repository identity resolved. */
@@ -378,7 +385,8 @@ interface WorkspaceProjects {
     string,
     { readonly kind: SourceControlProviderKind; readonly projectCount: number }
   >;
-  readonly viewerRoots: ReadonlyMap<string, ReadonlyArray<string>>;
+  /** Checkouts to resolve each viewer key's viewer in. */
+  readonly viewerRoots: ReadonlyMap<string, ReadonlyArray<ViewerCheckout>>;
   readonly refinedProjectIdsByHost: ReadonlyMap<string, ReadonlyArray<ProjectId>>;
 }
 
@@ -500,9 +508,10 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options?: { readonly viewerAllowsPause: boolean },
+  options?: { readonly viewerAllowsPause?: boolean; readonly checkoutRemote?: string },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
+  const checkoutRemote = options?.checkoutRemote;
   const protect = <A>(
     operation: string,
     effect: Effect.Effect<A, PullRequestProviderError>,
@@ -524,7 +533,10 @@ function withRateLimitBackoff(
               }),
           ),
           Effect.flatMap((lease) =>
-            effect.pipe(
+            (checkoutRemote === undefined
+              ? effect
+              : Effect.provideService(effect, PullRequestCheckoutRemote, checkoutRemote)
+            ).pipe(
               Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
               Effect.tap(() => limits.recordSuccess({ ...key, lease })),
               Effect.tapError((error) =>
@@ -564,6 +576,7 @@ function withRateLimitBackoff(
       ? {}
       : { unavailableRequirement: api.unavailableRequirement }),
     ...(api.repositoryKey === undefined ? {} : { repositoryKey: api.repositoryKey }),
+    ...(api.viewerScope === undefined ? {} : { viewerScope: api.viewerScope }),
     ...(api.servesHost === undefined ? {} : { servesHost: api.servesHost }),
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
@@ -1007,7 +1020,7 @@ export const make = Effect.gen(function* () {
           string,
           { kind: SourceControlProviderKind; projectCount: number }
         >();
-        const viewerRoots = new Map<string, string[]>();
+        const viewerRoots = new Map<string, ViewerCheckout[]>();
         const refinedProjectIdsByHost = new Map<string, ProjectId[]>();
         const seen = new Set<string>();
         for (const project of projects) {
@@ -1036,10 +1049,15 @@ export const make = Effect.gen(function* () {
           }
           const registered = registry.get(kind);
           const api = registered?.servesHost?.(host) === false ? null : registered;
+          const viewerScope = api?.viewerScope?.({ remoteUrl: identity.locator.remoteUrl }) ?? null;
+          const viewerKey = viewerScope === null ? host : `${host} ${viewerScope}`;
+          const viewerRemote =
+            api?.viewerScope === undefined ? {} : { remoteUrl: identity.locator.remoteUrl };
           if (api !== null) {
-            const roots = viewerRoots.get(host);
-            if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);
-            else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
+            const checkout = { cwd: project.workspaceRoot, ...viewerRemote };
+            const roots = viewerRoots.get(viewerKey);
+            if (roots === undefined) viewerRoots.set(viewerKey, [checkout]);
+            else if (!roots.some(({ cwd }) => cwd === checkout.cwd)) roots.push(checkout);
           }
           const repositoryKey =
             api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
@@ -1055,10 +1073,21 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withRateLimitBackoff(
+              api,
+              host,
+              rateLimits,
+              viewerRemote.remoteUrl === undefined
+                ? undefined
+                : { checkoutRemote: viewerRemote.remoteUrl },
+            ),
             kind,
             repository,
             host,
+            viewerKey,
+            ...(viewerRemote.remoteUrl === undefined
+              ? {}
+              : { viewerRemoteUrl: viewerRemote.remoteUrl }),
             remote:
               repositoryKey ??
               sourceControlDefinitions.repositoryKeyFromRemote(`https://${host}/${repository}`),
@@ -1140,6 +1169,7 @@ export const make = Effect.gen(function* () {
                       kind: publicHost.kind,
                       repository,
                       host,
+                      viewerKey: host,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
                         `https://${host}/${repository}`,
                       ),
@@ -1271,36 +1301,47 @@ export const make = Effect.gen(function* () {
 
   type ResolvedViewer = {
     readonly host: string;
+    readonly viewerKey: string;
     readonly kind: SourceControlProviderKind;
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
   };
-  const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
+  const viewersByKey = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
+  // Advanced when viewers are dropped, so a lookup started before then cannot put its answer back.
+  let viewerGeneration = 0;
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const generation = viewerGeneration;
+      const [host, kind, roots, viewerKey] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
-        ReadonlyArray<string>,
+        ReadonlyArray<ViewerCheckout>,
+        string,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
       const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
-      return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
+      return Effect.firstSuccessOf(
+        roots.map((checkout) => api.getViewer({ ...checkout, host })),
+      ).pipe(
         Effect.map((viewer) => ({
           host,
+          viewerKey,
           kind,
           viewer: viewer as string | null,
           error: null as PullRequestProviderError | null,
         })),
         Effect.tap((result) =>
-          Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(host, { at, result })),
+          Effect.map(Clock.currentTimeMillis, (at) => {
+            if (generation === viewerGeneration) viewersByKey.set(viewerKey, { at, result });
+          }),
         ),
         Effect.catch((error) =>
           Effect.succeed({
             host,
+            viewerKey,
             kind,
             viewer: null,
             error,
@@ -1322,19 +1363,28 @@ export const make = Effect.gen(function* () {
     options?: { readonly allowPaused: boolean },
   ) =>
     Effect.forEach(
-      [...new Set(projects.map(({ host }) => host))],
-      (host) =>
+      [...new Set(projects.map(({ viewerKey }) => viewerKey))],
+      (viewerKey) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
-          const held = viewersByHost.get(host);
+          const held = viewersByKey.get(viewerKey);
           if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
             return Effect.succeed(held.result);
           }
-          const forHost = projects.filter((project) => project.host === host);
-          const api = forHost[0]!.api;
+          const forKey = projects.filter((project) => project.viewerKey === viewerKey);
+          const { api, host } = forKey[0]!;
           // Include deduplicated checkouts too; one unreadable worktree must not mark the whole host signed out.
           const roots =
-            viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+            viewerRoots.get(viewerKey) ??
+            forKey.map(({ project, viewerRemoteUrl }) => ({
+              cwd: project.workspaceRoot,
+              ...(viewerRemoteUrl === undefined ? {} : { remoteUrl: viewerRemoteUrl }),
+            }));
+          const key = JSON.stringify([
+            host,
+            api.kind,
+            roots.toSorted((a, b) => a.cwd.localeCompare(b.cwd)),
+            viewerKey,
+          ]);
           if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // Check pauses outside the shared lookup so background reads cannot spawn repeated failing CLIs and extend the pause.
           return rateLimits.check({ provider: api.kind, host }).pipe(
@@ -1342,6 +1392,7 @@ export const make = Effect.gen(function* () {
             Effect.catch((error) =>
               Effect.succeed<ResolvedViewer>({
                 host,
+                viewerKey,
                 kind: api.kind,
                 viewer: null,
                 error: new PullRequestProviderError({
@@ -1396,6 +1447,7 @@ export const make = Effect.gen(function* () {
       ...(input.item.stack === undefined ? {} : { stack: input.item.stack }),
       provider: input.project.api.kind,
       host: input.project.host,
+      ...(input.project.viewerKey === input.project.host ? {} : { viewer: input.viewer }),
       projectId: input.project.project.id,
       projectTitle: input.project.project.title,
       repository: input.project.repository,
@@ -1448,24 +1500,36 @@ export const make = Effect.gen(function* () {
     }
 
     const viewerResults = yield* resolveViewers(projects, viewerRoots);
+    const viewerByKey = new Map<string, string>();
+    // Hosts keep one viewer each for clients; rows of a narrower viewer scope carry their own.
     const viewers: Record<string, string> = {};
     for (const result of viewerResults) {
-      if (result.viewer !== null) viewers[result.host] = result.viewer;
+      if (result.viewer === null) continue;
+      viewerByKey.set(result.viewerKey, result.viewer);
+      if (result.viewerKey === result.host) viewers[result.host] = result.viewer;
+      else viewers[result.host] ??= result.viewer;
+    }
+    const resultsByHost = new Map<string, Array<ResolvedViewer>>();
+    for (const result of viewerResults) {
+      const held = resultsByHost.get(result.host);
+      if (held === undefined) resultsByHost.set(result.host, [result]);
+      else held.push(result);
     }
 
     const providers: ReadonlyArray<PullRequestProviderSummary> = [
-      ...viewerResults.map((result) => {
-        const capabilities = projects.find((project) => project.host === result.host)?.api
-          .capabilities;
+      ...[...resultsByHost].map(([host, results]) => {
+        const capabilities = projects.find((project) => project.host === host)?.api.capabilities;
+        const configured = results.some((result) => result.viewer !== null);
+        const failed = results.find((result) => result.error !== null)?.error ?? null;
         return {
-          host: result.host,
-          kind: result.kind,
+          host,
+          kind: results[0]!.kind,
           searchesOnHost: capabilities?.search ?? false,
           actions: capabilities?.actions ?? [],
-          projectCount: projectCounts.get(result.host) ?? 1,
-          projectIds: refinedProjectIdsByHost.get(result.host),
-          configured: result.viewer !== null,
-          detail: result.error === null ? null : providerDetail(requirementOf, result.error),
+          projectCount: projectCounts.get(host) ?? 1,
+          projectIds: refinedProjectIdsByHost.get(host),
+          configured,
+          detail: configured || failed === null ? null : providerDetail(requirementOf, failed),
         };
       }),
       ...[...unimplemented].map(([host, { kind, projectCount }]) => ({
@@ -1484,9 +1548,9 @@ export const make = Effect.gen(function* () {
       continuation === null
         ? projects
         : projects.filter(({ cursorKey }) => continuation.has(cursorKey));
-    const readable = selected.filter(({ host }) => viewers[host] !== undefined);
+    const readable = selected.filter(({ viewerKey }) => viewerByKey.has(viewerKey));
     const unreadable = selected
-      .filter(({ host }) => viewers[host] === undefined)
+      .filter(({ viewerKey }) => !viewerByKey.has(viewerKey))
       .map(({ project, repository }) => ({
         projectId: project.id,
         projectTitle: project.title,
@@ -1502,7 +1566,7 @@ export const make = Effect.gen(function* () {
         nextCursors: {},
       };
       const errors = viewerResults.flatMap((result) =>
-        result.error === null || !selected.some(({ host }) => host === result.host)
+        result.error === null || !selected.some(({ viewerKey }) => viewerKey === result.viewerKey)
           ? []
           : [result.error],
       );
@@ -1526,7 +1590,7 @@ export const make = Effect.gen(function* () {
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
       {
-        const viewer = viewers[project.host]!;
+        const viewer = viewerByKey.get(project.viewerKey)!;
         const key = project.cursorKey;
         return project.api
           .listChangeRequests({
@@ -1639,7 +1703,7 @@ export const make = Effect.gen(function* () {
       const separately = () =>
         Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
       if (readAcross === undefined) return separately();
-      const viewer = viewers[first.host]!;
+      const viewer = viewerByKey.get(first.viewerKey)!;
       const cursor = cursorOf(first);
       return readAcross({
         cwd: first.project.workspaceRoot,
@@ -1725,7 +1789,7 @@ export const make = Effect.gen(function* () {
         separate.push(project);
         continue;
       }
-      const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+      const key = `${project.viewerKey}\n${cursorOf(project)?.updatedBefore ?? ""}`;
       const group = together.get(key);
       if (group === undefined) together.set(key, [project]);
       else group.push(project);
@@ -3134,6 +3198,8 @@ export const make = Effect.gen(function* () {
   const refEpochs = new Map<string, number>();
   const projectEpochs = new Map<ProjectId, number>();
   let projectEpochFloor = 0;
+  // Advanced when saved tokens change: every reference read so far was made as the old account.
+  let credentialsEpoch = 0;
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) =>
     JSON.stringify([
@@ -3148,6 +3214,7 @@ export const make = Effect.gen(function* () {
     return Math.max(
       mergedEpochs.get(scope) ?? projectEpochs.get(ref.projectId) ?? projectEpochFloor,
       refEpochs.get(scope) ?? 0,
+      credentialsEpoch,
     );
   };
   const noteMerged = (ref: PullRequestRef) => {
@@ -3940,13 +4007,50 @@ export const make = Effect.gen(function* () {
       yield* forgetProviderReads();
       listingsEpoch = ++epochCounter;
       everyFileRevisionEpoch = ++epochCounter;
-      viewersByHost.clear();
+      viewersByKey.clear();
+      viewerGeneration += 1;
       yield* Cache.invalidateAll(viewerFlights);
     }
     if (options?.notifyReaders) {
       yield* SubscriptionRef.set(pullRequestRefreshes, ++epochCounter);
     }
   });
+
+  // A saved token changes the account reads are made as. Clear viewers and provider reads, then
+  // each project's persisted reads (keyed without epochs), and only then move the keys: a read in
+  // between was made as the old account and must land under keys nothing builds again.
+  // Acquire the nonreplaying subscription before the snapshot so an intervening write is queued.
+  const credentialChanges = yield* serverSettings.subscribeChanges;
+  const credentialsKey = (settings: ServerSettingsValue) =>
+    JSON.stringify({ hosts: settings.sourceControlHosts, providers: settings.secretProviders });
+  let heldHosts = yield* serverSettings.getSettings.pipe(
+    Effect.map(credentialsKey),
+    Effect.orElseSucceed(() => null),
+  );
+  yield* Effect.forkIn(
+    Stream.runForEach(credentialChanges, (settings) => {
+      const hosts = credentialsKey(settings);
+      if (hosts === heldHosts) return Effect.void;
+      heldHosts = hosts;
+      return invalidate({}).pipe(
+        Effect.andThen(projects.listShells()),
+        Effect.flatMap((shells) =>
+          Effect.forEach(shells, (shell) => readCache.invalidate(`project:${shell.id}`), {
+            discard: true,
+          }),
+        ),
+        // Forget these hosts so the next settings change clears the persisted reads again.
+        Effect.catch(() => Effect.sync(() => (heldHosts = null))),
+        Effect.andThen(
+          Effect.sync(() => {
+            credentialsEpoch = ++epochCounter;
+          }),
+        ),
+        Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, ++epochCounter)),
+      );
+    }),
+    scope,
+  );
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
     "PullRequestService.refreshAfterTurn",

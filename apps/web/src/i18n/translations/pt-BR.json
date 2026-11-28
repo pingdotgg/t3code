@@ -11001,7 +11001,10 @@
   "027d70661a6fc7ac": "Verificar novamente o Git e as integrações de hospedagem",
   "847dfcd39ed0f9a5": "Conecte um ambiente para inspecionar as ferramentas de controle de versão e as integrações de hospedagem dele.",
   "7b09564f31eb8171": "acesso de leitura e gravação a pull requests e conteúdo",
+  "42b7faef3ecc8a28": "o escopo Code (Read & write) nessa organização",
+  "e23fba27fc82e29e": "cada organização se autentica com seu próprio token no az e nas leituras diretas",
   "8dd881ec9fd8c074": "Token do {host}",
+  "db39b9e0061ef6b2": "Valor não reconhecido. Tente {example}.",
   "4f7ff2645d23d463": "Nenhum token salvo; o servidor usa {envVar} ou o login do {cliName}.",
   "8ea7a295f2739627": "Salvo para {hosts}.",
   "36c33a32cfe8dc68": [
@@ -11050,7 +11053,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "Um token salvo aqui tem prioridade sobre ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " e sobre o login do ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". Assim, ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Conceda a ele ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Criar um token",
+  "0c66be22365ace69": "Organização",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "As mensagens de commit e os títulos e descrições de pull requests seguem o histórico de cada projeto.",
   "f512a778a446d715": "Prefixos de Conventional Commits, com títulos e descrições de pull requests curtos.",

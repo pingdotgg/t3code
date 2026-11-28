@@ -11010,7 +11010,10 @@
   "027d70661a6fc7ac": "Przeskanuj ponownie Gita i integracje hostingowe",
   "847dfcd39ed0f9a5": "Połącz środowisko, aby przejrzeć jego narzędzia kontroli wersji i integracje hostingowe.",
   "7b09564f31eb8171": "odczyt i zapis pull requestów i zawartości",
+  "42b7faef3ecc8a28": "zakres Code (Read & write) w tej organizacji",
+  "e23fba27fc82e29e": "każda organizacja uwierzytelnia się własnym tokenem w az i przy bezpośrednim odczycie",
   "8dd881ec9fd8c074": "Token {host}",
+  "db39b9e0061ef6b2": "Nie rozpoznano. Spróbuj użyć {example}.",
   "4f7ff2645d23d463": "Brak zapisanego tokenu; serwer używa {envVar} lub loginu {cliName}.",
   "8ea7a295f2739627": "Zapisane dla {hosts}.",
   "36c33a32cfe8dc68": [
@@ -11059,7 +11062,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "Token zapisany tutaj ma pierwszeństwo przed ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " i logowaniem do ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". Dzięki temu ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Nadaj tokenowi ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Utwórz token",
+  "0c66be22365ace69": "Organizacja",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "Komunikaty commitów oraz tytuły i opisy pull requestów pasują do historii każdego projektu.",
   "f512a778a446d715": "Prefiksy Conventional Commits, z krótkimi tytułami i opisami pull requestów.",

@@ -4,21 +4,41 @@ import * as NodeZlib from "node:zlib";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { SettingsSecretUnresolvedError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
+import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 
 const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>();
+const mockedGetJson = vi.fn<AzureDevOpsRest.AzureDevOpsRest["Service"]["getJson"]>(
+  () => Effect.succeedNone,
+);
+const ACME_REMOTE = "https://dev.azure.com/acme/platform/_git/web";
+const SAVED_ACME = Redacted.make("acme-pat");
+const mockedResolveCheckoutRemote = vi.fn(() => Effect.succeed(ACME_REMOTE));
+const mockedSavedToken = vi.fn<
+  AzureDevOpsCredentials.AzureDevOpsCredentials["Service"]["savedToken"]
+>(() => Effect.succeedNone);
 
 const layer = it.layer(
   AzureDevOpsPullRequestCli.layer.pipe(
     Layer.provide(
       Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
         execute: mockedExecute,
+        resolveCheckoutRemote: mockedResolveCheckoutRemote,
+      }),
+    ),
+    Layer.provide(Layer.mock(AzureDevOpsRest.AzureDevOpsRest)({ getJson: mockedGetJson })),
+    Layer.provide(
+      Layer.mock(AzureDevOpsCredentials.AzureDevOpsCredentials)({
+        savedToken: mockedSavedToken,
       }),
     ),
     Layer.provide(NodeServices.layer),
@@ -159,6 +179,11 @@ function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedGetJson.mockReset();
+  mockedGetJson.mockImplementation(() => Effect.succeedNone);
+  mockedSavedToken.mockReset();
+  mockedResolveCheckoutRemote.mockClear();
+  mockedSavedToken.mockImplementation(() => Effect.succeedNone);
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
@@ -401,6 +426,89 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(argsOfCall(1)).toEqual(expect.arrayContaining(["--creator", "me", "--top", "1"]));
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    }),
+  );
+
+  it.effect("names the saved token's account even when it has no pull requests of its own", () =>
+    Effect.gen(function* () {
+      mockedSavedToken.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedGetJson.mockReturnValue(
+        Effect.succeedSome(
+          JSON.stringify({
+            authenticatedUser: { properties: { Account: { $value: "pat@acme.dev" } } },
+          }),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "pat@acme.dev");
+      expect(mockedGetJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://dev.azure.com/acme/_apis/connectionData",
+          apiVersion: "7.1-preview",
+        }),
+      );
+      // Neither the az login account nor a pull request search.
+      expect(mockedExecute).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("names the saved token's account by its pull requests when Azure does not say", () =>
+    Effect.gen(function* () {
+      mockedSavedToken.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([{ ...pullRequestRow, createdBy: { uniqueName: "pat@acme.dev" } }]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "pat@acme.dev");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(mockedExecute.mock.calls[0]?.[0].remoteUrl).toBe(ACME_REMOTE);
+      expect(argsOfCall(0)).toEqual(expect.arrayContaining(["--creator", "me"]));
+    }),
+  );
+
+  it.effect(
+    "uses the selected project remote for the viewer even when checkout detection selects another organization",
+    () =>
+      Effect.gen(function* () {
+        const remoteUrl = "https://dev.azure.com/globex/platform/_git/web";
+        mockedSavedToken.mockReturnValueOnce(Effect.succeedSome(Redacted.make("globex-pat")));
+        mockedGetJson.mockReturnValueOnce(
+          Effect.succeedSome(
+            JSON.stringify({
+              authenticatedUser: { properties: { Account: { $value: "pat@globex.dev" } } },
+            }),
+          ),
+        );
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        assert.strictEqual(yield* cli.getViewer({ cwd: "/w", remoteUrl }), "pat@globex.dev");
+        expect(mockedResolveCheckoutRemote).not.toHaveBeenCalled();
+        expect(mockedSavedToken).toHaveBeenCalledWith("dev.azure.com/globex");
+        expect(mockedGetJson).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: "https://dev.azure.com/globex/_apis/connectionData",
+          }),
+        );
+      }),
+  );
+
+  it.effect("names no viewer when the organization's saved token cannot be read", () =>
+    Effect.gen(function* () {
+      mockedSavedToken.mockReturnValue(
+        Effect.fail(new SettingsSecretUnresolvedError({ provider: "Keychain" })),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+
+      assert.strictEqual(error._tag, "AzureDevOpsSavedTokenUnreadableError");
+      expect(mockedExecute).not.toHaveBeenCalled();
     }),
   );
 
@@ -1116,6 +1224,79 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       expect(mockedExecute.mock.calls.at(-1)?.[0].args).toContain("path=%2Fdocs%2FC%23%2Fa%26b.md");
+    }),
+  );
+
+  it.effect(
+    "reads a file over REST when the repository gave its API URL, without starting az",
+    () =>
+      Effect.gen(function* () {
+        mockedGetJson.mockReturnValueOnce(Effect.succeedSome(json({ content: "x" })));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        const item = yield* cli.readItemContent({
+          cwd: "/w",
+          location: {
+            project: "platform",
+            repository: "web",
+            apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+          },
+          path: "docs/C#/a&b.md",
+          commit: "a".repeat(40),
+        });
+
+        assert.strictEqual(item.contents, "x");
+        expect(mockedExecute).not.toHaveBeenCalled();
+        expect(mockedGetJson.mock.calls[0]?.[0].url).toBe(
+          "https://dev.azure.com/acme/p1/_apis/git/repositories/r1/items" +
+            "?path=%2Fdocs%2FC%23%2Fa%26b.md&versionDescriptor.versionType=commit" +
+            `&versionDescriptor.version=${"a".repeat(40)}` +
+            "&includeContent=true&includeContentMetadata=true&$format=json",
+        );
+      }),
+  );
+
+  it.effect("reads through az when REST cannot answer", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const threads = yield* cli.listThreads({
+        cwd: "/w",
+        location: {
+          project: "platform",
+          repository: "web",
+          apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+        },
+        number: 42,
+      });
+
+      assert.deepStrictEqual(threads, []);
+      expect(mockedGetJson.mock.calls[0]?.[0].url).toBe(
+        "https://dev.azure.com/acme/p1/_apis/git/repositories/r1/pullRequests/42/threads",
+      );
+      expect(mockedExecute.mock.calls[0]?.[0].args).toContain("pullRequestThreads");
+    }),
+  );
+
+  it.effect("reads through az when the REST answer does not decode", () =>
+    Effect.gen(function* () {
+      mockedGetJson.mockReturnValueOnce(Effect.succeedSome("not-json"));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const threads = yield* cli.listThreads({
+        cwd: "/w",
+        location: {
+          project: "platform",
+          repository: "web",
+          apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+        },
+        number: 42,
+      });
+
+      assert.deepStrictEqual(threads, []);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 

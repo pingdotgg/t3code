@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
@@ -55,8 +56,8 @@ it.effect("names the remote's repository when reading the default branch", () =>
     const provider = yield* AzureDevOpsSourceControlProvider.make;
     for (const [remoteUrl, repository, scoped] of [
       ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo", true],
-      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", false],
-      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", false],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", true],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", true],
       ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo", true],
       ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo", true],
       ["https://dev.azure.com/acme/project/_git/service.git", "service.git", true],
@@ -87,7 +88,14 @@ it.effect("names the remote's repository when reading the default branch", () =>
       // The selected remote names the project, not the checkout's primary remote.
       if (scoped) assert.include(args, "--project=project", remoteUrl);
     }
-  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
+  }).pipe(
+    Effect.provide(
+      AzureDevOpsCli.layer.pipe(
+        Layer.provide(AzureDevOpsCredentials.layer),
+        Layer.provideMerge(support),
+      ),
+    ),
+  );
 });
 
 it.effect(

@@ -11002,7 +11002,10 @@
   "027d70661a6fc7ac": "Git- und Hosting-Integrationen erneut scannen",
   "847dfcd39ed0f9a5": "Verbinde eine Umgebung, um ihre Versionskontroll-Tools und Hosting-Integrationen zu untersuchen.",
   "7b09564f31eb8171": "Lese- und Schreibzugriff auf Pull Requests und Inhalte",
+  "42b7faef3ecc8a28": "den Bereich Code (Read & write) in dieser Organisation",
+  "e23fba27fc82e29e": "jede Organisation authentifiziert sich mit ihrem eigenen Token in az und bei direkten Lesezugriffen",
   "8dd881ec9fd8c074": "{host}-Token",
+  "db39b9e0061ef6b2": "Nicht erkannt. Versuchen Sie {example}.",
   "4f7ff2645d23d463": "Kein Token gespeichert; der Server verwendet {envVar} oder die {cliName}-Anmeldung.",
   "8ea7a295f2739627": "Gespeichert für {hosts}.",
   "36c33a32cfe8dc68": [
@@ -11051,7 +11054,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "Ein hier gespeichertes Token hat Vorrang vor ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " und der Anmeldung bei ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". So gilt: ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Weisen Sie dem Token ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    " zu."
+  ],
   "c3b322e041dd88da": "Token erstellen",
+  "0c66be22365ace69": "Organisation",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "Commit-Nachrichten sowie Titel und Beschreibungen von Pull Requests richten sich nach dem Verlauf des jeweiligen Projekts.",
   "f512a778a446d715": "Conventional-Commit-Präfixe, mit kurzen Titeln und Beschreibungen für Pull Requests.",

@@ -37,6 +37,7 @@ import type {
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
+import { azureDevOpsOrganizationKey } from "../shared/organization.ts";
 
 /** A file the blob batch missed pays for two Python startups. */
 const DIFF_FILE_CONCURRENCY = 4;
@@ -125,6 +126,9 @@ function azureDevOpsProviderFailure(
 ): PullRequestProviderFailure {
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
+  // Not "unauthenticated": that shows the az login requirement, and signing in to az cannot read
+  // the saved token. Its own detail says to fix the secret provider.
+  if (error._tag === "AzureDevOpsSavedTokenUnreadableError") return { reason: "failed" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
   if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
@@ -200,7 +204,14 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
-  // PR locations are immutable; every pull request read records one so later reads can skip it.
+  // PR locations are immutable; caching avoids full PR reads for viewed-file checks. Keys hold the
+  // repository, which names the organization, so a checkout pointed at another organization cannot
+  // reuse the old one's location, REST URL, or iterations.
+  const pullRequestKey = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => JSON.stringify([input.cwd, input.repository.toLowerCase(), input.number]);
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
   // A pushed iteration never changes, so neither do its commits nor its change list.
   const knownIterations = new Map<string, ReadonlyArray<AzureDevOpsIteration>>();
@@ -215,9 +226,13 @@ export const make = Effect.gen(function* () {
     >
   >();
 
-  const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
+  const readPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
     Effect.suspend(() => {
-      const key = `${input.cwd} ${input.number}`;
+      const key = pullRequestKey(input);
       const pending = Deferred.makeUnsafe<
         AzureDevOpsRepositoryLocation | null,
         AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
@@ -242,9 +257,13 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const locationOf = (input: { readonly cwd: string; readonly number: number }) =>
+  const locationOf = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
     Effect.suspend(() => {
-      const key = `${input.cwd} ${input.number}`;
+      const key = pullRequestKey(input);
       const held = recall(locations, key);
       if (held !== undefined) return Effect.succeed(held);
       const ownRead = readPullRequest(input).pipe(
@@ -267,12 +286,13 @@ export const make = Effect.gen(function* () {
   /** A later slice names its iteration, which the list it was cut from already holds. */
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
+    readonly repository: string;
     readonly number: number;
     readonly iterationId?: number;
   }) {
     const location = yield* locationOf(input);
     if (location === null) return null;
-    const key = `${input.cwd} ${input.number}`;
+    const key = pullRequestKey(input);
     const held = recall(knownIterations, key);
     if (
       input.iterationId !== undefined &&
@@ -291,11 +311,12 @@ export const make = Effect.gen(function* () {
 
   const changesOf = (input: {
     readonly cwd: string;
+    readonly repository: string;
     readonly location: AzureDevOpsRepositoryLocation;
     readonly number: number;
     readonly iterationId: number;
   }) => {
-    const key = `${input.cwd} ${input.number} ${input.iterationId}`;
+    const key = `${pullRequestKey(input)} ${input.iterationId}`;
     const held = recall(iterationChanges, key);
     return held !== undefined
       ? Effect.succeed(held)
@@ -346,6 +367,7 @@ export const make = Effect.gen(function* () {
 
   const listLatestChanges = (input: {
     readonly cwd: string;
+    readonly repository: string;
     readonly location: AzureDevOpsRepositoryLocation;
     readonly number: number;
     readonly iterations: ReadonlyArray<AzureDevOpsIteration>;
@@ -358,6 +380,7 @@ export const make = Effect.gen(function* () {
         } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
       : changesOf({
           cwd: input.cwd,
+          repository: input.repository,
           location: input.location,
           number: input.number,
           iterationId: latest.id,
@@ -370,9 +393,16 @@ export const make = Effect.gen(function* () {
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     // The bare repository name repeats across an organization; the project path does not.
     repositoryKey: ({ canonicalKey }) => canonicalKey,
+    // Each organization can sign in with its own saved token, so each has its own viewer.
+    viewerScope: ({ remoteUrl }) => azureDevOpsOrganizationKey(remoteUrl),
 
     getViewer: (input) =>
-      cli.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewer({
+          cwd: input.cwd,
+          ...(input.remoteUrl === undefined ? {} : { remoteUrl: input.remoteUrl }),
+        })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
@@ -456,6 +486,7 @@ export const make = Effect.gen(function* () {
             ? 0
             : yield* listLatestChanges({
                 cwd: input.cwd,
+                repository: input.repository,
                 location,
                 number: input.number,
                 iterations,
@@ -529,6 +560,7 @@ export const make = Effect.gen(function* () {
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
         const scope = yield* diffScope({
           cwd: input.cwd,
+          repository: input.repository,
           number: input.number,
           ...(cursor === null ? {} : { iterationId: cursor.iterationId }),
         });
@@ -540,6 +572,7 @@ export const make = Effect.gen(function* () {
         if (iteration === undefined) return EMPTY_DIFF_SLICE;
         const listed = yield* changesOf({
           cwd: input.cwd,
+          repository: input.repository,
           location: scope.location,
           number: input.number,
           iterationId: iteration.id,
@@ -689,6 +722,7 @@ export const make = Effect.gen(function* () {
         const listed = yield* listLatestChanges({
           ...scope,
           cwd: input.cwd,
+          repository: input.repository,
           number: input.number,
         });
         const marked = new Set(input.paths);

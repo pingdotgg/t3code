@@ -9,6 +9,7 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
@@ -37,7 +38,13 @@ const layerSupport = Layer.mergeAll(
   NodeServices.layer,
   Layer.succeed(HostProcess.Platform, "linux"),
 );
-const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
+const layer = Layer.mergeAll(
+  AzureDevOpsCli.layer.pipe(
+    Layer.provide(AzureDevOpsCredentials.layer),
+    Layer.provide(layerSupport),
+  ),
+  layerSupport,
+);
 
 afterEach(() => {
   mockRun.mockReset();
@@ -674,6 +681,16 @@ describe("primaryRemoteUrl", () => {
     [
       `origin\t${azure("origin")[1]} (fetch) [blob:none]\norigin\tpush-url (push)\n`,
       azure("origin")[1],
+    ],
+    [
+      remotes(["origin", "ssh://github.com/acme/repo"]) +
+        `upstream\t${azure("upstream")[1]} (fetch)\nupstream\t${azure("upstream")[1]} (push)\n`,
+      azure("upstream")[1],
+    ],
+    [
+      "origin\thttps://tfs.example.com/p/_git/r (fetch)\norigin\thttps://tfs.example.com/p/_git/r (push)\n" +
+        `upstream\t${azure("upstream")[1]} (fetch)\nupstream\t${azure("upstream")[1]} (push)\n`,
+      "https://tfs.example.com/p/_git/r",
     ],
     [
       remotes(["origin", "https://dev.azure.com/acme/My Project/_git/My Repo"]),
