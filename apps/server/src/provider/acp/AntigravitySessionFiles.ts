@@ -114,6 +114,49 @@ const pathKey = Effect.fnUntraced(function* (
   return path.sep === "\\" ? resolved.toLowerCase() : resolved;
 });
 
+/**
+ * Checks whether an Antigravity native session was created in `cwd`.
+ * Antigravity binds workspace URIs at `session/new` and ignores `cwd` on `session/resume`.
+ * Missing or unreadable metadata returns true so normal resume handling runs.
+ */
+export const antigravitySessionMatchesWorkspace = Effect.fn("antigravitySessionMatchesWorkspace")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly sessionId: string;
+    readonly cwd: string;
+  }) {
+    if (!isNativeSessionId(input.sessionId)) {
+      return true;
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const acpDirectory = path.join(input.profileDirectory, "antigravity-acp");
+    const base = path.join(acpDirectory, "conversations", input.sessionId);
+    const cwdKey = yield* pathKey(fs, path, input.cwd);
+
+    if (yield* fs.exists(`${base}.meta`)) {
+      const metadata = yield* fs
+        .readFileString(`${base}.meta`)
+        .pipe(Effect.flatMap(decodeSessionMetadata));
+      return (yield* pathKey(fs, path, metadata.cwd)) === cwdKey;
+    }
+
+    const workspacePaths = yield* Effect.promise(() =>
+      readDatabaseWorkspacePaths(input.profileDirectory, input.sessionId),
+    );
+    if (workspacePaths === undefined || workspacePaths.length === 0) {
+      return true;
+    }
+    for (const workspacePath of workspacePaths) {
+      if ((yield* pathKey(fs, path, workspacePath)) === cwdKey) {
+        return true;
+      }
+    }
+    return false;
+  },
+  Effect.orElseSucceed(() => true),
+);
+
 /** Call after the process closes. The unique temporary cwd proves which session we own. */
 export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySessionFiles")(
   function* (input: {

@@ -466,6 +466,14 @@ export interface AcpAdapterV2Flavor {
       options?: { readonly retired?: boolean },
     ) => Effect.Effect<AcpPromptOutcomeFailure | "completed" | undefined>
   >;
+  /**
+   * Returns false when a native session is bound to another workspace and `session/resume`
+   * would keep that old workspace instead of switching to `cwd`.
+   */
+  readonly canResumeSessionInWorkspace?: (input: {
+    readonly sessionId: string;
+    readonly cwd: string;
+  }) => Effect.Effect<boolean>;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
@@ -2774,7 +2782,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const plansBySessionId = new Map<string, ActiveAcpTurn["plans"]>();
         const initialSessionActivationFailure = yield* Ref.make<{
           readonly sessionId: string;
-          readonly error: EffectAcpErrors.AcpError;
+          readonly error: EffectAcpErrors.AcpError | ProviderAdapter.ProviderAdapterProtocolError;
+        } | null>(null);
+        const freshFallbackSession = yield* Ref.make<{
+          readonly threadId: ThreadId | null;
+          readonly sessionId: string;
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
@@ -9173,29 +9185,63 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         // Read before the session exists: its own config updates replace what the client showed.
         const unsetOptionDefaults = yield* flavor.unsetOptionDefaults ?? Effect.succeed([]);
-        const initialStart = yield* Effect.result(
-          startAcpRuntime(input.threadId, input.initialNativeThreadId),
-        );
-        const started = Result.isSuccess(initialStart)
-          ? initialStart.success
-          : yield* Effect.gen(function* () {
-              const failedMethod =
-                "method" in initialStart.failure ? initialStart.failure.method : undefined;
-              if (
-                input.initialNativeThreadId === undefined ||
-                (failedMethod !== "session/load" && failedMethod !== "session/resume")
-              ) {
-                return yield* initialStart.failure;
-              }
+        const initialCwd = input.runtimePolicy.cwd ?? process.cwd();
+        const initialWorkspaceMismatch =
+          input.initialNativeThreadId !== undefined &&
+          flavor.canResumeSessionInWorkspace !== undefined &&
+          !(yield* flavor.canResumeSessionInWorkspace({
+            sessionId: input.initialNativeThreadId,
+            cwd: initialCwd,
+          }));
+        const started = initialWorkspaceMismatch
+          ? yield* Effect.gen(function* () {
+              const sessionId = input.initialNativeThreadId!;
               yield* Ref.set(initialSessionActivationFailure, {
-                sessionId: input.initialNativeThreadId,
-                error: initialStart.failure,
+                sessionId,
+                error: new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: `Native session ${sessionId} is bound to another workspace and cannot resume in ${initialCwd}.`,
+                }),
               });
               itemIdentityVersion = 2;
               yield* Ref.set(runtimeRestartRequired, false);
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
-              return yield* startAcpRuntime(input.threadId);
-            });
+              const fallback = yield* startAcpRuntime(input.threadId);
+              yield* Ref.set(freshFallbackSession, {
+                threadId: input.threadId,
+                sessionId: fallback.sessionId,
+              });
+              return fallback;
+            })
+          : yield* Effect.result(startAcpRuntime(input.threadId, input.initialNativeThreadId)).pipe(
+              Effect.flatMap((initialStart) =>
+                Result.isSuccess(initialStart)
+                  ? Effect.succeed(initialStart.success)
+                  : Effect.gen(function* () {
+                      const failedMethod =
+                        "method" in initialStart.failure ? initialStart.failure.method : undefined;
+                      if (
+                        input.initialNativeThreadId === undefined ||
+                        (failedMethod !== "session/load" && failedMethod !== "session/resume")
+                      ) {
+                        return yield* initialStart.failure;
+                      }
+                      yield* Ref.set(initialSessionActivationFailure, {
+                        sessionId: input.initialNativeThreadId,
+                        error: initialStart.failure,
+                      });
+                      itemIdentityVersion = 2;
+                      yield* Ref.set(runtimeRestartRequired, false);
+                      prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
+                      const fallback = yield* startAcpRuntime(input.threadId);
+                      yield* Ref.set(freshFallbackSession, {
+                        threadId: input.threadId,
+                        sessionId: fallback.sessionId,
+                      });
+                      return fallback;
+                    }),
+              ),
+            );
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(loadingSessionId, null);
         yield* setActiveSessionSetup(started);
@@ -11137,7 +11183,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const startTurn = Effect.fn("AcpAdapterV2.startTurn.transition")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
-          return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
+          return yield* runtimeTransitionPermit.withPermit(
+            Ref.set(freshFallbackSession, null).pipe(Effect.andThen(startTurnUnlocked(turnInput))),
+          );
         });
 
         const steerWithPrompt = Effect.fn("AcpAdapterV2.steerWithPrompt")(function* (
@@ -11428,19 +11476,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         detail:
                           "Cannot replace ACP session while a turn or background work is active",
                       });
-                    yield* awaitRuntimeTeardown();
-                    const previousItemIdentityVersion = itemIdentityVersion;
-                    itemIdentityVersion = 2;
-                    prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
-                    yield* startReplacementAcpRuntime(threadInput.threadId, (candidate) =>
-                      commitReplacementSession(threadInput.threadId, candidate),
-                    ).pipe(
-                      Effect.tapError(() =>
-                        Effect.sync(() => {
-                          itemIdentityVersion = previousItemIdentityVersion;
-                        }),
-                      ),
+                    const currentActiveSessionId = yield* Ref.get(activeSessionId);
+                    const reusesFreshFallback = yield* Ref.modify(
+                      freshFallbackSession,
+                      (fallback) =>
+                        fallback !== null &&
+                        fallback.threadId === threadInput.threadId &&
+                        fallback.sessionId === currentActiveSessionId
+                          ? [true, null]
+                          : [false, fallback],
                     );
+                    if (!reusesFreshFallback) {
+                      yield* awaitRuntimeTeardown();
+                      const previousItemIdentityVersion = itemIdentityVersion;
+                      itemIdentityVersion = 2;
+                      prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
+                      yield* startReplacementAcpRuntime(threadInput.threadId, (candidate) =>
+                        commitReplacementSession(threadInput.threadId, candidate),
+                      ).pipe(
+                        Effect.tapError(() =>
+                          Effect.sync(() => {
+                            itemIdentityVersion = previousItemIdentityVersion;
+                          }),
+                        ),
+                      );
+                    }
                   }
                   const now = yield* DateTime.now;
                   const sessionId = yield* Ref.get(activeSessionId);
@@ -11510,6 +11570,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
+                  const pendingInitialFailure = yield* Ref.get(initialSessionActivationFailure);
+                  const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
+                  const targetCwd = nextRuntimePolicy.cwd ?? process.cwd();
+                  if (
+                    pendingInitialFailure?.sessionId !== sessionId &&
+                    flavor.canResumeSessionInWorkspace !== undefined &&
+                    !(yield* flavor.canResumeSessionInWorkspace({ sessionId, cwd: targetCwd }))
+                  ) {
+                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver,
+                      detail: `Native session ${sessionId} is bound to another workspace and cannot resume in ${targetCwd}.`,
+                    });
+                  }
                   const previousItemIdentityVersion = itemIdentityVersion;
                   useProviderThreadIdentity(threadInput.providerThread);
                   const restorePreviousItemIdentity = Effect.sync(() => {

@@ -771,6 +771,125 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
     }).pipe(Effect.provide(layerSession)),
   );
+
+  it.effect(
+    "skips session/resume and adopts a fresh session when the native session belongs to another workspace",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-profile-",
+        });
+        const workspaceA = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-orig-" });
+        const workspaceB = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-wt-" });
+        const boundSessionId = "d90a4a32-0955-4c21-9e19-3f7830562995";
+        const conversationsDir = path.join(profileDirectory, "antigravity-acp", "conversations");
+        yield* fileSystem.makeDirectory(conversationsDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(conversationsDir, `${boundSessionId}.meta`),
+          JSON.stringify({ cwd: workspaceA }),
+        );
+
+        const startedRuntimes: Array<{
+          readonly cwd: string;
+          readonly resumeSessionId: string | undefined;
+        }> = [];
+        const instanceId = ProviderInstanceId.make("antigravity-workspace-resume-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          profileDirectory,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) => {
+            startedRuntimes.push({
+              cwd: input.cwd,
+              resumeSessionId: input.resumeSessionId,
+            });
+            return makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
+          },
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+
+        const policyFor = (cwd: string) =>
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+        const threadId = ThreadId.make("thread-antigravity-workspace-resume");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+
+        const sessionInWorktree = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-wt"),
+          modelSelection,
+          runtimePolicy: policyFor(workspaceB),
+          initialNativeThreadId: boundSessionId,
+        });
+        assert.deepEqual(startedRuntimes, [{ cwd: workspaceB, resumeSessionId: undefined }]);
+
+        const existingThread = yield* sessionInWorktree.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: policyFor(workspaceB),
+        });
+        const oldWorkspaceThread = {
+          ...existingThread,
+          nativeThreadRef: {
+            driver: existingThread.driver,
+            nativeId: boundSessionId,
+            strength: "strong" as const,
+          },
+        };
+        const resumeFailure = yield* sessionInWorktree
+          .resumeThread({
+            providerThread: oldWorkspaceThread,
+            modelSelection,
+            runtimePolicy: policyFor(workspaceB),
+          })
+          .pipe(Effect.flip);
+        assert.equal(resumeFailure._tag, "ProviderAdapterResumeThreadError");
+
+        const adopted = yield* sessionInWorktree.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: policyFor(workspaceB),
+          existingProviderThread: { ...oldWorkspaceThread, nativeThreadRef: null },
+          forceNewNativeThread: true,
+        });
+        assert.equal(adopted.id, oldWorkspaceThread.id);
+        assert.notEqual(adopted.nativeThreadRef?.nativeId, boundSessionId);
+        // Reuses the fresh fallback session opened in workspaceB without spawning a second runtime.
+        assert.equal(startedRuntimes.length, 1);
+
+        yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-orig"),
+          modelSelection,
+          runtimePolicy: policyFor(workspaceA),
+          initialNativeThreadId: boundSessionId,
+        });
+        assert.deepEqual(startedRuntimes[1], {
+          cwd: workspaceA,
+          resumeSessionId: boundSessionId,
+        });
+      }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 silent prompts", () => {
