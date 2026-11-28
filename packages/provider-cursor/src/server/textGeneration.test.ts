@@ -115,6 +115,24 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("runs without Plan mode or built-in tools so the reply stays in assistant text", () =>
+    Effect.gen(function* () {
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-key",
+      });
+      yield* generation.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/cursor",
+        stagedSummary: "M file.ts",
+        stagedPatch: "diff",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "default"),
+      });
+      const options = cursorSdkMock.create.mock.calls[0]?.[0];
+      expect(options).not.toMatchObject({ mode: "plan" });
+      expect(options).toMatchObject({ tools: [] });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("recovers invalid output after the SDK cannot sandbox", () =>
     Effect.gen(function* () {
       // The SDK checks sandbox support lazily, so create succeeds and send rejects.
