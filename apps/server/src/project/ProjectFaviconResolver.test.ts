@@ -296,7 +296,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           (yield* Path.Path).join(encodedCwd, "public", "team mark.svg"),
         );
 
-        for (const [href, filename] of [
+        for (const [href, filename, rel = "icon"] of [
           ["/brand/logo.svg&#35;mark", "logo.svg"],
           ["/brand/design&amp;dev.svg&#x3f;v=2", "design&dev.svg"],
           ["/brand/logo%23mark.svg&quest;v=2", "logo#mark.svg"],
@@ -305,9 +305,11 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           ["/brand/a&copy=b.svg", "a&copy=b.svg"],
           ["/brand/&ampdev.svg", "&ampdev.svg"],
           ["/brand/&apos.svg", "&apos.svg"],
+          ["/brand/primary.svg", "primary.svg", "ic&#111;n"],
+          ["/brand/secondary.svg", "secondary.svg", "shortcut&Tab;icon"],
         ] as const) {
           const entityCwd = yield* makeTempDir;
-          yield* writeTextFile(entityCwd, "index.html", `<link rel="icon" href="${href}">`);
+          yield* writeTextFile(entityCwd, "index.html", `<link rel="${rel}" href="${href}">`);
           yield* writeTextFile(entityCwd, `public/brand/${filename}`, "<svg>brand</svg>");
           expect(yield* resolver.resolvePath(entityCwd), href).toBe(
             (yield* Path.Path).join(entityCwd, "public", "brand", filename),
@@ -318,8 +320,9 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         yield* writeTextFile(
           jsxCwd,
           "app/root.tsx",
-          '<link rel="icon" href="/brand/a&amp-b.svg" />',
+          '<link rel="shortcut&Tab;icon" href="/brand/other.svg" /><link rel="icon" href="/brand/a&amp-b.svg" />',
         );
+        yield* writeTextFile(jsxCwd, "public/brand/other.svg", "<svg>other</svg>");
         yield* writeTextFile(jsxCwd, "public/brand/a&amp-b.svg", "<svg>brand</svg>");
         expect(yield* resolver.resolvePath(jsxCwd)).toBe(
           (yield* Path.Path).join(jsxCwd, "public", "brand", "a&amp-b.svg"),

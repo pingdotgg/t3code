@@ -19,12 +19,13 @@ const createdProject = {
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
+  isBrowsePending: false,
   lookupRepository: vi.fn(),
   createNewProject: vi.fn<() => Promise<typeof createdProject>>(),
   openDraft: vi.fn<() => Promise<void>>(),
   addProject: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
 }));
-const setup = (deniedScope?: string, sourceControl?: unknown) => {
+const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = false) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
   scopes.createNewProject.mockReset().mockResolvedValue(createdProject);
@@ -33,6 +34,7 @@ const setup = (deniedScope?: string, sourceControl?: unknown) => {
     _tag: "Success",
     value: { projectId: "project-cloned" },
   });
+  scopes.isBrowsePending = isBrowsePending;
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -150,7 +152,11 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: scopes.sourceControl, isLoading: false }),
+  useEnvironmentQuery: () => ({
+    data: scopes.sourceControl,
+    isLoading: false,
+    isPending: scopes.isBrowsePending,
+  }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -191,6 +197,27 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     }
   });
 });
+
+it.each([
+  { isBrowsePending: false, leavesInput: true },
+  { isBrowsePending: true, leavesInput: false },
+])(
+  "Tab with nothing to complete in the folder path: %j",
+  async ({ isBrowsePending, leavesInput }) => {
+    setup(undefined, undefined, isBrowsePending);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    const input = page.getByRole("combobox");
+    await input.fill("/workspace/zzz");
+    await userEvent.keyboard("{Tab}");
+    if (leavesInput) {
+      await expect.element(input).not.toHaveFocus();
+      expect(page.getByRole("dialog").element().contains(document.activeElement)).toBe(true);
+    } else await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("/workspace/zzz");
+  },
+);
 
 it.each([
   { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
@@ -247,6 +274,7 @@ it.each([
   { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
   { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
 ])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText(step.flow, { exact: true }).click();
