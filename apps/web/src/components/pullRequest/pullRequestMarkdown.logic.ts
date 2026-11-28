@@ -37,7 +37,8 @@ export function pullRequestMarkdownExtensions(
   if (extensions === undefined) {
     extensions = {
       changeRequest: {
-        repositoryUrl,
+        provider: changeRequest.provider,
+        url: changeRequest.url,
         autolinks: changeRequestReferenceAutolinker(changeRequest),
       },
       githubEmoji: changeRequest.provider === "github",

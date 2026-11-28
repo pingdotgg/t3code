@@ -40,7 +40,8 @@ export interface MarkdownExtensions {
   readonly preview?: { readonly fallback: string; readonly maxLength: number };
   /** A change request's body: root-relative media resolve on its host, and references link. */
   readonly changeRequest?: {
-    readonly repositoryUrl: string;
+    readonly provider: string;
+    readonly url: string;
     readonly autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   };
   /** Expand GitHub `:alias:` emoji shortcodes in prose outside code. */
@@ -696,11 +697,15 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     } else if (tagName === "a" && typeof props.href === "string") {
       // remarkNormalizeLinksAndTagInlineCode: a Windows drive path links as a file URL.
       const path = windowsPath(props.href);
-      props.href = path ? `file:///${path.replaceAll("\\", "/")}` : normalizeUri(props.href);
+      const changeRequest = walk.options.extensions.changeRequest;
+      const href = changeRequest
+        ? resolveChangeRequestMediaUrl(props.href, changeRequest)
+        : props.href;
+      props.href = path ? `file:///${path.replaceAll("\\", "/")}` : normalizeUri(href);
     } else if (tagName === "img" && typeof props.src === "string") {
       const changeRequest = walk.options.extensions.changeRequest;
       const src = changeRequest
-        ? resolveChangeRequestMediaUrl(props.src, changeRequest.repositoryUrl)
+        ? resolveChangeRequestMediaUrl(props.src, changeRequest)
         : props.src;
       props.src = windowsPath(src) ?? normalizeUri(src);
     } else if (tagName === "code" && isElement(node, "pre")) {

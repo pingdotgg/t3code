@@ -368,14 +368,20 @@ describe("wordsHast", () => {
         url: `https://forge.dev/o/r/pull/${match[1]}`,
         kind: "reference" as const,
       }));
-    const html = wordsHtml("See #12 and `#13`.\n\n![shot](/api/attachments/1)", {
-      extensions: { changeRequest: { repositoryUrl: "https://forge.dev/o/r", autolinks } },
-    });
+    const html = wordsHtml(
+      "See #12 and `#13`.\n\n![shot](/api/attachments/1) [log](/api/attachments/2)",
+      {
+        extensions: {
+          changeRequest: { provider: "github", url: "https://forge.dev/o/r/pull/1", autolinks },
+        },
+      },
+    );
     expect(html).toContain(
       '<a href="https://forge.dev/o/r/pull/12" data-pull-request-autolink="reference">#12</a>',
     );
     expect(html).toContain('<code data-inline-code="" dir="ltr">#13</code>');
     expect(html).toContain('src="https://forge.dev/api/attachments/1"');
+    expect(html).toContain('href="https://forge.dev/api/attachments/2"');
   });
 
   it("renders math as SVG, and keeps money as text", () => {
