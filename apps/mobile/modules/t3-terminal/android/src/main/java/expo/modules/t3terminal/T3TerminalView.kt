@@ -3,9 +3,7 @@ package expo.modules.t3terminal
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
-import android.text.Editable
 import android.text.InputType
-import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -23,6 +21,9 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
   private val sentText = TerminalSentText()
+  private val textWatcher = TerminalTextWatcher(sentText, { readOnly }) {
+    onInput(mapOf("data" to it))
+  }
 
   // Newer Android can request autofill even with importantForAutofill=no.
   // Reporting no autofill type keeps terminal input out of credential autofill.
@@ -31,7 +32,12 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
       super.onCreateInputConnection(outAttrs)?.let { connection ->
-        TerminalInputConnection(connection, sentText, { !readOnly }) { count ->
+        TerminalInputConnection(
+          connection,
+          sentText,
+          { !readOnly },
+          { textWatcher.onComposingFinished(text) },
+        ) { count ->
           if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
         }
       }
@@ -70,7 +76,6 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var cellSize = 0 to 0
   private var measuredCols = 0
   private var measuredRows = 0
-  private var clearingInput = false
   private var isCleanedUp = false
   private var backgroundColorValue = Color.parseColor("#24292E")
   private var foregroundColorValue = Color.parseColor("#D1D5DA")
@@ -284,9 +289,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       EditorInfo.IME_FLAG_NO_EXTRACT_UI or
       EditorInfo.IME_FLAG_NO_FULLSCREEN or
       EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-    inputView.inputType = InputType.TYPE_CLASS_TEXT or
-      InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
-      InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    // Not a password variation: ColorOS swaps those to its ASCII-only secure keyboard.
+    inputView.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     inputView.setPadding(0, 0, 0, 0)
     inputView.setOnEditorActionListener(
       TerminalEnterListener({ readOnly }) {
@@ -294,18 +298,24 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         onInput(mapOf("data" to "\r"))
       },
     )
-    val navigationKeys = TerminalNavigationKeyListener { onInput(mapOf("data" to it)) }
+    val navigationKeys = TerminalNavigationKeyListener {
+      resetInput()
+      onInput(mapOf("data" to it))
+    }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
       if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       when {
+        // A composing word is still in the input; deleting it there sends the DEL.
+        keyCode == KeyEvent.KEYCODE_DEL && inputView.text.isNotEmpty() -> false
         keyCode == KeyEvent.KEYCODE_DEL -> {
           sentText.removeCodePoints(1)
           onInput(mapOf("data" to "\u007F"))
           true
         }
         event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
+          resetInput()
           onInput(
             mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
           )
@@ -314,29 +324,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         else -> false
       }
     }
-    inputView.addTextChangedListener(
-      object : TextWatcher {
-        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-          if (readOnly) return
-          if (clearingInput || s == null || count <= 0) return
-          val end = (start + count).coerceAtMost(s.length)
-          if (start < end) {
-            val insertedText = s.subSequence(start, end).toString()
-            sentText.append(insertedText)
-            onInput(mapOf("data" to insertedText))
-          }
-        }
-
-        override fun afterTextChanged(editable: Editable?) {
-          if (clearingInput || editable.isNullOrEmpty()) return
-          clearingInput = true
-          editable.clear()
-          clearingInput = false
-        }
-      },
-    )
+    inputView.addTextChangedListener(textWatcher)
   }
 
   @Suppress("ComplexCondition")
@@ -419,6 +407,14 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalHandle = 0L
     fedBuffer = ""
     terminalCanvas.resetSelectionState()
+  }
+
+  // Input sent around the field moves the terminal cursor, so the IME must not
+  // keep editing a word it is still composing there.
+  fun resetInput() {
+    if (inputView.text.isEmpty()) return
+    textWatcher.reset(inputView.text)
+    context.getSystemService(InputMethodManager::class.java)?.restartInput(inputView)
   }
 
   fun applyPendingBuffer() {
