@@ -34,6 +34,7 @@ interface MappedText {
 interface Interpreter {
   readonly language: string;
   readonly inline: (flag: string) => boolean;
+  readonly shortFlags?: RegExp;
   readonly valueOptions?: ReadonlySet<string>;
   readonly scriptFileOptions?: ReadonlySet<string>;
   readonly stdin: "always" | "without-script-file" | "never";
@@ -61,7 +62,8 @@ const SHELL: Interpreter = {
 const PYTHON: Interpreter = {
   language: "python",
   // Bundles like -uc and -IBc; -W and -X take a value, so a c after them is that value.
-  inline: (flag) => /^-[bBdEiIOPqsSuvx]*c$/u.test(flag),
+  inline: flagIn("-c"),
+  shortFlags: /^-(?!-)[bBdEiIOPqRsStuvx]*/u,
   valueOptions: new Set(["-W", "-X"]),
   scriptFileOptions: new Set(["-m"]),
   stdin: "without-script-file",
@@ -123,17 +125,21 @@ const INTERPRETERS: Record<string, Interpreter> = {
   ruby: {
     language: "ruby",
     // Bundles like -ne and -lane; -i, -I, -r and -C take a value, so an e after them is that value.
-    inline: (flag) => /^-[acdlnpsvwyW]*e$/u.test(flag),
+    inline: flagIn("-e"),
+    shortFlags: /^-(?!-)(?:[acdlnpsSUvwy]|0[0-7]{0,3}|W[0-7]?|K[\x20-\x7e]?)*/u,
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
+    repeatable: true,
   },
   perl: {
     language: "perl",
     // Bundles like -pe and -0777ne; in -pie or -Me the e is the value of -i or -M.
-    inline: (flag) => /^-[0-7acdfglnpsStTuUwWX]*[eE]$/u.test(flag),
+    inline: flagIn("-e", "-E"),
+    shortFlags: /^-(?!-)(?:[acdfgnpsStTuUwWX]|0[0-7]{0,3}|l0?[0-7]{0,3})*/u,
     // -M and -m take their module only attached (`-Mstrict`).
     valueOptions: new Set(["-I"]),
     stdin: "without-script-file",
+    repeatable: true,
   },
   osascript: {
     language: "applescript",
@@ -328,8 +334,7 @@ function commandScripts(
     for (const script of found.scripts) {
       const mapped = wordText(script.word, source);
       if (!mapped) continue;
-      const start = script.inValue ? mapped.text.indexOf("=") + 1 : 0;
-      scripts.push({ language: interpreter.language, mapped: sliceMapped(mapped, start) });
+      scripts.push({ language: interpreter.language, mapped: sliceMapped(mapped, script.start) });
     }
     readsStdinScript =
       interpreter.stdin !== "never" && found.scripts.length === 0 && !found.scriptFromFile;
@@ -360,7 +365,7 @@ function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
 
 interface ScriptArgument {
   readonly word: Word;
-  readonly inValue: boolean;
+  readonly start: number;
 }
 
 function interpreterArgs(
@@ -370,7 +375,7 @@ function interpreterArgs(
 ): { scripts: ScriptArgument[]; scriptFromFile: boolean } {
   const positionals: Word[] = [];
   const scripts: ScriptArgument[] = [];
-  const whole = (word: Word): ScriptArgument => ({ word, inValue: false });
+  const whole = (word: Word): ScriptArgument => ({ word, start: 0 });
   let optionsEnded = false;
   let scriptFromFile = false;
   let shellInline = false;
@@ -386,7 +391,9 @@ function interpreterArgs(
       (flag.startsWith("-") || (interpreter === SHELL && flag.startsWith("+"))) &&
       flag !== "-"
     ) {
-      const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
+      let [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
+      const at = interpreter.shortFlags?.exec(flag)?.[0].length;
+      if (at && at < flag.length) [name, value] = [`-${flag[at]}`, flag.slice(at + 1) || undefined];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
         // SQL shells run `-f` files and `-c` statements alike, in order.
@@ -406,13 +413,14 @@ function interpreterArgs(
       }
       if (interpreter.inline(name)) {
         const next = args[index + 1];
-        if (value !== undefined) scripts.push({ word: arg, inValue: true });
+        if (value !== undefined) scripts.push({ word: arg, start: flag.length - value.length });
         else if (next) scripts.push(whole(next));
+        else return { scripts, scriptFromFile: true };
         if (!interpreter.repeatable) return { scripts, scriptFromFile };
         if (value === undefined) index += 1;
         continue;
       }
-      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
+      if (value === undefined && interpreter.valueOptions?.has(name)) index += 1;
       continue;
     }
     if (shellInline) return { scripts: [whole(arg)], scriptFromFile: false };
