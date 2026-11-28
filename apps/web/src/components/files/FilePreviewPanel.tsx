@@ -725,11 +725,11 @@ function ensureFileScrollStoreSubscriptions() {
 }
 
 class FileScrollSnapshot extends Component<{
-  relativePath: string | null;
+  scrollKey: string | null;
   snapshot: () => void;
 }> {
-  override getSnapshotBeforeUpdate(previous: Readonly<{ relativePath: string | null }>) {
-    if (previous.relativePath !== this.props.relativePath) this.props.snapshot();
+  override getSnapshotBeforeUpdate(previous: Readonly<{ scrollKey: string | null }>) {
+    if (previous.scrollKey !== this.props.scrollKey) this.props.snapshot();
     return null;
   }
 
@@ -2009,7 +2009,7 @@ function FilePreviewPanelContent({
       ref={setSurfaceElement}
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      <FileScrollSnapshot relativePath={relativePath} snapshot={snapshotFileScroll} />
+      <FileScrollSnapshot scrollKey={positionKey ?? relativePath} snapshot={snapshotFileScroll} />
       {fileHeader ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           {fileHeader.crumbs}
