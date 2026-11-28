@@ -684,6 +684,19 @@ Third}`;
     ]);
   });
 
+  it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
+        '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([["Apples", "42"], ["Pears"]]);
+  });
+
   it("reads an ODS time cell that has no display paragraph", async () => {
     const archive = new JSZip().file(
       "content.xml",
