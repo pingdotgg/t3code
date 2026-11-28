@@ -149,18 +149,11 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
       "/settings/diffs",
       "/settings/keybindings",
       "/settings/voice",
-      "/settings/snap-shot",
     ],
   },
   {
     heading: msg("Agents"),
-    paths: [
-      "/settings/providers",
-      "/settings/threads",
-      "/settings/browser",
-      "/settings/devices",
-      "/settings/scheduled-tasks",
-    ],
+    paths: ["/settings/providers", "/settings/threads", "/settings/browser", "/settings/devices"],
   },
   {
     heading: msg("Code"),
@@ -168,12 +161,12 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
   },
   {
     heading: msg("Connections"),
-    paths: ["/settings/connections", "/settings/access", "/settings/secrets"],
+    paths: ["/settings/connections", "/settings/access"],
   },
   {
     heading: msg("More"),
     headingHidden: true,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: ["/settings/archived"],
   },
 ];
 
@@ -1676,12 +1669,26 @@ export function useSearchableSetting() {
   };
 }
 
+/** Pages a solo install doesn't offer: kept out of the sidebar and out of search. */
+const HIDDEN_SETTINGS_PATHS: ReadonlySet<string> = new Set([
+  "/settings/about",
+  "/settings/labs",
+  "/settings/diagnostics",
+  "/settings/open-source-licenses",
+  "/settings/maintenance",
+  "/settings/integrations",
+  "/settings/scheduled-tasks",
+  "/settings/snap-shot",
+  "/settings/secrets",
+]);
+
 export function filterAvailableSettingsSearchItems(
   availability: SettingsSearchAvailability,
 ): ReadonlyArray<SettingsSearchItem> {
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
   return items.filter(
     (item) =>
+      !HIDDEN_SETTINGS_PATHS.has(item.to) &&
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&

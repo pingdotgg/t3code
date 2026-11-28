@@ -116,27 +116,24 @@ describe("searchSettings", () => {
     expect(ids("Language")).toEqual(["language", "speech-language", "dictation"]);
   });
 
-  it("shows the Secrets page in nav and search only when an environment enables secret providers", () => {
-    const availability = {
-      hasCloudPublicConfig: false,
-      hasEnvironment: true,
-      hasProviderSettingsEnvironment: true,
-      canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
-      hasThreadAutoSettlement: false,
-    };
-    for (const enabled of [false, true]) {
-      const navPaths = settingsNavGroups(enabled).flatMap((group) => group.paths);
-      const searchPaths = searchSettings(
-        "1password",
-        filterAvailableSettingsSearchItems({
-          ...availability,
-          hasSecretProvidersEnvironment: enabled,
-        }),
-      ).map((item) => item.to);
-      expect(navPaths.includes("/settings/secrets")).toBe(enabled);
-      expect(searchPaths.includes("/settings/secrets")).toBe(enabled);
+  it("keeps the solo-hidden pages out of nav and search", () => {
+    const navPaths = settingsNavGroups(true).flatMap((group) => group.paths);
+    for (const path of ["/settings/secrets", "/settings/about", "/settings/labs"]) {
+      expect(navPaths).not.toContain(path);
     }
+    const searchPaths = searchSettings(
+      "1password",
+      filterAvailableSettingsSearchItems({
+        hasCloudPublicConfig: false,
+        hasEnvironment: true,
+        hasProviderSettingsEnvironment: true,
+        canManageLocalBackend: false,
+        isWslSettingsRowVisible: false,
+        hasThreadAutoSettlement: false,
+        hasSecretProvidersEnvironment: true,
+      }),
+    ).map((item) => item.to);
+    expect(searchPaths).not.toContain("/settings/secrets");
   });
 
   it("finds where subagents and side chats open by any of its names", () => {
@@ -248,25 +245,6 @@ describe("searchSettings", () => {
         targetId: "linked-environments",
       }),
     );
-  });
-
-  it("finds the Welcome page only where a primary computer can open it", () => {
-    const availability = {
-      hasCloudPublicConfig: true,
-      hasEnvironment: true,
-      hasProviderSettingsEnvironment: true,
-      canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
-      hasThreadAutoSettlement: false,
-    };
-    const ids = (hasPrimaryEnvironment: boolean) =>
-      searchSettings(
-        "welcome page",
-        filterAvailableSettingsSearchItems({ ...availability, hasPrimaryEnvironment }),
-      ).map((item) => item.id);
-    // Hosted web reaches remote computers but has no primary one to set up.
-    expect(ids(false)).not.toContain("welcome-page");
-    expect(ids(true)).toContain("welcome-page");
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {

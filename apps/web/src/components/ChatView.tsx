@@ -306,7 +306,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
-import { DraftHeroGreeting, DraftHeroSuggestions } from "./chat/DraftHeroAssistant";
+import { DraftHeroDock, DraftHeroGreeting, DraftHeroSuggestions } from "./chat/DraftHeroAssistant";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -4109,14 +4109,20 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </ComposerSurface.Shell>
                       {isDraftHeroState ? (
-                        <DraftHeroSuggestions
-                          onPick={(prompt) => {
-                            composerRef.current?.insertTextAtEnd(prompt, {
-                              ensureLeadingBoundary: true,
-                            });
-                            composerRef.current?.focusAtEnd();
-                          }}
-                        />
+                        <>
+                          <DraftHeroSuggestions
+                            hasWorkingTreeChanges={
+                              gitStatusQuery.data?.hasWorkingTreeChanges === true
+                            }
+                            onPick={(prompt) => {
+                              composerRef.current?.insertTextAtEnd(prompt, {
+                                ensureLeadingBoundary: true,
+                              });
+                              composerRef.current?.focusAtEnd();
+                            }}
+                          />
+                          <DraftHeroDock />
+                        </>
                       ) : null}
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.

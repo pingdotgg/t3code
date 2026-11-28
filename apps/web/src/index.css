@@ -2763,19 +2763,3 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
-
-/* The chips under the composer on the new-thread screen read as pills. */
-[data-draft-hero] [data-slot="composer-context-strip"] button {
-  border: 1px solid color-mix(in srgb, var(--input) 50%, transparent);
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--muted) 55%, transparent);
-  padding-inline: 0.75rem;
-  transition:
-    border-color 150ms,
-    background-color 150ms;
-}
-
-[data-draft-hero] [data-slot="composer-context-strip"] button:hover {
-  border-color: var(--input);
-  background: var(--muted);
-}
