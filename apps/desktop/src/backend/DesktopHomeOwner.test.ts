@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - Spawns a real process that holds the ownership lock.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -166,17 +166,32 @@ describe("DesktopHomeOwner.reclaimHomeFromSshServer", () => {
         assert.isNull(owner.exitCode ?? owner.signalCode);
 
         yield* writeRuntime("0.0.0");
-        assert.isTrue(yield* DesktopHomeOwner.reclaimHomeFromSshServer());
+        const launchLock = `${home}/ssh-launch/.launch.lock`;
+        const lockRemoved = yield* Deferred.make<void>();
+        const reclaimed = yield* DesktopHomeOwner.reclaimHomeFromSshServer().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            remove: (path, options) =>
+              fs
+                .remove(path, options)
+                .pipe(
+                  Effect.tap(() =>
+                    path === launchLock ? Deferred.succeed(lockRemoved, undefined) : Effect.void,
+                  ),
+                ),
+          }),
+        );
+        assert.isTrue(reclaimed);
         if (owner.signalCode === null) {
           yield* Effect.promise(() => new Promise((resolve) => owner.once("exit", resolve)));
         }
         assert.strictEqual(owner.signalCode, "SIGTERM");
-        const launchLock = `${home}/ssh-launch/.launch.lock`;
         assert.strictEqual(yield* fs.readFileString(launchLock), `${process.pid}\n`);
 
         const backend = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
         backend.exec("BEGIN EXCLUSIVE;");
-        yield* Effect.promise(() => expect.poll(() => NodeFS.existsSync(launchLock)).toBe(false));
+        yield* Deferred.await(lockRemoved);
+        assert.isFalse(yield* fs.exists(launchLock));
         backend.close();
       }).pipe(Effect.scoped),
     ),
