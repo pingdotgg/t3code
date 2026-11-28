@@ -2619,7 +2619,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         assert.equal(answered.messages.at(-1)?.runId, answered.runs.at(-1)?.id);
         assert.equal(
           answered.messages.at(-1)?.text,
-          "Which color?\nBlue\n\nWhich sizes?\nNone selected",
+          "Which color?\nBlue\n\nWhich sizes?\nSmall, Large",
         );
         assert.deepEqual(
           (yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
