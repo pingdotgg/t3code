@@ -591,6 +591,8 @@ export const layerWithOptions = (
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
+        /** Another instance holds the thread's credential, so this attachment must not stay. */
+        readonly yielded?: true;
       }
       /** ACP and OpenCode consume credentials during openSession; reserve them against revocation until publication. */
       const mcpCredentialReservations = new Map<string, number>();
@@ -616,6 +618,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        yieldToOtherInstance = false,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -624,6 +627,22 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                // Checked under the per-thread lock, which every instance shares, so another
+                // instance's attach or in-flight open cannot land between this and the rotation.
+                if (yieldToOtherInstance) {
+                  const current = yield* mcpSessions.read(threadId);
+                  const heldElsewhere =
+                    (current !== undefined &&
+                      isMcpCredentialReserved(threadId, current.providerSessionId)) ||
+                    Array.from((yield* Ref.get(sessions)).values()).some(
+                      (entry) =>
+                        entry.runtime.instanceId !== providerInstanceId &&
+                        entry.attachedThreadIds.has(threadId),
+                    );
+                  if (heldElsewhere) {
+                    return { mcpCredentialId: undefined, issued: false, yielded: true };
+                  }
+                }
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
@@ -1958,6 +1977,8 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        /** Leave a credential alone that a live session on another instance holds. */
+        readonly yieldToOtherInstance?: boolean;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -1977,8 +1998,17 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.yieldToOtherInstance,
+              );
               preparedForCleanup = prepared;
+              if (prepared.yielded === true) {
+                yield* removeThreadAttachment({ ...input, runtime: attached });
+                attachedTo = undefined;
+                return;
+              }
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
                 yield* Ref.update(sessions, (current) => {
@@ -2581,7 +2611,58 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
+        const runtimeMcpApps = runtime.mcpApps;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
+        // MCP app views reach a live shared runtime without opening a turn, so attach the thread
+        // first: Codex resumes unloaded threads on MCP app requests and needs the thread's T3 MCP
+        // credential before the first `thread/resume` locks in its MCP server set.
+        const withMcpAppThread = <A>(
+          providerThread: OrchestrationV2ProviderThread,
+          effect: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
+        ): Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error> => {
+          const threadId = providerThread.appThreadId;
+          const passThrough = observeActivity(
+            providerSessionId,
+            touchActivity(providerSessionId),
+          ).pipe(Effect.andThen(effect));
+          if (threadId === null) return passThrough;
+          // A historical app must not rotate the credential the thread's live provider on another
+          // instance holds; this skips the attach, and prepareMcpSession re-checks under its lock.
+          const attachedToOtherInstance = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              Array.from(current.values()).some(
+                (entry) =>
+                  entry.runtime.instanceId !== runtime.instanceId &&
+                  entry.attachedThreadIds.has(threadId),
+              ),
+            ),
+          );
+          const prepared = observeActivity(
+            providerSessionId,
+            ensureThreadAttached({
+              providerSessionId,
+              threadId,
+              providerInstanceId: runtime.instanceId,
+              yieldToOtherInstance: true,
+            }),
+          ).pipe(
+            Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
+            Effect.andThen(
+              Effect.acquireUseRelease(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId,
+                  providerThread,
+                }),
+                () => effect,
+                () => scheduleThreadUnload(providerSessionId, providerThread.id),
+              ),
+            ),
+          );
+          return attachedToOtherInstance.pipe(
+            Effect.flatMap((elsewhere) => (elsewhere ? passThrough : prepared)),
+          );
+        };
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -2856,6 +2937,18 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("runtime-request-response")),
               ),
             ),
+          ...(runtimeMcpApps === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.listTools(input)),
+                  callTool: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.callTool(input)),
+                  readResource: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.readResource(input)),
+                },
+              }),
         };
       };
 
