@@ -105,7 +105,7 @@ export function NoProjectsHero() {
                   scratchTargetEnvironmentId === null
                     ? null
                     : () =>
-                        void startScratchThread(scratchTargetEnvironmentId, {
+                        startScratchThread(scratchTargetEnvironmentId, {
                           sendCarriedDraft: true,
                         })
                 }

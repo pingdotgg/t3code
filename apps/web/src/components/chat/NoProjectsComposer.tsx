@@ -59,7 +59,7 @@ export function NoProjectsComposer({
   startUnavailableReason,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly onStartWithoutProject: (() => void) | null;
+  readonly onStartWithoutProject: (() => Promise<void> | void) | null;
   readonly startUnavailableReason: string | null;
 }) {
   const gt = useGT();
@@ -102,8 +102,20 @@ export function NoProjectsComposer({
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
+  const startInFlightRef = useRef(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [multipleModelSelections, setMultipleModelSelections] =
     useState<ReadonlyArray<ModelSelection> | null>(null);
+
+  const handleStartWithoutProject = () => {
+    if (!onStartWithoutProject || startInFlightRef.current) return;
+    startInFlightRef.current = true;
+    setIsStarting(true);
+    void Promise.resolve(onStartWithoutProject()).finally(() => {
+      startInFlightRef.current = false;
+      setIsStarting(false);
+    });
+  };
 
   const scheduleComposerFocus = () => {
     window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
@@ -179,7 +191,7 @@ export function NoProjectsComposer({
           projectSelectionRequired={false}
           phase="disconnected"
           canInterrupt={false}
-          isSendBusy={false}
+          isSendBusy={isStarting}
           canResume={false}
           sendDisabledReason={
             onStartWithoutProject === null
@@ -226,7 +238,7 @@ export function NoProjectsComposer({
           editingQueuedAttachments={null}
           onRemoveEditingQueuedAttachment={noop}
           onCompactContext={noop}
-          onSend={onStartWithoutProject ?? noop}
+          onSend={onStartWithoutProject ? handleStartWithoutProject : noop}
           onResume={noop}
           onInterrupt={noop}
           onSelectActivePendingUserInputOption={noop}

@@ -1,6 +1,13 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
 import { AtomRegistry } from "effect/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+const runAtomCommandMock = vi.hoisted(() => vi.fn());
+vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
+  ...(await original()),
+  runAtomCommand: runAtomCommandMock,
+}));
 
 import { createScratchProjectActions } from "./useScratchProject";
 
@@ -45,5 +52,42 @@ describe("scratchEnvironmentId", () => {
     expect(actions(null, null).scratchEnvironmentId(remote)).toBe(remote);
     expect(actions(null, null, null).scratchEnvironmentId(remote)).toBe(other);
     expect(actions(local, null).scratchEnvironmentId(null)).toBeNull();
+  });
+});
+
+describe("startScratchThread", () => {
+  it("ignores repeat starts while one is pending and allows retry after failure", async () => {
+    runAtomCommandMock.mockReset();
+    let resolveOpen!: (value: unknown) => void;
+    runAtomCommandMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOpen = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(
+        Exit.succeed({ environmentId: local, id: "scratch-1" as ProjectId }),
+      );
+    const handleNewThread = vi.fn(async () => null);
+    const scratch = createScratchProjectActions({
+      environments: () => [scratchEnvironment(local, "/local/scratch")],
+      primaryEnvironmentId: () => local,
+      registry: AtomRegistry.make(),
+      handleNewThread,
+    });
+
+    const first = scratch.startScratchThread(local, { sendCarriedDraft: true });
+    const duplicate = scratch.startScratchThread(local, { sendCarriedDraft: true });
+    await duplicate;
+    expect(runAtomCommandMock).toHaveBeenCalledTimes(1);
+
+    resolveOpen(Exit.fail(new Error("boom")));
+    await first;
+    expect(handleNewThread).not.toHaveBeenCalled();
+
+    await scratch.startScratchThread(local, { sendCarriedDraft: true });
+    expect(runAtomCommandMock).toHaveBeenCalledTimes(2);
+    expect(handleNewThread).toHaveBeenCalledTimes(1);
   });
 });
