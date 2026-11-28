@@ -105,3 +105,19 @@ if (stderrText) {
 
 process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");
 process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);
+
+// Like the real CLI flushing telemetry, stay alive after the result until the test releases us.
+const holdPort = process.env.T3_FAKE_CLAUDE_HOLD_PORT;
+if (holdPort) {
+  const { createConnection } = await import("node:net");
+  const probe = createConnection(Number(holdPort), "127.0.0.1", () => {
+    probe.write(process.pid + "\n");
+  });
+  const workingDirectory = process.cwd();
+  const reportPath = process.env.T3_FAKE_CLAUDE_HOLD_REPORT;
+  const { existsSync, writeFileSync } = await import("node:fs");
+  probe.on("data", () => {
+    if (reportPath) writeFileSync(reportPath, String(existsSync(workingDirectory)));
+    process.exit();
+  });
+}

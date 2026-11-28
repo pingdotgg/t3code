@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
-import { processProbeSource } from "../testUtils/processProbe.ts";
+import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -59,6 +59,8 @@ function withFakeClaudeEnv<A, E, R>(
     output: string;
     rejectsNoSessionPersistence?: boolean;
     lifecyclePort?: number;
+    holdPort?: number;
+    holdReportPath?: string;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -86,6 +88,8 @@ function withFakeClaudeEnv<A, E, R>(
         ? "1"
         : undefined,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
+      T3_FAKE_CLAUDE_HOLD_PORT: input.holdPort === undefined ? undefined : String(input.holdPort),
+      T3_FAKE_CLAUDE_HOLD_REPORT: input.holdReportPath,
       T3_FAKE_CLAUDE_STDERR: input.stderr,
       T3_FAKE_CLAUDE_EXPECTED_TOOLS: input.expectedTools,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
@@ -308,42 +312,56 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
   );
 
   it.effect("sends image attachments to Claude, not only their metadata", () =>
-    withFakeClaudeEnv(
-      {
-        output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
-        stdinMustContain: Buffer.from("hello").toString("base64"),
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-          const attachmentId = "thread-1-claude-attachment";
-          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
-          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      yield* withFakeClaudeEnv(
+        {
+          output: [
+            JSON.stringify({ type: "system" }),
+            JSON.stringify({ type: "result", structured_output: { branch: "fix/login-button" } }),
+            "",
+          ].join("\n"),
+          holdPort: probe.port,
+          stdinMustContain: Buffer.from("hello").toString("base64"),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+            const attachmentId = "thread-1-claude-attachment";
+            const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+            yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+            yield* fs.writeFile(imagePath, Buffer.from("hello"));
 
-          yield* textGeneration
-            .generateBranchName({
-              cwd: process.cwd(),
-              message: "fix this",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "screen.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
+            const generated = yield* textGeneration
+              .generateBranchName({
+                cwd: process.cwd(),
+                message: "fix this",
+                attachments: [
+                  {
+                    type: "image",
+                    id: attachmentId,
+                    name: "screen.png",
+                    mimeType: "image/png",
+                    sizeBytes: 5,
+                  },
+                ],
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("claudeAgent"),
+                  model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
                 },
-              ],
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("claudeAgent"),
-                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
-              },
-            })
-            .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
-        }),
-    ),
+              })
+              .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
+
+            expect(generated.branch).toBe("fix/login-button");
+            yield* probe.started;
+            expect(yield* probe.hasExited).toBe(false);
+            yield* probe.release;
+            yield* probe.exited;
+          }),
+      );
+    }),
   );
 
   it.effect.each([
@@ -431,6 +449,45 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             });
 
             expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
+          }),
+      );
+    }),
+  );
+
+  it.effect("returns the result while the Claude CLI is still exiting in its title directory", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      const fs = yield* FileSystem.FileSystem;
+      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-hold-" });
+      const holdReportPath = `${reportDir}/cwd-exists`;
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            structured_output: { title: "Reconnect failures" },
+          }),
+          holdPort: probe.port,
+          holdReportPath,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Investigate reconnect failures",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
+
+            expect(generated.title).toBe("Reconnect failures");
+            yield* probe.started;
+            expect(yield* probe.hasExited).toBe(false);
+            yield* probe.release;
+            yield* probe.exited;
+            expect(yield* fs.readFileString(holdReportPath)).toBe("true");
           }),
       );
     }),
