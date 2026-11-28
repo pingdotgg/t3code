@@ -246,6 +246,17 @@ it("sends Cmd editing shortcuts to the simulator and leaves the rest to the brow
     );
   await act(async () => input.readLayout(true));
   expect(press("KeyL", "l")).toBe(true);
+  // The browser must compose a dead key with the next letter, so its keydown is not canceled.
+  expect(
+    host.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "BracketLeft",
+        key: "Dead",
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  ).toBe(true);
   expect(press("KeyA", "a")).toBe(false);
   expect(input.sent).toEqual(["down e3", "down 4", "up 4"]);
   // A Cyrillic layout names another letter, so the shortcut goes by its key.

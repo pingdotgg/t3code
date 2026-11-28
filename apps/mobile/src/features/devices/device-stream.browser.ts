@@ -191,7 +191,8 @@ export function start(configuration: DeviceStreamConfiguration) {
   frame.addEventListener("pointercancel", endTouch);
   frame.addEventListener("lostpointercapture", endTouch);
   frame.addEventListener("keydown", (event) => {
-    event.preventDefault();
+    // A canceled dead key composes nothing, so the next key would arrive as its bare letter.
+    if (event.key !== "Dead") event.preventDefault();
     client.sendKey(event, "down", usKeyboardLayout);
   });
   frame.addEventListener("keyup", (event) => client.sendKey(event, "up", usKeyboardLayout));

@@ -368,7 +368,8 @@ export function DeviceStreamView(props: {
           ) {
             return;
           }
-          event.preventDefault();
+          // A canceled dead key composes nothing, so the next key would arrive as its bare letter.
+          if (event.key !== "Dead") event.preventDefault();
           sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
