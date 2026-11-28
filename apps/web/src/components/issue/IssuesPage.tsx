@@ -239,7 +239,8 @@ export function IssuesPage() {
     () => {
       if (!list.isPending) list.reload();
     },
-    { key: JSON.stringify(targets) },
+    // One key for the page: a key per filter set would keep an entry for every search typed.
+    { key: "issues-list" },
   );
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
