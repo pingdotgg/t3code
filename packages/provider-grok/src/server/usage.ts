@@ -1,7 +1,9 @@
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   tokenCount,
@@ -206,7 +208,9 @@ export const grokUsageFormat: TranscriptUsageFormat<void> = {
   parseProjected: (projected) => parseGrokRecord(projected),
 };
 
-export const grokUsageReader: ProviderUsageReader<GrokSettings, Path.Path> = {
+export type GrokUsageReaderEnv = FileSystem.FileSystem | Path.Path;
+
+export const grokUsageReader: ProviderUsageReader<GrokSettings, GrokUsageReaderEnv> = {
   kind: "transcripts",
   provider: "grok",
   format: grokUsageFormat,
@@ -217,7 +221,18 @@ export const grokUsageReader: ProviderUsageReader<GrokSettings, Path.Path> = {
       environment.GROK_HOME?.trim() || path.join(homeDirectory, ".grok"),
       homeDirectory,
     );
+    const sessionsDir = path.resolve(home, "sessions");
+    // A CLIProxyAPI-managed account can put its Grok home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "sessions",
+      filePattern: /^updates\.jsonl$/,
+      exclude: [sessionsDir],
+    });
     // Only updates.jsonl carries usage; skip large chat_history and events logs.
-    return [{ dir: path.resolve(home, "sessions"), fileName: "updates.jsonl" }];
+    return [
+      { dir: sessionsDir, fileName: "updates.jsonl" },
+      ...cliproxyDirs.map((dir) => ({ dir, fileName: "updates.jsonl" })),
+    ];
   }),
 };

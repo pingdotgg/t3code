@@ -94,7 +94,11 @@ export type ClaudeDriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig;
 
-export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.Path> = {
+export const ClaudeDriver: ProviderDriver<
+  ClaudeSettings,
+  ClaudeDriverEnv,
+  Path.Path | FileSystem.FileSystem
+> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Claude",

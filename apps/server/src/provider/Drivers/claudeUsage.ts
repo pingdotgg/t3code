@@ -1,7 +1,9 @@
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseTimestampMs,
@@ -132,7 +134,10 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
   parseProjected: (projected) => parseClaudeRecord(projected),
 };
 
-export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> = {
+export const claudeUsageReader: ProviderUsageReader<
+  ClaudeSettings,
+  Path.Path | FileSystem.FileSystem
+> = {
   kind: "transcripts",
   provider: "claude",
   format: claudeUsageFormat,
@@ -144,6 +149,14 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     const home = configured
       ? expandHomePath(configured, homeDirectory)
       : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
-    return [{ dir: path.resolve(home, "projects") }];
+    const projectsDir = path.resolve(home, "projects");
+    // A CLIProxyAPI-managed account can put its Claude home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "projects",
+      filePattern: /\.jsonl$/,
+      exclude: [projectsDir],
+    });
+    return [{ dir: projectsDir }, ...cliproxyDirs.map((dir) => ({ dir }))];
   }),
 };

@@ -1,7 +1,10 @@
 import type { CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 
 import {
   parseTimestampMs,
@@ -525,7 +528,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
 
 export const codexUsageReader: ProviderUsageReader<
   CodexSettings,
-  Path.Path | CodexUsageHistory.CodexUsageHistory
+  Path.Path | FileSystem.FileSystem | CodexUsageHistory.CodexUsageHistory
 > = {
   kind: "transcripts",
   provider: "codex",
@@ -566,6 +569,14 @@ export const codexUsageReader: ProviderUsageReader<
         ? { ...config, homePath: environmentHome }
         : config,
     );
-    return [{ dir: path.resolve(layout.sharedHomePath, "sessions") }];
+    const sessionsDir = path.resolve(layout.sharedHomePath, "sessions");
+    // A CLIProxyAPI-managed account can put its Codex home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "sessions",
+      filePattern: /^rollout-.*\.jsonl$/,
+      exclude: [sessionsDir],
+    });
+    return [{ dir: sessionsDir }, ...cliproxyDirs.map((dir) => ({ dir }))];
   }),
 };

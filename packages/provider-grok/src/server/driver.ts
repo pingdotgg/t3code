@@ -19,7 +19,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "./status.ts";
-import { grokUsageReader } from "./usage.ts";
+import { grokUsageReader, type GrokUsageReaderEnv } from "./usage.ts";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -139,7 +139,7 @@ export type GrokDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> = {
+export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, GrokUsageReaderEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Grok",
