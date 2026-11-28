@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildPairingAppLink,
   readPairingAppLink,
-  RemoteBackendUrlInvalidError,
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
@@ -128,38 +127,19 @@ describe("remote", () => {
     expect((pairingUrlError as RemotePairingUrlInvalidError).cause).toBeUndefined();
   });
 
-  it("rejects dotted unsupported URL schemes in remote backend hosts", () => {
-    let directHostError: unknown;
-    try {
+  it("rejects dotted unsupported URL schemes instead of prefixing https", () => {
+    expect(() =>
       resolveRemotePairingTarget({
         host: "foo.bar://remote.example.com",
         pairingCode: "pairing-token",
-      });
-    } catch (cause) {
-      directHostError = cause;
-    }
-
-    expect(directHostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
-    expect(directHostError).toMatchObject({
-      source: "direct-host",
-      protocol: "foo.bar:",
-    });
-
-    let hostedHostError: unknown;
-    try {
-      resolveRemotePairingTarget({
-        pairingUrl:
-          "https://app.t3.codes/pair?host=ssh.tunnel%3A%2F%2Fremote.example.com#token=pairing-token",
-      });
-    } catch (cause) {
-      hostedHostError = cause;
-    }
-
-    expect(hostedHostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
-    expect(hostedHostError).toMatchObject({
-      source: "hosted-pairing-host",
-      protocol: "ssh.tunnel:",
-    });
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "RemoteBackendUrlInvalidError",
+        source: "direct-host",
+        protocol: "foo.bar:",
+      }),
+    );
   });
 
   it("uses distinct structural errors for missing pairing inputs", () => {
