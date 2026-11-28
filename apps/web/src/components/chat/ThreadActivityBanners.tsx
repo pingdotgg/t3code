@@ -86,9 +86,13 @@ export function childInputNowItem(
       </Fragment>
     )),
     actions: (
-      <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
+      <Button
+        size="xs"
+        variant="ghost-muted"
+        onClick={() => onOpenThread(first.id, first.environmentId)}
+      >
         {first.hasPendingApprovals ? <T>Open approval</T> : <T>Open question</T>}
-      </InlineButton>
+      </Button>
     ),
   };
 }
@@ -111,10 +115,8 @@ export function goalNowItem(
     title: (
       <Popover>
         <PopoverTrigger openOnHover render={<InlineButton />}>
-          <span className="inline-flex flex-col">
-            <span>{presentation.title}</span>
-            {presentation.usage === null ? null : <span>{presentation.usage}</span>}
-          </span>
+          {presentation.title}
+          {presentation.usage === null ? null : <> {presentation.usage}</>}
         </PopoverTrigger>
         <PopoverPopup
           side="top"
@@ -131,22 +133,23 @@ export function goalNowItem(
     actions: (
       <>
         {presentation.canResume && !isWorking ? (
-          <>
-            <InlineButton
-              onClick={() =>
-                void onSendCommand("/goal resume", resolve(msg("Failed to resume goal.")))
-              }
-            >
-              <T context="verb, resumes the goal">Resume</T>
-            </InlineButton>
-          </>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            onClick={() =>
+              void onSendCommand("/goal resume", resolve(msg("Failed to resume goal.")))
+            }
+          >
+            <T context="verb, resumes the goal">Resume</T>
+          </Button>
         ) : null}
-        <InlineButton
-          tone="muted"
+        <Button
+          size="xs"
+          variant="ghost-muted"
           onClick={() => void onSendCommand("/goal clear", resolve(msg("Failed to clear goal.")))}
         >
           <T context="verb, clears the goal">Clear</T>
-        </InlineButton>
+        </Button>
       </>
     ),
   };
@@ -187,9 +190,14 @@ export function runStopNowItem(input: {
           className="tabular-nums"
         />
         {unresponsive && input.canForceStop ? (
-          <InlineButton disabled={input.forceStopping} onClick={input.onForceStop}>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={input.forceStopping}
+            onClick={input.onForceStop}
+          >
             {input.forceStopping ? <T>Force stopping...</T> : <T>Force stop</T>}
-          </InlineButton>
+          </Button>
         ) : null}
       </>
     ),
@@ -250,14 +258,10 @@ export function backgroundWorkNowItem(
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          <span className="inline-flex flex-col">
-            <span>
-              {presentation.waiting
-                ? resolve(msg("Waiting", { $context: "status of background work" }))
-                : resolve(msg("Running", { $context: "status of background work" }))}
-            </span>
-            <span>{only.label}</span>
-          </span>
+          {presentation.waiting
+            ? resolve(msg("Waiting", { $context: "status of background work" }))
+            : resolve(msg("Running", { $context: "status of background work" }))}{" "}
+          {only.label}
         </>
       ) : (
         presentation.title
@@ -294,9 +298,14 @@ export function backgroundWorkNowItem(
           turnItems={input.turnItems}
           onOpenThread={onOpenThread}
         />
-        <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={input.stopDisabled}
+          onClick={() => void input.onStop()}
+        >
           {input.stopping ? <T>Stopping...</T> : <T context="verb, stops background work">Stop</T>}
-        </InlineButton>
+        </Button>
       </>
     ),
   };
@@ -339,7 +348,7 @@ export function branchMismatchBannerItem(
     actions: (
       <Button
         size="xs"
-        variant="secondary"
+        variant="ghost-muted"
         disabled={input.restoreDisabled}
         onClick={input.onRestore}
       >

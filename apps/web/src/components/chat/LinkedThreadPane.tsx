@@ -133,7 +133,7 @@ export function LinkedThread(props: {
               actions: (
                 <Button
                   size="xs"
-                  variant="ghost"
+                  variant="ghost-muted"
                   onClick={() => connection.addWithCode(connectState.prefill)}
                 >
                   <T>Enter code</T>

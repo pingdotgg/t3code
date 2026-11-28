@@ -425,6 +425,7 @@ import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
+import { ComposerBanner } from "./chat/ComposerBanner";
 import { threadRuntimeIsActive, type ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
@@ -4052,7 +4053,7 @@ export default function ChatView(props: ChatViewProps) {
                         className="empty:hidden"
                       />
                       {hasThreadNow ? (
-                        <div className="surface-composer-banner ps-2.5 pe-3.25 pt-2">
+                        <ComposerBanner.Dock>
                           <ThreadNow
                             key={routeThreadKey}
                             attention={attentionNow}
@@ -4060,7 +4061,7 @@ export default function ChatView(props: ChatViewProps) {
                             syncPhase={shownThreadSyncPhase}
                             goal={goalNow}
                           />
-                        </div>
+                        </ComposerBanner.Dock>
                       ) : null}
                       {hasQueuedTurns ? queuedRunsControl : null}
                       {composerTasks?.type === "todo_list" &&

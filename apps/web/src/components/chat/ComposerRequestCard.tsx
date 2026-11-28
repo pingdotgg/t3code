@@ -11,6 +11,7 @@ function Root(props: Omit<ComponentProps<"div">, "className" | "style">) {
   return (
     <div
       data-slot="composer-request-card"
+      data-composer-stack-section
       className="surface-composer-banner flex w-full min-w-0 flex-col gap-1 p-1 text-meta"
       {...props}
     />
@@ -18,9 +19,9 @@ function Root(props: Omit<ComponentProps<"div">, "className" | "style">) {
 }
 
 /**
- * The 32px title row: tone-colored icon, title, a dim one-line summary, then
- * trailing controls (a counter, a dismiss, or the card's own actions). Render
- * it as a button to make the whole row a disclosure trigger.
+ * The title row, laid out like every line above the composer: tone-colored icon, title, a dim
+ * one-line summary, then trailing controls (a counter, a dismiss, or the card's own actions).
+ * Render it as a button to make the whole row a disclosure trigger.
  */
 function Header({
   icon,
@@ -41,15 +42,20 @@ function Header({
     props: mergeProps<"div">(
       {
         className:
-          "flex min-h-8 w-full min-w-0 items-center gap-2 ps-2.5 pe-3.25 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:hover:surface-ghost-hover [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
+          "flex min-h-7 w-full min-w-0 items-center gap-1.5 ps-2.5 pe-1.25 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:hover:surface-ghost-hover [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
         children: (
           <>
-            <span aria-hidden className="flex shrink-0 items-center [&>svg]:size-[13px]">
+            <span
+              aria-hidden
+              className="flex w-3.5 shrink-0 items-center justify-center [&>svg]:size-3.5 max-sm:w-4 max-sm:[&>svg]:size-4"
+            >
               {icon}
             </span>
-            <span className="shrink-0 text-label text-foreground">{title}</span>
+            <span className="shrink-0 text-muted-foreground">{title}</span>
             <span className="min-w-0 flex-1 truncate text-dim-foreground">{sub}</span>
-            {trailing ? <span className="flex shrink-0 items-center gap-1">{trailing}</span> : null}
+            {trailing ? (
+              <span className="flex shrink-0 items-center gap-0.5">{trailing}</span>
+            ) : null}
           </>
         ),
       },
@@ -72,9 +78,9 @@ function Counter({ index, total }: { index: number; total: number }) {
   );
 }
 
-/** Content under the header, such as the question being asked. */
+/** Content under the header, such as the question being asked, on the header's text column. */
 function Body({ children }: { children: ReactNode }) {
-  return <div className="px-2.5 pt-0.5 pb-1 text-body text-foreground">{children}</div>;
+  return <div className="ps-7.5 pe-3.25 pt-0.5 pb-1 text-body text-foreground">{children}</div>;
 }
 
 /**
@@ -86,7 +92,7 @@ function Well({
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style"> & { density?: "default" | "options" }) {
   return (
-    <div className="ps-2.5 pe-3.25">
+    <div className="ps-7.5 pe-3.25">
       <div
         className={cn(
           "flex min-w-0 flex-col rounded-control surface-well",
@@ -101,7 +107,7 @@ function Well({
 function Footer(props: Omit<ComponentProps<"div">, "className" | "style">) {
   return (
     <div
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2 py-1.5 ps-2.5 pe-3.25"
+      className="flex min-w-0 flex-wrap items-center justify-end gap-2 py-1.5 ps-7.5 pe-3.25"
       {...props}
     />
   );

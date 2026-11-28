@@ -39,7 +39,7 @@ export function heldComposerSendBannerItem(
     actions: (
       <Button
         size="xs"
-        variant="ghost"
+        variant="ghost-muted"
         onPointerDown={(event) => event.preventDefault()}
         onClick={input.onCancel}
       >

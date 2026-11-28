@@ -200,7 +200,6 @@ export function providerStatusBannerItem({
 
   return {
     id: `provider-status:${bannerKey}`,
-    textSize: "body",
     variant: isWarning ? "warning" : "error",
     icon: isUnauthenticated ? (
       <KeyRoundIcon />
@@ -216,11 +215,11 @@ export function providerStatusBannerItem({
     actions: (
       <>
         {openSetup ? (
-          <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
+          <Button size="xs" variant="ghost-muted" onClick={() => openSetup(instanceId)}>
             <T>Provider setup</T>
           </Button>
         ) : isUnauthenticated && onOpenTerminal ? (
-          <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
+          <Button size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
             <T>Open terminal</T>
           </Button>
         ) : null}
@@ -274,7 +273,7 @@ function ProviderStatusRefreshButton({
       disabled={!canRefresh || isRefreshing}
       onClick={() => void refresh()}
       size="xs"
-      variant="secondary"
+      variant="ghost-muted"
     >
       <RefreshIcon />
       {isRefreshing ? gt("Refreshing...") : gt("Refresh")}

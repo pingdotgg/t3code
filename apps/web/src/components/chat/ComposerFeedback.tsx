@@ -28,7 +28,7 @@ export function feedbackBannerItem(
       submission.status === "sent" ? (
         <Button
           size="xs"
-          variant="secondary"
+          variant="ghost-muted"
           onClick={() => {
             void writeTextToClipboard(submission.feedbackId, {
               target: "Codex feedback thread ID",

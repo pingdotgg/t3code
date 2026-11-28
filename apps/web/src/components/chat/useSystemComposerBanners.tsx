@@ -171,7 +171,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       canDisconnectActiveEnvironment && activeEnvironmentUnavailableState ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="ghost-muted"
           disabled={disconnectingEnvironment}
           title={gt("Hide this server's threads. Switch it on again in Environments.")}
           onClick={() =>
@@ -232,7 +232,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
-                variant="secondary"
+                variant="ghost-muted"
                 onClick={() =>
                   void handleReconnectActiveEnvironmentStable(
                     activeEnvironmentUnavailableState.environmentId,
@@ -244,7 +244,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             ) : null}
             <Button
               size="xs"
-              variant="secondary"
+              variant="ghost-muted"
               onClick={() => void navigate({ to: "/settings/connections" })}
             >
               {gt("Connections")}
@@ -304,7 +304,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
             targetVersion={versionMismatch.clientVersion}
             label={gt("Retry", { $context: "verb, retries the server update" })}
-            variant="secondary"
+            variant="ghost-muted"
           />
         ),
         ...(updateFailed

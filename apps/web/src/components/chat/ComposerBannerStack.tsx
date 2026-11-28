@@ -5,8 +5,14 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
+import {
+  ComposerBanner,
+  composerBannerDetailClassName,
+  composerBannerTitleClassName,
+  type ComposerBannerVariant,
+} from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
+import { cn } from "~/lib/utils";
 
 /**
  * Where a notice sits in the stack. The machine comes first, then what needs you; the
@@ -17,7 +23,6 @@ export type ComposerBannerGroup = "environment" | "attention";
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
-  readonly textSize?: "compact" | "body";
   readonly group?: ComposerBannerGroup;
   readonly icon: ReactNode;
   readonly title: ReactNode;
@@ -72,9 +77,7 @@ export function ComposerBannerStack({
                 <TooltipTrigger
                   render={
                     <PopoverTrigger
-                      render={
-                        <Button variant="ghost-muted" size="micro" aria-label={overflowLabel} />
-                      }
+                      render={<Button variant="ghost-muted" size="xs" aria-label={overflowLabel} />}
                     />
                   }
                 >
@@ -218,12 +221,10 @@ function NoticeCard({
     <ComposerBanner.Root
       role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
       variant={item.variant}
-      textSize={item.textSize ?? "compact"}
       detached={detached}
-      density="comfortable"
       data-chat-composer-collapsed-controls="true"
     >
-      <ComposerBanner.Row layout="wrap-actions">
+      <ComposerBanner.Row>
         <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
         <ComposerBanner.Content className="items-baseline whitespace-nowrap">
           <NoticeText
@@ -232,7 +233,7 @@ function NoticeCard({
                 ? gt("Show full title: {title}", { title: item.title })
                 : gt("Show title details")
             }
-            className="min-w-0 truncate text-foreground"
+            className={composerBannerTitleClassName}
           >
             {item.title}
           </NoticeText>
@@ -244,14 +245,14 @@ function NoticeCard({
                   : gt("Show notice details")
               }
               details={item.descriptionDetails}
-              className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
+              className={cn(composerBannerDetailClassName, "@max-[400px]:sr-only")}
             >
               {item.description}
             </NoticeText>
           ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss || overflow ? (
-          <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
+          <ComposerBanner.Actions>
             {overflow}
             {item.actions}
             {item.onDismiss ? (

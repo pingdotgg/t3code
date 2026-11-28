@@ -184,11 +184,11 @@ export function usageLimitRecoveryBannerItem(
       <>
         {recoveryActions}
         {workspaceLimit ? (
-          <Button size="xs" variant="ghost" onClick={copyAdminRequest}>
+          <Button size="xs" variant="ghost-muted" onClick={copyAdminRequest}>
             <T>Copy request for admin</T>
           </Button>
         ) : (
-          <ChatGptUsageButton size="xs" variant="ghost" />
+          <ChatGptUsageButton size="xs" variant="ghost-muted" />
         )}
       </>
     ),
@@ -240,12 +240,12 @@ function RecoveryActions(props: RecoveryProps) {
   }
   // Inline errors would widen the actions column and crush the title.
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-0.5">
       {/* An active snooze must stay reversible while auto-resume is scheduled. */}
       {snoozed || !scheduled ? (
         <Button
           size="xs"
-          variant="secondary"
+          variant="ghost-muted"
           disabled={pending || (!snoozed && resetPassed)}
           onClick={() => void toggle("snooze")}
         >
@@ -254,7 +254,7 @@ function RecoveryActions(props: RecoveryProps) {
       ) : null}
       <Button
         size="xs"
-        variant={scheduled ? "secondary" : "default"}
+        variant="ghost-muted"
         disabled={pending}
         onClick={() => void toggle("resume")}
       >

@@ -55,7 +55,11 @@ import {
 import { CommandPaletteResults } from "../CommandPaletteResults";
 import type { CommandPaletteActionItem, CommandPaletteGroup } from "../CommandPalette.logic";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
-import { ComposerBanner } from "../chat/ComposerBanner";
+import {
+  ComposerBanner,
+  composerBannerDetailClassName,
+  composerBannerTitleClassName,
+} from "../chat/ComposerBanner";
 import { DiffStatLabel } from "../chat/DiffStatLabel";
 import { TimelineSystemDivider } from "../chat/TimelineSystemDivider";
 import {
@@ -2147,34 +2151,36 @@ function ComposerSection() {
       id="composer"
       title="Composer parts"
       layer="meta"
-      description="The composer's status lines and request cards. ComposerBanner rows lay out icon, content and actions on one grid."
+      description="The composer's status lines and request cards. Every line above the composer is one ComposerBanner row."
     >
       <Specimen label="Status lines" source="<ComposerBanner.Root variant>">
         <Stage width="lg">
           <div className="flex flex-col overflow-hidden rounded-card surface-tray">
-            {(["default", "info", "warning", "error", "success"] as const).map((variant) => (
-              <ComposerBanner.Root key={variant} variant={variant}>
-                <ComposerBanner.Row>
-                  <ComposerBanner.Icon>
-                    {variant === "error" || variant === "warning" ? (
-                      <TriangleAlertIcon />
-                    ) : (
-                      <BellIcon />
-                    )}
-                  </ComposerBanner.Icon>
-                  <ComposerBanner.Content>
-                    <span className="truncate text-foreground">{variant} status line</span>
-                    <ComposerBanner.Separator />
-                    <span className="truncate text-muted-foreground">Resets 4:00 PM</span>
-                  </ComposerBanner.Content>
-                  <ComposerBanner.Actions>
-                    <Button size="xs" variant="secondary">
-                      Action
-                    </Button>
-                  </ComposerBanner.Actions>
-                </ComposerBanner.Row>
-              </ComposerBanner.Root>
-            ))}
+            <ComposerBanner.Dock>
+              {(["default", "info", "warning", "error", "success"] as const).map((variant) => (
+                <ComposerBanner.Root key={variant} variant={variant}>
+                  <ComposerBanner.Row>
+                    <ComposerBanner.Icon>
+                      {variant === "error" || variant === "warning" ? (
+                        <TriangleAlertIcon />
+                      ) : (
+                        <BellIcon />
+                      )}
+                    </ComposerBanner.Icon>
+                    <ComposerBanner.Content>
+                      <span className={composerBannerTitleClassName}>{variant} status line</span>
+                      <span className={composerBannerDetailClassName}>Resets 4:00 PM</span>
+                    </ComposerBanner.Content>
+                    <ComposerBanner.Actions>
+                      <Button size="xs" variant="ghost-muted">
+                        Action
+                      </Button>
+                      <ComposerBanner.Dismiss aria-label="Dismiss" />
+                    </ComposerBanner.Actions>
+                  </ComposerBanner.Row>
+                </ComposerBanner.Root>
+              ))}
+            </ComposerBanner.Dock>
           </div>
         </Stage>
       </Specimen>

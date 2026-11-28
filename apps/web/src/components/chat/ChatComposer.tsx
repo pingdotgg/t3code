@@ -2944,7 +2944,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   actions: (
                     <Button
                       size="xs"
-                      variant="ghost"
+                      variant="ghost-muted"
                       onClick={() => handleRuntimeModeChange(runtimeModeCeilingFallback)}
                     >
                       <T>

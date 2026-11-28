@@ -307,6 +307,7 @@ export function QueuedRunsControl({
         { count: items.length },
       )}
       data-thread-queue="true"
+      data-composer-stack-section
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
       className="surface-composer-banner flex w-full min-w-0 flex-col px-2 py-1 text-meta"
       onKeyDown={(event) => {

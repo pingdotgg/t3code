@@ -133,7 +133,7 @@ export function useAutoBalanceUpdateBanner(
         {showMachineList ? (
           <Popover>
             <PopoverTrigger
-              render={<Button size="xs" variant="secondary" />}
+              render={<Button size="xs" variant="ghost-muted" />}
               aria-label={viewMachinesLabel}
             >
               <T>View machines</T>
@@ -168,7 +168,7 @@ export function useAutoBalanceUpdateBanner(
         {running === 0 && targets.length > 0 ? (
           <ServerUpdatesAction
             targets={targets}
-            variant="default"
+            variant="ghost-muted"
             label={
               failed > 0
                 ? gt("Retry", { $context: "verb, retries the server updates" })

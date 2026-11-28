@@ -126,13 +126,13 @@ export function threadErrorBannerItem(
         <span className="whitespace-pre-wrap">{error}</span>
       ) : undefined,
     actions: workspaceLimit ? (
-      <Button variant="default" size="xs" onClick={copyAdminRequest}>
+      <Button variant="ghost-muted" size="xs" onClick={copyAdminRequest}>
         {resolve(msg("Copy request for admin"))}
       </Button>
     ) : chatGptLimit ? (
-      <ChatGptUsageButton variant="secondary" size="xs" />
+      <ChatGptUsageButton variant="ghost-muted" size="xs" />
     ) : onRetry ? (
-      <Button size="xs" variant="default" disabled={retrying} onClick={onRetry}>
+      <Button size="xs" variant="ghost-muted" disabled={retrying} onClick={onRetry}>
         {retrying ? resolve(msg("Retrying...")) : resolve(msg("Retry"))}
       </Button>
     ) : undefined,

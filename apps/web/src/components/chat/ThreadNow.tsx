@@ -1,11 +1,19 @@
 import { CircleAlertIcon, RefreshCwIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
-import { cn } from "~/lib/utils";
 import { useMessages } from "gt-react";
 
-/** A line of thread state for the end of the timeline. */
+import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
+import {
+  ComposerBanner,
+  composerBannerDetailClassName,
+  composerBannerTitleClassName,
+} from "./ComposerBanner";
+
+const FADE_IN =
+  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
+
+/** A line of thread state above the composer. */
 export interface ThreadNowItem {
   readonly id: string;
   readonly icon: ReactNode;
@@ -14,15 +22,7 @@ export interface ThreadNowItem {
   readonly actions?: ReactNode;
 }
 
-/** Matches ThreadStatusLine, so every line at the end of the timeline reads as one family. */
-const lineClassName = cn(
-  "mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-1 pb-2 text-meta text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0",
-  // Inline actions keep their text size but get a finger-sized hit area on touch.
-  "pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5",
-  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
-);
-
-/** One line of thread state at the end of the timeline: icon, title, detail, then actions. */
+/** One line of thread state above the composer: icon, title, detail, then actions. */
 function ThreadNowLine({
   item,
   announce = false,
@@ -32,50 +32,52 @@ function ThreadNowLine({
   readonly announce?: boolean;
 }) {
   return (
-    <div
+    <ComposerBanner.Root
       role={announce ? "alert" : undefined}
-      // A title can take two lines; the icon and buttons stay on its first.
-      className={cn(lineClassName, "items-start")}
+      className={FADE_IN}
       data-thread-now-line="true"
     >
-      <span aria-hidden className="flex h-lh w-3.5 shrink-0 items-center justify-center">
-        {item.icon}
-      </span>
-      <span className="min-w-0 truncate">
-        {item.title}
-        {item.description ? (
-          <>
-            {" "}
-            <span className="ms-0.5 text-muted-foreground/60 light:text-muted-foreground/80">
-              {item.description}
-            </span>
-          </>
+      <ComposerBanner.Row>
+        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
+        <ComposerBanner.Content>
+          <span className={composerBannerTitleClassName}>{item.title}</span>
+          {item.description ? (
+            <span className={composerBannerDetailClassName}>{item.description}</span>
+          ) : null}
+        </ComposerBanner.Content>
+        {item.actions ? (
+          <ComposerBanner.Actions className="text-dim-foreground tabular-nums">
+            {item.actions}
+          </ComposerBanner.Actions>
         ) : null}
-      </span>
-      {item.actions ? (
-        <span className="ms-1.5 flex shrink-0 items-baseline gap-2.5">{item.actions}</span>
-      ) : null}
-    </div>
+      </ComposerBanner.Row>
+    </ComposerBanner.Root>
   );
 }
 
 function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
   const m = useMessages();
   return (
-    <div
-      className={lineClassName}
+    <ComposerBanner.Root
+      className={FADE_IN}
       role={phase === "failed" ? "alert" : "status"}
       data-composer-sync-status={phase}
     >
-      {phase === "failed" ? <CircleAlertIcon aria-hidden /> : <RefreshCwIcon aria-hidden />}
-      <span className="truncate">{threadSyncLabel(phase, m)}</span>
-    </div>
+      <ComposerBanner.Row>
+        <ComposerBanner.Icon>
+          {phase === "failed" ? <CircleAlertIcon /> : <RefreshCwIcon />}
+        </ComposerBanner.Icon>
+        <ComposerBanner.Content>
+          <span className={composerBannerTitleClassName}>{threadSyncLabel(phase, m)}</span>
+        </ComposerBanner.Content>
+      </ComposerBanner.Row>
+    </ComposerBanner.Root>
   );
 }
 
 /**
- * What the thread is doing now, at the end of the timeline: what needs you, background work,
- * the sync status while messages load, then the goal.
+ * What the thread is doing now, above the composer: what needs you, background work, the sync
+ * status while messages load, then the goal.
  */
 export function ThreadNow({
   attention,

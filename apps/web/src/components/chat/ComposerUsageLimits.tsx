@@ -194,7 +194,7 @@ export function modelFallbackBannerItem(
       </span>
     ),
     actions: (
-      <Button size="xs" variant="ghost" onClick={onUseDefault}>
+      <Button size="xs" variant="ghost-muted" onClick={onUseDefault}>
         {resolve(msg("Use {model}", { model: defaultModelName }))}
       </Button>
     ),
@@ -212,9 +212,9 @@ function UsageLimitsBannerBody({
 }) {
   return (
     <ComposerBanner.Scroll>
-      <ComposerBanner.Body className="flex flex-col gap-3 ps-0 pt-0.5 pb-1.5 pe-2">
+      <div className="flex min-w-0 flex-col gap-3 pt-0.5 pe-2">
         <UsageLimitsAccounts report={report} environmentId={environmentId} />
-      </ComposerBanner.Body>
+      </div>
     </ComposerBanner.Scroll>
   );
 }
@@ -553,7 +553,7 @@ function LimitsPopover({ source }: { readonly source: LimitsSource }) {
   const popupRef = useRef<HTMLDivElement>(null);
   return (
     <Popover>
-      <PopoverTrigger render={<Button size="xs" variant="ghost" />}>
+      <PopoverTrigger render={<Button size="xs" variant="ghost-muted" />}>
         {gt("Limits", { $context: "button that opens usage limits" })}
       </PopoverTrigger>
       <PopoverPopup
@@ -627,7 +627,7 @@ export function lowLimitBannerItem({
       <>
         {limits ? <LimitsPopover source={limits} /> : null}
         {switchTarget ? (
-          <Button size="xs" variant="secondary" onClick={() => onSwitch(switchTarget)}>
+          <Button size="xs" variant="ghost-muted" onClick={() => onSwitch(switchTarget)}>
             {resolve(
               msg("Switch to {provider}", {
                 provider: providerName(switchTarget.driver, switchTarget.displayName),

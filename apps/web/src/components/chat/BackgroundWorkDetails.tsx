@@ -13,7 +13,7 @@ import { useState } from "react";
 
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import {
   Dialog,
   DialogHeader,
@@ -78,7 +78,7 @@ export function BackgroundWorkDetails(props: {
   const parentRef = scopeThreadRef(props.environmentId, props.threadId);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<InlineButton />}>
+      <DialogTrigger render={<Button size="xs" variant="ghost-muted" />}>
         <T>Details</T>
       </DialogTrigger>
       <DialogPopup>

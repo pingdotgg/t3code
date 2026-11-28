@@ -43,7 +43,7 @@ export function composerPromptLengthBannerItem(
     title: resolve(msg("Prompt too long")),
     description,
     actions: (
-      <Button size="xs" variant="secondary" onClick={onStash}>
+      <Button size="xs" variant="ghost-muted" onClick={onStash}>
         {resolve(msg("Stash prompt"))}
       </Button>
     ),
