@@ -2681,6 +2681,7 @@
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Terminal process running",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} terminal process running. Open terminal} other {{count} terminal processes running. Open terminal}}",
+  "29f0a9ccd63b5471": "Browser tab playing audio. Open tab",
   "56f37ff8ca568059": "stack",
   "6831e9a46cbd8939": "chain",
   "9aa9e74a3b7eee91": "Add to chat",

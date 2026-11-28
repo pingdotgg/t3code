@@ -2681,6 +2681,7 @@
   "3260b22f72f7effb": "{tooltipLead} : {title}",
   "feac8e54b30c5a03": "Processus du terminal en cours",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} processus de terminal en cours. Ouvrir le terminal} other {{count} processus de terminal en cours. Ouvrir le terminal}}",
+  "29f0a9ccd63b5471": "Un onglet du navigateur diffuse du son. Ouvrir l’onglet",
   "56f37ff8ca568059": "pile",
   "6831e9a46cbd8939": "chaîne",
   "9aa9e74a3b7eee91": "Ajouter à la discussion",
