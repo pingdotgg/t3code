@@ -85,9 +85,9 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
 // Use the taller neighboring measurement because breakpoints can select either height.
 function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
-  const high = above === -1 ? heights.length - 1 : above;
-  const low = heights[high]![0] === width ? high : Math.max(0, high - 1);
-  return Math.max(heights[low]![1], heights[high]![1]);
+  if (above === -1) return heights[heights.length - 1]![1];
+  const low = heights[above]![0] === width ? above : Math.max(0, above - 1);
+  return Math.max(heights[low]![1], heights[above]![1]);
 }
 
 /**
@@ -428,13 +428,28 @@ export const HTML_RENDER_NATIVE_OPEN_IMAGE_SCRIPT = `(function(){${openImageList
 
 // The tag patterns below stop at the next `<` outside a quoted value, so matching stays linear in
 // the length of the document.
+function hasViewportMeta(markup: string): boolean {
+  for (const [, attrs = ""] of markup.matchAll(/<meta(?=[\s/])((?:[^"'<>]|"[^"]*"|'[^']*')*)>/gi)) {
+    for (const [, attrName, doubleQuoted, singleQuoted, unquoted] of attrs.matchAll(
+      /([^\s"'/<=>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g,
+    )) {
+      if (attrName?.toLowerCase() === "name") {
+        const value = doubleQuoted ?? singleQuoted ?? unquoted;
+        if (value?.toLowerCase() === "viewport") return true;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
   const light = htmlRenderTheme(T3_CODE_LIGHT_THEME_COLORS, "light");
   const defaultCss = `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`;
   return [
     /<meta\s[^<>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
-    /<meta\s(?:[^"'<>]|"[^"]*"|'[^']*')*name\s*=\s*["']?viewport/i.test(markup)
+    hasViewportMeta(markup)
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="t3-theme">${defaultCss}</style>`,

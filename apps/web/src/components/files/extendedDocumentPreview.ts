@@ -74,6 +74,19 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
   const value = Number(start);
   return value >= 0 && value <= 2_147_483_647 ? value : undefined;
 }
+// Writer hides text whose character style sets text:display="none"; a style without it inherits from its
+// parent style, and a span whose styles set nothing inherits from the enclosing span.
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
+function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
+  let style = styles.get(`auto\n${name}`) ?? styles.get(`span\n${name}`);
+  for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
+    seen.add(style);
+    const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
+    if (display) return display === "none";
+    style = styles.get(`span\n${style.attrs["style:parent-style-name"] ?? ""}`);
+  }
+  return undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -83,7 +96,15 @@ async function odfHtml(
   list: [string, number] = ["", 0],
   inOrderedList = false,
   listEnds = new Map<string, number>(),
+  hidden = false,
 ): Promise<string> {
+  if (
+    hidden &&
+    ["#text", "text:s", "text:tab", "text:line-break", "text:note", "draw:image"].includes(
+      node.name,
+    )
+  )
+    return "";
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -139,6 +160,10 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const childHidden =
+    node.name === "text:span"
+      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
+      : hidden;
   const repeatedRow =
     node.name === "table:table-row"
       ? Number(node.attrs["table:number-rows-repeated"]) > 1
@@ -171,6 +196,7 @@ async function odfHtml(
       nextList,
       numberingLevel !== undefined,
       listEnds,
+      childHidden,
     );
   const tags: Record<string, string> = {
     "text:p": "p",
@@ -185,7 +211,7 @@ async function odfHtml(
   const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
   const tag =
     Number.isSafeInteger(level) && level >= 1 ? `h${Math.min(level, 6)}` : tags[node.name];
-  if (!tag) return children;
+  if (!tag || (tag === "span" && childHidden)) return children;
   const count =
     tag === "tr"
       ? repeat(node.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS)
@@ -253,7 +279,15 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                : cell.children
+                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
+                    .filter(
+                      (child) =>
+                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
+                    )
+                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
+                    .map(text)
+                    .join("\n") ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
@@ -302,8 +336,8 @@ export async function openDocument(
   const pages = kind === "odp" ? find(root, "draw:page") : find(root, "office:text");
   if (!pages.length || pages.length > 500) throw new PreviewError({ code: "odf-page-count" });
   const listStyles = new Map<string, XmlNode>();
-  if (find(root, "text:list").length) {
-    // Named list styles live in styles.xml; it only decides numbering, so a bad part falls back to bullets.
+  if (find(root, "text:list").length || kind === "odt") {
+    // Named styles live in styles.xml; it only decides numbering and hidden text, so a bad part loses both.
     let named: XmlNode[] = [];
     const styles = await archive.file("styles.xml")?.async("uint8array");
     try {
@@ -316,6 +350,14 @@ export async function openDocument(
       find(part, "text:list-style", "office:body"),
     ))
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
+    if (kind === "odt")
+      for (const [prefix, part] of [
+        ...named.map((part) => ["span", part] as const),
+        ["auto", root] as const,
+      ])
+        for (const style of find(part, "style:style", "office:body"))
+          if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
+            listStyles.set(`${prefix}\n${style.attrs["style:name"]}`, style);
   }
   const rendered = [];
   for (const page of pages) {
@@ -466,6 +508,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     skip: false,
     deleted: false,
     hiddenText: false,
+    inTable: false,
     bold: false,
     italic: false,
     underline: false,
@@ -492,6 +535,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
+  // A table cell's lines share its column, so the row stays on one line.
+  const lineBreak = () => (state.inTable ? " " : "<br>");
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const decodeBytes = () => {
@@ -571,7 +616,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if (next === "\n" || next === "\r") {
           if (fallback > 0) fallback--;
-          else if (!hidden()) html += "<br>";
+          else if (!hidden()) html += lineBreak();
         }
         i++;
         continue;
@@ -661,6 +706,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
+      // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
+      else if (word === "intbl" || word === "pard") state.inTable = word === "intbl";
       else if (word === "plain")
         state = {
           ...state,
@@ -678,16 +725,13 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
         else if (!hidden()) {
           flush();
-          html += "<br>";
+          html += lineBreak();
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (
-        (!state.skip && word === "row") ||
-        (!hidden() && (word === "par" || word === "line"))
-      )
-        html += "<br>";
+      else if (!state.skip && word === "row") html += "<br>";
+      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";

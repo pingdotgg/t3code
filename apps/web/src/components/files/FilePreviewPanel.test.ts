@@ -346,6 +346,24 @@ Third}`;
     );
   });
 
+  it.each([
+    ["paragraphs", String.raw`\pard\intbl Apples\par\pard\intbl green\cell`],
+    // TextEdit ends a paragraph with a backslash before the line break.
+    ["TextEdit paragraphs", "\\pard\\intbl\\itap1 Apples\\\ngreen\\cell "],
+    ["line breaks", String.raw`\pard\intbl Apples\line green\cell`],
+    ["TextEdit line breaks", String.raw`\pard\intbl Apples\uc0\u8232 green\cell`],
+  ])("keeps the %s of a rich text table cell in its row", (_kind, cell) => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000` +
+          cell +
+          String.raw`\pard\intbl 3\cell\row\pard After\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Apples green\t3\t<br>After<br></p>");
+  });
+
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
     const result = openRtf(
       bytes(String.raw`{\rtf1\b First\page Second\b0{\*\unknown \page hidden}\page Third\page}`),
@@ -666,6 +684,19 @@ Third}`;
     ]);
   });
 
+  it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
+        '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([["Apples", "42"], ["Pears"]]);
+  });
+
   it("reads an ODS time cell that has no display paragraph", async () => {
     const archive = new JSZip().file(
       "content.xml",
@@ -770,6 +801,38 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(
       "<p>Visible intro.</p><p>Shown section.</p><p>Visible end.</p>",
+    );
+  });
+
+  it("omits ODT text hidden by character styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="T1" style:family="text"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="T2" style:family="text" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Base" style:family="text"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="Derived" style:family="text" style:parent-style-name="Base"/></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p>Use <text:span text:style-name="T1">the obsolete west or<text:line-break/></text:span> the north entrance.</text:p>',
+      '<text:p>Wait near the <text:span text:style-name="T2">old blue or </text:span>red marker.</text:p>',
+      '<text:p>Shown <text:span text:style-name="Shown">again</text:span>.</text:p>',
+      '<text:p>Bring your <text:span text:style-name="Retired">draft or permit</text:span>badge.</text:p>',
+      '<text:p>Take <text:span text:style-name="Retired">the old <text:span text:style-name="Shown">the new</text:span><text:span> stairs</text:span></text:span> up.</text:p>',
+      '<text:p>Keep <text:span text:style-name="Derived">visible</text:span>.</text:p>',
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="Shown" style:family="text" style:parent-style-name="Retired"><style:text-properties text:display="true"/></style:style>' +
+      '<style:style style:name="Base" style:family="text"><style:text-properties text:display="true"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Use  the north entrance.</p><p>Wait near the red marker.</p><p>Shown <span>again</span>.</p><p>Bring your badge.</p><p>Take <span>the new</span> up.</p><p>Keep <span>visible</span>.</p>",
     );
   });
 
