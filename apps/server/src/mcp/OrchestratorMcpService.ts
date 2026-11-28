@@ -438,6 +438,41 @@ export const withWorkspaceModels = (
         return models === undefined ? provider : { ...provider, models };
       });
 
+/**
+ * Agents copy the composer's `model:<instance>/<model>` mentions into `target.model`.
+ * Without an explicit provider, route such a model to the instance it names when the inherited provider lacks it.
+ */
+const withInstancePrefixedModel = (
+  target: OrchestratorMcpTarget | undefined,
+  inheritedInstanceId: string,
+  providers: ReadonlyArray<ServerProvider>,
+): OrchestratorMcpTarget | undefined => {
+  if (
+    target?.model === undefined ||
+    target.providerInstanceId !== undefined ||
+    target.driverKind !== undefined
+  ) {
+    return target;
+  }
+  const prefixed = target.model.startsWith("model:");
+  const inherited = providers.find((provider) => provider.instanceId === inheritedInstanceId);
+  if (
+    inherited !== undefined &&
+    ((!prefixed && inherited.models.length === 0) ||
+      advertisedModel(inherited, target.model) !== undefined)
+  ) {
+    return target;
+  }
+  const reference = prefixed ? target.model.slice("model:".length) : target.model;
+  const slash = reference.indexOf("/");
+  const instanceId = reference.slice(0, slash);
+  const model = reference.slice(slash + 1);
+  if (slash <= 0 || model.length === 0) return target;
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  if (provider === undefined) return target;
+  return { ...target, providerInstanceId: provider.instanceId, model };
+};
+
 const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
 
 /** A provider that lists no models accepts any slug. */
@@ -1703,8 +1738,16 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
 
   const resolveTargetRechecking = (
-    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
+    rawInput: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
   ) => {
+    const input = {
+      ...rawInput,
+      target: withInstancePrefixedModel(
+        rawInput.target,
+        rawInput.parent.thread.modelSelection.instanceId,
+        withWorkspaceModels(rawInput.providers, rawInput.cwd),
+      ),
+    };
     const instanceId =
       input.target?.providerInstanceId ??
       (input.target?.driverKind === undefined
@@ -3420,6 +3463,9 @@ const make = Effect.gen(function* () {
                     : {
                         ...request.target,
                         providerInstanceId: committedThread.modelSelection.instanceId,
+                        ...(request.target?.model === undefined
+                          ? {}
+                          : { model: committedThread.modelSelection.model }),
                       },
                 providers,
                 cwd,

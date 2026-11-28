@@ -3185,6 +3185,104 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect.each(["claudeAgent_alt/claude-opus-5-5", "model:claudeAgent_alt/claude-opus-5-5"])(
+    "a model named as %s delegates to that provider instance",
+    (targetModel) =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent_alt");
+        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Summarize the diff.",
+          title: null,
+          model: "claude-opus-5-5",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        let delegated = false;
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(delegated ? [task] : [])
+                  : childProjection,
+              ),
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            assertProviderInstanceEnabled: () => Effect.void,
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    delegated = true;
+                  }),
+                ),
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            providerSnapshot({
+              instanceId: claudeInstanceId,
+              driver: ProviderDriverKind.make("claudeAgent"),
+              model: "claude-opus-5-5",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ServerSettings.layerTest(),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Summarize the diff.",
+            target: { model: targetModel },
+            mode: "async",
+            clientRequestId: `delegate-instance-prefixed-${targetModel}`,
+          });
+          const commands = yield* Ref.get(dispatched);
+          assert.equal(commands.length, 1);
+          const request = commands[0] as {
+            modelSelection: { instanceId: string; model: string };
+          };
+          assert.equal(request.modelSelection.instanceId, claudeInstanceId);
+          assert.equal(request.modelSelection.model, "claude-opus-5-5");
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
+  );
+
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -3523,11 +3621,17 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect.each([
-    { name: "parent instance", parentEnabled: true, model: "gpt-5.4" },
-    { name: "alternate instance", parentEnabled: false, model: "gpt-5.5" },
+    { name: "parent instance", parentEnabled: true, target: { model: "gpt-5.4" } },
+    { name: "alternate instance", parentEnabled: false, target: { model: "gpt-5.5" } },
+    {
+      name: "instance named in the model",
+      parentEnabled: false,
+      target: { model: "codex-alt/gpt-5.5" },
+      instancePrefixed: true,
+    },
   ])(
     "replays accepted creation on the $name without authorizing new disabled work",
-    ({ parentEnabled, model }) =>
+    ({ parentEnabled, target, instancePrefixed }) =>
       Effect.gen(function* () {
         const altInstanceId = ProviderInstanceId.make("codex-alt");
         const driver = ProviderDriverKind.make("codex");
@@ -3617,7 +3721,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             dispatchMode: { type: "start_immediately" },
           });
           const request = {
-            threads: [{ target: { driverKind: driver, model } }],
+            threads: [
+              { target: instancePrefixed === true ? target : { driverKind: driver, ...target } },
+            ],
             clientRequestId: "create-retry",
           };
           const first = yield* service.createThreads(scope, request);
@@ -3745,7 +3851,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               clientRequestId: "fresh",
             })
             .pipe(Effect.flip);
-          assert.equal(freshError.code, "provider_unavailable");
+          assert.equal(
+            freshError.code,
+            instancePrefixed === true ? "invalid_request" : "provider_unavailable",
+          );
           const promptError = yield* service
             .createThreads(scope, {
               ...withPrompt,
