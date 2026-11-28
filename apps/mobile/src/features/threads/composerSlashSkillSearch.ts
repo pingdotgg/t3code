@@ -23,6 +23,15 @@ export function scoreSlashSkillQuery(skill: ServerProviderSkill, query: string):
       boundaryMarkers: ["-", "_", "/"],
     }),
     scoreQueryMatch({
+      value: skill.slashCommandName?.toLowerCase() ?? "",
+      query: skillQuery,
+      exactBase: 0,
+      prefixBase: 2,
+      boundaryBase: 4,
+      includesBase: 6,
+      boundaryMarkers: ["-", "_", "/"],
+    }),
+    scoreQueryMatch({
       value: skill.displayName?.toLowerCase() ?? "",
       query: skillQuery,
       exactBase: 1,
