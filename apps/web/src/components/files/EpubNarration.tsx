@@ -140,7 +140,7 @@ export function EpubNarration(props: {
         preload="none"
         onTimeUpdate={synchronize}
         onError={({ currentTarget: player }) => {
-          if (!player.error || !player.hasAttribute("src")) return;
+          if (!active.current || !player.error) return;
           fail();
         }}
         onEnded={() => {
