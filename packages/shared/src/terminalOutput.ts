@@ -66,8 +66,18 @@ const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
 
-// A retained tail must not start on a character that belongs to the one before it.
-const DETACHED = /[\p{Mark}\p{Default_Ignorable_Code_Point}\p{Emoji_Modifier}\uDC00-\uDFFF]/u;
+const LOW_SURROGATE = /[\uDC00-\uDFFF]/u;
+const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
+const EMOJI_MODIFIER_BASE_AT_END = /\p{Emoji_Modifier_Base}$/u;
+
+function isDetachedTailStart(character: string, text: string, end: number = text.length): boolean {
+  return (
+    ZERO_WIDTH.test(character) ||
+    LOW_SURROGATE.test(character) ||
+    (EMOJI_MODIFIER.test(character) &&
+      EMOJI_MODIFIER_BASE_AT_END.test(text.slice(Math.max(0, end - 2), end)))
+  );
+}
 
 function characterWidth(character: string): number {
   return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
@@ -158,7 +168,11 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      if (!DETACHED.test(character)) break;
+      const detached =
+        cut === 0
+          ? isDetachedTailStart(character, runs[dropped - 1]?.text ?? "")
+          : isDetachedTailStart(character, run.text, cut);
+      if (!detached) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -661,21 +675,30 @@ class Terminal {
   }
 }
 
-/** The active style at `index` of `text` and where a cut there may safely start. */
-function styleAt(text: string, index: number): { readonly start: number; readonly prefix: string } {
+/** Resolves the cut, active style, and end of the preceding visible text. */
+function styleAt(
+  text: string,
+  index: number,
+): { readonly start: number; readonly prefix: string; readonly textEnd: number } {
   const lineStart = text.lastIndexOf("\n", index - 1) + 1;
   let prefix = "";
   let cursor = lineStart;
+  let textEnd = lineStart;
   while (cursor < index) {
     const found = text.indexOf(`${ESC}[`, cursor);
     if (found === -1 || found >= index) break;
     const end = text.indexOf("m", found);
     if (end === -1) break;
-    if (end >= index) return { start: end + 1, prefix: text.slice(found, end + 1) };
+    if (found > cursor) textEnd = found;
+    if (end >= index) return { start: end + 1, prefix: text.slice(found, end + 1), textEnd };
     prefix = text.slice(found, end + 1);
     cursor = end + 1;
   }
-  return { start: index, prefix: prefix === sgr("") ? "" : prefix };
+  return {
+    start: index,
+    prefix: prefix === sgr("") ? "" : prefix,
+    textEnd: cursor < index ? index : textEnd,
+  };
 }
 
 /** Keeps the last `maxChars`, preferring to start on a fresh line. */
@@ -692,9 +715,10 @@ export function terminalOutputTail(
     return { text: text.slice(newline + 1), truncated: true };
   }
   // Cutting inside a line: never split an escape, keep the colour in force, and skip
-  // detached marks, emoji modifiers, and low surrogates.
+  // detached marks and modifiers, and lone low surrogates.
   const style = styleAt(text, start);
   let prefix = style.prefix;
+  let textEnd = style.textEnd;
   start = style.start;
   while (start < text.length) {
     if (text.startsWith(`${ESC}[`, start)) {
@@ -706,8 +730,9 @@ export function terminalOutputTail(
       continue;
     }
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!DETACHED.test(character)) break;
+    if (!isDetachedTailStart(character, text, textEnd)) break;
     start += character.length;
+    textEnd = start;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
 }
