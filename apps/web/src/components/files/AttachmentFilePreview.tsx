@@ -453,7 +453,7 @@ export function AttachmentFilePreview(props: {
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
-        {content || streamsText ? (
+        {failure === null && (content || streamsText) ? (
           <FileSurfaceAction
             label={
               isCopied
