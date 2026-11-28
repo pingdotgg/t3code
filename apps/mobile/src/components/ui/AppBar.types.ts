@@ -82,7 +82,7 @@ export interface AppBarTitleAvatar {
 
 export interface AppBarProps {
   readonly title: string;
-  /** Android: replaces the title text, such as the brand title. iOS ignores it. */
+  /** Replaces the title text, such as the brand title or a Bot's avatar and name. */
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AppBarAction>;

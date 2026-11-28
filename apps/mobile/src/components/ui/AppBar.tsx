@@ -167,6 +167,13 @@ export function AppBar(props: AppBarProps) {
             !(props.guardBack && props.onBack),
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
+          // A custom title is centered, as in Messages, not led like an editor's.
+          ...(props.titleContent
+            ? {
+                headerTitle: () => props.titleContent,
+                unstable_navigationItemStyle: "navigator",
+              }
+            : undefined),
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
