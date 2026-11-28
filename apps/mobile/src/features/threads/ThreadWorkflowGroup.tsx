@@ -11,7 +11,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
-import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { T, useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
@@ -311,8 +311,10 @@ function WorkflowElapsed(props: { readonly timing: ElapsedTiming }) {
 type ElapsedTiming = Parameters<typeof deriveSubagentElapsedMs>[0];
 
 function useElapsedLabel(timing: ElapsedTiming): string | null {
-  const nowMs = useVisibleSecondClock(isActiveSubagentStatus(timing.status));
+  const live = isActiveSubagentStatus(timing.status);
+  const nowMs = useVisibleSecondClock(live);
   const messages = useMessages();
   const elapsedMs = deriveSubagentElapsedMs(timing, nowMs);
-  return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs, messages);
+  if (elapsedMs === null || (!live && elapsedMs === 0)) return null;
+  return live ? formatLiveDuration(elapsedMs, messages) : formatDuration(elapsedMs, messages);
 }

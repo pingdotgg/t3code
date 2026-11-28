@@ -2,7 +2,7 @@ import { T, msg, useGT, useMessages } from "gt-react";
 import { type MessageResolver } from "~/i18n/messages";
 import { type WorktreeSetupSnapshot, type WorktreeSetupStage } from "@t3tools/contracts";
 import { worktreeSetupStageLabel } from "@t3tools/client-runtime/contract-labels";
-import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -42,7 +42,7 @@ function elapsedMs(startedAt: string | null, endMs: number): number | null {
 function LiveElapsed({ startedAt }: { startedAt: string }) {
   const m = useMessages();
   const elapsed = elapsedMs(startedAt, useNowSecond());
-  return elapsed === null ? null : <>{formatDuration(elapsed, m)}</>;
+  return elapsed === null ? null : <>{formatLiveDuration(elapsed, m)}</>;
 }
 
 /** A finished duration, or a ticking one while setup is still running. */
