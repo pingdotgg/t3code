@@ -5,6 +5,7 @@ import {
   markdownForNativeRendering,
   markdownWithFileEmbeds,
   markdownWithTextDirection,
+  parseMarkdownDocument,
 } from "./markdownDocument";
 
 const BOM = "\uFEFF";
@@ -38,5 +39,19 @@ describe("a leading byte-order mark", () => {
       "Intro text\n\n| a | c |\n|---|---|\n| [./a|b.ts](<./a|b.ts>) | b |",
     );
     expect(render(`${BOM}${markdown}`)).toBe(`${BOM}${render(markdown)}`);
+  });
+});
+
+describe("single tildes", () => {
+  const deleted = (markdown: string) =>
+    JSON.stringify(parseMarkdownDocument(markdown)).match(/"type":"delete"/g)?.length ?? 0;
+
+  it("stay literal in ranges and paths", () => {
+    expect(deleted("Latency is around 10~20ms (about 80~90% faster).")).toBe(0);
+    expect(deleted("Saved under com~apple~CloudDocs.")).toBe(0);
+  });
+
+  it("leave double-tilde strikethrough alone", () => {
+    expect(deleted("This is ~~gone~~ now.")).toBe(1);
   });
 });
