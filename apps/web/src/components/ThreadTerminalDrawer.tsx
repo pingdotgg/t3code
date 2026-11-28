@@ -469,6 +469,13 @@ function writableSessionGeneration(
     : null;
 }
 
+/** Changes on a restart and on a new attach stream, which restarts lifecycleVersion at zero. */
+export function terminalInputLifecycle(
+  session: Pick<TerminalSessionState, "lifecycleVersion" | "output">,
+): string {
+  return `${session.output.generation}:${session.lifecycleVersion}`;
+}
+
 export function shouldHandleTerminalExit(
   current: TerminalSessionState["status"],
   synchronized: TerminalSessionState["status"],
@@ -773,6 +780,7 @@ function TerminalSessionViewport({
               ? { text, ...(fallback === undefined ? {} : { fallback }) }
               : null,
           ),
+        inputLifecycle: () => terminalInputLifecycle(readTerminalSession()),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
