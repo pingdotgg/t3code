@@ -10090,7 +10090,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
-            hasBrowserTools: mcpSession?.browserToolsAvailable ?? true,
             hasDeviceTools:
               mcpSession?.capabilities?.has("device") === true &&
               mcpSession.deviceHostsAvailable !== false,

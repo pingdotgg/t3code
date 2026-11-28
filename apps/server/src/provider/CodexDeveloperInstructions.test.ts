@@ -66,27 +66,25 @@ describe("Codex orchestration context", () => {
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
   });
 
-  it("gates linked-environment and browser guidance on availability", () => {
-    const orchestration = (linkedEnvironments: boolean, browser: boolean) =>
+  it("sends linked-environment routing only while the feature is on", () => {
+    const orchestration = (linkedEnvironments: boolean) =>
       Object.entries(
         buildCodexAdditionalContext(
           { model: "gpt-6.1-sol" },
-          { browser, device: false, linkedEnvironments },
+          { browser: true, device: false, linkedEnvironments },
         ),
       )
         .filter(([key]) => key.startsWith("t3_code_orchestration_"))
         .map(([, entry]) => entry.value)
         .join("\n");
 
-    const off = orchestration(false, false);
-    NodeAssert.ok(!off.includes("`preview_*`"));
+    const off = orchestration(false);
     NodeAssert.ok(!off.includes("`t3_environment_link`"));
-    NodeAssert.ok(off.includes("Settings → Labs → Linked environments"));
+    NodeAssert.ok(off.includes("Delegating to another machine"));
 
-    const on = orchestration(true, true);
-    NodeAssert.ok(on.includes("`preview_*`"));
+    const on = orchestration(true);
     NodeAssert.ok(on.includes("`t3_environment_link`"));
-    NodeAssert.ok(!on.includes("Settings → Labs → Linked environments"));
+    NodeAssert.ok(!on.includes("Delegating to another machine"));
   });
 });
 

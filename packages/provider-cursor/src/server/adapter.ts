@@ -2948,7 +2948,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
-          hasBrowserTools: boolean,
           hasDeviceTools: boolean,
           hasLinkedEnvironments: boolean,
           delivered: {
@@ -2974,7 +2973,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
             hasT3Mcp: mcpServers !== undefined,
-            hasBrowserTools,
             hasDeviceTools,
             hasLinkedEnvironments,
             orchestrationDelivered: delivered.orchestration,
@@ -3131,7 +3129,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     : yield* resolveUserMessage(
                         turnInput,
                         mcpServers,
-                        mcpSession?.browserToolsAvailable ?? true,
                         hasDeviceTools,
                         mcpSession?.linkedEnvironmentsAvailable === true,
                         delivered,

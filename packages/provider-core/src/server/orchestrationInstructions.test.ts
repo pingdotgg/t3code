@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   acpMcpFallbackInstructions,
-  buildT3OrchestrationSections,
+  t3CodeOrchestrationSections,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -12,23 +12,18 @@ import {
 } from "./orchestrationInstructions.ts";
 
 describe("T3 orchestration gating", () => {
-  it("gates browser and linked-environment guidance on session capabilities", () => {
-    const defaultText = buildT3OrchestrationSections().join("\n");
-    assert.include(defaultText, "`preview_*`");
-    assert.include(defaultText, "Settings → Labs → Linked environments");
+  it("sends linked-environment routing only while the feature is on", () => {
+    const defaultText = t3CodeOrchestrationSections().join("\n");
+    assert.include(defaultText, "Delegating to another machine");
     assert.notInclude(defaultText, "`t3_environment_links`");
     assert.notInclude(defaultText, "`t3_environment_link`");
 
-    const noBrowser = buildT3OrchestrationSections({ browser: false }).join("\n");
-    assert.notInclude(noBrowser, "`preview_*`");
-    assert.include(noBrowser, "`html_render`");
-
-    const withLinks = buildT3OrchestrationSections({ linkedEnvironments: true }).join("\n");
+    const withLinks = t3CodeOrchestrationSections({ linkedEnvironments: true }).join("\n");
     assert.include(withLinks, "`t3_environment_links`");
     assert.include(withLinks, "`t3_environment_link`");
-    assert.notInclude(withLinks, "Settings → Labs → Linked environments");
+    assert.notInclude(withLinks, "Delegating to another machine");
 
-    const noNativeSubagents = buildT3OrchestrationSections({ nativeSubagents: false }).join("\n");
+    const noNativeSubagents = t3CodeOrchestrationSections({ nativeSubagents: false }).join("\n");
     assert.include(noNativeSubagents, "Use `delegate_task` for subagents");
     assert.notInclude(noNativeSubagents, "spawn_agent");
   });

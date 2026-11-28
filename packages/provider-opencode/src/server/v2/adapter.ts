@@ -4522,7 +4522,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           mcpSession?.capabilities?.has("device") === true &&
             mcpSession.deviceHostsAvailable !== false,
           {
-            browser: mcpSession?.browserToolsAvailable ?? true,
             linkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
           },
         ),

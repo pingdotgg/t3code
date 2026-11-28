@@ -2,58 +2,58 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { McpToolExposureMode } from "./mcpSession.ts";
 
 export interface T3CodeOrchestrationOptions {
-  /** Omit `preview_*` routing when agent browser access is off. Defaults to true. */
-  readonly browser?: boolean;
-  /** Include linked-environment tool routing when the Labs feature is on. Defaults to false. */
+  /** Linked-environment tool routing, sent while Settings → Labs → Linked environments is on. */
   readonly linkedEnvironments?: boolean;
-  /** When false (e.g. Codex subscription sharing), route all subagents through `delegate_task`. Defaults to true. */
+  /** False routes every subagent through `delegate_task`, as Codex subscription sharing needs. */
   readonly nativeSubagents?: boolean;
 }
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-export function buildT3OrchestrationSections(
-  options: T3CodeOrchestrationOptions = {},
-): ReadonlyArray<string> {
-  const nativeSubagents = options.nativeSubagents !== false;
-  return [
-    `## T3 Code orchestration
+export const t3CodeOrchestrationSections = ({
+  linkedEnvironments = false,
+  nativeSubagents = true,
+}: T3CodeOrchestrationOptions = {}): ReadonlyArray<string> => [
+  `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.
 
 - ${
-      nativeSubagents
-        ? `Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`.`
-        : `Use \`delegate_task\` for subagents, including when the child uses your provider and model. Set \`isolation:"worktree"\` for a separate checkout.`
-    } Workflow only when asked.
+    nativeSubagents
+      ? `Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`.`
+      : `Use \`delegate_task\` for subagents, including when the child uses your provider and model. Set \`isolation:"worktree"\` for a separate checkout.`
+  } Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - Follow a running delegate's \`next\`. Don't poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - As a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
-    [
-      `- Threads & secrets: \`t3_thread_launch\`/\`create_threads\` only when asked for a new top-level thread (never for "subagent"/"delegate"/"parallel"). Worktree threads: set \`workspaceStrategy\` (honor requested base; independent → default \`remote/branch\` with \`startFromOrigin:true\` or local default if no remote; dependent/unpublished → local base; omit for project root, not your worktree; no shell worktrees or checkout setup in prompt). Read given thread IDs (\`t3_thread_read\`); settle threads (\`t3_thread_organize\`). User-only logins, tokens, PINs, pairing codes, or sudo passwords: \`request_secret\` (never ask in chat; for \`sudo -S < "$file"\`, never pipe into \`sudo -S tee\`, pass file args).`,
-      options.linkedEnvironments === true
-        ? `- Other machines: \`t3_environment_links\` (pass \`environmentId\`) or \`t3_environment_link\` with \`hint\` (never chat pairing codes).`
-        : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`,
-      `- In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.`,
-      "- T3 tools may load late. Try the name once before you call it absent.",
-    ].join("\n"),
-    [
-      "### Visuals and preview\n",
-      `- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.`,
-      ...(options.browser === false
-        ? []
-        : [
-            `- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
-          ]),
-    ].join("\n"),
-  ];
+  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`. Honor a requested base. Otherwise independent work uses the default branch as \`remote/branch\` with \`startFromOrigin:true\`; with no remote, use the local default. Required unpublished commits and dependent work use their local base. Shell worktrees don't bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
+- Given a thread id, \`t3_thread_read\` it before you answer about it. Asked to settle a thread, this one too: \`t3_thread_organize\`.
+${
+  linkedEnvironments
+    ? `- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` and that machine's \`threadId\` to T3 tools.
+- Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.`
+    : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`
 }
+- In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
+- A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
+- T3 tools may load late. Try the name once before you call it absent.`,
+  `### Visuals and preview
 
-export function buildT3OrchestrationInstructions(options: T3CodeOrchestrationOptions = {}): string {
-  return `\n\n${buildT3OrchestrationSections(options).join("\n\n")}\n`;
-}
+- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
+- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+];
 
-export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = buildT3OrchestrationInstructions();
+export const t3CodeOrchestrationInstructions = (options: T3CodeOrchestrationOptions = {}): string =>
+  `\n\n${t3CodeOrchestrationSections(options).join("\n\n")}\n`;
+
+export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = t3CodeOrchestrationInstructions();
+
+export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
+
+## T3 Code browser
+
+When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
+`;
 
 const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot", "device_close"];
 
@@ -77,12 +77,13 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
   "Deferred T3 tools: only core orchestration tools, `tool_search`, and `tool_call` are declared directly. For any T3 tool not declared directly (including `delegate_task` if omitted, or optional tools like `preview_*`, `device_*`, `html_preview`, `html_render`, `t3_thread_*`, `t3_project_*`, `t3_worktree_*`, pull requests, `schedule_task`, `request_secret`, etc.), call `tool_search` to get its schema and `tool_call({ name, arguments })` to run it.";
 
-// ACP only: some ACP agents accept the injected MCP server but never expose its tools,
-// so they need the terminal transport. Emit only the current OS's syntax.
+// ACP only: some ACP agents accept the injected MCP server but never expose
+// its tools, so they need the terminal transport other harnesses never use.
+// Only the host OS's syntax is sent.
 export function acpMcpFallbackInstructions(platform?: NodeJS.Platform): string {
   return platform === "win32"
-    ? `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_CALL\` is set): pipe JSON (escape non-ASCII as \`\\uXXXX\`) to stdin, e.g. \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`.`
-    : `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_NODE\` is set): \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json>'\`, e.g. \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+    ? `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_CALL\` is present, call them through the terminal by piping the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`
+    : `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
 }
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
@@ -96,7 +97,6 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
-  readonly hasBrowserTools?: boolean;
   readonly hasDeviceTools: boolean;
   readonly hasLinkedEnvironments?: boolean;
   readonly toolExposure?: McpToolExposureMode | undefined;
@@ -115,7 +115,6 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    (input.previousState.hasBrowserTools ?? true) === (input.state.hasBrowserTools ?? true) &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
     (input.previousState.hasLinkedEnvironments ?? false) ===
       (input.state.hasLinkedEnvironments ?? false) &&
@@ -129,9 +128,9 @@ export function t3AcpPromptWithInstructions(input: {
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
       ? [
+          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          buildT3OrchestrationInstructions({
-            browser: input.state.hasBrowserTools ?? true,
+          t3CodeOrchestrationInstructions({
             linkedEnvironments: input.state.hasLinkedEnvironments ?? false,
           }).trim(),
           ...(input.state.toolExposure === "deferred-proxy"
@@ -148,7 +147,7 @@ const orchestrationInstructions = (
   hasDeviceTools: boolean,
   options: T3CodeOrchestrationOptions = {},
 ) => {
-  const base = buildT3OrchestrationInstructions(options);
+  const base = t3CodeOrchestrationInstructions(options);
   return hasDeviceTools ? `${base}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n` : base;
 };
 
@@ -160,7 +159,6 @@ function prependT3OrchestrationInstructions(prompt: string, instructions: string
 export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
   readonly hasT3Mcp: boolean;
-  readonly hasBrowserTools?: boolean;
   readonly hasDeviceTools: boolean;
   readonly hasLinkedEnvironments?: boolean;
   readonly orchestrationDelivered: boolean;
@@ -173,7 +171,6 @@ export function t3OrchestrationPrompt(input: {
   const instructions = [
     !input.orchestrationDelivered
       ? orchestrationInstructions(input.hasDeviceTools, {
-          browser: input.hasBrowserTools ?? true,
           linkedEnvironments: input.hasLinkedEnvironments ?? false,
         })
       : input.hasDeviceTools && !input.deviceInstructionsDelivered

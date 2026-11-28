@@ -3,8 +3,9 @@ import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import {
-  buildT3OrchestrationSections,
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  t3CodeOrchestrationSections,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 /** Codex silently truncates additionalContext values over 1,000 tokens, counted as UTF-8 bytes / 4. */
@@ -20,9 +21,16 @@ export interface T3CodeToolAvailability {
 const normalizeAvailability = (
   availability: boolean | T3CodeToolAvailability,
 ): T3CodeToolAvailability =>
-  typeof availability === "boolean"
-    ? { browser: availability, device: false, linkedEnvironments: false }
-    : availability;
+  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
+
+/** Instructions for unavailable tools would steer the model away from its remaining automation. */
+const toolInstructions = (tools: T3CodeToolAvailability): string =>
+  [
+    tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
+    tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
 export interface CodexRuntimeInfo {
   readonly agentFeedback?: AgentFeedbackMode;
@@ -36,16 +44,15 @@ export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
-  const tools = normalizeAvailability(toolsAvailable);
-  const orchestrationSections = buildT3OrchestrationSections({
-    browser: tools.browser,
-    linkedEnvironments: tools.linkedEnvironments === true,
-    nativeSubagents: tools.nativeSubagents !== false,
-  });
+  const availability = normalizeAvailability(toolsAvailable);
+  const tools = toolInstructions(availability);
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
-      orchestrationSections.map((section, index) => [
+      t3CodeOrchestrationSections({
+        linkedEnvironments: availability.linkedEnvironments === true,
+        nativeSubagents: availability.nativeSubagents !== false,
+      }).map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),
@@ -54,8 +61,6 @@ export function buildCodexAdditionalContext(
       kind: "application",
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
-    ...(tools.device
-      ? { t3_code_tools: { kind: "application", value: T3_CODE_DEVICE_TOOL_INSTRUCTIONS } }
-      : {}),
+    ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
   };
 }
