@@ -93,6 +93,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "extra/joined/.git",
         " notes",
         "notes",
+        "docs",
+        "docs\u00a0",
         "src/svc/.git",
         "tree",
         ".hidden/.git",
@@ -146,7 +148,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
             { "path": " notes", "name": "Intended" },
+            { "path": "notes ", "name": "TrailingSpace" },
             { "path": "notes" },
+            { "path": "docs\u00a0", "name": "Exact" },
             { "path": "trailing /", "name": "TrailingSlash" },
             { "path": "../outside" },
             { "path": "gone" },
