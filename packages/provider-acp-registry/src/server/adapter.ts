@@ -304,7 +304,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                 ),
             ),
         }),
-    ...(isVibe ? { registerExtensions: registerMistralVibeAcpExtensions } : {}),
+    // Vibe (v3.1.4) resolves the old ID it keeps as an alias after a model rename and refuses an
+    // unknown model with invalid params.
+    ...(isVibe
+      ? { registerExtensions: registerMistralVibeAcpExtensions, resolvesUnlistedModels: true }
+      : {}),
     ...(isClaude
       ? {
           followAgentWorkState: true,

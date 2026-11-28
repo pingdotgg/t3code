@@ -530,6 +530,12 @@ export interface AcpAdapterV2Flavor {
     ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly customModels?: ReadonlyArray<string>;
+  /**
+   * The agent resolves a model its model option does not list, such as the old ID it keeps as an
+   * alias after a rename, and refuses an unknown one with invalid params. An unlisted explicit
+   * model is then written for the agent to judge, and the session runs the model it reports.
+   */
+  readonly resolvesUnlistedModels?: boolean;
   /** The agent may run another model than session/new reports, so the model is always written. */
   readonly alwaysSetModel?: boolean;
   /** Values the client shows for options a new session's selection leaves unset. */
@@ -9264,6 +9270,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           )
             return;
           const option = findModelConfigOption(yield* runtime.getConfigOptions);
+          if (option !== undefined && flavor.resolvesUnlistedModels === true) return;
           const models = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
           const available =
             option?.type === "select"
@@ -9312,18 +9319,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
             const modelState = startResult.sessionSetupResult.models;
             if (modelOption?.type === "select") {
-              if (
-                isCustomModel ||
-                flattenSelectChoices(modelOption.options).some(
-                  (choice) => choice.value === requestedModel,
-                )
-              ) {
+              const isListed = flattenSelectChoices(modelOption.options).some(
+                (choice) => choice.value === requestedModel,
+              );
+              if (isCustomModel || isListed) {
                 yield* runtime
                   .setConfigOption(modelOption.id, requestedModel, {
                     resendCurrentValue: flavor.alwaysSetModel === true,
                   })
                   .pipe(Effect.mapError(rejectedModel));
                 appliedModel = requestedModel;
+              } else if (
+                flavor.resolvesUnlistedModels === true &&
+                requestedModel !== "default" &&
+                requestedModel !== "auto"
+              ) {
+                // The model option's current value then names the model the agent resolved.
+                yield* runtime
+                  .setConfigOption(modelOption.id, requestedModel, { allowUnlistedValue: true })
+                  .pipe(Effect.mapError(rejectedModel));
               }
             } else if (
               modelState != null &&
