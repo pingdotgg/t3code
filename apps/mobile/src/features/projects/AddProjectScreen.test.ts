@@ -250,7 +250,8 @@ function renderScreen(render: () => ReactNode) {
 it.each([
   { name: "Back after two submissions in one render", repeatSubmit: true, unmount: true },
   { name: "Back before the screen unmounts" },
-  { name: "editing the repository name", edit: true },
+  { name: "editing the repository name", edit: ["example/corrected"] },
+  { name: "batched edits back to the original name", edit: ["example/corrected", "example/slow"] },
   { name: "a change to the repository route parameters", changeParams: true },
   { name: "submitting from a render with stale route parameters", replaceBeforeSubmit: true },
 ])(
@@ -322,7 +323,9 @@ it.each([
         expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
         if (edit) {
           await act(() =>
-            withRepositoryInput(screen, (input) => input.onChangeText("example/corrected")),
+            withRepositoryInput(screen, (input) => {
+              for (const value of edit) input.onChangeText(value);
+            }),
           );
         } else if (changeParams) {
           flow.setParams({ source: "gitlab" });
@@ -341,10 +344,11 @@ it.each([
       if (edit) {
         const submitCorrected = findAction(screen, "Lookup repository");
         expect(submitCorrected).not.toBeNull();
-        await act(() => {
-          void submitCorrected?.();
+        await act(async () => {
+          await submitCorrected?.();
         });
-        expect(state.lookupRepository).toHaveBeenLastCalledWith("example/corrected");
+        expect(state.lookupRepository).toHaveBeenCalledTimes(2);
+        expect(state.lookupRepository).toHaveBeenLastCalledWith(edit.at(-1));
       }
     } finally {
       state.navigationState = undefined;
