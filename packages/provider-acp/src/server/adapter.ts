@@ -435,6 +435,69 @@ export function acpPerTurnPromptUsage(
   };
 }
 
+/**
+ * Merges a `usage_update` context snapshot (`usedTokens` / `maxTokens` / `cost`) on top of an
+ * existing `ThreadTokenUsageSnapshot`, preserving per-turn token counters previously merged from
+ * `PromptResponse.usage`.
+ */
+export function mergeAcpUsageUpdate(
+  previous: ThreadTokenUsageSnapshot | null,
+  update: ThreadTokenUsageSnapshot,
+): ThreadTokenUsageSnapshot {
+  if (previous === null) return update;
+  return {
+    ...previous,
+    ...update,
+  };
+}
+
+/**
+ * Merges a normalized per-turn `TurnTokenUsage` (from `PromptResponse.usage` on flavors with
+ * `reportsPerTurnPromptUsage`) into the thread's `ThreadTokenUsageSnapshot`, populating both
+ * `last*` per-turn counters and cumulative session totals while preserving `usedTokens` /
+ * `maxTokens` / `cost` from `usage_update`.
+ */
+export function mergeAcpTurnTokenUsage(
+  previous: ThreadTokenUsageSnapshot | null,
+  turnUsage: TurnTokenUsage,
+): ThreadTokenUsageSnapshot | null {
+  if (
+    turnUsage.usageStatus === "unavailable" ||
+    turnUsage.inputTokens === undefined ||
+    turnUsage.outputTokens === undefined
+  ) {
+    return previous;
+  }
+  const lastInputTokens = turnUsage.inputTokens;
+  const lastOutputTokens = turnUsage.outputTokens;
+  const lastUsedTokens = lastInputTokens + lastOutputTokens;
+  const cachedInputTokens =
+    previous?.cachedInputTokens === undefined && turnUsage.cachedInputTokens === undefined
+      ? undefined
+      : (previous?.cachedInputTokens ?? 0) + (turnUsage.cachedInputTokens ?? 0);
+  const reasoningOutputTokens =
+    previous?.reasoningOutputTokens === undefined && turnUsage.reasoningTokens === undefined
+      ? undefined
+      : (previous?.reasoningOutputTokens ?? 0) + (turnUsage.reasoningTokens ?? 0);
+  return {
+    ...previous,
+    usedTokens: previous?.usedTokens ?? lastUsedTokens,
+    inputTokens: (previous?.inputTokens ?? 0) + lastInputTokens,
+    outputTokens: (previous?.outputTokens ?? 0) + lastOutputTokens,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+    lastUsedTokens,
+    lastInputTokens,
+    lastOutputTokens,
+    ...(turnUsage.cachedInputTokens === undefined
+      ? {}
+      : { lastCachedInputTokens: turnUsage.cachedInputTokens }),
+    ...(turnUsage.reasoningTokens === undefined
+      ? {}
+      : { lastReasoningOutputTokens: turnUsage.reasoningTokens }),
+  };
+}
+
 interface AcpPromptOutcomeFailure {
   readonly failure: OrchestrationV2ProviderFailure;
   readonly threadDisposition: "reusable" | "broken";
@@ -6953,11 +7016,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             if (stateEvent === undefined) return;
             if (stateEvent._tag === "UsageUpdated") {
-              yield* Ref.update(contextUsageBySessionId, (current) =>
-                new Map(current).set(notification.sessionId, stateEvent.usage),
-              );
+              const mergedUsage = yield* Ref.modify(contextUsageBySessionId, (current) => {
+                const merged = mergeAcpUsageUpdate(
+                  current.get(notification.sessionId) ?? null,
+                  stateEvent.usage,
+                );
+                return [merged, new Map(current).set(notification.sessionId, merged)] as const;
+              });
               if (context?.nativeThreadId === notification.sessionId) {
-                context.contextUsage = stateEvent.usage;
+                context.contextUsage = mergedUsage;
               }
             } else {
               const metadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
@@ -9899,6 +9966,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? undefined
               : yield* flavor.executedModel(context.nativeThreadId);
           const settledTurn = providerTurnPayload(context, settledStatus, now);
+          if (settledTurn.turnTokenUsage !== undefined) {
+            const mergedUsage = mergeAcpTurnTokenUsage(
+              context.contextUsage,
+              settledTurn.turnTokenUsage,
+            );
+            if (mergedUsage !== context.contextUsage) {
+              context.contextUsage = mergedUsage;
+              if (mergedUsage !== null) {
+                yield* Ref.update(contextUsageBySessionId, (current) =>
+                  new Map(current).set(context.nativeThreadId, mergedUsage),
+                );
+              }
+            }
+          }
           const turn: OrchestrationV2ProviderTurn =
             executedModel === undefined
               ? settledTurn

@@ -90,6 +90,8 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import {
   AcpProviderCapabilitiesV2,
   acpPerTurnPromptUsage,
+  mergeAcpTurnTokenUsage,
+  mergeAcpUsageUpdate,
   acpScopedNativeId,
   acpPostSettleContinuationOfferEvidence,
   acpPostSettleWakeEvidence,
@@ -327,6 +329,102 @@ describe("acpPerTurnPromptUsage", () => {
       usageScope: "main_agent",
       usageStatus: "unavailable",
       hasSubagents: false,
+    });
+  });
+});
+
+describe("mergeAcpTurnTokenUsage and mergeAcpUsageUpdate", () => {
+  it("merges per-turn usage into an existing context snapshot and accumulates across turns", () => {
+    const initial = { usedTokens: 14_323, maxTokens: 1_048_576 };
+    const turn1 = acpPerTurnPromptUsage(
+      {
+        inputTokens: 2_181,
+        outputTokens: 23,
+        totalTokens: 14_323,
+        cachedReadTokens: 12_119,
+        cachedWriteTokens: 0,
+        thoughtTokens: 19,
+      },
+      false,
+      "completed",
+      true,
+    );
+    const afterTurn1 = mergeAcpTurnTokenUsage(initial, turn1);
+    assert.deepEqual(afterTurn1, {
+      usedTokens: 14_323,
+      maxTokens: 1_048_576,
+      inputTokens: 14_300,
+      cachedInputTokens: 12_119,
+      outputTokens: 23,
+      reasoningOutputTokens: 19,
+      lastUsedTokens: 14_323,
+      lastInputTokens: 14_300,
+      lastCachedInputTokens: 12_119,
+      lastOutputTokens: 23,
+      lastReasoningOutputTokens: 19,
+    });
+
+    // A later usage_update updates window counters without wiping per-turn token breakdown.
+    const afterLateUpdate = mergeAcpUsageUpdate(afterTurn1, {
+      usedTokens: 20_000,
+      maxTokens: 1_048_576,
+    });
+    assert.deepEqual(afterLateUpdate, {
+      ...afterTurn1,
+      usedTokens: 20_000,
+      maxTokens: 1_048_576,
+    });
+
+    // A second turn accumulates totals and refreshes last* fields.
+    const turn2 = acpPerTurnPromptUsage(
+      {
+        inputTokens: 1_000,
+        outputTokens: 50,
+        totalTokens: 20_050,
+        cachedReadTokens: 19_000,
+        thoughtTokens: 10,
+      },
+      false,
+      "completed",
+      true,
+    );
+    const afterTurn2 = mergeAcpTurnTokenUsage(afterLateUpdate, turn2);
+    assert.deepEqual(afterTurn2, {
+      usedTokens: 20_000,
+      maxTokens: 1_048_576,
+      inputTokens: 34_300,
+      cachedInputTokens: 31_119,
+      outputTokens: 73,
+      reasoningOutputTokens: 29,
+      lastUsedTokens: 20_050,
+      lastInputTokens: 20_000,
+      lastCachedInputTokens: 19_000,
+      lastOutputTokens: 50,
+      lastReasoningOutputTokens: 10,
+    });
+  });
+
+  it("leaves context usage unchanged when turn usage is unavailable and falls back to lastUsedTokens when no snapshot exists", () => {
+    const existing = { usedTokens: 5_000, maxTokens: 200_000 };
+    assert.equal(
+      mergeAcpTurnTokenUsage(existing, acpPerTurnPromptUsage(undefined, false, "completed")),
+      existing,
+    );
+
+    const turn = acpPerTurnPromptUsage(
+      { inputTokens: 1_200, outputTokens: 80, totalTokens: 1_280, cachedReadTokens: 900 },
+      false,
+      "completed",
+    );
+    assert.deepEqual(mergeAcpTurnTokenUsage(null, turn), {
+      usedTokens: 1_280,
+      inputTokens: 1_200,
+      cachedInputTokens: 900,
+      outputTokens: 80,
+      lastUsedTokens: 1_280,
+      lastInputTokens: 1_200,
+      lastCachedInputTokens: 900,
+      lastOutputTokens: 80,
     });
   });
 });
