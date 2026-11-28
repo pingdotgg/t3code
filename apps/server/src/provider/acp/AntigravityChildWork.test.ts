@@ -543,6 +543,62 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
+  it.effect("counts a detached child the runtime reported idle as no longer at work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-idle-" });
+      const idle = "0a591388-d9d9-439d-a2a0-90932fd25b39";
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+      const child = (conversationId: string, callId: string) =>
+        Effect.all([
+          writeJson([ROOT, ".system_generated", "subagents", `${conversationId}.json`], {
+            conversationId,
+            subagentDescriptor: { typeName: "self", role: LAUNCH.role },
+            state: "SUBAGENT_STATE_ALIVE",
+          }),
+          writeJson([conversationId, ".system_generated", "messages", "launch.json"], {
+            sender: ROOT,
+            content: LAUNCH.prompt,
+            sourceMetadata: {
+              tool: { conversationId: ROOT, toolCall: { id: callId, name: "invoke_subagent" } },
+            },
+          }),
+        ]);
+
+      yield* child(CHILD, "call_alive");
+      yield* child(idle, "call_idle");
+      // agy 1.5.19: a child that ends its turn without `send_message` leaves its record alive and
+      // the runtime posts this notice to the parent's inbox on its behalf.
+      yield* writeJson([ROOT, ".system_generated", "messages", "idle.json"], {
+        id: "idle-notice",
+        recipient: ROOT,
+        sender: "system",
+        priority: "MESSAGE_PRIORITY_HIGH",
+        content: `Subagent ${idle} has gone idle. This was the subagent's most recent response: Done.`,
+        sourceMetadata: {
+          conversationId: idle,
+          stepIndex: 1,
+          rootConversationId: ROOT,
+          contentKind: "CONTENT_KIND_CONVERSATION",
+        },
+      });
+
+      expect(
+        yield* readAntigravityChildrenAtWork({
+          profileDirectory: profile,
+          rootSessionId: ROOT,
+          toolCallIds: ["call_alive", "call_idle"],
+        }),
+      ).toEqual(["call_alive"]);
+    }),
+  );
+
   it.effect(
     "reads legacy disk-backed swarm worker transcripts and tracks working vs parked or killed members",
     () =>
