@@ -11724,6 +11724,16 @@ describe("AcpAdapterV2", () => {
             ),
             reused,
           );
+          assertNoToolRows(
+            yield* collectUpdate(
+              session.send({
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "completed",
+                rawOutput: { stdout: "late task-2" },
+              }),
+            ),
+          );
           assert.deepEqual(
             toolRows(
               yield* progress("Remaining running command"),
@@ -11732,6 +11742,29 @@ describe("AcpAdapterV2", () => {
               "running",
             ),
             original,
+          );
+          // A buffered fresh tool_call with the same ID must prevent ID-less updates from mutating task-1.
+          assertNoToolRows(
+            yield* collectUpdate(
+              session.send({
+                sessionUpdate: "tool_call",
+                toolCallId,
+                kind: "execute",
+                title: "Fresh post-settle command",
+                status: "in_progress",
+                rawInput: { command: "echo fresh" },
+              }),
+            ),
+          );
+          assertNoToolRows(
+            yield* collectUpdate(
+              session.send({
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "completed",
+                rawOutput: { stdout: "fresh" },
+              }),
+            ),
           );
           assert.deepEqual(
             toolRows(
@@ -11752,8 +11785,288 @@ describe("AcpAdapterV2", () => {
               }),
             ),
           );
-          assert.lengthOf(session.continuations, offers);
+          assert.lengthOf(session.continuations, offers + 1);
         }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "ignores ambiguous ID-less subagent terminals when a carried and fresh child share a task ID",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-shared-subagent-terminal");
+        const threadId = ThreadId.make("thread-shared-subagent-terminal");
+        const sessionId = "mock-session-1";
+        const notify =
+          yield* Deferred.make<
+            Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+          >();
+        const send = (update: EffectAcpSchema.SessionUpdate) =>
+          Deferred.await(notify).pipe(Effect.flatMap((handler) => handler({ sessionId, update })));
+        let turnCount = 0;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            extractSubagentUpdate: (toolCall) => {
+              const input =
+                typeof toolCall.data.rawInput === "object" && toolCall.data.rawInput !== null
+                  ? (toolCall.data.rawInput as Record<string, unknown>)
+                  : {};
+              const output =
+                typeof toolCall.data.rawOutput === "object" && toolCall.data.rawOutput !== null
+                  ? (toolCall.data.rawOutput as Record<string, unknown>)
+                  : {};
+              const childSessionId =
+                typeof output.childSessionId === "string" ? output.childSessionId : null;
+              return {
+                nativeTaskId: toolCall.toolCallId,
+                childSessionId,
+                prompt: typeof input.prompt === "string" ? input.prompt : "",
+                title: toolCall.title ?? null,
+                status:
+                  toolCall.status === "completed"
+                    ? "completed"
+                    : toolCall.status === "failed"
+                      ? "failed"
+                      : "running",
+                result: typeof output.result === "string" ? output.result : null,
+                model: null,
+              };
+            },
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Deferred.succeed(notify, handler).pipe(
+                    Effect.andThen(runtime.handleSessionUpdate(handler)),
+                  ),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    turnCount++;
+                    if (turnCount === 1) {
+                      yield* send({
+                        sessionUpdate: "tool_call",
+                        toolCallId: "shared-task",
+                        title: "Carried child",
+                        status: "in_progress",
+                        rawInput: { prompt: "first" },
+                        rawOutput: { childSessionId: "child-1" },
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "shared-task",
+                      title: "Fresh child",
+                      status: "in_progress",
+                      rawInput: { prompt: "second" },
+                      rawOutput: { childSessionId: "child-2" },
+                    });
+                    // ID-less terminal must not settle the fresh child when task ID is shared.
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "shared-task",
+                      status: "completed",
+                      rawOutput: { result: "ambiguous" },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "shared-task",
+                      status: "completed",
+                      rawOutput: { childSessionId: "child-1", result: "done-1" },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "shared-task",
+                      status: "completed",
+                      rawOutput: { childSessionId: "child-2", result: "done-2" },
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" };
+        const runtime = yield* adapter.openSession({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("session-shared-subagent"),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const firstTurn = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+        });
+        yield* runtime.startTurn(firstTurn);
+        const firstEvents = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const carried = firstEvents.findLast((e) => e.type === "subagent.updated")?.subagent;
+        assert.equal(carried?.status, "running");
+
+        const secondTurn = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        });
+        yield* runtime.startTurn(secondTurn);
+        const rest = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const fresh = rest.find(
+          (e): e is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            e.type === "subagent.updated" &&
+            e.subagent.id !== carried!.id &&
+            e.subagent.status === "running",
+        )?.subagent;
+        assert.isDefined(fresh);
+        assert.notEqual(fresh.id, carried!.id);
+        const terminalSubagents = rest.filter(
+          (e): e is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            e.type === "subagent.updated" && e.subagent.status === "completed",
+        );
+        assert.equal(
+          terminalSubagents.find((e) => e.subagent.id === carried!.id)?.subagent.result,
+          "done-1",
+        );
+        assert.equal(
+          terminalSubagents.find((e) => e.subagent.id === fresh.id)?.subagent.result,
+          "done-2",
+        );
+        assert.isFalse(
+          terminalSubagents.some((e) => e.subagent.result === "ambiguous"),
+          "ambiguous ID-less terminal must neither settle fresh nor spawn a third subagent",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "gates retained v1 wakes on offer eligibility and clears snapshot-only wake state on session switch",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-v1-retained-wake");
+        const threadA = ThreadId.make("thread-v1-a");
+        const threadB = ThreadId.make("thread-v1-b");
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const notify =
+          yield* Deferred.make<
+            Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+          >();
+        const send = (sessionId: string, update: EffectAcpSchema.SessionUpdate) =>
+          Deferred.await(notify).pipe(Effect.flatMap((handler) => handler({ sessionId, update })));
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: {
+            offer: (wake) =>
+              Effect.sync(() => {
+                offers.push(wake);
+              }),
+          },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Deferred.succeed(notify, handler).pipe(
+                    Effect.andThen(runtime.handleSessionUpdate(handler)),
+                  ),
+                loadSession: (sessionId) =>
+                  Effect.succeed({
+                    sessionId,
+                    initializeResult: {
+                      protocolVersion: 1 as const,
+                      agentCapabilities: { loadSession: true },
+                    },
+                    sessionSetupResult: {},
+                    modelConfigId: undefined,
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" };
+        const runtime = yield* adapter.openSession({
+          threadId: threadA,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("session-v1-retained"),
+        });
+        const providerThreadA = yield* runtime.ensureThread({
+          threadId: threadA,
+          modelSelection,
+          runtimePolicy,
+        });
+        const makePeer = (threadId: ThreadId, sessionId: string) => ({
+          ...providerThreadA,
+          id: ProviderThreadId.make(`provider-${sessionId}`),
+          appThreadId: threadId,
+          nativeThreadRef: {
+            driver: ACP_TEST_DRIVER,
+            nativeId: sessionId,
+            strength: "strong" as const,
+          },
+        });
+        const peerB = makePeer(threadB, "session-b");
+        const peerC = makePeer(ThreadId.make("thread-v1-c"), "session-c");
+
+        // Snapshot-only session B buffers an ineligible in_progress update; resumeThread must not offer.
+        yield* runtime.readThreadSnapshot({ providerThread: peerB });
+        yield* send("session-b", {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "running-1",
+          status: "in_progress",
+        });
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        yield* runtime.resumeThread({ providerThread: peerB });
+        assert.isEmpty(offers);
+
+        // Switching from snapshot-only session B to session C clears B's buffered wake even without a route.
+        yield* runtime.readThreadSnapshot({ providerThread: peerC });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        yield* send("session-c", {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "wake on C" },
+        });
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        assert.isEmpty(offers);
+        yield* runtime.readThreadSnapshot({ providerThread: peerB });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
