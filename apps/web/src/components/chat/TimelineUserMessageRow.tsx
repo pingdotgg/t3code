@@ -380,21 +380,14 @@ function UserMessageSwitchNote({ row }: { row: Extract<TimelineRow, { kind: "mes
   ) : null;
 }
 
-function AutomationMessageToggle({
-  queued,
-  ...props
-}: useRender.ComponentProps<"button"> & { queued?: boolean }) {
+function AutomationMessageToggle(props: useRender.ComponentProps<"button">) {
   return useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
         type: "button",
-        className: cn(
-          "flex w-full min-w-0 cursor-pointer items-center text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
-          queued
-            ? "h-7 gap-1 rounded-control"
-            : "gap-1.5 rounded-pane px-3.5 py-2.5 hover:surface-ghost-hover",
-        ),
+        className:
+          "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-pane px-3.5 py-2.5 text-left text-body hover:surface-ghost-hover focus-visible:outline-2 focus-visible:outline-ring",
       },
       props,
     ),
@@ -526,7 +519,7 @@ export function useScheduledTaskTitle(
   return tasksQuery.data?.tasks.find((task) => task.id === scheduledTaskId)?.title;
 }
 
-export function FoldedMessageHeader(props: {
+function FoldedMessageHeader(props: {
   icon: LucideIcon;
   label: string;
   /** A generic label (not a thread title) never truncates, whatever its length in the UI language. */
@@ -534,22 +527,15 @@ export function FoldedMessageHeader(props: {
   summary: string;
   expanded: boolean;
   onToggle: () => void;
-  queued?: boolean;
 }) {
   const Icon = props.icon;
   return (
     <AutomationMessageToggle
-      queued={props.queued === true}
       aria-expanded={props.expanded}
       data-scroll-anchor-ignore
       onClick={props.onToggle}
     >
-      <Icon
-        className={cn(
-          "shrink-0 stroke-2 text-muted-foreground",
-          props.queued ? "size-3.5 max-sm:size-4" : "size-4",
-        )}
-      />
+      <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
       <span
         className={cn(
           "shrink-0 text-muted-foreground",
@@ -563,7 +549,6 @@ export function FoldedMessageHeader(props: {
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
-          props.queued && "max-sm:size-4",
           props.expanded && "rotate-180",
         )}
       />
