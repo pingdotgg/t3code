@@ -1685,24 +1685,26 @@ const make = Effect.gen(function* () {
               return yield* releasePreparation(input.commandId);
             }
             const boundWorktreePath = current?.thread.worktreePath ?? null;
-            // A retry prepares the worktree the accepted launch asked for, not the
+            // A retry prepares the workspace the accepted launch asked for, not the
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
+            const retryStrategy =
+              Option.isSome(launchReceipt) && accepted?.type === "root"
+                ? accepted
+                : workspaceStrategy;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
               Option.isSome(launchReceipt) &&
-              (accepted?.type === "worktree" ||
-                accepted?.type === "existing_worktree" ||
-                (accepted?.type === "root" && boundWorktreePath === null))
+              (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
                 : Option.isSome(launchReceipt) &&
-                    workspaceStrategy.type === "root" &&
+                    retryStrategy.type === "root" &&
                     boundWorktreePath !== null
                   ? {
                       type: "existing_worktree",
                       worktreePath: boundWorktreePath,
-                      branch: workspaceStrategy.branch,
+                      branch: retryStrategy.branch,
                     }
-                  : workspaceStrategy;
+                  : retryStrategy;
             // The thread's link decides, as it does when preparation is retried: a request
             // that reuses a thread names none.
             const { linkOrigin: _requestLinkOrigin, ...preparation } = input;
