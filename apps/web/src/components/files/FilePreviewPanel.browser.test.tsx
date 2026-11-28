@@ -434,7 +434,15 @@ describe("source file scroll", () => {
     const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
     const scrollTo = async (top: number) => {
       await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      // The redesign records a file offset from scroll events, which arrive on the next frame.
+      const scrolled =
+        scroller()!.scrollTop === top
+          ? null
+          : new Promise((resolve) =>
+              scroller()!.addEventListener("scroll", resolve, { once: true }),
+            );
       scroller()!.scrollTop = top;
+      await scrolled;
       await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
     };
 
