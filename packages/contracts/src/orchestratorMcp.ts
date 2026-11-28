@@ -764,6 +764,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
   freshSession: Schema.Boolean,
+  runtimeMode: RuntimeMode.annotate({
+    description:
+      "Effective mode the task's runs use; resolves to the project default within the creating caller's ceiling.",
+  }),
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,

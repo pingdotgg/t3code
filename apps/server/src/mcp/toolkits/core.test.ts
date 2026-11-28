@@ -28,6 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -1350,6 +1351,193 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
     updatedAt: "2026-10-01T00:00:00.000Z",
   } as never;
 }
+
+it.effect.each([
+  {
+    scenario: "a project default below the caller ceiling",
+    ceiling: "full-access",
+    projectDefault: "auto",
+    expected: "auto",
+  },
+  {
+    scenario: "a caller ceiling below the project default",
+    ceiling: "auto",
+    projectDefault: "full-access",
+    expected: "auto",
+  },
+  {
+    scenario: "a project default at the caller ceiling",
+    ceiling: "full-access",
+    projectDefault: "full-access",
+    expected: "full-access",
+  },
+] as const)("schedule_task creates with $scenario", ({ ceiling, projectDefault, expected }) => {
+  const upserted: Array<Record<string, unknown>> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "schedule_task",
+        arguments: {
+          projectId: "project-schedule-default",
+          prompt: "Run nightly",
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope(ceiling)),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({ runtimeMode: expected });
+    expect(upserted).toHaveLength(1);
+    expect(upserted[0]).toMatchObject({ runtimeMode: expected });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed(null as never),
+            resolveCommit: () => Effect.succeed({} as never),
+          }),
+        ),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(ServerSettings.layerTest({ defaultRuntimeMode: projectDefault })),
+        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks: [] }),
+            upsert: (input) => {
+              upserted.push(input as Record<string, unknown>);
+              return Effect.succeed({
+                task: {
+                  ...(scheduledTask("task-created", "auto") as object),
+                  ...input,
+                  id: "task-created",
+                },
+              } as never);
+            },
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (id) =>
+              Effect.succeed(
+                Option.some({
+                  id,
+                  workspaceRoot: "/projects/schedule-test",
+                  defaultModelSelection: { instanceId: "codex", model: "gpt-5" },
+                }) as never,
+              ),
+          }),
+        ),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      ),
+    ),
+  );
+});
+
+it.effect("schedule_task lets an agent inherit its thread's mode above the project default", () => {
+  const upserted: Array<Record<string, unknown>> = [];
+  const parentThreadId = ThreadId.make("parent-full-access");
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "schedule_task",
+        arguments: {
+          projectId: "project-schedule-default",
+          prompt: "Run nightly",
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...scope,
+          thread: { ...scope.thread!, threadId: parentThreadId },
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({ runtimeMode: "full-access" });
+    expect(upserted).toHaveLength(1);
+    expect(upserted[0]).toMatchObject({ runtimeMode: "full-access" });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed(null as never),
+            resolveCommit: () => Effect.succeed({} as never),
+          }),
+        ),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(
+                McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "full-access" }),
+              ),
+            getThreadRecords: () =>
+              Effect.succeed({
+                ...McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(parentThreadId, {
+                    runtimeMode: "full-access",
+                  }),
+                ),
+                runs: [],
+              } as never),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest({ defaultRuntimeMode: "auto" })),
+        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks: [] }),
+            upsert: (input) => {
+              upserted.push(input as Record<string, unknown>);
+              return Effect.succeed({
+                task: {
+                  ...(scheduledTask("task-created", "auto") as object),
+                  ...input,
+                  id: "task-created",
+                },
+              } as never);
+            },
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (id) =>
+              Effect.succeed(
+                Option.some({
+                  id,
+                  workspaceRoot: "/projects/schedule-test",
+                  defaultModelSelection: { instanceId: "codex", model: "gpt-5" },
+                }) as never,
+              ),
+          }),
+        ),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      ),
+    ),
+  );
+});
 
 it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
   "a caller cannot use %s on a thread that runs above its own modes",

@@ -528,6 +528,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
+        yield* Effect.logInfo("Thread launched", {
+          threadId: thread.id,
+          projectId: thread.projectId,
+          runtimeMode: thread.runtimeMode,
+          replayed: replaying,
+        });
         return {
           threadId: thread.id,
           link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
