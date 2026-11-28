@@ -355,6 +355,15 @@ export function resolveThreadListV2RowStatus(
   return hasUnseenRunFailure(thread) ? status : "ready";
 }
 
+/** Whether a card shows a status (Done, Approval, Woke) where a read thread shows its time. */
+function threadListV2CardShowsStatus(thread: EnvironmentThreadShell, wokeAt: string | null) {
+  return (
+    resolveThreadListV2RowStatus(thread) !== "ready" ||
+    wokeAt !== null ||
+    threadHasUnseenCompletion(thread)
+  );
+}
+
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -564,13 +573,7 @@ function resolveThreadListV2ItemTimeLabel(
 ): string {
   const { thread, variant, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
-  if (
-    variant === "card" &&
-    (resolveThreadListV2RowStatus(thread) !== "ready" ||
-      item.wokeAt !== null ||
-      threadHasUnseenCompletion(thread))
-  )
-    return "";
+  if (variant === "card" && threadListV2CardShowsStatus(thread, item.wokeAt)) return "";
   const settledTimestamp =
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
@@ -711,6 +714,20 @@ function sortSettledThreadsReusingLast(
   lastSettledInput = settled;
   lastSettledOutput = sortSettledThreads(settled);
   return lastSettledOutput;
+}
+
+/** Threads waiting on the user list above the ones already read; each group keeps its order. */
+function statusCardsFirst(threads: readonly EnvironmentThreadShell[], now: string) {
+  const waiting: EnvironmentThreadShell[] = [];
+  const read: EnvironmentThreadShell[] = [];
+  for (const thread of threads) {
+    const showsStatus = threadListV2CardShowsStatus(
+      thread,
+      resolveThreadListV2WokeAt(thread, { now }),
+    );
+    (showsStatus ? waiting : read).push(thread);
+  }
+  return [...waiting, ...read];
 }
 
 export function buildThreadListV2Items(input: {
@@ -864,7 +881,7 @@ export function buildThreadListV2Items(input: {
   }
 
   const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+    ? statusCardsFirst(sortInboxThreadsByReturn(active, input.inboxReturnAt), now)
     : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(

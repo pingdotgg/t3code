@@ -1789,11 +1789,16 @@ describe("Working section beta", () => {
     lastError: null,
     updatedAt: NOW,
   };
-  const finishedAt = (id: string, completedAt: string) =>
+  const finishedAt = (
+    id: string,
+    completedAt: string,
+    lastVisitedAt = "2026-06-01T00:00:00.000Z",
+  ) =>
     makeThread({
       id: ThreadId.make(id),
       title: id,
       createdAt: "2026-06-01T00:00:00.000Z",
+      lastVisitedAt,
       latestRun: {
         runId: RunId.make(`run-${id}`),
         status: "completed",
@@ -1897,6 +1902,24 @@ describe("Working section beta", () => {
         thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
     });
     expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
+  });
+
+  it("lists threads waiting on the user above newer ones already read", () => {
+    const layout = build({
+      threads: [
+        finishedAt("read-new", "2026-06-01T05:00:00.000Z", "2026-06-01T05:05:00.000Z"),
+        finishedAt("done-old", "2026-06-01T01:00:00.000Z"),
+        makeThread({
+          id: ThreadId.make("approval-old"),
+          title: "approval-old",
+          createdAt: "2026-06-01T00:45:00.000Z",
+          runtime: running,
+          hasPendingApprovals: true,
+        }),
+        finishedAt("read-old", "2026-06-01T00:30:00.000Z", "2026-06-01T00:35:00.000Z"),
+      ],
+    });
+    expect(ids(layout)).toEqual(["done-old", "approval-old", "read-new", "read-old"]);
   });
 
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {
