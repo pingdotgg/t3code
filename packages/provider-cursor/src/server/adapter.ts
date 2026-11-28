@@ -81,6 +81,7 @@ import { isCursorSdkError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
+const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
 
 export const CursorProviderCapabilitiesV2 = {
@@ -1154,7 +1155,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         // Runs a Stop ended; a shell they started that is reported only afterwards is stopped too.
         const stoppedRuns = new Set<ProviderAdapter.ProviderAdapterV2TurnInput["runId"]>();
         let latestRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | undefined;
-        // A Stop or rollback bumps this, which drops wakes still queued behind another run.
+        // Stop, rollback, or close invalidates queued wakes and turns still starting.
         let wakeGeneration = 0;
         const publishedProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
@@ -3030,6 +3031,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
         const startTurn = Effect.fn("CursorAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            const startupGeneration = wakeGeneration;
             const current = yield* Ref.get(activeTurn);
             if (current !== null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -3133,6 +3135,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ...cursorMcpServers(mcpSession, additionalMcpServers),
               };
               for (const name of blocked) delete turnMcpServers[name];
+              if (startupGeneration !== wakeGeneration) {
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  refusedBeforePrompt: true,
+                  cause: "Cursor turn stopped during startup.",
+                });
+              }
               const sdkRun = yield* agent.session
                 .send({
                   message,
@@ -3381,15 +3393,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           },
           (effect, turnInput) =>
             effect.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isTurnStartError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );

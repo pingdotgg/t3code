@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
+  ProviderTurnId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -23,6 +24,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -3488,6 +3491,10 @@ describe("CursorAdapterV2", () => {
         });
         let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
         const sentWith: Array<Record<string, unknown> | undefined> = [];
+        const commandLoading = yield* Deferred.make<void>();
+        const releaseCommand = yield* Deferred.make<void>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let pauseCommand = false;
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           environment: {
@@ -3517,6 +3524,17 @@ describe("CursorAdapterV2", () => {
                     return Effect.die("sent");
                   },
                 };
+              }),
+          }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+            ...spawner,
+            spawn: (command) =>
+              Effect.gen(function* () {
+                if (pauseCommand) {
+                  yield* Deferred.succeed(commandLoading, undefined);
+                  yield* Deferred.await(releaseCommand);
+                }
+                return yield* spawner.spawn(command);
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd })),
@@ -3639,6 +3657,26 @@ describe("CursorAdapterV2", () => {
         yield* fileSystem.writeFileString(commandConfig, JSON.stringify({ mcpServers: {} }));
         yield* sendTurn(7);
         assert.deepEqual(sentWith[6], {});
+
+        pauseCommand = true;
+        const starting = yield* sendTurn(8).pipe(Effect.forkChild);
+        yield* Deferred.await(commandLoading);
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: ProviderTurnId.make("cursor-mcp-starting-turn"),
+          requestRuntimeRestart: true,
+        });
+        yield* Deferred.succeed(releaseCommand, undefined);
+        const stopped = yield* Fiber.join(starting);
+        assert.lengthOf(sentWith, 7, "Stop during command loading must not send the prompt");
+        assert.ok(Exit.isFailure(stopped));
+        const error = Cause.squash(stopped.cause);
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+        assert.isTrue(error.refusedBeforePrompt);
+        assert.equal(error.runId, RunId.make("cursor-mcp-run-8"));
+        pauseCommand = false;
+        yield* sendTurn(9);
+        assert.lengthOf(sentWith, 8, "a later turn can start after Stop");
       }).pipe(
         Effect.scoped,
         Effect.provide(
