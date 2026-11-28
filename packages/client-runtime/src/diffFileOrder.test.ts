@@ -283,6 +283,26 @@ describe("orderDiffFilesForReview", () => {
     ]);
   });
 
+  it("orders tests by the source beside them when another folder has the same name", () => {
+    expect(
+      order([
+        file("pkg-a/src/index.ts"),
+        file("pkg-a/src/utils.ts"),
+        file("pkg-b/src/index.ts", ['import { u } from "./utils";']),
+        file("pkg-b/src/utils.ts"),
+        file("pkg-b/src/index.test.ts"),
+        file("pkg-b/src/utils.test.ts"),
+      ]),
+    ).toEqual([
+      "pkg-a/src/index.ts",
+      "pkg-a/src/utils.ts",
+      "pkg-b/src/utils.ts",
+      "pkg-b/src/index.ts",
+      "pkg-b/src/utils.test.ts",
+      "pkg-b/src/index.test.ts",
+    ]);
+  });
+
   it("puts a test with no source in the diff after the ones that have theirs", () => {
     expect(order([file("src/orphan.spec.ts"), file("src/a.test.ts"), file("src/a.ts")])).toEqual([
       "src/a.ts",
