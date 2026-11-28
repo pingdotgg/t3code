@@ -23,6 +23,10 @@ import { ThreadRenameInput } from "./SidebarThreadRow";
 
 // Long enough for a state change to read as the Bot reacting, short enough not to keep painting.
 const REACTION_MS = 2000;
+// Now and then each avatar comes alive for a moment, then settles; never a running loop.
+const FIDGET_MS = 1600;
+const FIDGET_EVERY_MS = 7000;
+const FIDGET_SPREAD_MS = 4000;
 
 type ThreadContextMenuHandler = (
   threadRef: ScopedThreadRef,
@@ -66,6 +70,28 @@ function BotRow(props: {
     const timer = setTimeout(() => setReactingTo(null), REACTION_MS);
     return () => clearTimeout(timer);
   }, [reactingTo]);
+  const [fidgeting, setFidgeting] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer chain wakes the avatar briefly every few seconds
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const rest = () => {
+      timer = setTimeout(wake, FIDGET_EVERY_MS + Math.random() * FIDGET_SPREAD_MS);
+    };
+    const wake = () => {
+      if (document.hidden || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        rest();
+        return;
+      }
+      setFidgeting(true);
+      timer = setTimeout(() => {
+        setFidgeting(false);
+        rest();
+      }, FIDGET_MS);
+    };
+    // A random first wait spreads the Bots so they rarely move together.
+    timer = setTimeout(wake, Math.random() * (FIDGET_EVERY_MS + FIDGET_SPREAD_MS));
+    return () => clearTimeout(timer);
+  }, []);
   const avatar = (
     <BotAvatar
       threadId={props.bot.id}
@@ -73,8 +99,7 @@ function BotRow(props: {
       state={status.state}
       mood={status.mood}
       size={20}
-      idleMotion
-      live={hovered || reactingTo !== null}
+      live={hovered || reactingTo !== null || fidgeting}
     />
   );
   // An input cannot sit inside the row's button, so renaming swaps the row for a plain one.
