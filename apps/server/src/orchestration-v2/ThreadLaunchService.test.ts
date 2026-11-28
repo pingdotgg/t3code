@@ -4440,3 +4440,121 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+// A delegated child of a Scratch thread works in its parent's repository, not the plain copy.
+it.live.each(["", "docs"])(
+  "starts a delegated child in its task folder's worktree of the parent's repository (folder '%s')",
+  (subfolder) => {
+    const state: TaskFoldersTestState = {
+      workspaceRoot: "/unset",
+      trackedFolders: [],
+      thread: null,
+    };
+    const layerGit = GitVcsDriver.layer.pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-working-" })),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(
+      Layer.provide(layerGit),
+      Layer.orDie,
+    );
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const run = (cwd: string, ...args: ReadonlyArray<string>) =>
+        git
+          .execute({ operation: "launch-test", cwd, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const scratch = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-working-" }),
+      );
+      const session = path.join(scratch, "session");
+      yield* fileSystem.makeDirectory(session);
+      yield* run(session, "init", "-b", "master");
+      yield* run(session, "config", "user.email", "launch@example.test");
+      yield* run(session, "config", "user.name", "Launch");
+      yield* fileSystem.writeFileString(path.join(session, "NOTES.md"), "notes\n");
+      yield* fileSystem.makeDirectory(path.join(session, "docs"));
+      yield* fileSystem.writeFileString(path.join(session, "docs", "guide.md"), "guide\n");
+      yield* run(session, "add", ".");
+      yield* run(session, "commit", "-m", "notes");
+      const commit = yield* run(session, "rev-parse", "HEAD");
+      state.workspaceRoot = scratch;
+      state.trackedFolders = [{ path: session, name: "session" }];
+      const harness = makeHarness({ taskFolders: layerTaskFolders });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const taskFolders = yield* TaskFolders.TaskFolders;
+        const parent = yield* launches.launch(
+          launchInput({
+            command: "launch:scratch-parent",
+            thread: "thread:scratch-parent",
+            message: "Start",
+            workspace: { type: "existing_worktree", worktreePath: path.join(session, subfolder) },
+          }),
+        );
+        const parentRun = (yield* threads.getThreadProjection(parent.threadId)).runs[0]!;
+        const commandId = CommandId.make("launch:scratch-parent:delegate");
+        const delegated = yield* threads.dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId,
+          parentThreadId: parent.threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Edit NOTES.md",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: {
+            type: "worktree",
+            baseRef: commit,
+            startFromOrigin: false,
+            repositories: [{ path: session }],
+          },
+          completionWake: "always",
+        });
+        const childRun = delegated.storedEvents.find(
+          (stored) =>
+            stored.event.type === "run.created" && stored.event.threadId !== parent.threadId,
+        )!;
+        yield* launches.prepareRun({
+          commandId,
+          threadId: childRun.event.threadId,
+          runId: (childRun.event.payload as { readonly id: RunId }).id,
+        });
+        const { thread } = yield* preparationSettled(childRun.event.threadId);
+        const worktreePath = thread.worktreePath!;
+        const taskFolder = yield* taskFolders.find(worktreePath);
+        const checkout = taskFolder!.repositories[0]!.worktreePath;
+        assert.equal(worktreePath, path.join(checkout, subfolder));
+        assert.equal(yield* run(worktreePath, "rev-parse", "--show-toplevel"), checkout);
+        assert.equal(yield* run(worktreePath, "rev-parse", "HEAD"), commit);
+        assert.isTrue(yield* fileSystem.exists(path.join(checkout, "NOTES.md")));
+
+        // Another thread working in the folder keeps it; without one, the child's path takes it.
+        state.threadWorktreePaths = [taskFolder!.projectPath];
+        assert.isFalse(
+          yield* taskFolders.removeIfTaskFolder({
+            path: worktreePath,
+            force: true,
+            projectCommands: "permitted",
+          }),
+        );
+        assert.isTrue(yield* fileSystem.exists(checkout));
+        state.threadWorktreePaths = [worktreePath];
+        assert.isTrue(
+          yield* taskFolders.removeIfTaskFolder({
+            path: worktreePath,
+            force: true,
+            projectCommands: "permitted",
+          }),
+        );
+        assert.isFalse(yield* fileSystem.exists(taskFolder!.root));
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(layerGit), Effect.scoped);
+  },
+);

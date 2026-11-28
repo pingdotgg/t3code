@@ -23,6 +23,7 @@ import {
   type GitCommandError,
   type GitManagerServiceError,
   TaskFolderError,
+  type TaskFolder,
   TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -326,6 +327,30 @@ const make = Effect.gen(function* () {
 
   // The administrator's limit, fixed for the server's life as it is where turns start.
   const maxRuntimeMode = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+  /**
+   * A subagent works where its parent does: in its task folder's worktree of the repository the
+   * parent's folder is in (a Scratch thread's own repository), not the plain copy around it.
+   */
+  const parentRepositoryWorktree = Effect.fn("ThreadLaunchService.parentRepositoryWorktree")(
+    function* (threadId: ThreadId, taskFolder: TaskFolder) {
+      const lineage = (yield* threads.getThreadShell(threadId))?.lineage;
+      if (lineage?.relationshipToParent !== "subagent" || lineage.parentThreadId === null)
+        return undefined;
+      const parentCheckout = (yield* threads.getThreadShell(lineage.parentThreadId))?.worktreePath;
+      if (parentCheckout === undefined || parentCheckout === null) return undefined;
+      const repository = taskFolder.repositories.find((candidate) =>
+        isWithinRoot(path, path.resolve(parentCheckout), path.resolve(candidate.repositoryPath)),
+      );
+      if (repository === undefined) return undefined;
+      const mapped = path.join(
+        repository.worktreePath,
+        path.relative(path.resolve(repository.repositoryPath), path.resolve(parentCheckout)),
+      );
+      // A folder Git does not track (an empty one, say) is not in the worktree.
+      return (yield* fileSystem.exists(mapped)) ? mapped : repository.worktreePath;
+    },
+  );
+
   /**
    * Whether the project's own code may run for this preparation. An agent has it run only from a
    * thread in Full access: the thread it asked from, or the one being prepared when it named
@@ -930,10 +955,14 @@ const make = Effect.gen(function* () {
                     }),
                 })
                 .pipe(
-                  Effect.map((created) => ({
-                    path: created.taskFolder.projectPath,
-                    refName: created.branch,
-                  })),
+                  Effect.flatMap((created) =>
+                    parentRepositoryWorktree(threadId, created.taskFolder).pipe(
+                      Effect.map((working) => ({
+                        path: working ?? created.taskFolder.projectPath,
+                        refName: created.branch,
+                      })),
+                    ),
+                  ),
                   Effect.mapError(mapError(input, "provision-worktree", threadId)),
                 );
         worktreePath = worktree.path;

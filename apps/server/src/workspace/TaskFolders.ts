@@ -697,6 +697,13 @@ const make = Effect.gen(function* () {
   ) {
     // Clients send `HEAD` when no base was chosen; as a name it would match `origin/HEAD`.
     const wanted = baseBranch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+    // A delegated child names its parent's commit; only the repository holding it starts there.
+    if (
+      wanted !== undefined &&
+      /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(wanted) &&
+      (yield* git.hasCommit({ cwd, refName: wanted }))
+    )
+      return { refName: wanted, baseRefName: wanted };
     const defaultBranch =
       wanted !== undefined &&
       wanted !== "" &&
@@ -1534,8 +1541,23 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const taskFolder = yield* store.findContaining(input.path);
     const target = path.resolve(input.path);
-    if (taskFolder === null || (target !== taskFolder.root && target !== taskFolder.projectPath))
-      return false;
+    if (taskFolder === null) return false;
+    // A thread can work inside one of the folder's repositories (a delegated child of a Scratch
+    // thread). Its path takes the folder only when no other thread works anywhere in it.
+    if (target !== taskFolder.root && target !== taskFolder.projectPath) {
+      const inRepository = taskFolder.repositories.some((repository) =>
+        isWithinRoot(path, target, path.resolve(repository.worktreePath)),
+      );
+      if (!inRepository) return false;
+      const bindings = yield* projections
+        .getThreadWorktreePaths({ includeArchived: true })
+        .pipe(Effect.mapError(fail("remove", "Could not read the threads' folders")));
+      const shared = bindings.some((binding) => {
+        const bound = path.resolve(binding.worktreePath);
+        return bound !== target && isWithinRoot(path, bound, taskFolder.root);
+      });
+      if (shared) return false;
+    }
     const { kept } = yield* removeLocked(taskFolder, {
       force: input.force,
       forget: true,

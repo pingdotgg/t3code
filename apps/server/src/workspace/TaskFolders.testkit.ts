@@ -4,6 +4,7 @@ import {
   ProjectId,
   type ProjectTrackedFolder,
   type TaskFolderError,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,8 @@ export interface TaskFoldersTestState {
   workspaceRoot: string;
   trackedFolders: ReadonlyArray<ProjectTrackedFolder>;
   thread: { worktreePath: string | null; branch: string | null } | null;
+  /** Other threads' folders, as removal reads them. */
+  threadWorktreePaths?: ReadonlyArray<string>;
   /** Runs after each read of an approval, in the fiber that asked. */
   onApprovalRead?: Effect.Effect<void>;
   /** Runs after each listing of a repository's branches, in the fiber that asked. */
@@ -135,6 +138,13 @@ export const layerTaskFoldersWithGit = (
             ),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadWorktreePaths: () =>
+            Effect.succeed(
+              (state.threadWorktreePaths ?? []).map((worktreePath, index) => ({
+                threadId: ThreadId.make(`thread:bound-${index}`),
+                worktreePath,
+              })),
+            ),
           getThreadShell: () =>
             Effect.succeed(
               state.thread === null
