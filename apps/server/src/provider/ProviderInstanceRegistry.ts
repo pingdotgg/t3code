@@ -481,6 +481,19 @@ const makeReconcile = <R>(input: {
             parkedSnapshot(instanceId, entry) === undefined
           );
         });
+        const retire = Effect.fnUntraced(function* (ids: ReadonlyArray<ProviderInstanceId>) {
+          if (ids.length === 0) return;
+          const remaining = new Map(yield* Ref.get(state.entries));
+          for (const id of ids) remaining.delete(id);
+          yield* Ref.set(state.entries, remaining);
+          for (const id of ids) {
+            const live = previousEntries.get(id);
+            if (live) yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
+          }
+        });
+        // Removed ids have no replacement to wait for, so they stop routing before a vault prompt.
+        yield* retire(removedIds);
+
         const builds = yield* restore(
           Effect.gen(function* () {
             // Read every secret the builds below need in one go, so a vault unlocks once.
@@ -514,21 +527,14 @@ const makeReconcile = <R>(input: {
             );
             return new Map(prepared);
           }),
+        ).pipe(
+          Effect.onInterrupt(() =>
+            removedIds.length > 0 ? PubSub.publish(state.changes, undefined) : Effect.void,
+          ),
         );
 
-        // Once scopes retire, finish publishing their replacements even if the caller disconnects.
-        const retiredIds = [...removedIds, ...replacedIds];
-        if (retiredIds.length > 0) {
-          const remaining = new Map(previousEntries);
-          for (const id of retiredIds) remaining.delete(id);
-          yield* Ref.set(state.entries, remaining);
-        }
-        for (const id of retiredIds) {
-          const live = previousEntries.get(id);
-          if (live) {
-            yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
-          }
-        }
+        // Once replaced scopes retire, finish publishing replacements even if the caller disconnects.
+        yield* retire([...replacedIds]);
 
         const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
         const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
@@ -694,7 +700,8 @@ export const makeProviderInstanceRegistry = Effect.fn(
       for (const [rawInstanceId, entry] of targets) {
         const instanceId = ProviderInstanceId.make(rawInstanceId);
         const current = live.get(instanceId);
-        if (current === undefined) {
+        // An interrupted save can leave the old instance live; its environment is not this entry's.
+        if (current === undefined || !runtimeEqual(current.entry, entry)) {
           rebuild.add(instanceId);
           if (checked !== undefined) {
             const { secrets, unreadable } = yield* readInstanceSecrets(
