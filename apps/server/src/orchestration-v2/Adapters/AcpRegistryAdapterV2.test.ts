@@ -2951,7 +2951,7 @@ describe("AcpRegistryAdapterV2", () => {
 
   describe("Devin /compact", () => {
     // Devin 3000.14 answers `/compact` at once, then reports the summary through its extension.
-    const devinCompaction = (status: string) => [
+    const devinCompactionStarted = [
       ...claudeFrames.open.map((entry) =>
         entry.frame.method === "initialize" && entry.type === "emit_inbound"
           ? {
@@ -2988,6 +2988,9 @@ describe("AcpRegistryAdapterV2", () => {
         },
       },
       claudeMarker("compaction started"),
+    ];
+    const devinCompaction = (status: string) => [
+      ...devinCompactionStarted,
       {
         type: "emit_inbound",
         frame: {
@@ -3034,6 +3037,52 @@ describe("AcpRegistryAdapterV2", () => {
           ),
           status === "completed",
         );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    // Devin answers Stop's session/cancel by failing the compaction (verified live against
+    // Devin 3000.14), and that notice releases the waiter: Stop settles the turn instead of
+    // timing out on a wait that otherwise ends at the ceiling.
+    it.effect("settles Stop during compaction as interrupted", () =>
+      Effect.gen(function* () {
+        const session = yield* openClaudeReplaySession(
+          [
+            ...devinCompactionStarted,
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "notification",
+                method: "session/cancel",
+                params: { sessionId: CLAUDE_ROOT_SESSION },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "_cognition.ai/compaction",
+                params: { status: "failed", sessionId: CLAUDE_ROOT_SESSION },
+              },
+            },
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          false,
+          "devin",
+        );
+        const input = session.turnInput(1);
+        yield* session.runtime
+          .startTurn({ ...input, message: { ...input.message, text: "/compact" } })
+          .pipe(Effect.forkScoped);
+        const started = yield* session.throughMarker("compaction started");
+        const running = started.findLast((event) => event.type === "provider_turn.updated");
+        if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+        yield* session.runtime.interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: running.providerTurn.id,
+        });
+        assert.equal((yield* session.terminal).status, "interrupted");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
