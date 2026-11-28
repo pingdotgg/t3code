@@ -3893,7 +3893,7 @@
   "a265d829e76c30fb": "{program} ausgeführt",
   "3b8635b46a63c2f0": "Von dir nach {duration} gestoppt",
   "abebe26bc3e613e8": "Du hast diese Antwort gestoppt",
-  "cf180966ebd1c307": "{duration} gearbeitet",
+  "69c895518032a308": "Verstrichene Zeit: {duration}",
   "ea45064fb0582c38": "Gearbeitet",
   "cbf71f6bf85f65e4": "{duration} weitergearbeitet",
   "8571e67ea1596019": "Weitergearbeitet",
@@ -4616,8 +4616,8 @@
   "e81991d4a58ce959": "Setup-Skript",
   "512e5f7d08325a74": "Die Einrichtung im Hintergrund läuft noch: {scriptName}. Fortschritt anzeigen.",
   "ff6edf13509031be": "Worktree wird eingerichtet…",
-  "eb06160a98c4dd18": [
-    "Arbeitet seit ",
+  "4415a92a506827b7": [
+    "Verstrichene Zeit: ",
     {
       "t": "WorkingTimer",
       "i": 1

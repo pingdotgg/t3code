@@ -1228,7 +1228,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    expect(foldRow?.label).toBe("Worked for 22s");
+    expect(foldRow?.label).toBe("Elapsed 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -1457,7 +1457,7 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "turn-fold",
     );
     expect(foldRow?.runId).toBe("turn-1");
-    expect(foldRow?.label).toBe("Worked for 12s");
+    expect(foldRow?.label).toBe("Elapsed 12s");
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
@@ -1567,7 +1567,7 @@ describe("deriveMessagesTimelineRows", () => {
             "steer",
           ]);
           expect(rows[1]?.createdAt).toBe(time(0));
-          if (!isWorking) expect(rows[1]).toMatchObject({ label: "Worked for 20s", expanded });
+          if (!isWorking) expect(rows[1]).toMatchObject({ label: "Elapsed 20s", expanded });
           expect(rows.some((row) => row.id === "final")).toBe(true);
           expect(rows.some((row) => row.id === "work")).toBe(isWorking || expanded);
         }
@@ -1642,7 +1642,7 @@ describe("deriveMessagesTimelineRows", () => {
       "final",
       "late-subagent",
     ]);
-    expect(collapsed[1]).toMatchObject({ label: "Worked for 30s" });
+    expect(collapsed[1]).toMatchObject({ label: "Elapsed 30s" });
     expect(collapsed[3]).toMatchObject({ label: "Continued for 20s", createdAt: time(10) });
 
     expect(rows(new Set([segmentKey])).map((row) => row.id)).toEqual([
@@ -2200,10 +2200,10 @@ describe("deriveMessagesTimelineRows", () => {
     const settled = rows({ resume: "completed", working: false });
     expect(shape(settled)).toEqual([
       "user:launch",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "assistant:resume-answer",
     ]);
 
@@ -2216,17 +2216,17 @@ describe("deriveMessagesTimelineRows", () => {
     });
     expect(shape(expanded)).toEqual([
       "user:launch",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "work-toggle",
       "assistant:launch-answer",
       "user:resume",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "assistant:resume-answer",
     ]);
 
     expect(shape(rows({ resume: "running", working: true }))).toEqual([
       "user:launch",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "assistant:launch-answer",
       "user:resume",
       "working",
@@ -2235,7 +2235,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(shape(rows({ resume: "failed", working: false }))).toEqual([
       "user:launch",
-      "fold:Worked for 8s",
+      "fold:Elapsed 8s",
       "assistant:launch-answer",
       "user:resume",
       "work",
@@ -2953,7 +2953,7 @@ describe("deriveMessagesTimelineRows", () => {
 });
 
 describe("v2 run and attempt history", () => {
-  it("folds settled-turn commentary and work behind a Worked-for row", () => {
+  it("folds settled-turn commentary and work behind an elapsed-time row", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -2998,10 +2998,10 @@ describe("v2 run and attempt history", () => {
       {
         id: "provider-recovered-entry",
         kind: "work" as const,
-        createdAt: "2026-01-01T00:00:09Z",
+        createdAt: "2026-01-01T00:10:33Z",
         entry: {
           id: "provider-recovered",
-          createdAt: "2026-01-01T00:00:09Z",
+          createdAt: "2026-01-01T00:10:33Z",
           runId: "turn-1" as never,
           label: "Provider recovered (2/5 retries)",
           tone: "info" as const,
@@ -3012,7 +3012,7 @@ describe("v2 run and attempt history", () => {
       {
         id: "thread-created-entry",
         kind: "event" as const,
-        createdAt: "2026-01-01T00:00:10Z",
+        createdAt: "2026-01-01T00:10:34Z",
         projectedItem: {
           item: {
             type: "thread_created",
@@ -3022,14 +3022,14 @@ describe("v2 run and attempt history", () => {
       {
         id: "assistant-final-entry",
         kind: "message" as const,
-        createdAt: "2026-01-01T00:00:20Z",
+        createdAt: "2026-01-01T00:19:27Z",
         message: {
           id: "assistant-final" as never,
           role: "assistant" as const,
           text: "Done",
           runId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:20Z",
-          updatedAt: "2026-01-01T00:00:22Z",
+          createdAt: "2026-01-01T00:19:27Z",
+          updatedAt: "2026-01-01T00:19:29Z",
           streaming: false,
         },
       },
@@ -3037,6 +3037,12 @@ describe("v2 run and attempt history", () => {
 
     const collapsedRows = deriveMessagesTimelineRows({
       timelineEntries,
+      latestRun: {
+        runId: RunId.make("turn-1"),
+        status: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:19:29Z",
+      },
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
@@ -3048,7 +3054,7 @@ describe("v2 run and attempt history", () => {
     );
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    expect(foldRow?.label).toBe("Worked for 22s");
+    expect(foldRow?.label).toBe("Elapsed 19m 29s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -3694,7 +3700,7 @@ it.each([
     id: "fold",
     runId: RunId.make("run"),
     createdAt: "2026-01-01T00:00:00Z",
-    label: "Worked for 1m",
+    label: "Elapsed 1m",
     expanded: true,
     ...(before === undefined ? {} : { deferredWorkItemIds: before }),
   };

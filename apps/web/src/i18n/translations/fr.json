@@ -3891,7 +3891,7 @@
   "a265d829e76c30fb": "{program} exécuté",
   "3b8635b46a63c2f0": "Vous avez arrêté après {duration}",
   "abebe26bc3e613e8": "Vous avez arrêté cette réponse",
-  "cf180966ebd1c307": "A travaillé pendant {duration}",
+  "69c895518032a308": "Temps écoulé : {duration}",
   "ea45064fb0582c38": "A travaillé",
   "cbf71f6bf85f65e4": "A continué pendant {duration}",
   "8571e67ea1596019": "A continué",
@@ -4614,8 +4614,8 @@
   "e81991d4a58ce959": "Script de configuration",
   "512e5f7d08325a74": "La configuration en arrière-plan est toujours en cours : {scriptName}. Afficher la progression.",
   "ff6edf13509031be": "Configuration du worktree…",
-  "eb06160a98c4dd18": [
-    "Travaille depuis ",
+  "4415a92a506827b7": [
+    "Temps écoulé : ",
     {
       "t": "WorkingTimer",
       "i": 1
