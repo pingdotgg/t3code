@@ -190,8 +190,10 @@ export function parseGitRemoteRepository(
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  // SCP sends a literal path, so only a literal .git is a suffix.
-  const path = canonicalRepositoryPath(dropSuffix(scpPath).replace(/\/+$/, ""));
+  // SCP sends a literal path. Strip the literal suffix and escape percent signs before URL-style normalization.
+  const path = canonicalRepositoryPath(
+    dropSuffix(scpPath).replace(/\/+$/, "").replaceAll("%", "%25"),
+  );
   if (!scpHost.startsWith("[")) return { host: scpHost, path };
   try {
     // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
