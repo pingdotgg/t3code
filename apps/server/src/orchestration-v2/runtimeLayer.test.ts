@@ -12909,7 +12909,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "scheduled-task", "user"] as const)(
+  it.effect.each(["notification", "scheduled-task", "agent", "owner-client", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -12945,8 +12945,17 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "notification" ? "agent" : "user",
-          creationSource: kind === "notification" ? "provider" : "web",
+          createdBy:
+            kind === "notification" || kind === "agent" || kind === "owner-client"
+              ? "agent"
+              : "user",
+          creationSource:
+            kind === "notification"
+              ? "provider"
+              : kind === "agent" || kind === "owner-client"
+                ? "mcp"
+                : "web",
+          ...(kind === "agent" ? { senderThreadId: ThreadId.make("sending-agent") } : {}),
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12961,7 +12970,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
-        if (kind === "user") {
+        if (kind === "user" || kind === "owner-client") {
           assert.isNull(thread.snoozedUntil);
         } else {
           assert.isNotNull(thread.snoozedUntil);
