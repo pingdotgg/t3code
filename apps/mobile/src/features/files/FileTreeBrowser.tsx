@@ -231,13 +231,25 @@ export function FileTreeBrowser(props: {
       onPressDirectory={toggleDirectory}
       onPreviewFile={onPreviewFile}
       onPressFile={handleSelectFile}
-      scriptAction={item.node.kind === "file" ? scriptAction(
-        props.scriptPathPrefix ? `${props.scriptPathPrefix}/${item.node.path}` : item.node.path,
-      ) : undefined}
+      scriptAction={
+        item.node.kind === "file"
+          ? scriptAction(
+              props.scriptPathPrefix
+                ? `${props.scriptPathPrefix}/${item.node.path}`
+                : item.node.path,
+            )
+          : undefined
+      }
     />
   );
 
-  const extraData = { expandedPaths, loadingDirectories, selectedPath, scriptAction, scriptPathPrefix: props.scriptPathPrefix };
+  const extraData = {
+    expandedPaths,
+    loadingDirectories,
+    selectedPath,
+    scriptAction,
+    scriptPathPrefix: props.scriptPathPrefix,
+  };
 
   // Keep the list as direct screen content so UIKit can apply header insets.
   return (

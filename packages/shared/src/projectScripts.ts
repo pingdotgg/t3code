@@ -1,4 +1,5 @@
-import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+import { MAX_SCRIPT_ID_LENGTH, type ProjectId, type ProjectScript, type ServerSettings } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
 const FILE_SCRIPT_RUNNERS: Readonly<Record<string, string>> = {
   sh: "sh",
@@ -27,7 +28,7 @@ export function projectScriptForFile(path: string): ProjectScript | null {
   const command = projectScriptFileCommand(path);
   if (command === null) return null;
   return {
-    id: `file-${crypto.randomUUID().slice(0, 18)}`,
+    id: SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, MAX_SCRIPT_ID_LENGTH),
     name: path.split("/").at(-1) ?? path,
     command,
     icon: "play",

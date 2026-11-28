@@ -38,7 +38,10 @@ describe("projectScripts helpers", () => {
     expect(projectScriptFileCommand(path)).toBe(command);
     const script = projectScriptForFile(path);
     if (command === null) expect(script).toBeNull();
-    else expect(script).toMatchObject({ command, runOnWorktreeCreate: false, icon: "play" });
+    else {
+      expect(script).toMatchObject({ command, runOnWorktreeCreate: false, icon: "play" });
+      expect(script && commandForProjectScript(script.id)).not.toBeNull();
+    }
   });
 
   it.each(["install-javascript-dependencies", "A", "a.b", "a b", "-a", "", "a".repeat(25)])(

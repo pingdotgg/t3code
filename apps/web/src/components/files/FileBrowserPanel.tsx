@@ -216,7 +216,7 @@ export default function FileBrowserPanel({
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canEditScript = useAtomValue(
     serverEnvironment.editFileProjectScript.permissionAtom(environmentId, {
-      patch: { projectScriptOverrides: { [projectId ?? ""]: [] } },
+      patch: { defaultProjectScripts: [] },
     }),
   );
   const scripts = project && settings ? resolveProjectScripts(settings, project) : [];

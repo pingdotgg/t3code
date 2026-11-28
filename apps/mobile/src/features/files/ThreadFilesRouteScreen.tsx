@@ -694,7 +694,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   );
   const metadataPending = !metadata.isSuccess && metadata.error === null;
   const directoryPath = metadata.data?.kind === "directory" ? targetPath : null;
-  const scriptPathPrefix = directoryPath && cwd ? workspaceRelativeFilePath(directoryPath, cwd) : null;
+  const scriptPathPrefix =
+    directoryPath && cwd ? workspaceRelativeFilePath(directoryPath, cwd) : null;
   const [searchQuery, setSearchQuery] = useState("");
   const entriesQuery = useFileTreeEntries({
     environmentId,

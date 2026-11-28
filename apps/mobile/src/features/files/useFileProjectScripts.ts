@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { AuthOrchestrationOperateScope, AuthSettingsWriteScope, type ServerSettings } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
 import {
   projectScriptFileCommand,
@@ -22,7 +26,7 @@ export function useFileProjectScripts(project: EnvironmentProject | null | undef
   );
   const canEdit = useAtomValue(
     serverEnvironment.editFileProjectScript.permissionAtom(project?.environmentId ?? null, {
-      patch: { projectScriptOverrides: { [project?.id ?? ""]: [] } },
+      patch: { defaultProjectScripts: [] },
     }),
   );
   const edit = useAtomCommand(serverEnvironment.editFileProjectScript);
@@ -30,7 +34,10 @@ export function useFileProjectScripts(project: EnvironmentProject | null | undef
     project?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canWriteSettings = useEnvironmentScope(project?.environmentId ?? null, AuthSettingsWriteScope);
+  const canWriteSettings = useEnvironmentScope(
+    project?.environmentId ?? null,
+    AuthSettingsWriteScope,
+  );
   const scripts = project && settings ? resolveProjectScripts(settings, project) : [];
   const byCommand = new Map(scripts.map((script) => [script.command, script]));
   return (path: string) => {
