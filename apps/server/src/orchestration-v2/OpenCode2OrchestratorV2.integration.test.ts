@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the rule builders below need a sync hash.
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -63,7 +65,11 @@ const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntr
 /** MCP rules are last-match-wins; allow this thread after denying all T3 servers. */
 const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+  {
+    action: `t3-code-${NodeCrypto.createHash("sha256").update(`thread:${name}`).digest("hex").slice(0, 16)}_*`,
+    resource: "*",
+    effect: "allow",
+  },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 
