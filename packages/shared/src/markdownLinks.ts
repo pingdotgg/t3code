@@ -1,3 +1,4 @@
+import { literalRecoveredListItemLines } from "./markdownListIndentation.ts";
 import type { mediaKindFromPath } from "./mediaPreview.ts";
 import {
   isNetworkPath,
@@ -515,7 +516,7 @@ const SETEXT_UNDERLINE_PATTERN = /^(?:=+|-+) *$/;
 const PARAGRAPH_INTERRUPTION_PATTERN =
   /^(?:>|`{3,}(?![^`]*`)|~{3,}|(?:[-+*]|\d{1,9}[.)])(?: |$)|#{1,6}(?: |$)|([-*_]) *(?:\1 *){2,}$)/;
 
-const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(?:\\[\\[\]]|\\(?![\\[\]])|[^\s\\[\]]){1,999}\]: */;
+const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(?:\\[\\[\]]|\\(?![\\[\]])|[^ \t\r\n\\[\]]){1,999}\]: */;
 const TABLE_DELIMITER_PATTERN = /^\|? *:?-+:? *(?:\| *:?-+:? *)*\|? *$/;
 
 const BLOCKQUOTE = 0;
@@ -567,7 +568,8 @@ function visitMarkdownLines(
   // Depth of an item that has only its marker so far; a blank line next ends it.
   let emptyItemDepth = 0;
   let lineStart = 0;
-  for (const line of text.split("\n")) {
+  let literalListItems: ReadonlySet<number> | undefined;
+  for (const [index, line] of text.split("\n").entries()) {
     const previousTable = table;
     table = undefined;
     const start = lineStart;
@@ -713,7 +715,11 @@ function visitMarkdownLines(
         paragraph = false;
         readIndent();
         // The renderer recovers same-line indented list code with whitespace left in its value.
-        if (!emptyItem && padding > 5) {
+        if (
+          !emptyItem &&
+          padding > 5 &&
+          !(literalListItems ??= literalRecoveredListItemLines(text)).has(index + 1)
+        ) {
           containers.push(RECOVERED_LIST_CODE);
           visit(line, start, false);
           paragraph = true;

@@ -322,6 +322,14 @@ describe("extractMarkdownLinkHrefs", () => {
       "-      Example\n\n      [a](src/a.ts)\n\n          [code](src/code.ts)\n- [b](src/b.ts)",
       ["src/a.ts", "src/b.ts"],
     ],
+    [
+      "-      [index.ts](src/a/index.ts) | heading\n      -- | --\n\n[index.ts](src/b/index.ts)\n\n-      [notes](src/notes.ts)",
+      ["src/b/index.ts", "src/notes.ts"],
+    ],
+    [
+      "[^a\u00a0b]: Intro\n\n    [index.ts](src/a/index.ts)\n\nSee [^a\u00a0b] and [index.ts](src/b/index.ts)",
+      ["src/a/index.ts", "src/b/index.ts"],
+    ],
   ])("excludes indented code destinations in %j", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });

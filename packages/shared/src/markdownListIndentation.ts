@@ -1,3 +1,6 @@
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { keepLeadingWhitespace, keepsLeadingWhitespace } from "./markdownLeadingWhitespace.ts";
 import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 
@@ -207,3 +210,25 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
 }
 
 export const remarkNormalizeListItemIndentation = attachListItemIndentationNormalizer;
+
+const listRecoveryParser = unified().use(remarkParse).use(remarkGfm).freeze();
+
+/** Returns the original line numbers of recovered list items rendered as literal text. */
+export function literalRecoveredListItemLines(markdown: string): ReadonlySet<number> {
+  const tree = listRecoveryParser.parse(markdown);
+  const items: MarkdownAstNode[] = [];
+  const collect = (node: MarkdownAstNode) => {
+    if (node.type === "listItem") items.push(node);
+    node.children?.forEach(collect);
+  };
+  collect(tree);
+  attachListItemIndentationNormalizer.call(listRecoveryParser)(tree, { value: markdown });
+  const lines = new Set<number>();
+  for (const item of items) {
+    const line = item.position?.start?.line;
+    if (line !== undefined && item.children?.some((child) => child.type === "text")) {
+      lines.add(line);
+    }
+  }
+  return lines;
+}
