@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   IssueTrackerAccountId,
@@ -162,12 +164,22 @@ function makeService(input: {
   readonly readBindings?: ReturnType<
     IssueTrackerBindings.IssueTrackerBindingsRepository["Service"]["list"]
   >;
+  readonly resolveRepository?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
+  /** Folders that hold their own `.git`. */
+  readonly repositories?: ReadonlyArray<string>;
 }) {
   return IssueService.IssueService.pipe(
     Effect.provide(
       IssueService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            FileSystem.layerNoop({
+              exists: (target) =>
+                Effect.succeed(
+                  (input.repositories ?? []).some((folder) => target === `${folder}/.git`),
+                ),
+            }),
+            Path.layer,
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
               list: () =>
                 input.readBindings ??
@@ -192,7 +204,7 @@ function makeService(input: {
                 ),
             }),
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-              resolve: () => Effect.succeed(null),
+              resolve: input.resolveRepository ?? (() => Effect.succeed(null)),
             }),
           ),
         ),
@@ -221,6 +233,144 @@ describe("IssueService", () => {
         tracker: "azure-devops",
         host: "dev.azure.com",
         scope: "acme/Web App",
+      });
+    }),
+  );
+
+  it.effect(
+    "lists and serves the issues of a project's tracked repositories when its root is no repository",
+    () =>
+      Effect.gen(function* () {
+        const listed: string[] = [];
+        const read: string[] = [];
+        const workspace: OrchestrationProjectShell = {
+          ...project({ id: "workspace" }),
+          trackedFolders: [
+            { path: "/w/workspace/web", name: "web", discovered: true },
+            { path: "/w/workspace/api", name: "api", discovered: true },
+            // Added by hand: plain files inside another repository, which git resolves upward.
+            { path: "/w/other/docs", name: "docs" },
+          ],
+        };
+        const identities = new Map([
+          ["/w/workspace/web", project({ id: "web", repository: "acme/web" }).repositoryIdentity],
+          ["/w/workspace/api", project({ id: "api", repository: "acme/api" }).repositoryIdentity],
+          ["/w/other/docs", project({ id: "other", repository: "acme/other" }).repositoryIdentity],
+        ]);
+        const service = yield* makeService({
+          projects: [workspace],
+          trackers: [
+            fakeTracker({
+              listIssues: (input) =>
+                Effect.sync(() => {
+                  listed.push(`${input.scope} ${input.cwd}`);
+                  return {
+                    items: [issue(input.scope === "acme/web" ? "1" : "2")],
+                    nextCursor: null,
+                  };
+                }),
+              getIssue: (input) =>
+                Effect.sync(() => {
+                  read.push(`${input.scope} ${input.cwd}`);
+                  return issue(input.key);
+                }),
+            }),
+          ],
+          resolveRepository: (cwd) => Effect.succeed(identities.get(cwd) ?? null),
+          repositories: ["/w/workspace/web", "/w/workspace/api"],
+        });
+
+        const result = yield* service.list({ state: "open" });
+        expect(listed.toSorted()).toEqual([
+          "acme/api /w/workspace/api",
+          "acme/web /w/workspace/web",
+        ]);
+        expect(
+          result.entries.map((entry) => [entry.scope, entry.key, entry.projectId]).toSorted(),
+        ).toEqual([
+          ["acme/api", "2", "workspace"],
+          ["acme/web", "1", "workspace"],
+        ]);
+        expect(result.trackers).toMatchObject([{ host: "github.com", projectCount: 1 }]);
+
+        const detail = yield* service.detail({
+          projectId: "workspace" as ProjectId,
+          tracker: GITHUB,
+          scope: "acme/api",
+          key: "2",
+        });
+        expect(detail).toMatchObject({ scope: "acme/api", writable: true });
+        expect(read).toEqual(["acme/api /w/workspace/api"]);
+
+        // A bare key could be either repository's, so it must name one.
+        const bare = yield* service
+          .projectScope("workspace" as ProjectId, { key: "7" })
+          .pipe(Effect.result);
+        expect(bare).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "IssueOperationError", reason: "not-found" },
+        });
+        expect(
+          yield* service.projectScope("workspace" as ProjectId, { key: "7", scope: "acme/web" }),
+        ).toMatchObject({ scope: "acme/web" });
+        // Listing names no key, so it stays reachable (the MCP list_issues tool checks this first).
+        yield* service.projectScope("workspace" as ProjectId);
+      }),
+  );
+
+  it.effect("refuses a scope that names repositories on two hosts", () =>
+    Effect.gen(function* () {
+      const identities = new Map([
+        ["/w/workspace/a", project({ id: "a", repository: "acme/web" }).repositoryIdentity],
+        [
+          "/w/workspace/b",
+          project({ id: "b", repository: "acme/web", host: "ghe.acme.test" }).repositoryIdentity,
+        ],
+      ]);
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "workspace" }),
+            trackedFolders: [
+              { path: "/w/workspace/a", name: "a", discovered: true },
+              { path: "/w/workspace/b", name: "b", discovered: true },
+            ],
+          },
+        ],
+        trackers: [fakeTracker()],
+        resolveRepository: (cwd) => Effect.succeed(identities.get(cwd) ?? null),
+        repositories: ["/w/workspace/a", "/w/workspace/b"],
+      });
+      const result = yield* service
+        .projectScope("workspace" as ProjectId, { scope: "acme/web" })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "IssueOperationError", reason: "not-found" },
+      });
+    }),
+  );
+
+  it.effect("keeps a bare key on the project's own repository when it also tracks others", () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "web", repository: "acme/web" }),
+            trackedFolders: [{ path: "/w/web/api", name: "api", discovered: true }],
+          },
+        ],
+        trackers: [fakeTracker()],
+        resolveRepository: (cwd) =>
+          Effect.succeed(
+            cwd === "/w/web/api"
+              ? (project({ id: "api", repository: "acme/api" }).repositoryIdentity ?? null)
+              : null,
+          ),
+        repositories: ["/w/web/api"],
+      });
+      expect(yield* service.projectScope("web" as ProjectId, { key: "7" })).toMatchObject({
+        scope: "acme/web",
       });
     }),
   );

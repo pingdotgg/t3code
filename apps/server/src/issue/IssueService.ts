@@ -5,11 +5,13 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import {
   IssueOperationError,
   IssueTrackerKind,
@@ -118,6 +120,8 @@ interface ProjectTrackerBinding {
 interface SupportedProject extends ProjectTrackerBinding {
   readonly project: OrchestrationProjectShell;
   readonly api: IssueTrackerApi;
+  /** Read from one of the project's tracked folders rather than its own root. */
+  readonly tracked: boolean;
 }
 
 /**
@@ -244,6 +248,8 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const details = yield* Cache.makeWith((read: DetailRead) => read.lookup, {
     capacity: DETAIL_CACHE_CAPACITY,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
@@ -268,22 +274,58 @@ const make = Effect.gen(function* () {
     }));
   };
 
+  // A tracked folder deeper inside another repository is plain files, not a repository of its own.
+  const trackedRepositories = (project: OrchestrationProjectShell) =>
+    Effect.filter(
+      project.trackedFolders ?? [],
+      (folder) =>
+        fileSystem.exists(path.join(folder.path, ".git")).pipe(Effect.orElseSucceed(() => false)),
+      { concurrency: SCOPE_CONCURRENCY },
+    );
+
   /**
    * Where a project's issues live: its bound standalone tracker, its git host's, or both. The
-   * tracker bound in Settings leads, as the one the user chose for the project.
+   * tracker bound in Settings leads, as the one the user chose for the project. Tracked folders
+   * that are repositories of their own add their git host's, read through their own checkout.
    */
   const resolveProjectTracker = (
     project: OrchestrationProjectShell,
     binding: IssueTrackerProjectBinding | undefined,
   ) =>
-    (project.repositoryIdentity != null
-      ? Effect.succeed(project.repositoryIdentity)
-      : repositoryIdentities.resolve(project.workspaceRoot)
-    ).pipe(
-      Effect.map((repositoryIdentity) => {
-        const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
-        return [...resolveStandaloneBindings(binding), ...gitHost];
-      }),
+    trackedRepositories(project).pipe(
+      Effect.flatMap((folders) =>
+        Effect.forEach(
+          [
+            { checkout: project, tracked: false },
+            ...folders.map((folder) => ({
+              checkout: { ...project, workspaceRoot: folder.path, repositoryIdentity: null },
+              tracked: true,
+            })),
+          ],
+          ({ checkout, tracked }) =>
+            (checkout.repositoryIdentity != null
+              ? Effect.succeed(checkout.repositoryIdentity)
+              : repositoryIdentities.resolve(checkout.workspaceRoot)
+            ).pipe(
+              Effect.map((repositoryIdentity) =>
+                resolveGitHostBindings({ ...checkout, repositoryIdentity }).map((gitHost) => ({
+                  project: checkout,
+                  tracked,
+                  ...gitHost,
+                })),
+              ),
+            ),
+          { concurrency: SCOPE_CONCURRENCY },
+        ),
+      ),
+      Effect.map((gitHosts) => [
+        ...resolveStandaloneBindings(binding).map((standalone) => ({
+          project,
+          tracked: false,
+          ...standalone,
+        })),
+        ...gitHosts.flat(),
+      ]),
     );
 
   const listProjects = (filter: {
@@ -325,12 +367,7 @@ const make = Effect.gen(function* () {
           );
           return yield* Effect.forEach(
             shells,
-            (project) =>
-              resolveProjectTracker(project, bound.get(project.id)).pipe(
-                Effect.map((candidates) =>
-                  candidates.map((candidate) => ({ project, ...candidate })),
-                ),
-              ),
+            (project) => resolveProjectTracker(project, bound.get(project.id)),
             { concurrency: SCOPE_CONCURRENCY },
           );
         }),
@@ -857,16 +894,31 @@ const make = Effect.gen(function* () {
     }
     const named = select?.scope?.trim().toLowerCase();
     const prefix = select?.key?.toLowerCase();
-    const own =
+    const scopes = [...new Set(supported.map((candidate) => candidate.scope))];
+    const candidates =
       named === undefined
-        ? (supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
-          supported[0])
-        : supported.find((candidate) => candidate.scope.toLowerCase() === named);
+        ? supported
+        : supported.filter((candidate) => candidate.scope.toLowerCase() === named);
+    const repositories = [
+      ...new Set(candidates.map((candidate) => `${candidate.host}/${candidate.scope}`)),
+    ];
+    // Several repositories, all tracked folders or one path on several hosts, could own the key.
+    const own =
+      (named === undefined
+        ? supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`))
+        : undefined) ??
+      candidates.find((candidate) => !candidate.tracked) ??
+      ((named === undefined && prefix === undefined) || repositories.length === 1
+        ? candidates[0]
+        : undefined);
     if (own === undefined) {
       return yield* new IssueOperationError({
         operation: "scope",
         reason: "not-found",
-        detail: `This project does not track ${select?.scope?.trim()}. Use one of: ${[...new Set(supported.map((candidate) => candidate.scope))].join(", ")}.`,
+        detail:
+          candidates.length === 0
+            ? `This project does not track ${select?.scope?.trim()}. Use one of: ${scopes.join(", ")}.`
+            : `This project has several repositories that could hold it: ${repositories.join(", ")}.`,
       });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };

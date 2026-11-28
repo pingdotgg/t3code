@@ -15,8 +15,10 @@ import {
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
@@ -259,6 +261,8 @@ describe("issue toolkit handlers", () => {
         Layer.provide(
           Layer.mergeAll(
             projectLayer,
+            FileSystem.layerNoop({}),
+            Path.layer,
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
               list: () => Effect.succeed(new Map([[PROJECT_ID, { tracker, scope: "ENG" }]])),
@@ -313,6 +317,8 @@ describe("issue toolkit handlers", () => {
         Layer.provide(
           Layer.mergeAll(
             projectLayer,
+            FileSystem.layerNoop({}),
+            Path.layer,
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
               list: () =>
