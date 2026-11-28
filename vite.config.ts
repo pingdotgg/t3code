@@ -682,6 +682,7 @@ export default defineConfig({
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
+          "apps/mobile/src/native/LayoutCrossfade.android.tsx",
           "apps/mobile/src/native/SelectableMarkdownText.tsx",
           "apps/mobile/src/native/useEnrichedLinkVariants.ts",
         ],

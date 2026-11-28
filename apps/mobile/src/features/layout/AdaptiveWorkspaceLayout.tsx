@@ -45,6 +45,7 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useDerivedValue,
+  useReducedMotion,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
@@ -112,6 +113,7 @@ import {
 
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
+import { LayoutCrossfade } from "../../native/LayoutCrossfade";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { useAndroidWorkspaceRoot } from "./workspace/AndroidWorkspaceTabsProvider";
 import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
@@ -491,22 +493,57 @@ function AdaptiveWorkspaceLayoutContent(
       setPrimarySidebarPreferredVisible(visible);
     }
   };
+  // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
+  // sidebar never resizes; both slide by one offset, so together they always fill the width.
+  const stripSidebar =
+    Platform.OS === "android" &&
+    layout.usesSplitView &&
+    layout.listPaneWidth !== null &&
+    !workspacePage &&
+    !sidebarFloats;
+  // Toggling the strip's sidebar resizes the pane in one commit. Like UIKit's columns, the pane
+  // cross-dissolves: the toggle waits for a native snapshot of the pane, then commits the new
+  // layout with a fade request that dissolves the snapshot as the strip slides.
+  const reduceMotion = useReducedMotion();
+  const [paneCrossfade, setPaneCrossfade] = useState({ snapshot: 0, fade: 0 });
+  const pendingPaneChange = useRef<(() => void) | null>(null);
+  const crossfadePane = (change: () => void) => {
+    if (!stripSidebar || reduceMotion) {
+      change();
+      return;
+    }
+    pendingPaneChange.current = change;
+    setPaneCrossfade((current) => ({ ...current, snapshot: current.snapshot + 1 }));
+  };
+  const handlePaneSnapshot = (request: number) => {
+    const change = pendingPaneChange.current;
+    pendingPaneChange.current = null;
+    if (change === null) return;
+    change();
+    setPaneCrossfade((current) => ({ ...current, fade: request }));
+  };
   const togglePrimarySidebar = () => {
     if (primarySidebarPinned) {
       return;
     }
-    if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
-      setFileInspectorPreferredVisible(false);
-      setPrimarySidebarPreferredVisible(true);
-      return;
-    }
-    setPrimarySidebarVisible(!preferredSidebarVisible);
+    crossfadePane(() => {
+      if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
+        setFileInspectorPreferredVisible(false);
+        setPrimarySidebarPreferredVisible(true);
+        return;
+      }
+      setPrimarySidebarVisible(!preferredSidebarVisible);
+    });
   };
   const revealPrimarySidebar = () => {
-    if (panes.primarySidebarSuppressedByAuxiliary) {
-      setFileInspectorPreferredVisible(false);
-    }
-    setPrimarySidebarVisible(true);
+    const reveal = () => {
+      if (panes.primarySidebarSuppressedByAuxiliary) {
+        setFileInspectorPreferredVisible(false);
+      }
+      setPrimarySidebarVisible(true);
+    };
+    if (panes.primarySidebarVisible) reveal();
+    else crossfadePane(reveal);
   };
   const handleToggleSidebarCommand = () => {
     togglePrimarySidebar();
@@ -674,14 +711,6 @@ function AdaptiveWorkspaceLayoutContent(
     : 0;
   // Android's split content is a rounded card: keep it off the screen edge like the list card.
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
-  // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
-  // sidebar never resizes; both slide by one offset, so together they always fill the width.
-  const stripSidebar =
-    Platform.OS === "android" &&
-    layout.usesSplitView &&
-    layout.listPaneWidth !== null &&
-    !workspacePage &&
-    !sidebarFloats;
   const sidebarSlotWidth = (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0);
   // The pane takes its new width in the commit that starts the sidebar moving, so it rewraps as
   // the strip starts to slide rather than after it lands.
@@ -1080,65 +1109,79 @@ function AdaptiveWorkspaceLayoutContent(
         importantForAccessibility={floatingSidebarOpen ? "no-hide-descendants" : "auto"}
         accessibilityElementsHidden={floatingSidebarOpen}
       >
-        <Animated.View
-          collapsable={false}
-          style={[
-            contentTargetWidth !== null
-              ? {
-                  flex: 1,
-                  width: contentTargetWidth,
-                  // The strip's column is wider than the pane; the pane sits at its start.
-                  alignSelf: contentAnchor.end && !stripSidebar ? "flex-end" : "flex-start",
-                  marginRight: contentAnchor.end && !stripSidebar ? contentEndGap : 0,
-                }
-              : { flex: 1 },
-            Platform.OS === "android" ? androidNavigatorLimit : undefined,
-          ]}
+        <LayoutCrossfade
+          style={{ flex: 1 }}
+          snapshotRequest={paneCrossfade.snapshot}
+          fadeRequest={paneCrossfade.fade}
+          fadeDuration={WORKSPACE_PANE_TIMING.duration}
+          onSnapshot={handlePaneSnapshot}
         >
-          {/* Android holds the content still, so its floating controls keep its width. */}
-          <WorkspaceContentWidthContext
-            value={layout.usesSplitView && Platform.OS !== "android" ? renderedContentWidth : null}
+          <Animated.View
+            collapsable={false}
+            style={[
+              contentTargetWidth !== null
+                ? {
+                    flex: 1,
+                    width: contentTargetWidth,
+                    // The strip's column is wider than the pane; the pane sits at its start.
+                    alignSelf: contentAnchor.end && !stripSidebar ? "flex-end" : "flex-start",
+                    marginRight: contentAnchor.end && !stripSidebar ? contentEndGap : 0,
+                  }
+                : { flex: 1 },
+              Platform.OS === "android" ? androidNavigatorLimit : undefined,
+            ]}
           >
-            <WorkspaceSettledContentWidthContext
-              value={Platform.OS === "android" && layout.usesSplitView ? contentTargetWidth : null}
+            {/* Android holds the content still, so its floating controls keep its width. */}
+            <WorkspaceContentWidthContext
+              value={
+                layout.usesSplitView && Platform.OS !== "android" ? renderedContentWidth : null
+              }
             >
-              {/* Compact Settings keeps the bottom navigation under all of its pages. */}
-              <SafeAreaInsetsContext
+              <WorkspaceSettledContentWidthContext
                 value={
-                  floatingTabsEnabled &&
-                  (compactAndroidSettings || (layout.usesSplitView && workspacePage))
-                    ? {
-                        ...safeAreaInsets,
-                        bottom:
-                          safeAreaInsets.bottom +
-                          FLOATING_TABS.bottom +
-                          FLOATING_TABS.edge +
-                          floatingTabs.height,
-                      }
-                    : compactAndroidSettings
-                      ? { ...safeAreaInsets, bottom: 0 }
-                      : safeAreaInsets
+                  Platform.OS === "android" && layout.usesSplitView ? contentTargetWidth : null
                 }
               >
-                <View className="flex-1">
-                  <PaneContext value="content">
-                    <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
-                  </PaneContext>
-                </View>
-              </SafeAreaInsetsContext>
-              {floatingTabsEnabled &&
-              (compactAndroidSettings || (layout.usesSplitView && workspacePage)) ? (
-                <FloatingWorkspaceTabs
-                  paneWidth={layout.usesSplitView ? (layout.listPaneWidth ?? undefined) : undefined}
-                  fillWidth={compactAndroidSettings}
-                  onNewThread={handleStartNewTask}
-                />
-              ) : compactAndroidSettings ? (
-                <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
-              ) : null}
-            </WorkspaceSettledContentWidthContext>
-          </WorkspaceContentWidthContext>
-        </Animated.View>
+                {/* Compact Settings keeps the bottom navigation under all of its pages. */}
+                <SafeAreaInsetsContext
+                  value={
+                    floatingTabsEnabled &&
+                    (compactAndroidSettings || (layout.usesSplitView && workspacePage))
+                      ? {
+                          ...safeAreaInsets,
+                          bottom:
+                            safeAreaInsets.bottom +
+                            FLOATING_TABS.bottom +
+                            FLOATING_TABS.edge +
+                            floatingTabs.height,
+                        }
+                      : compactAndroidSettings
+                        ? { ...safeAreaInsets, bottom: 0 }
+                        : safeAreaInsets
+                  }
+                >
+                  <View className="flex-1">
+                    <PaneContext value="content">
+                      <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
+                    </PaneContext>
+                  </View>
+                </SafeAreaInsetsContext>
+                {floatingTabsEnabled &&
+                (compactAndroidSettings || (layout.usesSplitView && workspacePage)) ? (
+                  <FloatingWorkspaceTabs
+                    paneWidth={
+                      layout.usesSplitView ? (layout.listPaneWidth ?? undefined) : undefined
+                    }
+                    fillWidth={compactAndroidSettings}
+                    onNewThread={handleStartNewTask}
+                  />
+                ) : compactAndroidSettings ? (
+                  <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />
+                ) : null}
+              </WorkspaceSettledContentWidthContext>
+            </WorkspaceContentWidthContext>
+          </Animated.View>
+        </LayoutCrossfade>
       </Animated.View>
       {sidebarFloats ? (
         <Animated.View
