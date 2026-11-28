@@ -14,7 +14,7 @@ In a web browser, plain `F6` may focus the browser toolbar. Use `mod+F6` and `mo
 - `Up` / `Down`: Moves between threads (or Settings sections) without opening them.
 - `Enter`: Opens the focused thread or toggles a group.
 - `Right` / `Left`: Expands and collapses groups.
-- `F2`: Renames the focused thread.
+- `F2`: Renames the focused thread. In the composer, it renames the open thread when the sidebar shows it.
 - `Shift+F10` (or Context Menu key): Opens the focused thread's menu (`Esc` closes it).
 
 ## Focus behavior
