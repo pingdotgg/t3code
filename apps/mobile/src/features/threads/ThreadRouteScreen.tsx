@@ -56,6 +56,7 @@ import { View } from "react-native";
 import { BrandMark } from "../../components/BrandMark";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { connectionRetryLabel } from "./floating-working-status";
@@ -216,7 +217,8 @@ function ThreadUnavailableScreen(props: {
   );
 }
 
-// Laid out like the loading screen it replaces, so the logo doesn't jump when an attempt fails.
+// The centered block matches OpeningThreadLoadingScreen's, so the logo stays put when an attempt
+// fails; the detail and Retry hang below it.
 function ThreadConnectionWaitScreen(props: {
   readonly title: string;
   readonly detail: string;
@@ -225,19 +227,24 @@ function ThreadConnectionWaitScreen(props: {
   const gt = useGT();
   return (
     <ThreadRouteFallbackLayout>
-      <View className="flex-1 items-center justify-center gap-5 px-8">
-        <BrandMark compact />
-        <View className="items-center gap-2">
+      <View className="flex-1">
+        <View className="flex-1" />
+        <View className="items-center gap-5 px-6">
+          <BrandMark compact />
           <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
+          <AppActivityIndicator size="large" />
+        </View>
+        <View className="flex-1 items-center gap-5 px-8 pt-5">
           <Text
             textRole="body"
+            textBreakStrategy="balanced"
             className="text-center font-sans leading-normal text-foreground-muted"
           >
             {props.detail}
           </Text>
-        </View>
-        <View>
-          <Button tone="primary" label={gt("Retry")} onPress={props.onRetry} />
+          <View>
+            <Button tone="primary" label={gt("Retry")} onPress={props.onRetry} />
+          </View>
         </View>
       </View>
     </ThreadRouteFallbackLayout>
