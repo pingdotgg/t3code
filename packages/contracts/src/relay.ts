@@ -593,6 +593,19 @@ export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErr
   }
 }
 
+export class RelayMobileDeviceNotRegisteredError extends Schema.TaggedError<RelayMobileDeviceNotRegisteredError>()(
+  "RelayMobileDeviceNotRegisteredError",
+  {
+    code: Schema.Literal("mobile_device_not_registered"),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 404 },
+) {
+  override get message(): string {
+    return "Relay has no registration for this mobile device";
+  }
+}
+
 export class RelayInternalError extends Schema.TaggedError<RelayInternalError>()(
   "RelayInternalError",
   {
@@ -1042,7 +1055,7 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
     headers: RelayDpopRequestHeaders,
     payload: RelayLiveActivityRegistrationRequest,
     success: RelayOkResponse,
-    error: RelayAuthAndInternalErrors,
+    error: [RelayAuthInvalidError, RelayMobileDeviceNotRegisteredError, RelayInternalError],
   },
 ).annotate(OpenApi.Summary, "Register a Live Activity push token");
 

@@ -171,7 +171,7 @@ function layerFor(input: {
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
           upsert: () => Effect.void,
           remove: () => Effect.void,
-          pruneTerminal: () => Effect.void,
+          prune: Effect.void,
           listForUser: () =>
             input.activityStates !== undefined
               ? Effect.succeed([...input.activityStates])
@@ -230,6 +230,7 @@ function layerFor(input: {
             Effect.sync(() => {
               input.invalidatedTokens?.push(invalidated);
             }),
+          clearEndedAggregates: Effect.void,
         }),
         RelayConfiguration.layer(input.config ?? config),
         input.execute

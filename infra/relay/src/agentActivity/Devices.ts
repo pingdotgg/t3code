@@ -7,8 +7,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { and, eq, exists, gte, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
@@ -53,6 +53,20 @@ export class DeviceListPersistenceError extends Schema.TaggedError<DeviceListPer
   }
 }
 
+export class DevicePrunePersistenceError extends Schema.TaggedError<DevicePrunePersistenceError>()(
+  "DevicePrunePersistenceError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to prune mobile devices without push tokens.";
+  }
+}
+
+export const TOKENLESS_DEVICE_RETENTION_DAYS = 30;
+const DEVICE_PRUNE_BATCH_SIZE = 500;
+
 export class Devices extends Context.Service<
   Devices,
   {
@@ -67,6 +81,8 @@ export class Devices extends Context.Service<
     readonly listForUser: (input: {
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, DeviceListPersistenceError>;
+    /** Deletes devices left with no way to reach them; returns how many were removed. */
+    readonly pruneTokenless: Effect.Effect<number, DevicePrunePersistenceError>;
   }
 >()("t3code-relay/agentActivity/Devices") {}
 
@@ -254,6 +270,75 @@ const make = Effect.gen(function* () {
         updatedAt: row.updatedAt,
       }));
     }),
+    pruneTokenless: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, { days: TOKENLESS_DEVICE_RETENTION_DAYS }),
+      );
+      yield* Effect.annotateCurrentSpan({ "relay.mobile_devices_prune.before": before });
+      const prunable = and(
+        isNull(relayMobileDevices.pushToken),
+        isNull(relayMobileDevices.pushToStartToken),
+        lt(relayMobileDevices.updatedAt, before),
+        notExists(
+          new QueryBuilder()
+            .select({ deviceId: relayLiveActivities.deviceId })
+            .from(relayLiveActivities)
+            .where(
+              and(
+                eq(relayLiveActivities.userId, relayMobileDevices.userId),
+                eq(relayLiveActivities.deviceId, relayMobileDevices.deviceId),
+                // Live Activity use never touches the device row, so a recent card keeps it.
+                or(
+                  isNotNull(relayLiveActivities.activityPushToken),
+                  gte(relayLiveActivities.updatedAt, before),
+                ),
+              ),
+            ),
+        ),
+      );
+      const keys = yield* db
+        .select({ userId: relayMobileDevices.userId, deviceId: relayMobileDevices.deviceId })
+        .from(relayMobileDevices)
+        .where(prunable)
+        .limit(DEVICE_PRUNE_BATCH_SIZE);
+      if (keys.length === 0) return 0;
+      const keyCondition = (table: typeof relayMobileDevices | typeof relayLiveActivities) =>
+        or(
+          ...keys.map((key) => and(eq(table.userId, key.userId), eq(table.deviceId, key.deviceId))),
+        );
+      // Live Activity rows have no foreign key; drop them first so none outlives its device, and
+      // only while their device is still prunable, so a device re-registered meanwhile keeps its row.
+      yield* db.delete(relayLiveActivities).where(
+        and(
+          keyCondition(relayLiveActivities),
+          isNull(relayLiveActivities.activityPushToken),
+          lt(relayLiveActivities.updatedAt, before),
+          exists(
+            new QueryBuilder()
+              .select({ deviceId: relayMobileDevices.deviceId })
+              .from(relayMobileDevices)
+              .where(
+                and(
+                  eq(relayMobileDevices.userId, relayLiveActivities.userId),
+                  eq(relayMobileDevices.deviceId, relayLiveActivities.deviceId),
+                  isNull(relayMobileDevices.pushToken),
+                  isNull(relayMobileDevices.pushToStartToken),
+                  lt(relayMobileDevices.updatedAt, before),
+                ),
+              ),
+          ),
+        ),
+      );
+      const deleted = yield* db
+        .delete(relayMobileDevices)
+        .where(and(keyCondition(relayMobileDevices), prunable))
+        .returning({ deviceId: relayMobileDevices.deviceId });
+      yield* Effect.annotateCurrentSpan({ "relay.mobile_devices_prune.deleted": deleted.length });
+      return deleted.length;
+    }).pipe(
+      Effect.mapError((cause) => new DevicePrunePersistenceError({ cause })),
+      Effect.withSpan("relay.devices.prune_tokenless"),
+    ),
   });
 });
 

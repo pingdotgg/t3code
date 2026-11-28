@@ -57,6 +57,7 @@ function makeDevices(
     register: () => Effect.void,
     unregister: () => Effect.void,
     listForUser: () => Effect.succeed([]),
+    pruneTokenless: Effect.succeed(0),
     ...overrides,
   };
 }
@@ -71,6 +72,7 @@ function makeLiveActivities(
     markDelivery: () => Effect.void,
 
     invalidateDeliveryToken: () => Effect.void,
+    clearEndedAggregates: Effect.void,
     ...overrides,
   };
 }
@@ -81,7 +83,7 @@ function makeAgentActivityRows(
   return {
     upsert: () => Effect.void,
     remove: () => Effect.void,
-    pruneTerminal: () => Effect.void,
+    prune: Effect.void,
     listForUser: () => {
       const activeState: RelayAgentActivityState = {
         environmentId: "env-1" as RelayAgentActivityState["environmentId"],
@@ -120,6 +122,7 @@ function makeEnvironmentLinks(
     updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
+    pruneRevoked: Effect.succeed(0),
     ...overrides,
   };
 }

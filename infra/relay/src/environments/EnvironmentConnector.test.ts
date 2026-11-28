@@ -232,6 +232,7 @@ function makeLinks(
     updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
+    pruneRevoked: Effect.succeed(0),
   };
 }
 

@@ -73,6 +73,7 @@ function makeLiveActivities(
     markDelivery: () => Effect.void,
 
     invalidateDeliveryToken: () => Effect.void,
+    clearEndedAggregates: Effect.void,
     ...overrides,
   };
 }
@@ -83,7 +84,7 @@ function makeAgentActivityRows(
   return {
     upsert: () => Effect.void,
     remove: () => Effect.void,
-    pruneTerminal: () => Effect.void,
+    prune: Effect.void,
     listForUser: () => Effect.succeed([state]),
     getForUserThread: () => Effect.succeed(state),
     ...overrides,
@@ -109,6 +110,7 @@ function makeEnvironmentLinks(
     updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
+    pruneRevoked: Effect.succeed(0),
     ...overrides,
   };
 }

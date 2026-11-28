@@ -4,7 +4,6 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -486,22 +485,15 @@ export const layer = Api.make(
     yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
       Effect.all(
         [
-          DpopProofs.DpopProofReplay.pipe(
-            Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
-            Effect.andThen(
-              Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
-                Effect.flatMap(([activityRows, now]) =>
-                  activityRows.pruneTerminal({
-                    updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
-                  }),
-                ),
-              ),
-            ),
-            Effect.andThen(
-              DeliveryAttempts.DeliveryAttempts.pipe(
-                Effect.flatMap((attempts) => attempts.pruneExpired),
-              ),
-            ),
+          Effect.gen(function* () {
+            yield* (yield* DpopProofs.DpopProofReplay).pruneExpired;
+            yield* (yield* AgentActivityRows.AgentActivityRows).prune;
+            yield* (yield* DeliveryAttempts.DeliveryAttempts).pruneExpired;
+            yield* (yield* LiveActivities.LiveActivities).clearEndedAggregates;
+            yield* (yield* Devices.Devices).pruneTokenless;
+            yield* (yield* EnvironmentLinks.EnvironmentLinks).pruneRevoked;
+            yield* (yield* EnvironmentCredentials.EnvironmentCredentials).pruneRevoked;
+          }).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterrupts(cause)
                 ? Effect.interrupt

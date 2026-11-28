@@ -1,10 +1,13 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayDb from "../db.ts";
+import { makePgliteRelayDb } from "../persistence/pgliteTestDb.ts";
 import { relayEnvironmentCredentials } from "../persistence/schema.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 
@@ -200,4 +203,47 @@ describe("EnvironmentCredentials", () => {
       ),
     );
   });
+
+  it.effect("prunes credentials revoked over 30 days ago", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-06-01T00:00:00.000Z");
+      yield* TestClock.setTime(now);
+      const daysAgo = (days: number) =>
+        DateTime.formatIso(DateTime.makeUnsafe(now - days * 86_400_000));
+      const { db, layer } = yield* makePgliteRelayDb;
+      const credential = (credentialId: string, revokedAt: string | null) => ({
+        credentialId,
+        environmentId: "env-1",
+        environmentPublicKey: "key-1",
+        credentialHash: `hash-${credentialId}`,
+        revokedAt,
+        createdAt: daysAgo(90),
+        updatedAt: revokedAt ?? daysAgo(90),
+      });
+      yield* Effect.promise(() =>
+        db
+          .insert(relayEnvironmentCredentials)
+          .values([
+            credential("old-revoked", daysAgo(31)),
+            credential("recently-revoked", daysAgo(29)),
+            credential("active", null),
+          ]),
+      );
+      const credentials = yield* Effect.service(EnvironmentCredentials.EnvironmentCredentials).pipe(
+        Effect.provide(
+          EnvironmentCredentials.layer.pipe(
+            Layer.provide(NodeCryptoLayer.layer),
+            Layer.provide(layer),
+          ),
+        ),
+      );
+
+      expect(yield* credentials.pruneRevoked).toBe(1);
+      const remaining = yield* Effect.promise(() => db.select().from(relayEnvironmentCredentials));
+      expect(remaining.map((row) => row.credentialId).toSorted()).toEqual([
+        "active",
+        "recently-revoked",
+      ]);
+    }),
+  );
 });

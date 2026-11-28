@@ -444,6 +444,64 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
+  it.effect("registers the device again when the relay no longer has it", () => {
+    const calls: Array<string> = [];
+    let rejectLiveActivity = true;
+    vi.stubGlobal("fetch", (request: RequestInfo | URL) => {
+      const url = request instanceof Request ? request.url : String(request);
+      if (url.endsWith("/v1/client/dpop-token")) {
+        return Promise.resolve(
+          Response.json({
+            access_token: "relay-dpop-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          }),
+        );
+      }
+      const path = new URL(url).pathname;
+      if (path === "/v1/mobile/devices" || path === "/v1/mobile/live-activities") calls.push(path);
+      if (url.endsWith("/v1/mobile/live-activities") && rejectLiveActivity) {
+        rejectLiveActivity = false;
+        return Promise.resolve(
+          Response.json(
+            {
+              _tag: "RelayMobileDeviceNotRegisteredError",
+              code: "mobile_device_not_registered",
+              traceId: "trace-1",
+            },
+            { status: 404 },
+          ),
+        );
+      }
+      return Promise.resolve(Response.json({ ok: true }));
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    const activity = {
+      getId: () => "activity-1",
+      getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+      addPushTokenListener: vi.fn(() => ({ remove: vi.fn() })),
+    };
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(registrationRecordStore.current).not.toBeNull();
+
+      expect(yield* registerLiveActivityPushToken({ activity: activity as never })).toBe(true);
+      expect(calls).toEqual([
+        "/v1/mobile/devices",
+        "/v1/mobile/live-activities",
+        "/v1/mobile/devices",
+        "/v1/mobile/live-activities",
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect("registers a rotated Live Activity token only after an older registration", () => {
     const arrivals: Array<string> = [];
     let openOldRequest: (() => void) | undefined;

@@ -28,6 +28,7 @@ import {
   RelayAgentActivitySnapshotEndpoint,
   RelayRegisterLiveActivityEndpoint,
   RelayProtectedError,
+  type RelayMobileDeviceNotRegisteredError,
   type RelayProtectedError as RelayProtectedErrorType,
   RelayUnregisterDeviceEndpoint,
 } from "@t3tools/contracts/relay";
@@ -332,6 +333,7 @@ export type ManagedRelayClientError = typeof ManagedRelayClientError.Type;
 
 type RelayHttpRequestError =
   | RelayProtectedErrorType
+  | RelayMobileDeviceNotRegisteredError
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 

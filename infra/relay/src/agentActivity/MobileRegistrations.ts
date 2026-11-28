@@ -30,7 +30,10 @@ export class MobileRegistrations extends Context.Service<
     readonly registerLiveActivity: (input: {
       readonly userId: string;
       readonly payload: RelayLiveActivityRegistrationRequest;
-    }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
+    }) => Effect.Effect<
+      { readonly ok: true },
+      MobileRegistrationError | LiveActivities.LiveActivityDeviceNotRegisteredError
+    >;
     readonly unregisterDevice: (input: {
       readonly userId: string;
       readonly deviceId: string;

@@ -52,6 +52,7 @@ import {
   RelayManagedEndpointRecoveryProofPayload,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
+  RelayMobileDeviceNotRegisteredError,
 } from "@t3tools/contracts/relay";
 import {
   normalizeRelayIssuer,
@@ -767,15 +768,25 @@ export const layerMobileApi = HttpApiBuilder.group(
       )
       .handle(
         "registerLiveActivity",
-        Effect.fn("relay.api.mobile.registerLiveActivity")(function* (args) {
-          const { payload } = args;
-          const { userId, token } = yield* RelayClientPrincipal;
-          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
-          yield* requireDpopThumbprint(proofKeyThumbprint, {
-            expectedAccessToken: token,
-          }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
-          return yield* registrations.registerLiveActivity({ userId, payload });
-        }, mapRelayCommonApiErrors("invalid_dpop")),
+        Effect.fn("relay.api.mobile.registerLiveActivity")(
+          function* (args) {
+            const { payload } = args;
+            const { userId, token } = yield* RelayClientPrincipal;
+            const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
+            yield* requireDpopThumbprint(proofKeyThumbprint, {
+              expectedAccessToken: token,
+            }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
+            return yield* registrations.registerLiveActivity({ userId, payload });
+          },
+          mapRelayCommonApiErrors("invalid_dpop"),
+          mapErrorTags({
+            LiveActivityDeviceNotRegisteredError: (_error, traceId) =>
+              new RelayMobileDeviceNotRegisteredError({
+                code: "mobile_device_not_registered",
+                traceId,
+              }),
+          }),
+        ),
       )
       .handle(
         "getAgentActivitySnapshot",
