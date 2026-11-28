@@ -634,6 +634,7 @@ query PullRequestMergeMessage(
 # What `gh pr merge` and `gh pr update-branch` read before they act.
 query PullRequestActionState($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
+    autoMergeAllowed
     pullRequest(number: $number) {
       id
       headRefOid

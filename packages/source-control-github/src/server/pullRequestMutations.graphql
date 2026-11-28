@@ -143,6 +143,16 @@ mutation EnablePullRequestAutoMerge($input: EnablePullRequestAutoMergeInput!) {
   }
 }
 
+mutation EnqueuePullRequest($input: EnqueuePullRequestInput!) {
+  enqueuePullRequest(input: $input) {
+    mergeQueueEntry {
+      pullRequest {
+        ...PullRequestActionSummary
+      }
+    }
+  }
+}
+
 mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
   disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
     pullRequest {

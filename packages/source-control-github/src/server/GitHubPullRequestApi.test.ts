@@ -2453,9 +2453,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  const actionState = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
+  const actionState = (
+    pullRequest: Readonly<Record<string, unknown>> = {},
+    repository: Readonly<Record<string, unknown>> = {},
+  ) => ({
     data: {
       repository: {
+        autoMergeAllowed: true,
+        ...repository,
         pullRequest: {
           id: "PR_7",
           headRefOid: "abc123",
@@ -2534,6 +2539,116 @@ layer("GitHubPullRequestApi.layer", (it) => {
         });
         // The action-state read and the mutation; no re-read of the pull request.
         expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect(
+    "adds a pull request to the merge queue via enqueuePullRequest when auto-merge is disallowed",
+    () =>
+      Effect.gen(function* () {
+        route(
+          [
+            "query PullRequestActionState",
+            actionState(
+              { isMergeQueueEnabled: true, mergeStateStatus: "CLEAN" },
+              { autoMergeAllowed: false },
+            ),
+          ],
+          [
+            "enablePullRequestAutoMerge(",
+            {
+              data: { enablePullRequestAutoMerge: null },
+              errors: [
+                {
+                  type: "UNPROCESSABLE",
+                  path: ["enablePullRequestAutoMerge"],
+                  message: "Auto merge is not allowed for this repository",
+                },
+              ],
+            },
+          ],
+          [
+            "enqueuePullRequest(",
+            {
+              data: {
+                enqueuePullRequest: {
+                  mergeQueueEntry: {
+                    pullRequest: {
+                      number: 7,
+                      title: "Pull request 7",
+                      url: "https://github.com/acme/web/pull/7",
+                      headRefName: "feat/page",
+                      baseRefName: "main",
+                      state: "OPEN",
+                      isDraft: false,
+                      updatedAt: "2026-10-27T12:00:00Z",
+                      mergedAt: null,
+                      closedAt: null,
+                      headRefOid: "response-head",
+                      author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
+                      autoMergeRequest: null,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const summary = yield* cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "merge",
+          mergeMethod: "squash",
+          expectedHeadSha: "abc123",
+        });
+        expect(summary).toEqual({
+          number: 7,
+          title: "Pull request 7",
+          url: "https://github.com/acme/web/pull/7",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+          updatedAt: "2026-10-27T12:00:00Z",
+          mergedAt: null,
+          closedAt: null,
+          author: { login: "alice", name: null, avatarUrl: null },
+          headSha: "response-head",
+          autoMergeEnabled: false,
+        });
+        expect(variablesOf("enqueuePullRequest(")).toEqual([
+          { input: { pullRequestId: "PR_7", expectedHeadOid: "abc123" } },
+        ]);
+        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    "enqueues at once when auto-merge is asked of a ready merge-queue PR with auto-merge disallowed",
+    () =>
+      Effect.gen(function* () {
+        route(
+          [
+            "query PullRequestActionState",
+            actionState(
+              { isMergeQueueEnabled: true, mergeStateStatus: "CLEAN" },
+              { autoMergeAllowed: false },
+            ),
+          ],
+          [
+            "enqueuePullRequest(",
+            { data: { enqueuePullRequest: { mergeQueueEntry: { pullRequest: null } } } },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const summary = yield* cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "enable-auto-merge",
+          mergeMethod: "squash",
+        });
+        expect(summary).toBeUndefined();
+        expect(variablesOf("enqueuePullRequest(")).toEqual([{ input: { pullRequestId: "PR_7" } }]);
+        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
       }),
   );
 
