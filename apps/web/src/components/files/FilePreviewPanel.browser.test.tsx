@@ -1156,6 +1156,25 @@ function opened(positionKey: string, children: ReactNode, height = 400) {
   );
 }
 
+it.each([
+  { path: "/tmp/report\\draft.log", name: "report\\draft.log" },
+  { path: "C:\\workspace\\large.log", name: "large.log" },
+  { path: "//server/share\\large.log", name: "large.log" },
+])("saves $path as $name before the host OS is known", async ({ path, name }) => {
+  state.file = { relativePath: path, contents: "log", byteLength: 1_200_000, truncated: true };
+  state.mintUrl.mockResolvedValueOnce("data:text/plain,log");
+  const download = Promise.withResolvers<string>();
+  using _click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    download.resolve(this.download);
+  });
+
+  await using screen = await render(filePreview(path));
+  await screen.getByRole("button", { name: "Save file", exact: true }).click();
+  expect(await download.promise).toBe(name);
+});
+
 describe("large text scroll position", () => {
   const log = (count: number, indexing = false, revealLine?: number) => (
     <VirtualTablePreview

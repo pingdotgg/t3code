@@ -11,8 +11,12 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { downloadMedia } from "../media/mediaContent";
 import { toastManager } from "../ui/toast";
+import { fileDownloadName, type FileDownloadPathKind } from "./fileDownloadName";
 
-export function useFileDownload(environmentId: EnvironmentId | null) {
+export function useFileDownload(
+  environmentId: EnvironmentId | null,
+  pathKind: FileDownloadPathKind,
+) {
   const gt = useGT();
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -23,16 +27,20 @@ export function useFileDownload(environmentId: EnvironmentId | null) {
   return (cwd: string, filePath: string | Promise<string>) =>
     void (async () => {
       const path = await filePath;
-      const httpBaseUrl = readPreparedConnection(environmentId)?.httpBaseUrl;
-      if (!httpBaseUrl) throw new Error(gt("Reconnect to the environment and try again."));
+      const connection = readPreparedConnection(environmentId);
+      if (!connection?.httpBaseUrl)
+        throw new Error(gt("Reconnect to the environment and try again."));
       const result = await createUrl({
         environmentId,
         input: { resource: { _tag: "draft-workspace-file", cwd, path, disposition: "attachment" } },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+      const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
       if (!url) throw new Error(gt("The file could not be loaded. Try again."));
-      await downloadMedia(url, path.split(/[\\/]/).at(-1) || path);
+      await downloadMedia(
+        url,
+        fileDownloadName(path, pathKind, connection.descriptor?.platform.os),
+      );
     })().catch((cause: unknown) =>
       toastManager.add({
         type: "error",

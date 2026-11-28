@@ -1828,6 +1828,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
       workspaceRoot="/repo"
       absolutePath="/repo/planning.pdf"
       title="Planning PDF"
+      downloadName="planning.pdf"
       workspaceMutationId={mutation}
     />
   );
@@ -1892,6 +1893,7 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
       workspaceRoot="/repo"
       absolutePath="/tmp/report.html"
       title="Report"
+      downloadName="report.html"
       workspaceMutationId={mutation}
     />
   );
@@ -1927,6 +1929,7 @@ it("keeps an unchanged workspace HTML page loaded across commands and renews its
       workspaceRoot="/repo"
       absolutePath="/repo/report.html"
       title="Report"
+      downloadName="report.html"
       workspaceMutationId={mutation}
     />
   );
@@ -2042,6 +2045,7 @@ it("keeps a workspace PDF's page, offset and zoom when a new revision reloads it
           absolutePath={path}
           workspaceRoot="/repo"
           title="Planning PDF"
+          downloadName="planning.pdf"
           workspaceMutationId={mutation}
         />
       </div>

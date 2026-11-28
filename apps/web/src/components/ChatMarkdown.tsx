@@ -662,7 +662,7 @@ function useChatMarkdownState(
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const isClientHost = useAtomValue(clientHostEnvironmentAtom(environmentId));
   const remoteOpen = useRemoteOpenResolution(environmentId);
-  const downloadFile = useFileDownload(environmentId);
+  const downloadFile = useFileDownload(environmentId, "host");
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
