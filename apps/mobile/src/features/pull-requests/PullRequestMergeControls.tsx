@@ -366,6 +366,16 @@ export function PullRequestMergeControls(props: {
                       },
                     ]
                   : []),
+                ...(stateAction.available("close")
+                  ? [
+                      {
+                        id: "close",
+                        title: pullRequestActionLabel("close", terminology, m),
+                        image: PR_ACTION_ICONS.close,
+                        attributes: { destructive: true },
+                      },
+                    ]
+                  : []),
               ]
         }
         onPressAction={(id) => {
@@ -374,6 +384,7 @@ export function PullRequestMergeControls(props: {
             setSelectedMethod(selected);
             void savePreferences({ pullRequestMergeMethod: selected });
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
+          else if (id === "close") stateAction.confirmClose();
         }}
       />
       {permissions.connected && !status && reason ? (
