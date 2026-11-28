@@ -2,7 +2,7 @@ import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { T, useGT } from "gt-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
@@ -147,19 +147,11 @@ export function DeviceStreamView(props: {
   const deviceDetail = useAtomValue(deviceDetailAtom(detailKey));
   const layoutPending =
     props.platform === "ios" && deviceDetail.detail === null && deviceDetail.error === null;
-  const usKeyboardLayout = deviceDetail.detail?.settings.usKeyboardLayout ?? true;
-  const heldKeys = useRef<Array<[KeyboardEvent, "down" | "up"]>>([]);
-  const sendKey = (event: KeyboardEvent, phase: "down" | "up") => {
-    if (layoutPending) heldKeys.current.push([event, phase]);
-    else client?.sendKey(event, phase, usKeyboardLayout);
-  };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends keys held while the layout read was pending to the device once it answers
-  useLayoutEffect(() => {
-    if (layoutPending) return;
-    for (const [event, phase] of heldKeys.current.splice(0)) {
-      client?.sendKey(event, phase, usKeyboardLayout);
-    }
-  }, [client, layoutPending, usKeyboardLayout]);
+  // Until the layout is known, keys go by key place as they did before layouts were read, so
+  // they stay in order with touches.
+  const usKeyboardLayout = deviceDetail.detail?.settings.usKeyboardLayout ?? !layoutPending;
+  const sendKey = (event: KeyboardEvent, phase: "down" | "up") =>
+    client?.sendKey(event, phase, usKeyboardLayout);
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;

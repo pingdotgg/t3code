@@ -47,7 +47,9 @@ function setup() {
       onmessage?: (event: { data: ArrayBuffer }) => void;
       send(message: string | Uint8Array) {
         if (typeof message !== "string" && message[0] === 0x03) {
-          touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+          const touch = JSON.parse(new TextDecoder().decode(message.subarray(1)));
+          touches.push(touch);
+          keys.push(`touch ${touch.type}`);
         }
         if (typeof message !== "string" && message[0] === 0x06) {
           const { type, usage } = JSON.parse(new TextDecoder().decode(message.subarray(1)));
@@ -239,23 +241,31 @@ it("sends Mac editing shortcuts to the simulator and leaves the rest to the brow
     host.dispatchEvent(
       new KeyboardEvent("keydown", { code, key, metaKey: true, bubbles: true, cancelable: true }),
     );
+  await act(async () => input.readLayout(true));
   expect(press("KeyL", "l")).toBe(true);
   expect(press("KeyA", "a")).toBe(false);
-  expect(keys).toEqual([]);
-  await act(async () => input.readLayout(true));
   expect(keys).toEqual(["down e3", "down 4", "up 4"]);
   expect(press("KeyC", "с")).toBe(false);
   expect(keys.slice(3)).toEqual(["down 6", "up 6"]);
 });
 
-it("sends keys typed before a failed layout read with the US layout", async () => {
+it("sends keys by key place in order with touches until the layout read answers", async () => {
   using input = setup();
   await using screen = await render(input.view(), options);
   await act(async () => input.configure());
   await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
   const host = screen.getByRole("application").element() as HTMLElement;
-  host.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyQ", key: "q", bubbles: true }));
-  expect(input.keys).toEqual([]);
+  const { send } = flatPointer(screen.container);
+  const type = (code: string, key: string) => {
+    host.dispatchEvent(new KeyboardEvent("keydown", { code, key, bubbles: true }));
+    host.dispatchEvent(new KeyboardEvent("keyup", { code, key, bubbles: true }));
+  };
+  // An AZERTY "a" typed into one field before a touch moves focus to another.
+  type("KeyQ", "a");
+  send("pointerdown", 1);
+  send("pointerup", 1);
+  expect(input.keys).toEqual(["down 14", "up 14", "touch begin", "touch end"]);
   await act(async () => input.readLayout("failed"));
-  expect(input.keys).toEqual(["down 14", "up 14"]);
+  type("KeyQ", "a");
+  expect(input.keys.slice(4)).toEqual(["down 4", "up 4"]);
 });
