@@ -178,6 +178,16 @@ it.effect(
         { id: ProjectId.make("intended-project"), title: "Intended", workspaceRoot },
         { id: ProjectId.make("alias-project"), title: "Alias", workspaceRoot: aliasRoot },
         { id: ProjectId.make("nested-project"), title: "Nested", workspaceRoot: nestedRoot },
+        {
+          id: ProjectId.make("absent-project"),
+          title: "Absent",
+          workspaceRoot: path.join(aliasRoot, "absent"),
+        },
+        {
+          id: ProjectId.make("physical-absent-project"),
+          title: "Physical absent",
+          workspaceRoot: path.join(workspaceRoot, "absent"),
+        },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
       yield* persistServerRuntimeState({
@@ -211,6 +221,11 @@ it.effect(
         [path.relative(cwd, workspaceRoot), "intended-project"],
         [aliasRoot, "alias-project"],
         [path.join(aliasRoot, "nested"), "nested-project"],
+        [path.join(aliasRoot, "nested", "not-created", "plan.ts"), "nested-project"],
+        [path.join(aliasRoot, "not-created", "plan.ts"), "alias-project"],
+        [path.join(aliasRoot, "absent", "plan.ts"), "absent-project"],
+        [path.join(aliasRoot, "absent"), "absent-project"],
+        [path.join(workspaceRoot, "absent", "plan.ts"), "physical-absent-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],
@@ -817,6 +832,12 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "pkg/index.ts"), sample);
+    const worktreeAlias = path.join(root, "worktree-alias");
+    yield* Effect.promise(() => NodeFSP.symlink(worktree, worktreeAlias, "junction"));
+    assert.deepStrictEqual(
+      yield* resolveFrom([sample], worktreeAlias, "pkg/not-created/yet.ts"),
+      sample,
+    );
     assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
     const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");

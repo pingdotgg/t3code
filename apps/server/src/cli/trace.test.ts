@@ -117,7 +117,7 @@ it("drops spans that ended before the window and counts unreadable lines", () =>
 it("reads failures and interrupts of browser spans from their OTLP status", () => {
   const summarizer = makeTraceSpanSummary();
   [
-    browserSpan("render", { code: "2", message: "boom" }),
+    browserSpan("render", { code: "2", message: "Interrupted" }),
     browserSpan("render", { code: "0" }, { "effect.fiber.interrupted": true }),
     browserSpan("render", { code: "1", message: "Interrupted" }),
     browserSpan("render", { code: "1" }),

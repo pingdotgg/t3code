@@ -195,6 +195,27 @@ describe("HttpClient", () => {
       assert.deepStrictEqual(bytes, Array.from(new TextEncoder().encode("data: hello\n\n")))
     }))
 
+  it("HttpClientResponse.link resolves the first matching link against the request URL", () => {
+    const request = HttpClientRequest.get("https://example.com/items")
+    const response = HttpClientResponse.fromWeb(
+      request,
+      new Response(null, {
+        headers: {
+          link: "<https://other.example/>; rel=\"next\"; anchor=\"#frag\", " +
+            "</items?page=2>; title=\"Page 2, continued; details\"; rel=\"next last\""
+        }
+      })
+    )
+
+    assert.deepStrictEqual(
+      Option.map(HttpClientResponse.link(response, "next"), (url) => url.href),
+      Option.some("https://example.com/items?page=2")
+    )
+    assert.isTrue(
+      Option.isNone(HttpClientResponse.link(HttpClientResponse.fromWeb(request, new Response(null)), "next"))
+    )
+  })
+
   it.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
     "does not retain unread responses without FinalizationRegistry",
     async () => {

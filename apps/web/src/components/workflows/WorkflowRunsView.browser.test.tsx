@@ -7,10 +7,12 @@ import {
   type WorkflowRunsSnapshot,
   type WorkflowStep,
 } from "@t3tools/contracts";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browserPage, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { initializeI18n } from "~/i18n/initializeI18n";
 import { render } from "../../../test/render";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
 import { WorkflowRunsView } from "./WorkflowRunsView";
@@ -980,5 +982,27 @@ describe("WorkflowRunsView", () => {
       .element(screen.getByRole("combobox", { name: "Kind of question" }))
       .not.toBeInTheDocument();
     localStorage.removeItem(KIND_KEY);
+  });
+
+  it("says how long a finished run and its steps took in the UI language", async () => {
+    // GTProvider leaves its locale in a cookie; this sets it back to English.
+    initializeI18n(() => {});
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
+      { fix: [step({ name: "build", kind: "step", endedAt: at(2) })] },
+    );
+    const translations = await getTranslationsSnapshot("ja");
+    await using screen = await render(
+      <GTProvider locale="ja" translations={translations}>
+        {page("fix")}
+      </GTProvider>,
+    );
+
+    await expect.element(screen.getByText("所要時間 2分0秒")).toBeVisible();
+    await expect.element(screen.getByText("2分0秒", { exact: true })).toBeVisible();
+    initializeI18n(() => {});
   });
 });

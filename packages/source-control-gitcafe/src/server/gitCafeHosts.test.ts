@@ -15,6 +15,7 @@ describe("gitCafeHosts", () => {
   it.each([
     ["https://staging.git.cafe/team/project.git/", "staging.git.cafe"],
     ["ssh@git.cafe:team/project.git", "git.cafe"],
+    ["ssh@git.cafe:/team/project.git", "git.cafe"],
     ["ssh://git@git.cafe/team/project.git", "git.cafe"],
     ["ssh://git.cafe/team/project.git", "git.cafe"],
     ["ssh://git.cafe:2222/team/project.git", "git.cafe"],
@@ -29,6 +30,7 @@ describe("gitCafeHosts", () => {
   it.each([
     "https://evil.git.cafe/team/project.git",
     "https://git.cafe/team/nested/project.git",
+    "git.cafe://team/project.git",
     "team/project",
   ])("is not a GitCafe repository: %s", (url) => {
     assert.isNull(GitCafeHosts.parseGitCafeRemote(url));

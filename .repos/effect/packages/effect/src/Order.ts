@@ -916,7 +916,7 @@ export const clamp = <A>(O: Order<A>): {
     (self: A, options: {
       minimum: A
       maximum: A
-    }): A => min(O)(options.maximum, max(O)(options.minimum, self))
+    }): A => min(O)(max(O)(self, options.minimum), options.maximum)
   )
 
 /**

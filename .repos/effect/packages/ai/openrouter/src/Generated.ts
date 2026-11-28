@@ -15421,6 +15421,7 @@ export type ChatStreamChunk = {
   readonly "service_tier"?: string | null
   readonly "system_fingerprint"?: string
   readonly "usage"?: ChatUsage
+  readonly "provider"?: string | null
 }
 
 export const ChatStreamChunk = Schema.Struct({
@@ -15475,7 +15476,8 @@ export const ChatStreamChunk = Schema.Struct({
   "system_fingerprint": Schema.optionalKey(
     Schema.String.annotate({ "description": "System fingerprint", "examples": ["fp_44709d6fcb"] })
   ),
-  "usage": Schema.optionalKey(ChatUsage)
+  "usage": Schema.optionalKey(ChatUsage),
+  "provider": Schema.optionalKey(Schema.Union([Schema.String, Schema.Null]))
 }).annotate({
   "description": "Streaming chat completion chunk",
   "examples": [{
