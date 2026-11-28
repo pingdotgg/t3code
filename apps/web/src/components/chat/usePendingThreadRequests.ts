@@ -651,7 +651,6 @@ export function usePendingThreadRequests(input: {
     if (!activePendingProgress.canAdvance) return;
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   };
-  const onAdvanceActivePendingUserInputStable = useStableCallback(onAdvanceActivePendingUserInput);
 
   const onPreviousActivePendingUserInputQuestion = () => {
     const { activePendingProgress } = readPendingUserInputDraft(draftScope);
@@ -676,7 +675,6 @@ export function usePendingThreadRequests(input: {
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
     onChangeActivePendingUserInputCustomAnswer,
     onAdvanceActivePendingUserInput,
-    onAdvanceActivePendingUserInputStable,
     onPreviousActivePendingUserInputQuestion: onPreviousActivePendingUserInputQuestionStable,
   };
 }
