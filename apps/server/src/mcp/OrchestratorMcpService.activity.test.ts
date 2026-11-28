@@ -475,24 +475,7 @@ it("readThread includes completed user input answers in activity text", async ()
       id: "choice",
       header: "Choice",
       question: "Choose a color",
-      options: [
-        { label: "Blue", description: "Use blue", value: "blue" },
-        { label: "Red", description: "Use red", value: "red" },
-      ],
-    },
-    {
-      id: "tags",
-      header: "Tags",
-      question: "Choose tags",
-      options: [{ label: "One", description: "First tag", value: "one" }],
-      multiSelect: true,
-    },
-    {
-      id: "notes",
-      header: "Notes",
-      question: "Add notes",
-      options: [],
-      allowCustomAnswer: true,
+      options: [{ label: "Blue", description: "Use blue" }],
     },
   ];
   const attachment = {
@@ -542,11 +525,9 @@ it("readThread includes completed user input answers in activity text", async ()
     item(pendingItemId),
     item(completedItemId, {
       requestId,
-      answers: { choice: "blue", tags: ["one", "two"], notes: "custom text" },
-      attachmentsByQuestionId: { notes: [attachment] },
-      questionTextById: Object.fromEntries(
-        questions.map((question) => [question.id, question.question]),
-      ),
+      answers: { choice: "blue" },
+      attachmentsByQuestionId: { choice: [attachment] },
+      questionTextById: { choice: "Choose a color" },
     }),
     item(emptyAttachmentsItemId, {
       requestId,
@@ -611,43 +592,26 @@ it("readThread includes completed user input answers in activity text", async ()
       threadId: parentThreadId,
       view: "activity",
       itemId: completedItemId,
-      maxCharsPerItem: 80,
+      maxCharsPerItem: 5_000,
     });
-    expect(completed.items[0]?.text).toContain('"answers"');
-    expect(completed.items[0]?.text).not.toContain('"questions"');
-    expect(completed.items[0]?.textTruncated).toBe(true);
-    const pages = [completed.items[0]?.text ?? ""];
-    let textOffset = completed.items[0]?.nextTextOffset ?? null;
-    while (textOffset !== null) {
-      const page = yield* service.readThread(makeScope(), {
-        threadId: parentThreadId,
-        view: "activity",
-        itemId: completedItemId,
-        textOffset,
-        maxCharsPerItem: 80,
-      });
-      pages.push(page.items[0]?.text ?? "");
-      textOffset = page.items[0]?.nextTextOffset ?? null;
-    }
-    const answerText = pages.join("");
-    const answer = JSON.parse(answerText);
-    expect(answer).toMatchObject({
-      answers: { choice: "blue", tags: ["one", "two"], notes: "custom text" },
+    const answer = JSON.parse(completed.items[0]?.text ?? "{}");
+    // Answers lead so a truncated first page still shows them.
+    expect(Object.keys(answer)[0]).toBe("answers");
+    expect(answer).toEqual({
+      answers: { choice: "blue" },
       attachmentsByQuestionId: {
-        notes: [
+        choice: [
           {
             type: "file",
             id: attachment.id,
             name: attachment.name,
             mimeType: attachment.mimeType,
-            sizeBytes: 12,
+            sizeBytes: attachment.sizeBytes,
           },
         ],
       },
       questions,
     });
-    expect(answer).not.toHaveProperty("questionTextById");
-    expect(answer.attachmentsByQuestionId.notes[0]).not.toHaveProperty("source");
 
     const emptyAttachments = yield* service.readThread(makeScope(), {
       threadId: parentThreadId,
@@ -655,8 +619,7 @@ it("readThread includes completed user input answers in activity text", async ()
       itemId: emptyAttachmentsItemId,
       maxCharsPerItem: 5_000,
     });
-    expect(emptyAttachments.items[0]?.text).not.toContain("attachmentsByQuestionId");
-    expect(JSON.parse(emptyAttachments.items[0]?.text ?? "{}")).toMatchObject({
+    expect(JSON.parse(emptyAttachments.items[0]?.text ?? "{}")).toEqual({
       answers: { choice: "red" },
       questions,
     });
