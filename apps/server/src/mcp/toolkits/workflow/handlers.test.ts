@@ -126,6 +126,7 @@ const changes = [
   { action: "signal", runId: "run-1", wait: "review", value: { choice: "yes" } },
   { action: "resume", runId: "run-1" },
   { action: "cancel", runId: "run-1" },
+  { action: "withdraw", runId: "run-1", wait: "review" },
   { action: "store_set", key: "switch", value: true },
   { action: "store_delete", key: "switch" },
 ];
@@ -145,6 +146,7 @@ it.effect("a caller below the broadest mode reads runs but does not start or cha
             signal: () => Effect.sync(() => (reached.push("signal"), "delivered" as const)),
             resume: reach("resume"),
             cancel: reach("cancel"),
+            withdraw: () => Effect.sync(() => (reached.push("withdraw"), "withdrawn" as const)),
             storeSet: reach("storeSet"),
             storeDelete: reach("storeDelete"),
             stored: () => Effect.succeed([]),
@@ -354,4 +356,26 @@ it.effect(
       expect(result.sent).toBe(false);
       expect(named).toEqual(["t3 CLI"]);
     }),
+);
+
+it.effect("withdraw names the caller who withdrew the question and says whether it was open", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const result = yield* call({
+      action: "withdraw",
+      runId: "run-1",
+      wait: "wanted",
+      reason: "settled elsewhere",
+    }).pipe(
+      Effect.provide(
+        handlersWith({
+          withdraw: (runId, name, options) =>
+            Effect.sync(() => (calls.push([runId, name, options]), "not_open" as const)),
+          get: () => Effect.succeed(emptyRun),
+        }),
+      ),
+    );
+    expect(calls).toEqual([["run-1", "wanted", { by: "t3 CLI", reason: "settled elsewhere" }]]);
+    expect(result).toEqual({ withdrawal: "not_open", steps: [], references: [] });
+  }),
 );

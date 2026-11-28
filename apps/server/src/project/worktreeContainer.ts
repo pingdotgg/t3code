@@ -7,9 +7,9 @@ import * as ProcessRunner from "../processRunner.ts";
 import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 
 const parseGitfileTarget = (contents: string): string | undefined => {
-  const firstLine = contents.split(/\r?\n/u, 1)[0] ?? "";
-  if (!firstLine.startsWith("gitdir:")) return undefined;
-  const target = firstLine.slice("gitdir:".length).trim();
+  const prefix = "gitdir: ";
+  if (!contents.startsWith(prefix)) return undefined;
+  const target = contents.slice(prefix.length).replace(/[\r\n]+$/u, "");
   return target === "" ? undefined : target;
 };
 
@@ -79,7 +79,11 @@ export const makeIsWorktreeContainer = Effect.gen(function* () {
       if (hasIndex) return false;
     }
 
-    const worktrees = yield* git(["worktree", "list", "--porcelain", "-z"]);
+    // Pre-2.36 Git rejects worktree list -z; normalize its line output to NUL records.
+    const worktrees =
+      (yield* git(["worktree", "list", "--porcelain", "-z"])) ??
+      (yield* git(["worktree", "list", "--porcelain"]))?.replaceAll("\n", "\0") ??
+      null;
     if (worktrees === null) return false;
     // The first entry is the main worktree, which Git reports as the metadata directory here.
     const linkedWorktreePaths = splitNul(worktrees)

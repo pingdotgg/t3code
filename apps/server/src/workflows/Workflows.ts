@@ -3,6 +3,7 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
+  type WorkflowRunsAboutInput,
   applyWorkflowRunsUpdate,
   type WorkflowRunsSnapshot,
   type WorkflowRunsUpdate,
@@ -87,6 +88,8 @@ export class Workflows extends Context.Service<
         readonly parent?: WorkflowStore.RunParent;
         /** The version to run, when the caller holds a definition. Without it, the newest. */
         readonly version?: number;
+        /** What a new run is about. A start that finds its run already there leaves it be. */
+        readonly subject?: WorkflowStore.ReferenceInput;
       },
     ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
     /**
@@ -119,6 +122,15 @@ export class Workflows extends Context.Service<
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
     readonly cancel: (runId: string, reason?: string) => Effect.Effect<void, WorkflowError>;
+    /**
+     * End a run's open question unanswered, as its timeout would: its `ask` returns `None` and the
+     * run goes on. `not_open` when the question was answered, timed out or never asked.
+     */
+    readonly withdraw: (
+      runId: string,
+      name: string,
+      options: { readonly by: string; readonly reason?: string | undefined },
+    ) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
     readonly get: (runId: string) => Effect.Effect<
       {
         readonly run: WorkflowStore.WorkflowRun;
@@ -131,7 +143,21 @@ export class Workflows extends Context.Service<
       readonly status?: WorkflowStore.WorkflowRunStatus;
       /** Only runs their workflow tagged with this. */
       readonly tag?: string;
+      /** Only runs about this: their subject's web address, or its key, such as a thread id. */
+      readonly subject?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
+    /**
+     * The runs about an item, by its web address (as `list` reads `subject`) or by the issue or
+     * pull request it is, and the questions they have open, for the item's own view: the runs
+     * list is the newest runs of every subject.
+     */
+    readonly about: (item: WorkflowRunsAboutInput) => Effect.Effect<
+      {
+        readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
+        readonly questions: ReadonlyArray<WorkflowQuestion>;
+      },
+      WorkflowInputError
+    >;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (
       runId: string,
@@ -192,11 +218,15 @@ export const disabled = Workflows.of({
   answer: refuse,
   resume: refuse,
   cancel: refuse,
+  withdraw: refuse,
   get: Effect.fn("Workflows.get")(function* (runId) {
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
   list: Effect.fn("Workflows.list")(function* () {
     return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
+  }),
+  about: Effect.fn("Workflows.about")(function* () {
+    return yield* Effect.succeed({ runs: [], questions: [] });
   }),
   waitFor: Effect.fn("Workflows.waitFor")(function* () {
     return yield* Effect.never;
@@ -248,8 +278,10 @@ export const off = Workflows.of({
   answer: refuseOff,
   resume: refuseOff,
   cancel: refuseOff,
+  withdraw: refuseOff,
   get: refuseOff,
   list: refuseOff,
+  about: refuseOff,
   questions: refuseOff(),
   hooks: refuseOff(),
   stored: refuseOff,
