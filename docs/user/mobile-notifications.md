@@ -13,6 +13,7 @@ Get push alerts, Live Activities, and home-screen widgets on iOS and Android whe
 - **Live progress**: Enable **Live Activity Updates** (iOS), **Agent Live Updates** (Android 16+, check **Live Update Settings** if missing), or **Ongoing Agent Activity** (older Android). Finished results stay visible for up to 15 minutes.
 - **Silent live updates (Android 8+)**: Keep **Ongoing agent activity** on and disable **Agent alerts** in Android system notification settings.
 - **iOS widget**: Add the **Agent Activity** widget to your Home Screen or Lock Screen (refreshes when you open T3; marks unfinished work stale after 10 minutes).
+- **iOS Control Center (iOS 18+)**: Open Control Center, choose **Add a Control**, and find T3 Code. **Start a task** opens the project chooser for a new task; **Open T3 Code** opens the app.
 
 ## Notes
 

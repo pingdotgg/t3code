@@ -22,5 +22,12 @@ module.exports = {
       filePath: "../../native/apple-speech/AppleSpeechEngine.swift",
       reasons: ["appleSpeech"],
     },
+    // The controls plugin copies these native inputs outside Expo's module tracking.
+    ...[
+      "plugins/ios/T3ControlIntents.swift",
+      "plugins/ios/T3StartTaskControl.swift",
+      "plugins/ios/T3OpenAppControl.swift",
+      "assets/widget/T3Mark.svg",
+    ].map((filePath) => ({ type: "file", filePath })),
   ],
 };
