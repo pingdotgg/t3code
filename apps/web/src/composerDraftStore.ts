@@ -690,6 +690,8 @@ interface ComposerDraftStoreState {
     },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  /** Swaps an image's bytes in place, keeping its id so references and position hold. */
+  replaceImageFile: (threadRef: ComposerThreadTarget, imageId: string, file: File) => boolean;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3724,6 +3726,41 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        replaceImageFile: (threadRef, imageId, file) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          const existing = get().draftsByThreadKey[threadKey];
+          const previous = existing?.images.find((image) => image.id === imageId);
+          if (!existing || !previous) return false;
+          const replacement: ComposerImageAttachment = {
+            ...previous,
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          };
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  images: current.images.map((image) =>
+                    image.id === imageId ? replacement : image,
+                  ),
+                  // Persistence reuses a stored data URL by id, so drop the stale bytes.
+                  persistedAttachments: current.persistedAttachments.filter(
+                    (attachment) => attachment.id !== imageId,
+                  ),
+                },
+              },
+            };
+          });
+          revokeObjectPreviewUrl(previous.previewUrl);
+          return true;
         },
         addFiles: (threadRef, files, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

@@ -392,6 +392,27 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect("labels an image with the type its bytes have, not the declared one", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const mislabelled = { ...imageAttachment, name: "screen.jpg", mimeType: "image/jpeg" };
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      yield* fixture.write(mislabelled, bytes);
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Explain this image.",
+        attachments: [mislabelled],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toContainEqual({
+        type: "image",
+        data: bytes.toString("base64"),
+        mimeType: "image/png",
+      });
+    }),
+  );
+
   it.effect.each(["utf8", "utf16le", "utf16be"] as const)(
     "embeds %s code from the selected environment and keeps the upload in place",
     (encoding) =>

@@ -1,6 +1,8 @@
 import {
-  type ProviderInstanceConfig,
+  defaultInstanceIdForDriver,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
+  type UsageAccessRequest,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
@@ -361,33 +363,70 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // Only enabled instances, and only those the user allowed; the rest are never read.
   const usageInstances = Effect.fn("UsageService.usageInstances")(function* <Config>(
     driver: ProviderDriver<Config, unknown, unknown>,
     settings: ServerSettingsValue,
+    access: "allowed" | "unasked" = "allowed",
   ) {
-    const entries: Array<
-      readonly [ProviderInstanceId, Pick<ProviderInstanceConfig, "config" | "environment">, boolean]
-    > = Object.entries(settings.providerInstances)
-      .filter(([, instance]) => instance.driver === driver.driverKind)
-      .map(([id, instance]) => [ProviderInstanceId.make(id), instance, true] as const);
-    // History in the driver's default home stays counted after every instance moves elsewhere; readers dedupe shared directories.
-    entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
+    const entries = Object.entries(settings.providerInstances).filter(
+      ([, instance]) => instance.driver === driver.driverKind,
+    );
+    const defaultId = defaultInstanceIdForDriver(driver.driverKind);
+    if (
+      driver.metadata.hasDefaultInstance !== false &&
+      !Object.hasOwn(settings.providerInstances, defaultId)
+    ) {
+      entries.push([defaultId, { driver: driver.driverKind }]);
+    }
     const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
     return yield* Effect.forEach(
-      entries,
-      Effect.fnUntraced(function* ([instanceId, instance, configured]) {
+      entries.filter(
+        ([, instance]) =>
+          resolveProviderInstanceEnabled(instance) &&
+          (access === "allowed"
+            ? instance.usageAccess === "allowed"
+            : instance.usageAccess === undefined),
+      ),
+      Effect.fnUntraced(function* ([id, instance]) {
         const instanceConfig: ProviderUsageInstance<Config> = {
-          instanceId,
+          instanceId: ProviderInstanceId.make(id),
           config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
           environment: yield* mergeProviderInstanceEnvironment(
             instance.environment,
             hostEnvironment,
           ),
-          configured,
+          configured: Object.hasOwn(settings.providerInstances, id),
         };
         return instanceConfig;
       }),
     );
+  });
+
+  // Enabled instances nobody has answered for yet. Finding a transcript folder only resolves paths.
+  const accessRequests = Effect.fn("UsageService.accessRequests")(function* (
+    settings: ServerSettingsValue,
+  ) {
+    const requests: Array<UsageAccessRequest> = [];
+    for (const driver of BUILT_IN_USAGE_DRIVERS) {
+      const reader = driver.usage;
+      if (reader === undefined) continue;
+      for (const instance of yield* usageInstances(driver, settings, "unasked")) {
+        const paths =
+          reader.kind === "transcripts"
+            ? (yield* reader.directories(instance, { awaitRefresh: false })).flatMap((entry) =>
+                entry.refreshing ? [] : [entry.dir],
+              )
+            : [];
+        requests.push({
+          instanceId: instance.instanceId,
+          driver: driver.driverKind,
+          provider: reader.provider,
+          paths,
+        });
+      }
+    }
+    return requests;
   });
 
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
@@ -1199,6 +1238,7 @@ export const make = Effect.gen(function* () {
       pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      accessRequests: yield* accessRequests(settings).pipe(Effect.provideContext(readerContext)),
     } satisfies UsageSummary;
     return { summary, fromMemory };
   });

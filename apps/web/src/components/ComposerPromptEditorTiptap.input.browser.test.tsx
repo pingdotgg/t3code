@@ -437,15 +437,19 @@ it.each([
   },
 );
 
-it("lets composition replace selected text without surrounding it", async () => {
-  await using screen = await mountEditor("word");
+it.each([
+  { richText: true, composing: true, text: '"', expected: '"' },
+  { richText: true, composing: false, text: "*", expected: "*word*" },
+  { richText: false, composing: false, text: "*", expected: "*" },
+])("replaces or surrounds selected text: %j", async ({ richText, composing, text, expected }) => {
+  await using screen = await mountEditor("word", richText);
   const { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
-    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
-    typeText(editor, 1, 5, '"');
+    if (composing) editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+    typeText(editor, 1, 5, text);
   });
-  expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
 });
 
 it("keeps replacement behavior at a prose mention boundary", async () => {
@@ -1275,6 +1279,42 @@ describe("Markdown markers around styled text", () => {
     });
     expect(editor.state.doc.textContent).toBe("bold after?");
     expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+  });
+
+  it("keeps text a mouse drag selects still, and shows markers for a click on release", async () => {
+    await using screen = await mountEditor("start **bold words** end");
+    const { editor } = screen;
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const point = (pos: number) => {
+      const { left, top, bottom } = editor.view.coordsAtPos(pos);
+      return { x: frame.left + left, y: frame.top + (top + bottom) / 2 };
+    };
+    const mouse = (
+      type: "mousePressed" | "mouseMoved" | "mouseReleased",
+      { x, y }: { x: number; y: number },
+    ) => cdp().send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    const end = editor.state.doc.content.size - 1;
+    const hidden = editor.state.doc.textContent;
+    // A press that focuses the editor starts ProseMirror's 20ms focus timer, which can
+    // take the first drag move's selection as already read and never dispatch it.
+    await focusAt(editor, "end");
+    await mouse("mousePressed", point(end));
+    for (const pos of [end - 2, "start bold wo".length + 1, "start bo".length + 1]) {
+      await mouse("mouseMoved", point(pos));
+      await vi.waitFor(() => expect(editor.state.selection.head).toBe(pos));
+      expect(editor.state.doc.textContent).toBe(hidden);
+    }
+    const released = point("start bo".length + 1);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.selection.head).toBe("start bo".length + 1));
+    const { from, to } = editor.state.selection;
+    expect(editor.state.doc.textBetween(from, to)).toBe("ld words end");
+    expect(editor.state.doc.textContent).toBe(hidden);
+
+    await mouse("mousePressed", released);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("start **bold words** end"));
+    expect(editor.state.selection.empty).toBe(true);
   });
 
   it("keeps bold around a skill pasted inside it", async () => {

@@ -4,6 +4,7 @@ import type {
   PullRequestRef,
   RepositoryIdentity,
 } from "@t3tools/contracts";
+import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import type { ChangeRequestLink } from "@t3tools/source-control-core/shared/definition";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
@@ -130,6 +131,20 @@ export function resolvePullRequestPreviewTarget({
   };
 }
 
+function trimmedRepositoryPath(path: string): string {
+  return canonicalRepositoryPath(path.replace(/^\/+|\/+$/g, ""));
+}
+
+function webUrlRepositoryPath(webUrl: string | undefined): string | null {
+  if (webUrl === undefined) return null;
+  try {
+    const path = trimmedRepositoryPath(new URL(webUrl).pathname);
+    return path === "" ? null : path;
+  } catch {
+    return null;
+  }
+}
+
 /** The project host's browser URL for one of its change requests, before its detail loads. */
 export function projectChangeRequestUrl(
   identity: RepositoryIdentity | null | undefined,
@@ -140,8 +155,11 @@ export function projectChangeRequestUrl(
   const [host, ...path] = identity.canonicalKey.split("/");
   if (!host) return null;
   // The RPC selector can be shorter than the browser path (Azure's `web` for
-  // `org/project/_git/web`), so the project's own repository uses its full key.
-  const ownRepository = sourceControlClients.repositorySelector(identity) === repository;
+  // `org/project/_git/web`), so the project's own repository uses its full key. A host
+  // mounted under a path prefix names it with that prefix, which only its webUrl carries.
+  const ownRepository =
+    sourceControlClients.repositorySelector(identity) === repository ||
+    webUrlRepositoryPath(identity.webUrl) === trimmedRepositoryPath(repository);
   return sourceControlClients.get(identity.provider).changeRequestUrl({
     host,
     repository: ownRepository ? path.join("/") : repository,

@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -247,9 +248,10 @@ describe("EventSink run outcomes", () => {
       const layer = EventSink.layer.pipe(
         Layer.provideMerge(pausedLookup),
         Layer.provideMerge(
-          Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-            Layer.provideMerge(SqlitePersistence.layerMemory),
-          ),
+          Layer.mergeAll(
+            EventStore.layer,
+            ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+          ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
         ),
       );
 

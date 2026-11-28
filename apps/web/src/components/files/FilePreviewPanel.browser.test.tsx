@@ -18,6 +18,9 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetUrlForRevision: null as
+    | ((revision: string | null | undefined) => import("~/assets/assetUrls").AssetUrlState)
+    | null,
   assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
@@ -71,9 +74,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlState: (
     _environmentId: unknown,
     resource: import("@t3tools/contracts").AssetResource | null,
+    revision?: string | null,
   ) => {
     if (resource) state.assetResources.push(resource);
-    return state.assetUrl;
+    return state.assetUrlForRevision ? state.assetUrlForRevision(revision) : state.assetUrl;
   },
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
@@ -132,8 +136,13 @@ vi.mock(import("./OfficeFilePreview"), () => ({
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
-  default: () => (
+  default: ({ onRefreshSelectedFile }: { onRefreshSelectedFile?: () => void }) => (
     <div role="tree">
+      {onRefreshSelectedFile ? (
+        <button type="button" onClick={onRefreshSelectedFile}>
+          Refresh workspace files
+        </button>
+      ) : null}
       <button type="button" role="treeitem" data-item-path="src/">
         src
       </button>
@@ -191,6 +200,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetUrlForRevision = null;
   state.assetResources = [];
   state.openedBrowserUrls = [];
   state.diffWorkersReady = true;
@@ -851,6 +861,87 @@ describe("open file in preview browser", () => {
   });
 });
 
+describe("workspace HTML preview refresh", () => {
+  it.each([
+    {
+      label: "reloads a rendered HTML preview on refresh when fileRevision advances",
+      workspaceMutationId: null as string | null,
+      withFileRevision: true,
+    },
+    {
+      label: "reloads a rendered HTML preview on refresh without a server fileRevision",
+      workspaceMutationId: "mutation-1" as string | null,
+      withFileRevision: false,
+    },
+  ])("$label", async ({ workspaceMutationId, withFileRevision }) => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    state.file = {
+      relativePath: "page.html",
+      contents: "<h1>v1</h1>",
+      byteLength: 11,
+      truncated: false,
+    };
+    const seenRevisions: Array<string | null | undefined> = [];
+    state.assetUrlForRevision = (revision) => {
+      seenRevisions.push(revision);
+      const refreshed = revision !== workspaceMutationId;
+      return {
+        _tag: "Success",
+        url: refreshed ? "data:text/html,v2" : "data:text/html,v1",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        ...(withFileRevision ? { fileRevision: refreshed ? "rev-2" : "rev-1" } : {}),
+      };
+    };
+
+    await using screen = await render(filePreview("page.html", workspaceMutationId));
+    const shownIframeSrc = () =>
+      screen.container.querySelector('iframe:not([aria-hidden="true"])')?.getAttribute("src");
+    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v1/));
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
+
+    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v2/));
+    expect(seenRevisions.at(-1)).not.toBe(workspaceMutationId);
+  });
+});
+
+describe("save file", () => {
+  it("offers one Save file, whether the toolbar or the preview provides it", async () => {
+    using _settings = setup();
+    state.file = { relativePath: "notes.txt", contents: "notes", byteLength: 5, truncated: false };
+    await using screen = await render(filePreview("notes.txt"));
+    await expect.element(screen.getByRole("button", { name: "Save file" })).toBeVisible();
+
+    await screen.rerender(documentPreview("mutation-1", "revision-1"));
+    await expect.element(screen.getByTestId("office-preview")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save file" }).elements()).toHaveLength(1);
+  });
+});
+
+describe("workspace image previews", () => {
+  it("omits the word-wrap toggle on SVG image previews", async () => {
+    using _settings = setup();
+    const contents = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>';
+    state.file = {
+      relativePath: "icon.svg",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    state.assetUrl = {
+      _tag: "Success",
+      url: `data:image/svg+xml,${encodeURIComponent(contents)}`,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    await using screen = await render(filePreview("icon.svg"));
+    await expect.element(screen.getByRole("img", { name: "icon.svg" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /word wrap/i }))
+      .not.toBeInTheDocument();
+  });
+});
+
 describe("rendered Markdown select all", () => {
   it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();
@@ -902,6 +993,51 @@ describe("rendered Markdown select all", () => {
     document.execCommand("copy");
     expect(copied).toBe(contents);
   });
+
+  it("selects and copies the whole file in a large rendered Markdown preview", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const block = `## Section\n\n${"Paragraph body text. ".repeat(4)}\n\n`;
+    const contents = `Loaded opening body.\n\n${block.repeat(400)}Trailing sentinel.`;
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/large.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/large.md"
+          ? Promise.resolve(new Response(contents))
+          : realFetch(input, init),
+      );
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {sized(markdownPreview(true, `Initial preview.\n\n${block.repeat(40)}`, "large.md"))}
+      </>,
+    );
+    await expect.element(screen.getByText("Loaded opening body.")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Trailing sentinel.");
+
+    await userEvent.click(screen.getByText("Loaded opening body."));
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Loaded opening body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
+
+    let copied: string | undefined;
+    const read = (event: ClipboardEvent) => {
+      copied = event.clipboardData?.getData("text/plain");
+    };
+    window.addEventListener("copy", read);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("copy", read) };
+    document.execCommand("copy");
+    expect(copied).toBe(contents);
+  });
 });
 
 describe("rendered Markdown relative images", () => {
@@ -917,6 +1053,32 @@ describe("rendered Markdown relative images", () => {
     expect(state.assetResources).toContainEqual(
       expect.objectContaining({ _tag: "media-file", path: expectedPath }),
     );
+  });
+});
+
+describe("rendered Markdown image refresh", () => {
+  it("re-mints embedded workspace images when workspace files refresh", async () => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    const seenRevisions: Array<string | null | undefined> = [];
+    state.assetUrlForRevision = (revision) => {
+      seenRevisions.push(revision);
+      return {
+        _tag: "Success",
+        url: `data:image/png;base64,${typeof revision === "string" ? "djI=" : "djE="}`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+    };
+    await using screen = await render(markdownPreview(false, "![diagram](diagram.png)\n"));
+    await vi.waitFor(() => expect(seenRevisions).not.toHaveLength(0));
+    const loaded = seenRevisions.at(-1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
+
+    await vi.waitFor(() => {
+      expect(seenRevisions.at(-1)).toEqual(expect.any(String));
+      expect(seenRevisions.at(-1)).not.toBe(loaded);
+    });
   });
 });
 
@@ -1135,20 +1297,21 @@ function withPreviewAppCss() {
   return { [Symbol.dispose]: () => style.remove() };
 }
 
-function opened(positionKey: string, children: ReactNode) {
+function opened(positionKey: string, children: ReactNode, height = 400) {
   return (
     <PreviewPositionKey value={positionKey}>
-      <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
-        {children}
-      </div>
+      <div style={{ width: 500, height, display: "flex", flexDirection: "column" }}>{children}</div>
     </PreviewPositionKey>
   );
 }
 
 describe("large text scroll position", () => {
-  const log = (count: number) => (
+  const log = (count: number, indexing = false, revealLine?: number) => (
     <VirtualTablePreview
       name="app.log"
+      indexing={indexing}
+      revealLine={revealLine ?? null}
+      revealRequestId={1}
       count={count}
       columns={1}
       source
@@ -1190,6 +1353,192 @@ describe("large text scroll position", () => {
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
     await screen.rerender(opened("app.log", log(5000)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
+  });
+
+  it.each([{ indexing: true }, { indexing: false }])(
+    "keeps the reading row past a cited line on return (indexing: $indexing)",
+    async ({ indexing }) => {
+      using _style = withPreviewAppCss();
+      const key = `cited-log-${indexing}`;
+      {
+        await using _screen = await render(opened(key, log(66000, false, 1000), 608));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(999));
+        scroller().scrollTop = 1499 * 29;
+        scroller().dispatchEvent(new Event("scroll"));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+      }
+      // While indexing, the viewer has no line request yet.
+      await using screen = await render(
+        opened(key, indexing ? log(2000, true) : log(66000, false, 1000), 608),
+      );
+      if (indexing) {
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+        await screen.rerender(opened(key, log(66000, false, 1000), 608));
+      }
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+    },
+  );
+
+  const wrappedLog = (
+    count: number,
+    { missingPage = -1, indexing = false, wrap = true, wide = false } = {},
+  ) => (
+    <VirtualTablePreview
+      name="wrapped.log"
+      count={count}
+      indexing={indexing}
+      columns={wide ? 8 : 1}
+      source={!wide}
+      wrap={wrap}
+      getRows={(page) =>
+        page === missingPage
+          ? undefined
+          : Array.from({ length: PREVIEW_PAGE_ROWS }, (_, local) => {
+              const index = page * PREVIEW_PAGE_ROWS + local;
+              return [
+                `entry ${index}: ${index >= 80 ? "wrapped content ".repeat(wide && index >= 96 ? 2 : 60) : ""}`,
+              ];
+            })
+      }
+    />
+  );
+  const row = (index: number) =>
+    scroller().querySelector<HTMLElement>(`[data-preview-row="${index}"]`);
+  const waitForRowLayout = (index: number) =>
+    new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(row(index)!);
+    });
+  const atEnd = (index: number) =>
+    Math.abs(
+      (row(index)?.getBoundingClientRect().bottom ?? 0) - scroller().getBoundingClientRect().bottom,
+    ) < 2;
+  const scrollToEnd = async () => {
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+    await act(() =>
+      scroller().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await act(() => scroller().dispatchEvent(new Event("scroll")));
+  };
+  const scrollToRow = async (index: number) => {
+    const viewport = scroller();
+    await act(() => {
+      viewport.scrollTop +=
+        row(index)!.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 2;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(index));
+  };
+
+  it.each([
+    { name: "an interior row in the wrapped tail", interior: true, count: 100 },
+    { name: "the new bottom after truncation", interior: false, count: 98 },
+  ])("restores $name when reopening a preview", async ({ name, interior, count }) => {
+    using _style = withPreviewAppCss();
+    {
+      await using _screen = await render(opened(name, wrappedLog(100)));
+      await scrollToEnd();
+      if (interior) await scrollToRow(94);
+    }
+    await using screen = await render(
+      opened(name, wrappedLog(interior ? count : 85, { indexing: !interior })),
+    );
+    if (!interior) {
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+      await screen.rerender(opened(name, wrappedLog(count)));
+    }
+    await vi.waitFor(() => {
+      if (interior) expect(firstVisibleRow()).toBe(94);
+      else expect(atEnd(count - 1)).toBe(true);
+    });
+  });
+
+  it("keeps a manual scroll made before the final page arrives", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with delayed final page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { missingPage: 3 })));
+    await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+    await scrollToRow(94);
+    await screen.rerender(opened(key, wrappedLog(100)));
+    await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
+    await waitForRowLayout(99);
+    expect(firstVisibleRow()).toBe(94);
+  });
+
+  it.each([false, true])(
+    "handles a late preceding page with manual scrolling set to %s",
+    async (manualScroll) => {
+      using _style = withPreviewAppCss();
+      const key = `wrapped log with late preceding page ${manualScroll}`;
+      {
+        await using _screen = await render(opened(key, wrappedLog(100)));
+        await scrollToEnd();
+        await scrollToRow(96);
+      }
+      await using screen = await render(opened(key, wrappedLog(100, { missingPage: 2 })));
+      await vi.waitFor(() => expect(row(96)?.textContent).toContain("entry 96"));
+      await waitForRowLayout(96);
+      const viewport = scroller();
+      if (manualScroll) {
+        viewport.style.overflowAnchor = "none";
+        await scrollToRow(97);
+      }
+      const manualTop = viewport.scrollTop;
+      await screen.rerender(opened(key, wrappedLog(100)));
+      await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+      if (manualScroll) {
+        await waitForRowLayout(94);
+        expect(viewport.scrollTop).toBe(manualTop);
+      } else await vi.waitFor(() => expect(firstVisibleRow()).toBe(96));
+    },
+  );
+
+  it("keeps a wide table at the bottom when the preceding tail page arrives last", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wide table with late preceding page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100, { wide: true })));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { wide: true, missingPage: 2 })));
+    // Require the preview to preserve the bottom even when the browser does not anchor it.
+    scroller().style.overflowAnchor = "none";
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await waitForRowLayout(99);
+    await screen.rerender(opened(key, wrappedLog(100, { wide: true })));
+    await vi.waitFor(() => {
+      expect(row(94)?.offsetHeight).toBeGreaterThan(29);
+      expect(atEnd(99)).toBe(true);
+    });
+  });
+
+  it("allows scrolling up after a saved tail row can no longer align with the top", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with wrap turned off";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+      await scrollToRow(94);
+    }
+    await using _screen = await render(opened(key, wrappedLog(100, { wrap: false })));
+    const viewport = scroller();
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+    });
+    await act(() => {
+      viewport.scrollTop -= 3 * 29;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(firstVisibleRow()).toBeLessThan(87));
   });
 });
 
@@ -1252,4 +1601,33 @@ describe("notebook scroll position", () => {
       expect(Math.abs(position.offset - saved.offset)).toBeLessThanOrEqual(2);
     });
   });
+});
+
+it("highlights Jupyter kernel languages while keeping labels and raw cells plain", async () => {
+  // Loading a grammar on first use can outlast waitFor on a busy runner.
+  await preloadHighlighter({
+    themes: Object.values(DEFAULT_THEMES),
+    langs: ["rust", "cpp", "csharp", "fsharp", "zsh"],
+  });
+  for (const [language, source] of [
+    ["Rust", 'fn main() { println!("hi"); }'],
+    ["C++17", "int main() { return 0; }"],
+    ["C#", "class C { int x = 1; }"],
+    ["F#", "let answer = 42"],
+    ["Bash", 'if [ -n "$HOME" ]; then echo "hi"; fi'],
+  ] as const) {
+    const cells = (["code", "raw"] as const).map((kind) => ({ kind, source, outputs: [] }));
+    const notebook = { type: "notebook" as const, language, cells };
+    await using screen = await render(<NotebookPreview notebook={notebook} />);
+    expect(screen.getByRole("status").first().element().textContent).toContain(`· ${language}`);
+    expect(screen.container.querySelector("section > div")?.textContent).toBe(`${language} · 1`);
+    await vi.waitFor(() => {
+      const [code, raw] = [...screen.container.querySelectorAll("diffs-container")].map((el) => {
+        const spans = el.shadowRoot?.querySelectorAll("[data-line] span") ?? [];
+        return new Set(Array.from(spans, (span) => getComputedStyle(span).color)).size;
+      });
+      expect(code, language).toBeGreaterThan(1);
+      expect(raw, `raw:${language}`).toBe(1);
+    });
+  }
 });

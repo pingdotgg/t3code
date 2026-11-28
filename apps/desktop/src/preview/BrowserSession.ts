@@ -163,7 +163,7 @@ const CERTIFICATE_APPROVALS_FILE = "t3code-certificate-approvals.json";
 /** Server-chosen certificate names must not add lines or flood the prompt. */
 const promptCertificateName = (name: string): string => {
   const flat = name.replace(/\s+/g, " ").trim();
-  return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
+  return flat.length > 120 ? `${flat.slice(0, 120).replace(/\p{Surrogate}$/u, "")}…` : flat;
 };
 
 const promptCertificateDate = (seconds: number): string =>

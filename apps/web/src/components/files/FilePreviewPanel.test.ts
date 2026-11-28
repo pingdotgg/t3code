@@ -180,12 +180,34 @@ describe("document preview contents", () => {
     [
       "nested table cells",
       String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
-      "Inner A\tInner B\t\t",
+      "Inner A\tInner B\t",
     ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
+  it("shows RTF footnotes after the page text", () => {
+    // LibreOffice Writer marks the footnote destination with \*; Word does not.
+    const libreOffice = String.raw`{\rtf1\ansi{\pard The north region}{{\super \chftn{\*\footnote \chftn\pard\plain \s24\fi-340\li340{
+\tab Hold the obsolete value apart.}
+}}
+}{
+ is ready.}
+\par }`;
+    const word = String.raw`{\rtf1\ansi\pard The shipment left.{\cs16\super \chftn }{\footnote \pard\plain \s15 {\cs16\super \chftn } Inspect the seals.} Finance booked revenue.\par}`;
+    const html = (source: string) => {
+      const result = openRtf(bytes(source));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages[0]!.html;
+    };
+    expect(html(libreOffice)).toBe(
+      "<p data-rtf-whitespace>The north region<sup>1</sup> is ready.<br></p><hr><p data-rtf-whitespace><sup>1</sup>\tHold the obsolete value apart.</p>",
+    );
+    expect(html(word)).toBe(
+      "<p data-rtf-whitespace>The shipment left.<sup>1</sup> Finance booked revenue.<br></p><hr><p data-rtf-whitespace><sup>1</sup> Inspect the seals.</p>",
+    );
   });
 
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
@@ -196,6 +218,42 @@ describe("document preview contents", () => {
       expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
+
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\pard Before table\par
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1\cell\row
+\pard After table\par
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before table<br>Item\tQuantity\t<br>Bolts\tFour\t<br>After table<br></p>",
+    );
+  });
+
+  it.each([
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
 
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
@@ -295,6 +353,15 @@ describe("document preview contents", () => {
     expect(underlines.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
     );
+    const scripts = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\strike old} \strike on\strike0  off \striked1 dbl\striked0  plain x\super 2\nosupersub+H\sub 2\super+\nosupersub O {\sub scoped} \strike\super both\plain  reset}`,
+      ),
+    );
+    if (scripts.type !== "document") throw new Error("Expected document");
+    expect(scripts.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><s>old</s> <s>on</s> off <s>dbl</s> plain x<sup>2</sup>+H<sub>2</sub><sup>+</sup>O <sub>scoped</sub> <sup><s>both</s></sup> reset</p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -322,6 +389,46 @@ Third}`;
     expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
       lineBreak,
     );
+  });
+
+  it.each([
+    ["LibreOffice", ""],
+    // Word adds a drawing that repeats the box for older readers.
+    [
+      "Word",
+      String.raw`{\shprslt{\*\do\dobxcolumn{\dptxbx{\dptxbxtext\pard Trucks leave at noon\par}}}}`,
+    ],
+    ["a plain fallback", String.raw`{\shprslt\pard Trucks leave at noon\par}`],
+  ])("shows the text of a %s rich text box once, without shape properties", (_writer, result) => {
+    const html = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi Before\par{\shp{\*\shpinst\shpleft0{\sp{\sn shapeType}{\sv 202}}{\shptxt\pard Trucks leave at noon\par}}` +
+          result +
+          String.raw`}After\par}`,
+      ),
+    );
+    if (html.type !== "document") throw new Error("Expected document");
+    expect(html.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before<br>Trucks leave at noon<br>After<br></p>",
+    );
+  });
+
+  it.each([
+    ["paragraphs", String.raw`\pard\intbl Apples\par\pard\intbl green\cell`],
+    // TextEdit ends a paragraph with a backslash before the line break.
+    ["TextEdit paragraphs", "\\pard\\intbl\\itap1 Apples\\\ngreen\\cell "],
+    ["line breaks", String.raw`\pard\intbl Apples\line green\cell`],
+    ["TextEdit line breaks", String.raw`\pard\intbl Apples\uc0\u8232 green\cell`],
+  ])("keeps the %s of a rich text table cell in its row", (_kind, cell) => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000` +
+          cell +
+          String.raw`\pard\intbl 3\cell\row\pard After\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Apples green\t3\t<br>After<br></p>");
   });
 
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
@@ -473,6 +580,12 @@ Third}`;
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
                 { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
                 { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
+                { output_type: "stream", name: "stdout", text: "Status: 10%" },
+                { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
+                { output_type: "stream", name: "stderr", text: "\rDiagnostic" },
+                { output_type: "stream", name: "stdout", text: "Keep this" },
+                { output_type: "display_data", data: { "text/plain": "Saved result" } },
+                { output_type: "stream", name: "stdout", text: "\rNext" },
               ],
             },
           ],
@@ -496,6 +609,11 @@ Third}`;
             { kind: "html", text: "<b>Results</b>" },
             { kind: "text", text: "| a |\n|---|" },
             { kind: "text", text: "plain wins" },
+            { kind: "text", text: "Status: Done\n" },
+            { kind: "text", text: "Diagnostic" },
+            { kind: "text", text: "Keep this" },
+            { kind: "text", text: "Saved result" },
+            { kind: "text", text: "Next" },
           ],
         },
       ],
@@ -509,6 +627,9 @@ Third}`;
       [{ kernelspec }, "python"],
       [{ language_info: { name: "" }, kernelspec }, "python"],
       [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+      [{ kernelspec: { name: "Python3" } }, "python"],
+      [{ kernelspec: { name: { toString: null } } }, "text"],
+      [{ language_info: { name: { toString: null } }, kernelspec: { language: "r" } }, "r"],
     ] as const) {
       expect(
         openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
@@ -602,6 +723,65 @@ Third}`;
     ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
+  it("removes saved terminal cursor and erase sequences from notebook output", () => {
+    const result = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [
+                    "\u001b[?25lepoch 1\u001b[K\n",
+                    "\u001b[Aepoch 2\u001b[",
+                    "2K\u001b[?25h\n",
+                  ],
+                },
+                {
+                  output_type: "execute_result",
+                  data: { "text/plain": "\u001b[1Gready\u001b[0K" },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: "epoch 1\nepoch 2\n" },
+      { kind: "text", text: "ready" },
+    ]);
+  });
+
+  it("counts a run of saved stream records as one notebook output", () => {
+    // nbclient (papermill, nbconvert --execute) saves each kernel flush as its own record.
+    const records = Array.from({ length: 150 }, (_, index) => ({
+      output_type: "stream",
+      name: "stdout",
+      text: `step ${index}\n`,
+    }));
+    const notebook = (outputs: unknown[]) =>
+      bytes(JSON.stringify({ nbformat: 4, cells: [{ cell_type: "code", source: "", outputs }] }));
+    const result = openNotebook(notebook(records));
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: records.map((record) => record.text).join("") },
+    ]);
+    const results = Array.from({ length: 101 }, () => ({
+      output_type: "display_data",
+      data: { "text/plain": "x" },
+    }));
+    expect(() => openNotebook(notebook(results))).toThrow(
+      expect.objectContaining({ code: "notebook-too-many-outputs" }),
+    );
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",
@@ -630,6 +810,28 @@ Third}`;
     expect(result.sheets[0]!.rows).toEqual([
       ["Total", "", "", "", "Lead"],
       ["", "", "", "", "Q2"],
+    ]);
+  });
+
+  it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const inlineShape =
+      '<draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Recount on Monday</text:p></draw:text-box></draw:frame>';
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
+        '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        `<table:table-row><table:table-cell><text:p>Plums</text:p></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Low<text:s/><text:span>${inlineShape}stock</text:span></text:p></text:list-item></text:list></table:table-cell></table:table-row>` +
+        `<table:table-row><table:table-cell><text:p>Figs</text:p></table:table-cell><table:table-cell office:value-type="string" office:string-value="Available"><text:p>${inlineShape}</text:p><text:p>${inlineShape}</text:p></table:table-cell></table:table-row>` +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Apples", "42"],
+      ["Pears"],
+      ["Plums", "Low stock"],
+      ["Figs", "Available"],
     ]);
   });
 
@@ -689,6 +891,63 @@ Third}`;
     },
   );
 
+  it("hides ODS rows and columns that Calc hides or filters out", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Staff">' +
+        '<table:table-column/><table:table-column table:visibility="collapse"/><table:table-column table:number-columns-repeated="2"/>' +
+        "<table:table-row><table:table-cell><text:p>Name</text:p></table:table-cell><table:table-cell><text:p>Salary</text:p></table:table-cell><table:table-cell><text:p>Team</text:p></table:table-cell></table:table-row>" +
+        "<table:table-row><table:table-cell><text:p>Ada</text:p></table:table-cell><table:table-cell><text:p>900</text:p></table:table-cell><table:table-cell><text:p>North</text:p></table:table-cell></table:table-row>" +
+        '<table:table-row table:visibility="collapse"><table:table-cell><text:p>Draft</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row table:visibility="filter"><table:table-cell><text:p>Bob</text:p></table:table-cell><table:table-cell><text:p>800</text:p></table:table-cell><table:table-cell><text:p>South</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:table-cell><text:p>Cy</text:p></table:table-cell><table:table-cell><text:p>700</text:p></table:table-cell><table:table-cell><text:p>East</text:p></table:table-cell></table:table-row>" +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    const sheet = result.sheets[0]!;
+    expect(sheet.rows).toEqual([
+      ["Name", "Team"],
+      ["Ada", "North"],
+      ["Cy", "East"],
+    ]);
+    // Labels keep Calc's addresses: Team stays in column C, Cy in row 5.
+    expect(sheet.columnIndexes?.slice(0, 2)).toEqual([0, 2]);
+    expect(sheet.rowIndexes).toEqual([0, 1, 4]);
+  });
+
+  it("hides ODS sheets whose table style sets table:display to false", async () => {
+    const ns =
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta1" style:family="table"><style:table-properties table:display="true"/></style:style>' +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '<style:style style:name="ta_extref" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        "</office:automatic-styles><office:body><office:spreadsheet>" +
+        '<table:table table:name="Summary" table:style-name="ta1"><table:table-row><table:table-cell><text:p>Visible</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Private" table:style-name="ta2"><table:table-row><table:table-cell><text:p>Secret</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Notes"><table:table-row><table:table-cell><text:p>Plain</text:p></table:table-cell></table:table-row></table:table>' +
+        `<table:table table:name="'file:///rates.ods'#Rates" table:style-name="ta_extref"><table:table-source table:mode="copy-results-only" table:table-name="Rates"/><table:table-row><table:table-cell><text:p>Cached</text:p></table:table-cell></table:table-row></table:table>` +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets.map((sheet) => sheet.name)).toEqual(["Summary", "Notes"]);
+    expect(result.sheets[0]!.rows).toEqual([["Visible"]]);
+    const hiddenOnly = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '</office:automatic-styles><office:body><office:spreadsheet><table:table table:name="Only" table:style-name="ta2"/></office:spreadsheet></office:body></office:document-content>',
+    );
+    await expect(openDocument(hiddenOnly, "ods")).rejects.toMatchObject({
+      _tag: "PreviewError",
+      code: "ods-sheet-count",
+    });
+  });
+
   const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
   const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
   it.each([
@@ -730,6 +989,105 @@ Third}`;
     );
   });
 
+  it("omits hidden ODT sections", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Visible intro.</text:p><text:section text:style-name="Sect1" text:name="Internal" text:display="none"><text:p>Internal margin 42%.</text:p></text:section><text:section text:name="Shown" text:display="true"><text:p>Shown section.</text:p></text:section><text:p>Visible end.</text:p></office:text></office:body></office:document-content>';
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Visible intro.</p><p>Shown section.</p><p>Visible end.</p>",
+    );
+  });
+
+  it("omits ODT text hidden by character styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="T1" style:family="text"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="T2" style:family="text" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Base" style:family="text"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="Derived" style:family="text" style:parent-style-name="Base"/></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p>Use <text:span text:style-name="T1">the obsolete west or<text:line-break/></text:span> the north entrance.</text:p>',
+      '<text:p>Wait near the <text:span text:style-name="T2">old blue or </text:span>red marker.</text:p>',
+      '<text:p>Shown <text:span text:style-name="Shown">again</text:span>.</text:p>',
+      '<text:p>Bring your <text:span text:style-name="Retired">draft or permit</text:span>badge.</text:p>',
+      '<text:p>Take <text:span text:style-name="Retired">the old <text:span text:style-name="Shown">the new</text:span><text:span> stairs</text:span></text:span> up.</text:p>',
+      '<text:p>Keep <text:span text:style-name="Derived">visible</text:span>.</text:p>',
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="Shown" style:family="text" style:parent-style-name="Retired"><style:text-properties text:display="true"/></style:style>' +
+      '<style:style style:name="Base" style:family="text"><style:text-properties text:display="true"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Use  the north entrance.</p><p>Wait near the red marker.</p><p>Shown <span>again</span>.</p><p>Bring your badge.</p><p>Take <span>the new</span> up.</p><p>Keep <span>visible</span>.</p>",
+    );
+  });
+
+  it("keeps ODT ruby readings apart from their base text", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+      '<text:p>Read <text:ruby text:style-name="Ru1"><text:ruby-base>漢字</text:ruby-base><text:ruby-text>かんじ</text:ruby-text></text:ruby> here.</text:p>' +
+      "</office:text></office:body></office:document-content>";
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p>Read <ruby>漢字<rt>かんじ</rt></ruby> here.</p>");
+  });
+
+  it("respects ODT hidden text and hidden paragraph fields", async () => {
+    // Field markup as LibreOffice Writer 24.2 saves it: no text:is-hidden, and the field text only in
+    // text:string-value.
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:text>' +
+      '<text:p>Gate code <text:hidden-text text:condition="ooow:1" text:string-value="4471 (staff only)"/>is posted.</text:p>' +
+      '<text:p>Shown field <text:hidden-text text:condition="ooow:0" text:string-value="visible note"/><text:s/>end.</text:p>' +
+      '<text:p><text:hidden-paragraph text:condition="ooow:1"/>Internal margin is 42%.</text:p>' +
+      '<text:p><text:hidden-paragraph text:condition="ooow:0" text:is-hidden="true"/>Kept paragraph.</text:p>' +
+      '<text:p>Outer <draw:frame><draw:text-box><text:p><text:hidden-paragraph text:condition="ooow:1"/>Boxed.</text:p></draw:text-box></draw:frame>stays.</text:p>' +
+      "</office:text></office:body></office:document-content>";
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p><p>Outer stays.</p>",
+    );
+  });
+
+  it("omits ODT text hidden by paragraph styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Shown" style:family="text"><style:text-properties text:display="true"/></style:style></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p text:style-name="P1">Use the obsolete west entrance.</text:p>',
+      '<text:h text:outline-level="2" text:style-name="Retired">Retired section</text:h>',
+      '<text:p text:style-name="P2">Draft <text:span text:style-name="Shown">North entrance</text:span> only.</text:p>',
+      '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+      "<text:p>Keep this.</text:p>",
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="paragraph"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="TextOnly" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p><span>North entrance</span></p><p>Paragraph ignores text family.</p><p>Keep this.</p>",
+    );
+  });
+
   it("maps ODT heading outline levels to HTML heading tags", async () => {
     const xml =
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
@@ -764,6 +1122,48 @@ Third}`;
     );
   });
 
+  it.each([
+    { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
+    { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
+    { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+    { styleStart: "3", itemStart: undefined, format: "I", expected: '<ol start="3" type="I"><li>' },
+    { styleStart: "1", itemStart: undefined, format: "a", expected: '<ol start="1" type="a"><li>' },
+  ])(
+    "keeps ODT list numbers for style start $styleStart and item start $itemStart",
+    async ({ styleStart, itemStart, format = "1", expected }) => {
+      const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="${format}" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
+
+  it.each([
+    { continued: 'text:continue-numbering="true"', expected: '<ol start="3">' },
+    { continued: 'text:continue-list="list1"', expected: '<ol start="3">' },
+    { continued: "", expected: "<ol>" },
+  ])(
+    "numbers a continued ODT list after the paragraph that splits it ($continued)",
+    async ({ continued, expected }) => {
+      // LibreOffice splits a numbered list around a plain paragraph and marks the second part as continued.
+      const list = (id: string, items: string[], attrs = "") =>
+        `<text:list xml:id="${id}" ${attrs} text:style-name="Steps">${items.map((item) => `<text:list-item><text:p>${item}</text:p></text:list-item>`).join("")}</text:list>`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">' +
+        '<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style></office:automatic-styles>' +
+        `<office:body><office:text>${list("list1", ["Review", "Send"])}<text:p>Wait for a reply.</text:p>${list("list2", ["Merge", "Deploy"], continued)}</office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(
+        `<ol><li><p>Review</p></li><li><p>Send</p></li></ol><p>Wait for a reply.</p>${expected}<li><p>Merge</p></li><li><p>Deploy</p></li></ol>`,
+      );
+    },
+  );
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
@@ -780,7 +1180,7 @@ Third}`;
   it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? `<office:text><text:p>Field notes</text:p>${indexes.join("")}</office:text>` : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? `<office:text><text:p>Field notes<text:note text:id="ftn1" text:note-class="footnote"><text:note-citation>1</text:note-citation><text:note-body>\n  <text:p>Sourced on site</text:p></text:note-body></text:note> today<text:note text:id="edn1" text:note-class="endnote"><text:note-citation>i</text:note-citation><text:note-body><text:h>Appendix</text:h></text:note-body></text:note></text:p>${indexes.join("")}</office:text>` : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
@@ -789,7 +1189,7 @@ Third}`;
     expect(result.pages[0]!.html).not.toContain("Speaker only");
     if (kind === "odt")
       expect(result.pages[0]!.html).toBe(
-        `<p>Field notes</p>${"<p>Index</p><p>Field notes: 1</p>".repeat(indexes.length)}`,
+        `<p>Field notes<sup>1</sup> today<sup>i</sup></p>${"<p>Index</p><p>Field notes: 1</p>".repeat(indexes.length)}<hr><p><sup>1</sup>Sourced on site</p><p><sup>i</sup></p><h2>Appendix</h2>`,
       );
     for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
@@ -804,6 +1204,16 @@ Third}`;
       archive.file("content.xml", source);
       await expect(openDocument(archive, kind)).rejects.toMatchObject({ code: "xml-invalid" });
     }
+  });
+
+  it("counts ODT footnote marks against the preview size limit", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Lead<text:note text:id="ftn1" text:note-class="footnote"><text:note-citation>${'"'.repeat(1_450_000)}</text:note-citation><text:note-body><text:p>Body</text:p></text:note-body></text:note></text:p></office:text></office:body></office:document-content>`,
+    );
+    await expect(openDocument(archive, "odt")).rejects.toMatchObject({
+      code: "rendered-too-large",
+    });
   });
 
   it("keeps OpenDocument image descriptions in image alt text", async () => {
@@ -850,7 +1260,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><center><p>Archive <strike>draft</strike> edition</p></center><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -867,6 +1277,7 @@ Third}`;
     expect(first.html).toContain(
       '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
     );
+    expect(first.html).toContain("<center><p>Archive <strike>draft</strike> edition</p></center>");
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
@@ -930,6 +1341,8 @@ Third}`;
           <item id="chapter" href="book/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
           <item id="read" href="overlays/chapter.smil" media-type="application/smil+xml"/>
           <item id="captions" href="captions.xml" media-type="application/ttml+xml"/>
+          <item id="captions-dfxp" href="captions-dfxp.xml" media-type="application/ttaf+xml"/>
+          <item id="captions-ext" href="captions-ext.dfxp" media-type="application/xml"/>
           <item id="clip" href="clip.mp4" media-type="video/mp4"/>
         </manifest><spine><itemref idref="chapter"/></spine></package>`,
       )
@@ -937,6 +1350,8 @@ Third}`;
         "book/chapter.xhtml",
         `<html><body><p id="line-1">First line</p>
           <video autoplay=""><track kind="captions" srclang="en" label="English" src="../captions.xml" default=""/>
+          <track kind="captions" srclang="fr" label="French" src="../captions-dfxp.xml"/>
+          <track kind="captions" srclang="es" label="Spanish" src="../captions-ext.dfxp"/>
           <track kind="captions" src="https://example.test/remote.vtt"/>
           <source src="../clip.mp4#t=00:01:00,00:02:00"/><source src="../clip.mp4#t=,120"/>
           <source src="../clip.mp4#t=npt:2.5,4.25"/></video>
@@ -948,6 +1363,14 @@ Third}`;
           <div><p begin="500ms" dur="2s">Tea &amp; coffee<br/>served.</p></div>
           <p begin="500ms" end="2s">Thanks.</p>
         </div></body></tt>`,
+      )
+      .file(
+        "captions-dfxp.xml",
+        `<tt xmlns="http://www.w3.org/2006/04/ttaf1"><body><div><p begin="0s" end="1.5s">Bonjour.</p></div></body></tt>`,
+      )
+      .file(
+        "captions-ext.dfxp",
+        `<tt xmlns="http://www.w3.org/2006/04/ttaf1"><body><div><p begin="1s" dur="1.5s">Hola.</p></div></body></tt>`,
       )
       .file(
         "overlays/chapter.smil",
@@ -962,14 +1385,25 @@ Third}`;
     const page = await (await openEpub(archive)).page(0);
     try {
       const tracks = page.html.match(/<track [^>]*>/g);
-      expect(tracks).toHaveLength(1);
+      expect(tracks).toHaveLength(3);
       expect(tracks?.[0]).toContain('kind="captions" srclang="en" label="English" default');
+      expect(tracks?.[1]).toContain('kind="captions" srclang="fr" label="French"');
+      expect(tracks?.[2]).toContain('kind="captions" srclang="es" label="Spanish"');
       expect(page.html).toContain("<video controls playsinline>");
-      const caption = await fetch(tracks?.[0]?.match(/src="([^"]+)"/)?.[1] ?? "");
-      expect(caption.headers.get("Content-Type")).toBe("text/vtt");
-      expect(await caption.text()).toBe(
-        "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+      const captions = await Promise.all(
+        (tracks ?? []).map(async (track) => {
+          const response = await fetch(track.match(/src="([^"]+)"/)?.[1] ?? "");
+          return { type: response.headers.get("Content-Type"), text: await response.text() };
+        }),
       );
+      expect(captions).toEqual([
+        {
+          type: "text/vtt",
+          text: "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+        },
+        { type: "text/vtt", text: "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nBonjour.\n" },
+        { type: "text/vtt", text: "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nHola.\n" },
+      ]);
       expect(page.html.match(/#t=[\d.,]+(?=")/g)).toEqual(["#t=60,120", "#t=0,120", "#t=2.5,4.25"]);
       expect(page.narration).toEqual([
         { src: page.assets.at(-1), begin: 2, end: 3.25, anchor: "line-1" },
@@ -980,6 +1414,13 @@ Third}`;
   });
 
   it("preserves the SVG filters used by EPUB artwork", async () => {
+    const fxFilter = `<filter id="fx">
+      <feMorphology operator="dilate" radius="1 2"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="7" stitchTiles="stitch" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="12" xChannelSelector="R" yChannelSelector="G"/>
+      <feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" divisor="1" bias="0" targetX="1" targetY="1" edgeMode="duplicate" preserveAlpha="true"/>
+      <feTile in="noise"/>
+    </filter>`;
     const archive = new JSZip()
       .file(
         "META-INF/container.xml",
@@ -1000,12 +1441,13 @@ Third}`;
           </filter>
           <filter id="drop"><feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5"/></filter>
           <filter id="tone"><feFlood flood-color="red"/><feBlend mode="multiply" in="SourceGraphic"/><feImage href="art.png"/></filter>
+          ${fxFilter}
           <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
         </svg>`,
       )
       .file(
         "fallback.xhtml",
-        '<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter></svg></body></html>',
+        `<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter>${fxFilter}</svg></body></html>`,
       );
     const book = await openEpub(archive);
     const { html } = await book.page(0);
@@ -1021,7 +1463,87 @@ Third}`;
     expect(html).toContain('<feBlend in="SourceGraphic" mode="multiply">');
     expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
-    expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
+    const fallbackHtml = (await book.page(1)).html;
+    expect(fallbackHtml).toContain('<feDropShadow dx="2">');
+    for (const output of [html, fallbackHtml]) {
+      expect(output).toContain('<feMorphology operator="dilate" radius="1 2">');
+      expect(output).toContain(
+        '<feTurbulence result="noise" type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="7" stitchTiles="stitch">',
+      );
+      expect(output).toContain(
+        '<feDisplacementMap in="SourceGraphic" in2="noise" scale="12" xChannelSelector="R" yChannelSelector="G">',
+      );
+      expect(output).toContain(
+        '<feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" divisor="1" bias="0" targetX="1" targetY="1" edgeMode="duplicate" preserveAlpha="true">',
+      );
+      expect(output).toContain('<feTile in="noise"></feTile>');
+    }
+  });
+
+  it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="poster" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="poster"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feComponentTransfer>
+            <feFuncR type="linear" slope="0.5"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
+          </feComponentTransfer></filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
+      '<feFuncR type="linear" slope="0.5">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
+    ]);
+  });
+
+  it("keeps the lighting and arithmetic composite of EPUB SVG bevels", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="badge" href="badge.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="badge"/></spine></package>',
+      )
+      .file(
+        "badge.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="bevel">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+            <feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.75" specularExponent="20" result="shine">
+              <fePointLight x="-5000" y="-10000" z="20000"/>
+            </feSpecularLighting>
+            <feDiffuseLighting in="blur" diffuseConstant="1" result="light">
+              <feSpotLight x="10" y="10" z="50" pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"/>
+            </feDiffuseLighting>
+            <feComposite in="SourceGraphic" in2="shine" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+          </filter>
+          <rect width="80" height="80" fill="orange" filter="url(#bevel)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html).toContain('<fePointLight x="-5000" y="-10000" z="20000">');
+    expect(html).toContain("<feDiffuseLighting ");
+    expect(html).toContain('diffuseConstant="1"');
+    expect(html).toContain("<feSpotLight ");
+    expect(html).toContain('pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"');
+    expect(html).toContain('operator="arithmetic" k1="0" k2="1" k3="1" k4="0"');
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
