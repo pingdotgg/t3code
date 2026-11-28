@@ -87,6 +87,17 @@ function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undef
   }
   return undefined;
 }
+// Writer recomputes hidden-text and hidden-paragraph fields from text:condition on load and ignores
+// the saved text:is-hidden, so only a literal condition can be decided here; others stay undecided.
+function odfFieldHidden(field: XmlNode): boolean | undefined {
+  const condition = (field.attrs["text:condition"] ?? "")
+    .trim()
+    .replace(/^ooow:/, "")
+    .trim();
+  if (!condition || /^false$/i.test(condition)) return false;
+  if (/^true$/i.test(condition)) return true;
+  return /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(condition) ? Number(condition) !== 0 : undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -111,6 +122,26 @@ async function odfHtml(
       `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
     );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
+  if (node.name === "text:hidden-text") {
+    const value = node.attrs["text:string-value"];
+    const fieldHidden = odfFieldHidden(node);
+    if (fieldHidden) return "";
+    if (fieldHidden === false && value !== undefined)
+      return hidden ? "" : pipe(value, escape, boundedMarkup);
+  }
+  if (node.name === "text:p" || node.name === "text:h") {
+    // A frame or note anchored here holds its own paragraphs, whose fields do not hide this one.
+    const ownFields = (parent: XmlNode): XmlNode[] =>
+      parent.children.flatMap((child) =>
+        child.name === "text:hidden-paragraph"
+          ? [child]
+          : child.name === "text:p" || child.name === "text:h"
+            ? []
+            : ownFields(child),
+      );
+    const fields = ownFields(node);
+    if (fields.length && fields.every((field) => odfFieldHidden(field))) return "";
+  }
   if (node.name === "text:note") {
     const mark = `<sup>${escape(find(node, "text:note-citation", "text:note-body").map(text).join(""))}</sup>`;
     const [body] = find(node, "text:note-body");

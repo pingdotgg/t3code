@@ -1058,6 +1058,15 @@ describe("question answer paths", () => {
           expected: ["[Extracted text truncated at document extraction limits.]"],
           absent: ["Lost"],
         })),
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Sheet"><table:table-row table:number-rows-repeated="+2"><table:table-cell table:number-columns-repeated=" +02 "><text:p>Quarter<text:s text:c="+2"/>one</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>',
+          },
+          exact: "## Sheet: Sheet\nQuarter one\tQuarter one\nQuarter one\tQuarter one",
+          expected: [],
+        },
         ...["ods", "odt", "odp", "docx"].flatMap((ext) =>
           [false, true].map((rows) => ({
             ext,

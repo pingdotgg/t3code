@@ -138,6 +138,28 @@ describe("thread links", () => {
       );
       expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
     }
+    for (const threadId of ["mcp:launch:qa(1)", "feature(a(b))"]) {
+      const thread = ref("there", threadId);
+      const unbracketed = `[Original](t3-thread://v2/there/${threadId})`;
+      expect(threadLinkRefs(unbracketed, local)).toEqual([thread]);
+      expect(relabelThreadLinks(unbracketed, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(unbracketed, local, () => undefined)).toBe("Original");
+    }
+    expect(threadLinkRefs("[Original](t3-thread://v2/there/feature\\(test\\))", local)).toEqual([
+      ref("there", "feature(test)"),
+    ]);
+    expect(
+      relabelThreadLinks(
+        "[Original](t3-thread://v2/there/feature\\(test\\))",
+        local,
+        () => undefined,
+      ),
+    ).toBe("Original");
+    const unbalanced = "[Original](t3-thread://v2/there/feature(test)";
+    expect(threadLinkRefs(unbalanced, local)).toEqual([]);
+    expect(relabelThreadLinks(unbalanced, local, () => "Renamed")).toBe(unbalanced);
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -558,6 +580,7 @@ describe("hosted thread links", () => {
       [`[Example](https://example.com/?next=${hosted})`],
       [`[ ${hosted} ](https://example.com)`],
       [`[${hosted}](<https://example.com/a b> "Title")`],
+      [`[${hosted}](t3-thread://v2/local/id "Title")`],
       [`[a](https://example.com/x_(y)) ${hosted}`, `[a](https://example.com/x_(y)) ${relabeled}`],
       [`(${hosted}) **${hosted}**`, `(${relabeled}) **${relabeled}**`],
       [`[[[ [old](${hosted})`, `[[[ ${relabeled}`],
