@@ -1170,10 +1170,13 @@ export const make = Effect.gen(function* () {
             ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
             : Effect.succeed(false),
         ),
-        // A terminal commit moves the branch ref but not HEAD; it always rewrites the index beside it.
+        // Commits rewrite index; soft resets and other ref moves through HEAD unlink HEAD.lock
+        // after updating the branch ref (filtering to Remove avoids firing while the lock is held).
         Stream.filter((event) => {
           const name = path.basename(event.path);
-          return name === "HEAD" || name === "index";
+          return (
+            name === "HEAD" || name === "index" || (name === "HEAD.lock" && event._tag === "Remove")
+          );
         }),
         // On arrival: the cache keeps the old branch until reads below land, and they can retry.
         Stream.tap(() =>
