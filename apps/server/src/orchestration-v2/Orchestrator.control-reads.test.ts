@@ -1883,6 +1883,56 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
+it.effect(
+  "preserves the provider-thread record when importing a deleted thread's native session again",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const original = ThreadId.make("thread:native-import-original");
+      const replacement = ThreadId.make("thread:native-import-replacement");
+      const ref = {
+        driver: adapter.driver,
+        nativeId: "native-reimport",
+        strength: "strong",
+      } as const;
+      const create = (threadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId: ProjectId.make("project:native-reimport"),
+          title: "Imported session",
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+          importedNativeThread: { ref },
+        });
+
+      yield* create(original);
+      const before = yield* projections.getThreadRecords(original, ["providerThreads"]);
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete:native-import-original"),
+        threadId: original,
+      });
+      yield* create(replacement);
+
+      const retained = yield* projections.getThreadRecords(original, ["providerThreads"]);
+      const imported = yield* projections.getThreadRecords(replacement, ["providerThreads"]);
+      assert.lengthOf(retained.providerThreads, 1);
+      assert.lengthOf(imported.providerThreads, 1);
+      assert.equal(retained.providerThreads[0]?.id, before.providerThreads[0]?.id);
+      assert.notEqual(imported.providerThreads[0]?.id, retained.providerThreads[0]?.id);
+      assert.equal(imported.thread.activeProviderThreadId, imported.providerThreads[0]?.id);
+      assert.deepEqual(imported.providerThreads[0]?.nativeThreadRef, ref);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
