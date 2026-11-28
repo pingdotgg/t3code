@@ -149,8 +149,8 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
 
 export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_client.resolve_mode")(
   function* () {
-    const { managed } = yield* resolveStartup();
-    return { managed };
+    const { managed, context } = yield* resolveStartup();
+    return { managed, updateTrial: context?.update?.status === "pending" };
   },
 );
 
