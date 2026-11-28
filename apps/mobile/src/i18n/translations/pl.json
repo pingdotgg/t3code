@@ -5753,5 +5753,8 @@
   "bb9866823586b67a": "Baza danych użycia i klucz Go",
   "8380d6f1828fe191": "Historia konwersacji",
   "1f2036cf25caaf16": "Użycie konta z Cursor",
-  "51aa7700c1f967d2": "Historia sesji"
+  "51aa7700c1f967d2": "Historia sesji",
+  "b2732f3a418e059c": "{count, plural, one {{count} przypięty wątek} few {{count} przypięte wątki} many {{count} przypiętych wątków} other {{count} przypiętego wątku}}",
+  "3004a11f7cf61872": "Zwija przypięte wątki.",
+  "27c975125ff3d459": "Rozwija przypięte wątki."
 }

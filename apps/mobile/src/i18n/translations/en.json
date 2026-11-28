@@ -5753,5 +5753,8 @@
   "bb9866823586b67a": "Usage database and Go key",
   "8380d6f1828fe191": "Conversation history",
   "1f2036cf25caaf16": "Account usage from Cursor",
-  "51aa7700c1f967d2": "Session history"
+  "51aa7700c1f967d2": "Session history",
+  "b2732f3a418e059c": "{count, plural, one {{count} pinned thread} other {{count} pinned threads}}",
+  "3004a11f7cf61872": "Collapses the pinned threads.",
+  "27c975125ff3d459": "Expands the pinned threads."
 }

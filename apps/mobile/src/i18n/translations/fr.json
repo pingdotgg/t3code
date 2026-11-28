@@ -5745,5 +5745,8 @@
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",
   "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
-  "51aa7700c1f967d2": "Historique de sessions"
+  "51aa7700c1f967d2": "Historique de sessions",
+  "b2732f3a418e059c": "{count, plural, one {{count} discussion épinglée} other {{count} discussions épinglées}}",
+  "3004a11f7cf61872": "Réduit les discussions épinglées.",
+  "27c975125ff3d459": "Développe les discussions épinglées."
 }

@@ -260,6 +260,7 @@ export function resolveSidebarDropTarget(
   items: readonly SidebarListItem[],
   activeKey: string,
   overId: string,
+  collapsedPinnedOrder?: readonly string[],
 ): SidebarDropTarget | null {
   const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
   const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
@@ -283,7 +284,19 @@ export function resolveSidebarDropTarget(
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
-  return { section, pinnedOrder, activeOrder };
+  return {
+    section,
+    // A closed shelf offers no position among its hidden pins. Keep their order.
+    pinnedOrder:
+      collapsedPinnedOrder === undefined
+        ? pinnedOrder
+        : section === "pinned"
+          ? collapsedPinnedOrder.includes(activeKey)
+            ? collapsedPinnedOrder
+            : [...collapsedPinnedOrder, activeKey]
+          : collapsedPinnedOrder.filter((key) => key !== activeKey),
+    activeOrder,
+  };
 }
 
 type SidebarThreadDropPlan =
