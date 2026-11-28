@@ -6,7 +6,7 @@ import { T, useGT, Var } from "gt-react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { groupHostAccounts, nextHostAccountChoices } from "./SourceControlAccountSettings.logic";
@@ -38,9 +38,9 @@ function RedactedLogin(props: {
     </span>
   );
   return props.onToggle ? (
-    <button
-      type="button"
-      className="min-w-0 cursor-pointer rounded-sm text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    <InlineButton
+      tone="ghost"
+      className="min-w-0 [--inline-button-text-align:left]"
       aria-label={
         props.revealed
           ? gt("Toggle source control account visibility: {account}", { account: props.account })
@@ -50,7 +50,7 @@ function RedactedLogin(props: {
       onClick={props.onToggle}
     >
       {content}
-    </button>
+    </InlineButton>
   ) : (
     content
   );
