@@ -346,6 +346,24 @@ Third}`;
     );
   });
 
+  it.each([
+    ["paragraphs", String.raw`\pard\intbl Apples\par\pard\intbl green\cell`],
+    // TextEdit ends a paragraph with a backslash before the line break.
+    ["TextEdit paragraphs", "\\pard\\intbl\\itap1 Apples\\\ngreen\\cell "],
+    ["line breaks", String.raw`\pard\intbl Apples\line green\cell`],
+    ["TextEdit line breaks", String.raw`\pard\intbl Apples\uc0\u8232 green\cell`],
+  ])("keeps the %s of a rich text table cell in its row", (_kind, cell) => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000` +
+          cell +
+          String.raw`\pard\intbl 3\cell\row\pard After\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Apples green\t3\t<br>After<br></p>");
+  });
+
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
     const result = openRtf(
       bytes(String.raw`{\rtf1\b First\page Second\b0{\*\unknown \page hidden}\page Third\page}`),
