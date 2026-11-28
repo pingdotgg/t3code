@@ -267,7 +267,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",
+    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden, without reading settings while turned off",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -288,7 +288,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ];
 
         const routed = yield* mergeClaudeProcessEnvironment(
-          { homePath, setupMode: "inference" },
+          { homePath, setupMode: "inference", enabled: true },
           [{ name: "ANTHROPIC_BASE_URL", value: "http://route", sensitive: false }],
           {
             ...host,
@@ -306,12 +306,16 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           CLAUDE_CONFIG_DIR: homePath,
           CLAUDE_SECURESTORAGE_CONFIG_DIR: homePath,
         });
-        expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+        expect(
+          yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, undefined, host),
+        ).toEqual({
           ...providerProcessEnvironment({}, "linux"),
           CLAUDE_CODE_ENTRYPOINT: "t3-code",
           KEEP: "1",
         });
-        expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+        expect(
+          yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, instance, host),
+        ).toEqual({
           ...providerProcessEnvironment({}, "linux"),
           CLAUDE_CODE_ENTRYPOINT: "instance",
           CLAUDE_EFFORT: "low",
@@ -323,9 +327,13 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
         );
         expect(
-          (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host))
+          (yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, instance, host))
             .CLAUDE_CODE_ENTRYPOINT,
         ).toBe("custom");
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath, enabled: false }, instance, host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("instance");
       }),
   );
 });

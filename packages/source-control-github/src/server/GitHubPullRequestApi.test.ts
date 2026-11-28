@@ -1044,7 +1044,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
               output(
                 encodeJson({
                   data: {
-                    nodes: [{ __typename: "Commit", oid: "regular", additions: 18, deletions: 7 }],
+                    nodes: [
+                      {
+                        __typename: "Commit",
+                        oid: "regular",
+                        additions: 18,
+                        deletions: 7,
+                        changedFilesIfAvailable: 12,
+                      },
+                    ],
                   },
                 }),
               ),
@@ -1061,7 +1069,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
           "deletions",
         );
         if (kind === "mixed") {
-          expect(activity.commits[0]).toMatchObject({ additions: 18, deletions: 7 });
+          expect(activity.commits[0]).toMatchObject({
+            additions: 18,
+            deletions: 7,
+            changedFiles: 12,
+          });
         } else if (kind === "unavailable") {
           expect(activity.commits[0]).not.toHaveProperty("additions");
         }
@@ -1116,7 +1128,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
               output(
                 encodeJson({
                   data: {
-                    nodes: [{ __typename: "Commit", oid: "regular", additions: 3, deletions: 1 }],
+                    nodes: [
+                      {
+                        __typename: "Commit",
+                        oid: "regular",
+                        additions: 3,
+                        deletions: 1,
+                        changedFilesIfAvailable: null,
+                      },
+                    ],
                   },
                 }),
               ),
@@ -1136,6 +1156,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const activity = yield* cli.getPullRequestActivity(pullRequestInput);
 
       expect(activity.commits[0]).toMatchObject({ additions: 3, deletions: 1 });
+      expect(activity.commits[0]).not.toHaveProperty("changedFiles");
       expect(activity.truncated).toBe(false);
       expect(mockedExecute).toHaveBeenCalledTimes(3);
     }),

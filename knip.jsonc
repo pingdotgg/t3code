@@ -58,7 +58,6 @@
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
         "src/project/knowledge/codeIntelligenceWorkerThread.ts!",
-        "src/process-launcher.ts!",
         "scripts/cli.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
@@ -108,7 +107,12 @@
     "apps/web": {
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
-      "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs", "test/*.renders.tsx"],
+      "entry": [
+        "src/epubPreviewMain.tsx!",
+        "scripts/warm-dep-cache.ts",
+        "test/fixtures/**/*.mjs",
+        "test/*.renders.tsx",
+      ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

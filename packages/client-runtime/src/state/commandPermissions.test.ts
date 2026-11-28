@@ -620,24 +620,29 @@ describe("command permissions", () => {
   );
 
   it.effect.each([
-    WS_METHODS.serverCheckOtlpEndpoint,
-    WS_METHODS.serverCheckSecretSource,
-    WS_METHODS.serverRefreshSkillsLibrary,
-    WS_METHODS.modelEvaluationsClear,
-  ])("requires the destination settings grant for %s", (method) =>
+    { method: WS_METHODS.serverCheckOtlpEndpoint, scopes: [AuthSettingsWriteScope] },
+    {
+      method: WS_METHODS.serverCheckSecretSource,
+      scopes: [AuthSettingsWriteScope, AuthProvidersManageScope],
+    },
+    { method: WS_METHODS.serverRefreshSkillsLibrary, scopes: [AuthSettingsWriteScope] },
+    { method: WS_METHODS.modelEvaluationsClear, scopes: [AuthSettingsWriteScope] },
+  ])("requires every destination grant in $scopes for $method", ({ method, scopes }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
       const check = createCommandPermissions(runtime, method);
       registry.set(sessions(env), AsyncResult.success(grant(true)));
       expect(registry.get(check.permissionAtom(env))).toBe(false);
-      registry.set(
-        sessions(env),
-        AsyncResult.success({
-          ...grant(false),
-          scopes: [AuthSettingsWriteScope],
-          permissions: [AuthSettingsWriteScope],
-        }),
-      );
+      const hold = (held: typeof scopes) =>
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes: held, permissions: held }),
+        );
+      for (const missing of scopes) {
+        hold(scopes.filter((scope) => scope !== missing));
+        expect(registry.get(check.permissionAtom(env))).toBe(false);
+      }
+      hold(scopes);
       expect(registry.get(check.permissionAtom(env))).toBe(true);
       yield* check.authorize(registry, env);
     }),

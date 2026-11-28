@@ -386,7 +386,10 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
       return true;
     }
   }
-  return matchesLabelPosition(splitFilePathPosition(trimmed));
+  return (
+    matchesLabelPosition(splitFilePathPosition(trimmed)) ||
+    (trimmed.length > 0 && matchesLabelPosition(splitFilePathPosition(label)))
+  );
 }
 
 export function isRelativeFilePath(path: string): boolean {
@@ -401,7 +404,7 @@ function looksLikePosixFilesystemPath(path: string): boolean {
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
   if (POSITION_SUFFIX_PATTERN.test(path)) return true;
   const basename = path.slice(path.lastIndexOf("/") + 1);
-  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename);
+  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename.trimEnd());
 }
 
 function looksLikeFilePath(path: string, authoredPath: string): boolean {
@@ -467,49 +470,225 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
     : null;
 }
 
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-
 const BACKTICK_RUN_PATTERN = /`+/g;
 
+function collectLineCodeSpans(line: string, spans: string[]) {
+  const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
+  if (runs.length < 2) return;
+  const runsByLength = new Map<number, number[]>();
+  for (const [i, run] of runs.entries()) {
+    const indexes = runsByLength.get(run[0].length);
+    if (indexes) indexes.push(i);
+    else runsByLength.set(run[0].length, [i]);
+  }
+  const cursorByLength = new Map<number, number>();
+  let textStart = 0;
+  for (let i = 0; i < runs.length; i += 1) {
+    const run = runs[i]!;
+    let backslashes = 0;
+    while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
+      backslashes += 1;
+    }
+    // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
+    const length = run[0].length - (backslashes % 2);
+    const candidates = runsByLength.get(length) ?? [];
+    let cursor = cursorByLength.get(length) ?? 0;
+    while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
+    cursorByLength.set(length, cursor);
+    const close = candidates[cursor];
+    if (length === 0 || close === undefined) continue;
+    const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
+    if (span) spans.push(span);
+    i = close;
+    textStart = runs[close]!.index + runs[close]![0].length;
+  }
+}
+
+// A backtick fence's info string cannot contain a backtick: "```a```" is a code span.
+const FENCE_OPENER_PATTERN = /^(`{3,}(?![^`]*`)|~{3,})/;
+const FENCE_CLOSER_PATTERN = /^(`{3,}|~{3,}) *$/;
+const LIST_MARKER_PATTERN = /^(?:[-+*]|(\d{1,9})[.)])( +|$)/;
+const THEMATIC_BREAK_PATTERN = /^([-*_]) *(?:\1 *){2,}$/;
+const ATX_HEADING_PATTERN = /^#{1,6}(?: |$)/;
+const SETEXT_UNDERLINE_PATTERN = /^(?:=+|-+) *$/;
+// What ends a paragraph, so a line starting with one is never its lazy continuation.
+const PARAGRAPH_INTERRUPTION_PATTERN =
+  /^(?:>|`{3,}(?![^`]*`)|~{3,}|(?:[-+*]|\d{1,9}[.)])(?: |$)|#{1,6}(?: |$)|([-*_]) *(?:\1 *){2,}$)/;
+
+const BLOCKQUOTE = 0;
+
 export function extractInlineCodeSpans(text: string): string[] {
+  if (!text.includes("`")) return [];
   const spans: string[] = [];
-  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    const segment = segments[index] ?? "";
-    if (!segment.includes("`")) continue;
-    for (const line of segment.split("\n")) {
-      const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
-      if (runs.length < 2) continue;
-      const runsByLength = new Map<number, number[]>();
-      for (const [i, run] of runs.entries()) {
-        const indexes = runsByLength.get(run[0].length);
-        if (indexes) indexes.push(i);
-        else runsByLength.set(run[0].length, [i]);
-      }
-      const cursorByLength = new Map<number, number>();
-      let textStart = 0;
-      for (let i = 0; i < runs.length; i += 1) {
-        const run = runs[i]!;
-        let backslashes = 0;
-        while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
-          backslashes += 1;
-        }
-        // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
-        const length = run[0].length - (backslashes % 2);
-        const candidates = runsByLength.get(length) ?? [];
-        let cursor = cursorByLength.get(length) ?? 0;
-        while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
-        cursorByLength.set(length, cursor);
-        const close = candidates[cursor];
-        if (length === 0 || close === undefined) continue;
-        const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
-        if (span) spans.push(span);
-        i = close;
-        textStart = runs[close]!.index + runs[close]![0].length;
+  visitMarkdownLines(text, (line, _start, fenced) => {
+    if (!fenced) collectLineCodeSpans(line, spans);
+  });
+  return spans;
+}
+
+/**
+ * Visits text lines and fenced code lines. Blockquotes and list items are tracked line by line as
+ * CommonMark nests them, because a fence closes only at its own container's indentation and ends
+ * with that container. A full parse would be exact but costs about 100x this scan, which runs on
+ * every streamed chunk.
+ */
+function visitMarkdownLines(
+  text: string,
+  visit: (line: string, start: number, fenced: boolean) => void,
+) {
+  // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
+  const containers: number[] = [];
+  let fence: { marker: string; indented: boolean } | null = null;
+  // Whether the previous line left a paragraph open, and whether indented code is still open:
+  // micromark lets neither be interrupted by an empty list item or one not numbered 1.
+  let paragraph = false;
+  let indentedCode = false;
+  // Depth of an item that has only its marker so far; a blank line next ends it.
+  let emptyItemDepth = 0;
+  let lineStart = 0;
+  for (const line of text.split("\n")) {
+    const start = lineStart;
+    lineStart += line.length + 1;
+    let source = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (source.includes("\t")) {
+      let column = 0;
+      source = source.replace(/\t|[^\t]+/g, (part) => {
+        const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
+        column += expanded.length;
+        return expanded;
+      });
+    }
+    let position = 0;
+    let indent = 0;
+    let content = "";
+    const readIndent = () => {
+      indent = 0;
+      while (source[position + indent] === " ") indent += 1;
+      content = source.slice(position + indent);
+    };
+    const enterBlockquote = () => {
+      position += indent + 1;
+      if (source[position] === " ") position += 1;
+    };
+
+    const blankEndsItemAt = emptyItemDepth - 1;
+    emptyItemDepth = 0;
+    const containerCount = containers.length;
+    let matched = 0;
+    for (; matched < containers.length; matched += 1) {
+      const container = containers[matched]!;
+      readIndent();
+      if (container === BLOCKQUOTE) {
+        if (indent > 3 || content[0] !== ">") break;
+        enterBlockquote();
+      } else if (content === "") {
+        if (matched === blankEndsItemAt) break;
+      } else if (indent >= container) {
+        position += container;
+      } else {
+        break;
       }
     }
+    readIndent();
+
+    if (fence) {
+      if (matched === containers.length) {
+        if (content === "") continue;
+        // A fence written inside indented code ends with that code.
+        if (!fence.indented || indent >= 4) {
+          visit(line, start, true);
+          const closer = FENCE_CLOSER_PATTERN.exec(content)?.[1];
+          if (
+            closer?.startsWith(fence.marker[0]!) &&
+            closer.length >= fence.marker.length &&
+            (fence.indented || indent <= 3)
+          ) {
+            fence = null;
+            paragraph = false;
+          }
+          continue;
+        }
+      }
+      fence = null;
+      paragraph = false;
+    }
+
+    if (matched < containers.length) {
+      if (
+        paragraph &&
+        content !== "" &&
+        (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
+      ) {
+        visit(line, start, false);
+        continue;
+      }
+      containers.length = matched;
+      paragraph = false;
+      indentedCode = false;
+    }
+    // micromark decides this once per line, and not at all on a line that closed a container.
+    const interrupts = paragraph || indentedCode;
+    const closedContainer = matched < containerCount;
+
+    for (;;) {
+      if (content === "") {
+        paragraph = false;
+        break;
+      }
+      const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
+      if (indent >= 4) {
+        if (!paragraph && !closedContainer) indentedCode = true;
+        // Indented code is not skipped, but a fence shown inside it still hides its lines. Inside
+        // a paragraph an indented line is text, where only a backtick run opens code (a span).
+        if (opener && (!paragraph || opener[0] === "`")) {
+          fence = { marker: opener, indented: true };
+          visit(line, start, true);
+        } else {
+          visit(line, start, false);
+        }
+        break;
+      }
+      indentedCode = false;
+      if (opener) {
+        fence = { marker: opener, indented: false };
+        visit(line, start, true);
+        break;
+      }
+      if (content[0] === ">") {
+        containers.push(BLOCKQUOTE);
+        enterBlockquote();
+        paragraph = false;
+        readIndent();
+        continue;
+      }
+      if (THEMATIC_BREAK_PATTERN.test(content)) {
+        paragraph = false;
+        break;
+      }
+      const item = LIST_MARKER_PATTERN.exec(content);
+      const emptyItem = item?.[0].length === content.length;
+      // Only a non-empty item, numbered 1 if ordered, starts a list in the middle of a block.
+      if (
+        item &&
+        !(interrupts && (emptyItem || (item[1] !== undefined && Number(item[1]) !== 1)))
+      ) {
+        const padding = item[2]!.length;
+        const width = item[0].length - padding + (emptyItem || padding > 4 ? 1 : padding);
+        containers.push(indent + width);
+        if (emptyItem) emptyItemDepth = containers.length;
+        position += indent + width;
+        paragraph = false;
+        readIndent();
+        continue;
+      }
+      visit(line, start, false);
+      paragraph = !(
+        ATX_HEADING_PATTERN.test(content) ||
+        (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
+      );
+      break;
+    }
   }
-  return spans;
 }
 
 function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
@@ -572,7 +751,7 @@ function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number
   }
 }
 
-function markdownLinkDestinationScanner(markdown: string) {
+export function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /\\[\\<>]|[<>\r\n]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
@@ -595,16 +774,46 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+// Code is literal: fenced lines become spaces, keeping every offset.
+function blankFencedCode(text: string): string {
+  if (!text.includes("```") && !text.includes("~~~")) return text;
+  let blanked = "";
+  let copied = 0;
+  visitMarkdownLines(text, (line, start, fenced) => {
+    if (!fenced) return;
+    blanked += text.slice(copied, start) + line.replace(/[^\r]/g, " ");
+    copied = start + line.length;
+  });
+  return blanked + text.slice(copied);
+}
+
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const markdown = blankFencedCode(text);
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  const bracket = /!\[|[[\]\\]|\n[ \t\r]*\n/g;
+  const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);
+  // A code span closes at the next run of as many backticks in its paragraph.
+  const closersByLength = new Map<number, { ends: number[]; next: number }>();
+  for (const run of markdown.matchAll(/`+/g)) {
+    const closers = closersByLength.get(run[0].length) ?? { ends: [], next: 0 };
+    closers.ends.push(run.index + run[0].length);
+    closersByLength.set(run[0].length, closers);
+  }
+  const bracket = /!\[|[[\]\\]|`+|\n[ \t\r]*\n/g;
   const openers: boolean[] = [];
   for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
     if (match[0] === "\\") {
       bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("`")) {
+      const length = match[0].length;
+      const closers = closersByLength.get(length) ?? { ends: [], next: 0 };
+      while ((closers.ends[closers.next] ?? Infinity) - length < bracket.lastIndex) closers.next++;
+      const end = closers.ends[closers.next];
+      if (end !== undefined && end - length <= paragraphEnd(bracket.lastIndex)) {
+        bracket.lastIndex = end;
+      }
     } else if (match[0].startsWith("\n")) {
       openers.length = 0;
     } else if (match[0].endsWith("[")) {
@@ -673,12 +882,23 @@ export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
 
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
+// plus the Arabic-script comma, semicolon, question mark, and full stop.
+export const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
+
+/** Where ASCII text runs into such a mark, or -1. Unicode before it may make the mark part of the text. */
+export function scriptPunctuationAfterAscii(text: string): number {
+  const index = text.search(/[^!-~]/u);
+  return index > 0 && SCRIPT_PUNCTUATION.test(text.charAt(index)) ? index : -1;
+}
+
 // Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route,
 // and a file-shaped last segment.
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
   for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
-    const source = match[2]!;
+    const cut = scriptPunctuationAfterAscii(match[2]!);
+    const source = cut > 0 ? match[2]!.slice(0, cut) : match[2]!;
     let parentheses = 0;
     let brackets = 0;
     for (const character of source) {

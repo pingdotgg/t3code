@@ -16,6 +16,8 @@ import {
   movedSettingsPath,
   searchSettings,
   settingsNavGroups,
+  SETTINGS_NAV_LABELS,
+  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
   sourceControlHostSettingsSearchId,
@@ -62,6 +64,26 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     const spanish = (message: string) => (message === "Word wrap" ? "Ajuste de línea" : message);
     expect(searchSettings("ajuste", ITEMS, spanish).map((item) => item.id)).toEqual(["word-wrap"]);
+    const sourceControlItems: ReadonlyArray<SettingsSearchItem> = [
+      { id: "commit-style", title: "Commit style", to: "/settings/source-control" },
+    ];
+    for (const [section, nav] of [
+      ["Versionshantering och ärenden", "Versioner och ärenden"],
+      ["Page title", "Navigation: localized suffix"],
+    ] as const) {
+      const translate = (message: string) =>
+        message === SETTINGS_NAV_LABELS["/settings/source-control"]
+          ? nav
+          : message === SETTINGS_SECTION_LABELS["/settings/source-control"]
+            ? section
+            : message;
+      for (const query of [section, nav]) {
+        expect(
+          searchSettings(query, sourceControlItems, translate).map((item) => item.id),
+          query,
+        ).toEqual(["commit-style"]);
+      }
+    }
     for (const query of ["fallback", "fallback agent", "fallback model"]) {
       expect(searchSettings(query)[0]).toMatchObject({
         id: "fallback-model",
@@ -144,6 +166,13 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    const contextualItems: ReadonlyArray<SettingsSearchItem> = [
+      { id: "source", title: "Example", to: "/settings/source-control" },
+      { id: "access", title: "Example", to: "/settings/access" },
+    ];
+    for (const query of ["ci", "md", "min", "io", "eyik"]) {
+      expect(searchSettings(query, contextualItems), query).toEqual([]);
+    }
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {
@@ -266,14 +295,32 @@ describe("searchSettings", () => {
     for (const [title, id] of [
       ["Automatic worktree cleanup", "storage-worktrees"],
       ["Delete settled worktrees", "storage-worktrees"],
+      ["Delete worktrees with deleted threads", "storage-worktrees"],
+      ["Delete merged worktrees", "storage-worktrees"],
       ["Delete old browser artifacts", "storage-artifacts"],
       ["Delete old rotated logs", "storage-artifacts"],
       ["Custom search URL", "browser-search-engine"],
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["ChatGPT account", "providers"],
+      ["Live Processes", "diagnostics"],
+      ["Most Common Failures", "diagnostics"],
+      ["Top Span Names", "diagnostics"],
+      ["Slowest Spans", "diagnostics"],
+      ["Third-party notices", "open-source-licenses"],
+      ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
+    }
+  });
+
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
     }
   });
 
@@ -305,7 +352,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    for (const id of ["response-streaming", "speech-project-dictionary"]) {
+    for (const id of ["response-streaming", "speech-project-dictionary", "project-actions"]) {
       expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
     }
     for (const scope of ["all", "environment", "project"] as const) {

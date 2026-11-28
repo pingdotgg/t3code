@@ -145,7 +145,7 @@ const makeLaptopWith = (
     const layerDatabase = Layer.succeedContext(database);
     const layerOrchestrator = Layer.mergeAll(
       layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
         { name: "peer-link-requests" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -905,6 +905,81 @@ it.live("settling the thread closes its open card, so it no longer reads as aski
       });
       expect(yield* cardOf(a)).toMatchObject({ status: "cancelled", linkStatus: "cancelled" });
       expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+    }),
+  ),
+);
+
+it.live("a later run that completes, started by another agent, stops the card asking", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url });
+      const card = yield* pendingCard(a);
+      yield* endRun(a);
+
+      // Another thread's agent writes in (t3_thread_send) and the thread runs a turn to completion.
+      const at = DateTime.add(card.startedAt!, { seconds: 1 });
+      const laterRunId = RunId.make("run:laptop:2");
+      const laterNode = NodeId.make("node:laptop:root:later");
+      const agentMessageId = MessageId.make("message:agent-writes");
+      const projection = yield* a.orchestrator.getThreadProjection(threadId);
+      const firstRun = projection.runs.find((run) => run.id === runId)!;
+      yield* a.sink.write({
+        commandId: CommandId.make("command:agent-writes:laptop"),
+        events: [
+          {
+            id: EventId.make("event:agent-writes"),
+            type: "message.updated",
+            threadId,
+            occurredAt: at,
+            payload: {
+              createdBy: "agent",
+              creationSource: "mcp",
+              id: agentMessageId,
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Status from the other thread",
+              attachments: [],
+              streaming: false,
+              createdAt: at,
+              updatedAt: at,
+            },
+          },
+          {
+            id: EventId.make("event:later-run"),
+            type: "run.updated",
+            threadId,
+            runId: laterRunId,
+            nodeId: laterNode,
+            providerInstanceId: instanceId,
+            occurredAt: at,
+            payload: {
+              ...firstRun,
+              id: laterRunId,
+              ordinal: 2,
+              userMessageId: agentMessageId,
+              rootNodeId: laterNode,
+              status: "completed",
+              requestedAt: at,
+              startedAt: at,
+              completedAt: at,
+            },
+          },
+        ],
+      });
+
+      expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      expect(
+        (yield* a.projections.getSettlementCandidates(threadId)).map((thread) => thread.id),
+      ).toEqual([threadId]);
     }),
   ),
 );

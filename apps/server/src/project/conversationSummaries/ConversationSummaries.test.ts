@@ -3375,9 +3375,10 @@ it.effect.each([0, 2])(
             strategy: "full_thread_summary",
             items: Array.from({ length: MESSAGE_COUNT }, (_, index) => item(index)),
             createdAt: at,
+            tokenCap: 16_000,
           }),
       );
-      // The default cap cannot carry 16 long messages, so older history is omitted at prepare.
+      // A 16 KB cap cannot carry 16 long messages, so older history is omitted at prepare.
       assert.isAbove(durable.history!.omittedItems, 0);
       assert.equal(
         (durable.history!.omittedItemIds ?? []).includes(itemId(knowledgeSource)),

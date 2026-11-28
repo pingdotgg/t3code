@@ -2,6 +2,7 @@ import { SourceControlProviderKind, type PullRequestChecks } from "@t3tools/cont
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import {
@@ -102,6 +104,63 @@ it.effect("reads clone URLs on the given host rather than the checkout's", () =>
                 processOutput("origin\thttps://code.example/maria/project.git (fetch)"),
               );
             }
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("publishes to the signed-in user's account whatever case its owner is typed in", () => {
+  const requests: string[] = [];
+  const client = HttpClient.make((request) => {
+    requests.push(`${request.method} ${request.url}`);
+    const body = request.url.endsWith("/api/v1/user")
+      ? { login: "Alice" }
+      : {
+          full_name: "Alice/project",
+          clone_url: "https://forgejo.test/Alice/project.git",
+          ssh_url: "git@forgejo.test:Alice/project.git",
+        };
+    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(encodeJson(body))));
+  });
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    yield* provider.createRepository({
+      cwd: "/repo",
+      repository: "alice/project",
+      visibility: "private",
+    });
+    assert.deepStrictEqual(requests, [
+      "GET https://forgejo.test/api/v1/user",
+      "POST https://forgejo.test/api/v1/user/repos",
+    ]);
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forgejo.test": { type: "Application", token: "test-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
             assert.strictEqual(input.command, "fj");
             assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
             return Effect.succeed(processOutput(""));
@@ -2990,4 +3049,113 @@ it.effect("exposes fixed not-found details only for repository lookup", () =>
       ),
     ),
   ),
+);
+
+it.effect(
+  "reports TLS certificate, transport error codes, and timeouts for fj API requests",
+  () => {
+    const token = "fj-secret-token";
+    const tlsCause = Object.assign(new Error("unable to verify the first certificate"), {
+      code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    });
+    const refusedCause = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    const untrustedCodeCause = Object.assign(new Error(`bad ${token}`), {
+      code: `leaked ${token}`,
+    });
+
+    const runScenario = (
+      handler: (
+        request: HttpClientRequest.HttpClientRequest,
+      ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+    ) =>
+      Effect.gen(function* () {
+        const cli = yield* ForgejoCli.make;
+        return yield* Effect.flip(
+          cli.api({
+            cwd: "/repo",
+            repository: "https://forgejo.test/maria/project",
+            path: "repos/maria/project/pulls/1",
+          }),
+        );
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, HttpClient.make(handler)),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: () => Effect.succeed(true),
+            readFileString: () =>
+              Effect.succeed(
+                encodeJson({
+                  hosts: {
+                    "forgejo.test": { type: "Application", token },
+                  },
+                }),
+              ),
+          }),
+        ),
+        Effect.provide(
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                assert.strictEqual(input.command, "fj");
+                return Effect.succeed(processOutput(""));
+              },
+            },
+          }),
+        ),
+      );
+
+    return Effect.gen(function* () {
+      const untrustedCert = yield* runScenario((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: new TypeError("fetch failed", { cause: tlsCause }),
+            }),
+          }),
+        ),
+      );
+      assert.strictEqual(
+        untrustedCert.detail,
+        "Forgejo TLS certificate is not trusted (UNABLE_TO_VERIFY_LEAF_SIGNATURE). If this server uses a private CA, add that CA to NODE_EXTRA_CA_CERTS.",
+      );
+      assert.isUndefined(untrustedCert.cause);
+
+      const refused = yield* runScenario((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: new TypeError("fetch failed", { cause: refusedCause }),
+            }),
+          }),
+        ),
+      );
+      assert.strictEqual(refused.detail, "Forgejo API request failed (ECONNREFUSED).");
+
+      const invalidCode = yield* runScenario((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: untrustedCodeCause,
+            }),
+          }),
+        ),
+      );
+      assert.strictEqual(invalidCode.detail, "Forgejo API request failed.");
+      assert.notInclude(invalidCode.detail, token);
+
+      const hanging = yield* Effect.forkChild(
+        runScenario(() => Effect.never),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("30 seconds");
+      const timedOut = yield* Fiber.join(hanging);
+      assert.strictEqual(timedOut.detail, "Forgejo API request timed out.");
+    });
+  },
 );

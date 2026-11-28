@@ -101,7 +101,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const attemptScope = yield* Scope.Scope;
   const transient = new Map<string, ConnectionAttemptError>();
   const rejectedCredentials = new Set<string>();
+  // Kept when `transient` is cleared below, so a relay refusal never ends retries.
+  let firstTransient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let relayRefused: ConnectionAttemptError | undefined;
   const refusedRouteIds: Array<string> = [];
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
@@ -115,7 +118,12 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       const credentialId = credentialConnectionId(connectionRouteId(route.target));
       if (result.failure._tag === "ConnectionTransientError") {
         if (!transient.has(credentialId)) transient.set(credentialId, result.failure);
-      } else {
+        firstTransient ??= result.failure;
+      }
+      // A T3 Connect refusal cannot explain why a direct route failed.
+      else if (result.failure.hop === "relay" || result.failure.hop === "tunnel")
+        relayRefused ??= result.failure;
+      else {
         blocked ??= result.failure;
         if (result.failure.reason === "authentication") rejectedCredentials.add(credentialId);
       }
@@ -157,11 +165,13 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
     // A route that never answered cannot explain why a host that answered refused.
-    if (neverAnswered && blocked !== undefined) transient.clear();
+    if (neverAnswered && (blocked ?? relayRefused) !== undefined) transient.clear();
   }
   return yield* (
     [...transient].find(([credentialId]) => !rejectedCredentials.has(credentialId))?.[1] ??
     blocked ??
+    firstTransient ??
+    relayRefused ??
     new ConnectionTransientError({
       reason: "endpoint-unavailable",
       ...translatableDetail(

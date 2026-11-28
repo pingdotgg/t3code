@@ -5,6 +5,7 @@ import type { UsageSource } from "@t3tools/contracts";
 import {
   formatDateTimeShort,
   formatHourShort,
+  formatPercent,
   formatTokens,
   makeWindow,
   usageSourceMessages,
@@ -233,6 +234,14 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("percent formatting", () => {
+  it("keeps a share short of the whole below 100%", () => {
+    expect(formatPercent(0.9996)).toBe(">99.9%");
+    expect(formatPercent(0.999)).toBe("99.9%");
+    expect(formatPercent(1)).toBe("100.0%");
   });
 });
 

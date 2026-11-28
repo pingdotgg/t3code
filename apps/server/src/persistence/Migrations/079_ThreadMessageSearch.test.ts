@@ -138,3 +138,75 @@ it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect.each(["message", "thread"])(
+  "backfills valid messages and runs triggers past a %s payload that is not JSON",
+  (corrupt) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 68 });
+      const timestamp = "2026-09-01T00:00:00.000Z";
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, payload_json
+        )
+        VALUES (
+          'thread-1', 'project-1', 'Thread', 'codex', 'full-access', 'default',
+          ${timestamp}, ${timestamp}, ${corrupt === "thread" ? "{not json" : "{}"}
+        )
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+        )
+        VALUES (
+          'valid', 'thread-1', 'assistant', 0,
+          ${timestamp}, ${timestamp}, ${JSON.stringify({ text: "needle" })}
+        )
+      `;
+      if (corrupt === "message") {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_messages (
+            message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+          )
+          VALUES
+            ('corrupt', 'thread-1', 'assistant', 0, ${timestamp}, ${timestamp}, '{not json'),
+            ('corrupt-user', 'thread-1', 'user', 0, ${timestamp}, ${timestamp}, '{not json')
+        `;
+      }
+      yield* runMigrations({ toMigrationInclusive: 99 });
+      // Migration 100's index still stops on a damaged user message, a separate fix.
+      yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'corrupt-user'`;
+      yield* runMigrations();
+      const indexed = () =>
+        sql<{ readonly messageId: string }>`
+          SELECT messages.message_id AS "messageId"
+          FROM orchestration_v2_message_search AS search
+          INNER JOIN orchestration_v2_projection_messages AS messages ON messages.rowid = search.rowid
+          ORDER BY messages.message_id
+        `.pipe(Effect.map((rows) => rows.map((row) => row.messageId)));
+      assert.deepEqual(yield* indexed(), ["valid"]);
+
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+        )
+        VALUES ('corrupt-inserted', 'thread-1', 'assistant', 0, ${timestamp}, ${timestamp}, '{not json')
+      `;
+      assert.deepEqual(yield* indexed(), ["valid"]);
+
+      const repairedId = corrupt === "message" ? "corrupt" : "corrupt-inserted";
+      yield* sql`
+        UPDATE orchestration_v2_projection_messages
+        SET payload_json = ${JSON.stringify({ text: "needle repaired" })}
+        WHERE message_id = ${repairedId}
+      `;
+      yield* sql`
+        UPDATE orchestration_v2_projection_messages
+        SET payload_json = '{not json'
+        WHERE message_id = 'valid'
+      `;
+      assert.deepEqual(yield* indexed(), [repairedId]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);

@@ -377,6 +377,146 @@ function makeService(input: {
   );
 }
 
+it.effect(
+  "lists and reads pull requests of every repository a multi-repository project tracks",
+  () =>
+    Effect.gen(function* () {
+      const identityOf = (repository: string) =>
+        project({ id: "x", title: "x", workspaceRoot: "/x", repository }).repositoryIdentity!;
+      const identities: Record<string, ReturnType<typeof identityOf>> = {
+        "/ws/web": identityOf("acme/web"),
+        "/ws/api": identityOf("acme/api"),
+      };
+      const detailCwds: Array<string> = [];
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "p1", title: "workspace", workspaceRoot: "/ws" }),
+            trackedFolders: [
+              { name: "web", path: "/ws/web", discovered: true },
+              { name: "api", path: "/ws/api", discovered: true },
+              { name: "notes", path: "/ws/notes" },
+            ],
+          },
+          project({ id: "p2", title: "api", workspaceRoot: "/api", repository: "acme/api" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ repository }) =>
+              Effect.succeed({
+                items: [changeRequest(repository === "acme/web" ? 1 : 2, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd }) =>
+              Effect.sync(() => {
+                detailCwds.push(cwd);
+                return hostedChangeRequest("Body");
+              }),
+            listChangeRequestStats: ({ changeRequests }) =>
+              Effect.succeed(
+                changeRequests.map(({ repository, number }) => ({
+                  repository,
+                  number,
+                  additions: repository === "acme/web" ? 10 : 20,
+                  deletions: 0,
+                })),
+              ),
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+      });
+      const result = yield* service.list({ state: "open", projectIds: ["p1" as ProjectId] });
+      assert.deepStrictEqual(
+        result.entries
+          .map(({ projectId, repository, number }) => `${projectId} ${repository}#${number}`)
+          .toSorted(),
+        ["p1 acme/api#2", "p1 acme/web#1"],
+      );
+      const { stats } = yield* service.listStats({
+        refs: [
+          { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 },
+          { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 },
+          // The same repository as its own project, listed after the workspace that tracks it.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 8 },
+          // One pull request asked for by both projects reaches both.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 7 },
+        ],
+      });
+      assert.deepStrictEqual(
+        stats
+          .map(
+            ({ projectId, repository, number, additions }) =>
+              `${projectId} ${repository}#${number} +${additions}`,
+          )
+          .toSorted(),
+        ["p1 acme/api#7 +20", "p1 acme/web#7 +10", "p2 acme/api#7 +20", "p2 acme/api#8 +20"],
+      );
+      yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
+      assert.deepStrictEqual(detailCwds, ["/ws/api"]);
+      // A pull request named by number alone has no one repository to default to.
+      assert.notExists((yield* service.addressedProject("p1" as ProjectId))?.repositoryIdentity);
+    }),
+);
+
+it.effect("keeps a repository's line counts apart from its mirror on another host", () =>
+  Effect.gen(function* () {
+    const identities: Record<string, OrchestrationProjectShell["repositoryIdentity"]> = {
+      "/m/github": project({ id: "x", title: "x", workspaceRoot: "/x", repository: "acme/api" })
+        .repositoryIdentity,
+      "/m/gitlab": project({
+        id: "x",
+        title: "x",
+        workspaceRoot: "/x",
+        repository: "acme/api",
+        provider: "gitlab",
+      }).repositoryIdentity,
+    };
+    const statsFrom = (additions: number) => ({
+      listChangeRequestStats: ({
+        changeRequests,
+      }: {
+        readonly changeRequests: ReadonlyArray<{ repository: string; number: number }>;
+      }) =>
+        Effect.succeed(
+          changeRequests.map(({ repository, number }) => ({
+            repository,
+            number,
+            additions,
+            deletions: 0,
+          })),
+        ),
+    });
+    const service = yield* makeService({
+      projects: [
+        {
+          ...project({ id: "p1", title: "mirrors", workspaceRoot: "/m" }),
+          trackedFolders: [
+            { name: "github", path: "/m/github", discovered: true },
+            { name: "gitlab", path: "/m/gitlab", discovered: true },
+          ],
+        },
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), statsFrom(10)),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), statsFrom(20)),
+      ],
+      resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 };
+    const { stats } = yield* service.listStats({
+      refs: [
+        { ...ref, host: "github.com" },
+        { ...ref, host: "gitlab.com" },
+      ],
+    });
+    assert.deepStrictEqual(stats.map(({ host, additions }) => `${host} +${additions}`).toSorted(), [
+      "github.com +10",
+      "gitlab.com +20",
+    ]);
+  }),
+);
+
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -3464,6 +3604,7 @@ it.effect("fills in the line counts for the rows it is given", () =>
     assert.deepStrictEqual(result.stats, [
       {
         projectId: "p1" as ProjectId,
+        host: "github.com",
         repository: "acme/web",
         number: 1,
         additions: 12,

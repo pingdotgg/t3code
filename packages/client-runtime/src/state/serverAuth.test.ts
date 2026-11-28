@@ -103,6 +103,7 @@ it.effect("waits for a newly configured provider and preserves its active auth s
       ready: Effect.void,
       probe: Effect.void,
       inboundFrames: Effect.succeed(0),
+      awaitingReply: Effect.succeed(false),
       closed: Effect.never,
     };
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({

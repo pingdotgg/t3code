@@ -6,6 +6,7 @@ import {
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
   StorageCleanupReportEntry,
+  trimAsciiWhitespace,
 } from "@t3tools/contracts";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
@@ -50,6 +51,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import * as WorktreeBranches from "./orchestration-v2/WorktreeBranches.ts";
 import * as CodeIntelligence from "./project/knowledge/CodeIntelligence.ts";
@@ -337,6 +339,7 @@ const make = Effect.gen(function* () {
   const codeIntelligence = yield* CodeIntelligence.CodeIntelligence;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
+  const pendingSettleScripts = yield* PendingSettleScripts.PendingSettleScripts;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const taskFolders = yield* TaskFolders.TaskFolders;
@@ -1442,6 +1445,8 @@ const make = Effect.gen(function* () {
         if (!group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)))
           return keep(waitForStop("thread is running or has pending work"));
         if (yield* hasTerminal(guardedPaths)) return keep(waitForStop("open terminal"));
+        if (members.some((member) => pendingSettleScripts.has(member.id)))
+          return keep(waitForStop("settle script is queued"));
         if (
           [...group, ...settlementChain.slice(1)].some(
             (member) =>
@@ -1512,6 +1517,8 @@ const make = Effect.gen(function* () {
           );
           const latest = bindings.filter((_binding, index) => bindingKeys[index] === worktreeKey);
           if (yield* hasTerminal(guardedPaths)) return waitForStop("open terminal");
+          if (latest.some((binding) => pendingSettleScripts.has(binding.threadId)))
+            return waitForStop("settle script is queued");
           if (deleted) {
             if (
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
@@ -1780,7 +1787,7 @@ const make = Effect.gen(function* () {
               allowNonZeroExit: true,
             });
             if (projectHead.exitCode !== 0) return keep("project branch is unavailable");
-            defaultRef = projectHead.stdout.trim();
+            defaultRef = trimAsciiWhitespace(projectHead.stdout);
             branch = defaultRef.slice("refs/heads/".length);
           } else {
             const defaultBranchKey = `${repositoryCwd}\0${remote}`;
@@ -1959,7 +1966,7 @@ const make = Effect.gen(function* () {
               // Git requires force for submodules; recursive checks above cannot make removal atomic.
               force: submodules.force,
               execute: git.execute,
-              run: (args) => cleanupGit(repository, [...args], "git worktree remove"),
+              run: (args, cwd) => cleanupGit(cwd, [...args], "git worktree remove"),
             }).pipe(Effect.tapError(() => noteLeftover(adminDir, entry)));
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);

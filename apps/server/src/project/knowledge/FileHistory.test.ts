@@ -11,6 +11,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,7 +26,7 @@ import * as FileHistory from "./FileHistory.ts";
 const layerTest = FileHistory.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer)),
   Layer.provideMerge(SqlitePersistence.layerMemory),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const providerInstanceId = ProviderInstanceId.make("codex");

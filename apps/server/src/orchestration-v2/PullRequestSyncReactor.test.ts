@@ -2268,6 +2268,38 @@ describe("PullRequestSyncReactor", () => {
       linked: [124],
     },
     {
+      name: "a create after quoted heredoc text",
+      input: "echo '<<EOF'; gh pr create --fill\ntrue",
+      output: "<<EOF\nhttps://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create after a comment mentioning a heredoc",
+      input: "# <<EOF\ngh pr create --fill\ntrue",
+      output: "https://github.com/owner/repository/pull/32",
+      linked: [32],
+    },
+    {
+      name: "a create whose quoted heredoc body has a lone quote and mentions a listing command",
+      input:
+        'gh pr create --title "x" --body "$(cat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
+      name: "a create whose multiline quoted heredoc body has a lone quote and mentions a listing command",
+      input:
+        'gh pr create --title "x" --body "$(\ncat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
+      name: "a create whose body quote never closes around repeated heredoc substitutions",
+      input: `gh pr create --body "${"$(<<A\nA\n".repeat(200)}`,
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
@@ -2297,6 +2329,39 @@ describe("PullRequestSyncReactor", () => {
       input:
         "cat > notes.md <<'EOF'\nOpen it with gh pr create.\nEOF\ngh pr list --json url --jq '.[].url'",
       output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text beside escaped quotes",
+      input: "echo \\' <<EOF \\'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: "' '\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an ANSI-C quote",
+      input:
+        "printf '%s\\n' $'it\\'s'; cat <<EOF\n'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: "it's\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an escaped space before #",
+      input: "echo \\ # <<EOF\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: " #\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create beside a named read after a comment with an apostrophe",
+      input:
+        "# don't treat <<EOF as code\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create beside a named read after heredoc text with an apostrophe",
+      input:
+        "echo '<<FAKE'; cat <<EOF\n'\nEOF\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "<<FAKE\n'\nhttps://github.com/owner/repository/pull/31",
       linked: [],
     },
     {

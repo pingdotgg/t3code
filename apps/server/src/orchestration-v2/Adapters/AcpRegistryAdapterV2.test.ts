@@ -1634,6 +1634,27 @@ describe("AcpRegistryAdapterV2", () => {
         new: stdio("Bearer opened-token"),
         load: stdio("Bearer rotated-token"),
       });
+      // Local agy / antigravity commands defer optional tools through tool_call, as the Antigravity provider does.
+      const agyStdio = stdio("Bearer opened-token");
+      const expectedAgyStdio = [
+        {
+          ...agyStdio[0],
+          env: [...agyStdio[0]!.env, { name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred-proxy" }],
+        },
+      ];
+      assert.deepEqual(
+        (yield* sessionMcpServers({ source: "local", commandPath: "agy", commandArgs: ["acp"] }))
+          .new,
+        expectedAgyStdio,
+      );
+      assert.deepEqual(
+        (yield* sessionMcpServers({
+          source: "local",
+          commandPath: "antigravity",
+          commandArgs: ["acp"],
+        })).new,
+        expectedAgyStdio,
+      );
       // Command Code cannot start the stdio bridge on Windows: it spawns MCP commands through
       // cmd.exe, which splits the unquoted T3 executable path at the space.
       const commandCode = {

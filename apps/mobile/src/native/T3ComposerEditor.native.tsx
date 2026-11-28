@@ -6,6 +6,7 @@ import { composerContextEditorTokens, composerSkillLabels } from "../lib/compose
 import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
+import { useMessages } from "gt-react-native";
 import { TextInputWrapper } from "expo-paste-input";
 import {
   useCallback,
@@ -29,7 +30,6 @@ import {
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useNativePaste } from "../lib/useNativePaste";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
@@ -148,6 +148,7 @@ export function ComposerEditor({
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
+  const messages = useMessages();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -233,7 +234,7 @@ export function ComposerEditor({
                       : token.type === "citation"
                         ? token.value
                         : basename(token.value).normalize("NFC"),
-            detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
+            detail: token.type === "context" ? composerChipSizeSuffix(record, messages) : "",
             iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
             tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
           };
@@ -250,6 +251,7 @@ export function ComposerEditor({
     group,
     theme,
     chipTextColor,
+    messages,
   ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
@@ -323,13 +325,13 @@ export function ComposerEditor({
     },
     [nativeEventSnapshotsRef],
   );
-  const { systemColorsActive } = useAppearancePreferences();
+  const { systemColorsActive, fontFamilies } = useAppearancePreferences();
   const themeJson = JSON.stringify({
     ...createNativeComposerTheme(theme),
     selection: Platform.OS === "android" || systemColorsActive ? theme["--color-focus"] : null,
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
-  const regularFontFamily = FONT_FAMILIES.regular;
+  const regularFontFamily = fontFamilies.regular;
   return (
     <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
       <NativeView

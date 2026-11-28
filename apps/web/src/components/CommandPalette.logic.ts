@@ -99,7 +99,7 @@ export interface CommandPaletteUiState {
   readonly mode: SearchOverlayMode;
   /** What the current palette session opened to; read once when the palette view mounts. */
   readonly openIntent: CommandPaletteOpenIntent | null;
-  /** Bumped by every intent so an open palette starts over from the new one. */
+  /** Advances when the palette opens or a new intent replaces the current session. */
   readonly session: number;
   readonly parentSearch?: CommandPaletteReturnContext;
   readonly restoredSearch?: CommandPaletteReturnContext;
@@ -137,18 +137,23 @@ export function reduceCommandPaletteUiState(
   switch (action._tag) {
     case "SetOpen":
       return action.open
-        ? { open: true, mode: "command", openIntent: state.openIntent, session }
+        ? {
+            open: true,
+            mode: "command",
+            openIntent: state.openIntent,
+            session: state.open && state.mode === "command" ? session : session + 1,
+          }
         : { open: false, mode: state.mode, openIntent: null, session };
     case "ToggleMode":
       return state.open && state.mode === action.mode
         ? { open: false, mode: state.mode, openIntent: null, session }
-        : { open: true, mode: action.mode, openIntent: null, session };
+        : { open: true, mode: action.mode, openIntent: null, session: session + 1 };
     case "OpenChildSearch":
       return {
         open: true,
         mode: action.mode,
         openIntent: null,
-        session,
+        session: state.open ? session : session + 1,
         parentSearch: action.context,
       };
     case "BackToCommand":

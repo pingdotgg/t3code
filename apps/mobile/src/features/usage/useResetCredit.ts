@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { resetCreditFailureText } from "@t3tools/client-runtime/state/usage";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -52,9 +52,9 @@ export function useResetCredit(
       return;
     }
     setStatus(
-      result !== null && "error" in result.cause && result.cause.error instanceof Error
-        ? (errorDisplayMessage(result.cause.error, m) ?? result.cause.error.message)
-        : m(msg("Could not use the reset credit.")),
+      result === null
+        ? m(msg("Could not use the reset credit."))
+        : resetCreditFailureText(result, m),
     );
   };
 

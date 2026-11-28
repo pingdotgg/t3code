@@ -75,19 +75,29 @@ function parseJson(text: string): unknown {
 
 export function isJsonToolText(text: string): boolean {
   if (parseJson(text) !== undefined) return true;
-  const documents = text.trim().split(/\n\s*\n/);
-  return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
+  const trimmed = text.trim();
+  const documents = trimmed.split(/\n\s*\n/);
+  if (documents.length > 1 && documents.every((document) => parseJson(document) !== undefined)) {
+    return true;
+  }
+  return trimmed
+    .split(/\n\s*/)
+    .every((line) => /^[[{]/.test(line) && parseJson(line) !== undefined);
 }
 
 // Strings match whole so numbers inside them are skipped. Scan only parsed JSON: every string closes.
-const JSON_STRING_OR_NUMBER = /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_STRING_OR_NUMBER = /"(?:[^"\\]|\\.)*"|(-?\d+(?:\.\d+)?)(?:[eE][+-]?\d+)?/g;
 
-/** JSON.parse rounds integers beyond 2^53 and overflows to Infinity, so reformatting would change the value. */
+/** Keep raw JSON when numbers are unsafe integers, overflow, or underflow to zero. */
 function hasLossyJsonNumber(json: string): boolean {
-  for (const [token] of json.matchAll(JSON_STRING_OR_NUMBER)) {
-    if (token.startsWith('"')) continue;
+  for (const [token, mantissa] of json.matchAll(JSON_STRING_OR_NUMBER)) {
+    if (mantissa === undefined) continue;
     const value = Number(token);
-    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+    if (
+      !Number.isFinite(value) ||
+      (Number.isInteger(value) && !Number.isSafeInteger(value)) ||
+      (value === 0 && /[1-9]/.test(mantissa))
+    ) {
       return true;
     }
   }

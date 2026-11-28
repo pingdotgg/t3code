@@ -213,13 +213,7 @@ const createdSession = (
     ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))]
     : []),
 
-  out("session.create", {
-    location: { directory },
-    agent,
-    model: "<any>",
-    permissions,
-    title: name,
-  }),
+  out("session.create", { location: { directory }, agent, model: "<any>", permissions }),
   reply("session.create", sessionInfo(directory, permissions, name, agent)),
 ];
 

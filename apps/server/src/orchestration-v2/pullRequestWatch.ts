@@ -148,8 +148,8 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
-    const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // Checks can start and finish between sweeps; a new name in the gate is news.
+    const gateGrew = gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
@@ -198,7 +198,12 @@ export function evaluatePullRequestWatch(
       }
     }
     passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    // Without required checks, told names add up, so a varying check list cannot wake twice.
+    passedChecks = !passedNow
+      ? []
+      : required.length > 0
+        ? gateNames
+        : [...new Set([...told, ...gateNames])];
   }
 
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
@@ -355,8 +360,12 @@ function withoutMarkup(body: string): string {
   };
   for (const line of body.split("\n")) {
     if (fence !== undefined) {
-      const closer = line.trim();
-      if (closer.length >= fence.length && closer.replaceAll(fence.charAt(0), "") === "") {
+      const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/.exec(line)?.[1];
+      if (
+        closer !== undefined &&
+        closer.charAt(0) === fence.charAt(0) &&
+        closer.length >= fence.length
+      ) {
         fence = undefined;
       }
       code(line);

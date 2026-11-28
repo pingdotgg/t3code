@@ -247,7 +247,7 @@ export const layerObserver = Layer.effect(
           // The index builds in the code intelligence service, off this turn's lane.
           yield* codeIntelligence.refreshIfIndexed(cwd);
           const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
+            [workspaceEntries.refresh(cwd, "passive"), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
           const thread = yield* projections.getThreadShell(threadId);

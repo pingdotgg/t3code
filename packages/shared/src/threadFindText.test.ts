@@ -156,6 +156,12 @@ it("keeps fence paths literal and indexes file-chip labels in user messages", ()
 
 it.each([
   {
+    source: "assistant",
+    cwd: undefined,
+    text: "**已返回总部工作。**据美联社报道 and ~~删除。~~后续",
+    expected: ["已返回总部工作。据美联社报道 and 删除。后续"],
+  },
+  {
     source: "user",
     cwd: "/workspace/repo",
     text: "See [src/notes.ts](src/notes.ts#L42-L64) and [src/notes.ts](src/notes.ts#L42-L70)",
@@ -264,6 +270,14 @@ it("indexes image destinations rendered as file chips", () => {
     ),
   ).toEqual(["notes.ts · L42–64 "]);
 });
+
+it.each(["\n", "\r\n", "\r"])(
+  "does not search across a standalone image with %j line endings",
+  (ending) => {
+    const text = ["Caption", "![pic](https://x.test/pic.png)", "After"].join(ending);
+    expect(assistantSegments(text)).toEqual(["Caption", " After"]);
+  },
+);
 
 it("projects carriage-return soft line breaks to a space outside code blocks", () => {
   expect(assistantSegments("First\rsecond")).toEqual(["First second"]);

@@ -12,6 +12,8 @@ import {
   ComposerContextId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
+  type CheckpointId,
+  type MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextRestart,
@@ -39,6 +41,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../config.ts";
 import {
@@ -179,6 +182,47 @@ export function abandonedProviderTurns(
   });
 }
 
+/**
+ * The run whose ready end checkpoint is still the baseline before `run`: the last run, when every
+ * run since is a queued message steered into it while it ran, after anything that message did.
+ */
+export const findBaselineSourceOrdinal = Effect.fn("findBaselineSourceOrdinal")(function* (
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  run: Pick<OrchestrationV2Run, "ordinal">,
+  readPrompt: (messageId: MessageId) => Effect.Effect<OrchestrationV2TurnItem | null>,
+  readCheckpoints: (
+    id: CheckpointId,
+  ) => Effect.Effect<Pick<OrchestrationV2ThreadProjection, "checkpoints">>,
+) {
+  const owners: Array<RunId | null> = [];
+  // Runs come in ordinal order; a missing ordinal is a queued run that started late.
+  let index = runs.findLastIndex((candidate) => candidate.ordinal < run.ordinal);
+  for (let ordinal = run.ordinal - 1; runs[index]?.ordinal === ordinal; ordinal -= 1, index -= 1) {
+    const previous = runs[index]!;
+    const prompt =
+      previous.status === "cancelled" && previous.checkpointId === null
+        ? yield* readPrompt(previous.userMessageId)
+        : null;
+    if (prompt?.type === "user_message" && prompt.inputIntent === "promoted_queued_to_steer") {
+      owners.push(prompt.runId);
+      continue;
+    }
+    const [checkpoint] =
+      owners.length > 0 &&
+      owners.every((owner) => owner === previous.id) &&
+      previous.checkpointId !== null &&
+      ["completed", "interrupted", "cancelled"].includes(previous.status)
+        ? (yield* readCheckpoints(previous.checkpointId)).checkpoints
+        : [];
+    return checkpoint?.status === "ready" &&
+      checkpoint.runId === previous.id &&
+      checkpoint.appRunOrdinal === ordinal
+      ? ordinal
+      : undefined;
+  }
+  return undefined;
+});
+
 const CUT_TURN_SETTLED = "cut-turn-settled";
 
 /**
@@ -263,6 +307,19 @@ const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
 const outcomeUnknown = (error: unknown): boolean =>
   OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
+
+// An ACP agent that restarted under a loaded thread reloads its session when the turn starts, before
+// any prompt. A failed reload is a failed resume that surfaced after the run began.
+const NATIVE_SESSION_LOAD_METHODS: ReadonlySet<unknown> = new Set([
+  "session/load",
+  "session/resume",
+]);
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+const nativeSessionLoadFailed = (error: unknown): boolean =>
+  (isAcpRequestError(error) && NATIVE_SESSION_LOAD_METHODS.has(error.method)) ||
+  (Predicate.hasProperty(error, "cause") && nativeSessionLoadFailed(error.cause));
 
 /**
  * Whether a non-truncating provider's native session lost the conversation kept before `run`.
@@ -353,6 +410,7 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly runId: RunId;
     readonly attemptId: RunAttemptId;
     readonly rootNodeId: NodeId;
+    readonly message?: string;
   }) => Effect.Effect<void, ProviderTurnStartError | ProviderTurnStartRunStateMissingError>;
 }
 
@@ -584,6 +642,10 @@ export const layer: Layer.Layer<
         readonly item:
           | Pick<Extract<OrchestrationV2TurnItem, { type: "error" }>, "type" | "title" | "failure">
           | Pick<
+              Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
+              "type" | "title" | "driver" | "summary"
+            >
+          | Pick<
               Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
               "type" | "title" | "input" | "output" | "exitCode"
             >;
@@ -672,7 +734,7 @@ export const layer: Layer.Layer<
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
     ) {
-      const { runId } = input;
+      const { runId, threadId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
@@ -1134,11 +1196,24 @@ export const layer: Layer.Layer<
         );
         providerTurns = providerTurns.map((turn) => repairedTurns.get(turn.id) ?? turn);
       }
+      const sourceOrdinalWithinScope = yield* findBaselineSourceOrdinal(
+        projection.runs,
+        run,
+        (messageId) =>
+          projectionStore
+            .getTurnItem({ threadId, itemId: idAllocator.derive.userTurnItem({ messageId }) })
+            .pipe(Effect.orElseSucceed(() => null)),
+        (checkpointId) =>
+          projectionStore
+            .getThreadRecords(threadId, ["checkpoints"], { checkpointIds: [checkpointId] })
+            .pipe(Effect.orElseSucceed(() => ({ checkpoints: [] }))),
+      );
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,
         run,
         checkpointScope,
+        sourceOrdinalWithinScope,
       });
       const brokenNativeThread = providerThread.status === "error";
       // Opened without the broken native id, a session that was not live starts fresh.
@@ -1187,6 +1262,52 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      // A compaction carries no inline history, so with a full summary still pending the native
+      // session holds none of the conversation: compacting it would summarize nothing.
+      if (
+        session.injectHistory === undefined &&
+        providerMessage.attachments.length === 0 &&
+        providerMessage.text.trim().toLowerCase() === "/compact" &&
+        handoffs.some(
+          (handoff) =>
+            handoff.strategy === "full_thread_summary" &&
+            (providerThread.nativeThreadRef === null ||
+              handoff.delivery?.nativeThreadId !== providerThread.nativeThreadRef.nativeId ||
+              handoff.delivery.status === "pending"),
+        )
+      ) {
+        const now = yield* DateTime.now;
+        yield* settleRunBeforeStart({
+          run,
+          rootNode,
+          attempt,
+          turnItems: projection.turnItems,
+          signal: "empty-compaction",
+          status: "failed",
+          now,
+          startedAt: now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "compaction",
+            title: "Nothing to compact yet",
+            driver: session.driver,
+            summary:
+              "This thread's earlier conversation reaches the agent with your next message. Send a message before compacting.",
+          },
+          providerThreadUpdate: {
+            ...providerThread,
+            status:
+              providerThread.status === "error"
+                ? "error"
+                : providerThread.nativeThreadRef === null
+                  ? "not_loaded"
+                  : "idle",
+            updatedAt: now,
+          },
+        });
+        return;
+      }
       const cutTurn = unsettledStoppedProviderTurn(
         { runs: projection.runs, providerTurns },
         run,
@@ -1630,6 +1751,143 @@ export const layer: Layer.Layer<
       let contextRestart: OrchestrationV2ContextRestart | undefined;
       let recordForkMemory: Effect.Effect<void> = Effect.void;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
+      // The summary handoff, its transfer and the item showing it, for a turn moved to a fresh session.
+      const recoveryRecords = Effect.fn("ProviderTurnStartService.recoveryRecords")(function* () {
+        const { handoff, transferId, createdAt } = yield* recoveryHandoff;
+        const previousRun = projection.runs.findLast(
+          (candidate) =>
+            candidate.providerThreadId === providerThread.id &&
+            candidate.ordinal < run.ordinal &&
+            candidate.startedAt !== null,
+        );
+        // Stable per run so a retried start reuses the reserved run-start position.
+        const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
+          runId,
+          signal: "resume-fallback-handoff",
+        });
+        // A context restart records its own "Restarted from summaries" handoff below.
+        const handoffTurnItem: OrchestrationV2TurnItem | undefined =
+          contextRestart !== undefined
+            ? undefined
+            : {
+                id: handoffTurnItemId,
+                threadId: projection.thread.id,
+                runId,
+                nodeId: rootNode.id,
+                providerThreadId: providerThread.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                // The summary is delivered ahead of this run's own handoffs and message.
+                ordinal: yield* turnItemPositions.allocate({
+                  threadId: projection.thread.id,
+                  turnItemId: handoffTurnItemId,
+                  runId,
+                  runOrdinal: run.ordinal,
+                  placement: "run_start",
+                }),
+                status: "completed",
+                title: "Recovered context",
+                startedAt: createdAt,
+                completedAt: createdAt,
+                updatedAt: createdAt,
+                type: "handoff",
+                contextHandoffId: handoff.id,
+                fromProviderThreadIds: handoff.fromProviderThreadIds,
+                toProviderThreadId: handoff.toProviderThreadId,
+                fromProviderInstanceIds: [providerThread.providerInstanceId],
+                toProviderInstanceId: run.providerInstanceId,
+                fromModelSelections: previousRun === undefined ? [] : [previousRun.modelSelection],
+                toModel: run.modelSelection.model,
+                strategy: handoff.strategy,
+                summary: handoff.summaryText,
+              };
+        const events: Array<OrchestrationV2DomainEvent> = [
+          {
+            id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+            type: "context-handoff.updated",
+            threadId: projection.thread.id,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: createdAt,
+            payload: handoff,
+          },
+          {
+            id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+            type: "context-transfer.updated",
+            threadId: projection.thread.id,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: createdAt,
+            payload: {
+              id: transferId,
+              type: "provider_handoff",
+              sourceThreadId: projection.thread.id,
+              targetThreadId: projection.thread.id,
+              sourcePoint: { threadId: projection.thread.id },
+              basePoint: null,
+              sourceProviderInstanceId: providerThread.providerInstanceId,
+              targetProviderInstanceId: run.providerInstanceId,
+              targetRunId: run.id,
+              status: "resolved_portable",
+              resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
+              createdBy: "system",
+              error: null,
+              createdAt,
+              updatedAt: createdAt,
+              consumedAt: null,
+            },
+          },
+          ...(contextRestart === undefined
+            ? []
+            : [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "turn-item.updated" as const,
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  nodeId: rootNode.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: {
+                    id: idAllocator.derive.runSignalTurnItem({
+                      runId: run.id,
+                      signal: `context-handoff:${handoff.id}`,
+                    }),
+                    threadId: projection.thread.id,
+                    runId: run.id,
+                    nodeId: rootNode.id,
+                    providerThreadId: providerThread.id,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: run.ordinal * 100 - 1,
+                    status: "completed" as const,
+                    title: "Restarted from summaries",
+                    startedAt: createdAt,
+                    completedAt: createdAt,
+                    updatedAt: createdAt,
+                    type: "handoff" as const,
+                    contextHandoffId: handoff.id,
+                    fromProviderThreadIds: [providerThread.id],
+                    toProviderThreadId: providerThread.id,
+                    fromProviderInstanceIds: [providerThread.providerInstanceId],
+                    toProviderInstanceId: run.providerInstanceId,
+                    toModel: run.modelSelection.model,
+                    strategy: handoff.strategy,
+                    summary: handoff.summaryText,
+                    contextRestart,
+                  },
+                },
+              ]),
+        ];
+        return { handoff, turnItem: handoffTurnItem, events };
+      });
+      // A fresh session would orphan background work still running on the native thread.
+      const hasPendingWork = (thread: OrchestrationV2ProviderThread) =>
+        session.hasPendingBackgroundWorkForThread?.(thread, { includeSubagents: true }) ??
+        session.hasPendingBackgroundWork ??
+        Effect.succeed(false);
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           let sourceProjection = yield* projectionStore.getThreadRecords(
@@ -1979,11 +2237,6 @@ export const layer: Layer.Layer<
                   "invalid_encrypted_content"),
           );
         });
-        // A fresh session would orphan background work still running on the native thread.
-        const hasPendingWork = (thread: OrchestrationV2ProviderThread) =>
-          session.hasPendingBackgroundWorkForThread?.(thread, { includeSubagents: true }) ??
-          session.hasPendingBackgroundWork ??
-          Effect.succeed(false);
         const failForPendingWork = loadFromProvider(
           Effect.fail(
             new ProviderAdapter.ProviderAdapterTurnStartError({
@@ -2129,6 +2382,36 @@ export const layer: Layer.Layer<
                     : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
+        // Until a replacement starts, a retry must not resume or prompt the abandoned native
+        // session, even when opening the replacement fails (an initialize timeout).
+        if (providerThread.status !== "error") {
+          const abandonedAt = yield* DateTime.now;
+          const abandoned = yield* eventSink.writeIfRunCurrent({
+            threadId: projection.thread.id,
+            runId: run.id,
+            activeAttemptId: attempt.id,
+            expectedStatus: "starting",
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "provider-thread.updated",
+                threadId: projection.thread.id,
+                driver: session.driver,
+                providerInstanceId: providerThread.providerInstanceId,
+                occurredAt: abandonedAt,
+                payload: { ...providerThread, status: "error", updatedAt: abandonedAt },
+              },
+            ],
+          });
+          if (!abandoned.committed) return undefined;
+        }
+        yield* providerSessions.forgetLoadedProviderThread({
+          providerSessionId: session.providerSessionId,
+          threadId: projection.thread.id,
+          providerThread,
+          modelSelection: run.modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+        });
         const replacement = yield* loadFromProvider(
           session.ensureThread({
             threadId: projection.thread.id,
@@ -2170,139 +2453,17 @@ export const layer: Layer.Layer<
           });
           return undefined;
         }
-        const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        const previousRun = projection.runs.findLast(
-          (candidate) =>
-            candidate.providerThreadId === providerThread.id &&
-            candidate.ordinal < run.ordinal &&
-            candidate.startedAt !== null,
-        );
-        // Stable per run so a retried start reuses the reserved run-start position.
-        const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
-          runId,
-          signal: "resume-fallback-handoff",
-        });
-        // A context restart records its own "Restarted from summaries" handoff below.
-        const handoffTurnItem: OrchestrationV2TurnItem | undefined =
-          contextRestart !== undefined
-            ? undefined
-            : {
-                id: handoffTurnItemId,
-                threadId: projection.thread.id,
-                runId,
-                nodeId: rootNode.id,
-                providerThreadId: providerThread.id,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                // The summary is delivered ahead of this run's own handoffs and message.
-                ordinal: yield* turnItemPositions.allocate({
-                  threadId: projection.thread.id,
-                  turnItemId: handoffTurnItemId,
-                  runId,
-                  runOrdinal: run.ordinal,
-                  placement: "run_start",
-                }),
-                status: "completed",
-                title: "Recovered context",
-                startedAt: createdAt,
-                completedAt: createdAt,
-                updatedAt: createdAt,
-                type: "handoff",
-                contextHandoffId: handoff.id,
-                fromProviderThreadIds: handoff.fromProviderThreadIds,
-                toProviderThreadId: handoff.toProviderThreadId,
-                fromProviderInstanceIds: [providerThread.providerInstanceId],
-                toProviderInstanceId: run.providerInstanceId,
-                fromModelSelections: previousRun === undefined ? [] : [previousRun.modelSelection],
-                toModel: run.modelSelection.model,
-                strategy: handoff.strategy,
-                summary: handoff.summaryText,
-              };
+        const {
+          handoff,
+          turnItem: handoffTurnItem,
+          events: recoveryEventList,
+        } = yield* recoveryRecords();
         const replacementWrite = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: [
-            {
-              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-              type: "context-handoff.updated",
-              threadId: projection.thread.id,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: createdAt,
-              payload: handoff,
-            },
-            {
-              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-              type: "context-transfer.updated",
-              threadId: projection.thread.id,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: createdAt,
-              payload: {
-                id: transferId,
-                type: "provider_handoff",
-                sourceThreadId: projection.thread.id,
-                targetThreadId: projection.thread.id,
-                sourcePoint: { threadId: projection.thread.id },
-                basePoint: null,
-                sourceProviderInstanceId: providerThread.providerInstanceId,
-                targetProviderInstanceId: run.providerInstanceId,
-                targetRunId: run.id,
-                status: "resolved_portable",
-                resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
-                createdBy: "system",
-                error: null,
-                createdAt,
-                updatedAt: createdAt,
-                consumedAt: null,
-              },
-            },
-            ...(contextRestart === undefined
-              ? []
-              : [
-                  {
-                    id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                    type: "turn-item.updated" as const,
-                    threadId: projection.thread.id,
-                    runId: run.id,
-                    nodeId: rootNode.id,
-                    providerInstanceId: run.providerInstanceId,
-                    occurredAt: createdAt,
-                    payload: {
-                      id: idAllocator.derive.runSignalTurnItem({
-                        runId: run.id,
-                        signal: `context-handoff:${handoff.id}`,
-                      }),
-                      threadId: projection.thread.id,
-                      runId: run.id,
-                      nodeId: rootNode.id,
-                      providerThreadId: providerThread.id,
-                      providerTurnId: null,
-                      nativeItemRef: null,
-                      parentItemId: null,
-                      ordinal: run.ordinal * 100 - 1,
-                      status: "completed" as const,
-                      title: "Restarted from summaries",
-                      startedAt: createdAt,
-                      completedAt: createdAt,
-                      updatedAt: createdAt,
-                      type: "handoff" as const,
-                      contextHandoffId: handoff.id,
-                      fromProviderThreadIds: [providerThread.id],
-                      toProviderThreadId: providerThread.id,
-                      fromProviderInstanceIds: [providerThread.providerInstanceId],
-                      toProviderInstanceId: run.providerInstanceId,
-                      toModel: run.modelSelection.model,
-                      strategy: handoff.strategy,
-                      summary: handoff.summaryText,
-                      contextRestart,
-                    },
-                  },
-                ]),
-          ],
+          events: recoveryEventList,
         });
         if (!replacementWrite.committed) return undefined;
         effectiveHandoffs = withRecoveryHandoff(handoff);
@@ -2655,9 +2816,29 @@ export const layer: Layer.Layer<
         let inlineDeliveredHandoffs: ReadonlyArray<OrchestrationV2ContextHandoff> = [];
         let promptDroppedOnTerminal = false;
         const inlineDeliveryLock = yield* Semaphore.make(1);
-        const retryHandoffIds = new Set(retryHandoff.handoffs.map((handoff) => handoff.id));
+        // A turn recovered in a fresh native session delivers to that session instead.
+        let deliveryTarget = {
+          providerThread: runningProviderThread,
+          budget: Effect.gen(function* () {
+            return handoffBudget({
+              tokenCap: resumeFellBack ? REPLACEMENT_HANDOFF_TOKEN_CAP : tokenCap,
+              modelContextWindow,
+              userText: turnNotes === "" ? userText : `${turnNotes}\n\n${userText}`,
+              attachments: providerMessage.attachments,
+              providerThread: budgetProviderThread,
+              nativeContextEstimate:
+                budgetProviderThread.contextUsage?.usedTokens === undefined
+                  ? yield* nativeContextEstimate
+                  : 0,
+            });
+          }),
+          deliveredItemIds: new Set([...deliveredItemIds, ...summarizedItemIds]),
+          retryHandoff,
+        };
         const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
           function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
+            const { providerThread: targetThread, retryHandoff } = deliveryTarget;
+            const retryHandoffIds = new Set(retryHandoff.handoffs.map((handoff) => handoff.id));
             // The wrapper can be retried without rebuilding turn-start context. Read the
             // committed receipt here, before any native history or prompt injection.
             const deliveryState = yield* knowledgeDelivery.readState;
@@ -2678,21 +2859,9 @@ export const layer: Layer.Layer<
               refreshSources,
               handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
               deferInline: compact || slashCommand,
-              providerThread: runningProviderThread,
-              budget: Effect.gen(function* () {
-                return handoffBudget({
-                  tokenCap: resumeFellBack ? REPLACEMENT_HANDOFF_TOKEN_CAP : tokenCap,
-                  modelContextWindow,
-                  userText: turnNotes === "" ? userText : `${turnNotes}\n\n${userText}`,
-                  attachments: providerMessage.attachments,
-                  providerThread: budgetProviderThread,
-                  nativeContextEstimate:
-                    budgetProviderThread.contextUsage?.usedTokens === undefined
-                      ? yield* nativeContextEstimate
-                      : 0,
-                });
-              }),
-              alreadyDeliveredItemIds: new Set([...deliveredItemIds, ...summarizedItemIds]),
+              providerThread: targetThread,
+              budget: deliveryTarget.budget,
+              alreadyDeliveredItemIds: deliveryTarget.deliveredItemIds,
               summaries: summariesFor(
                 [...effectiveHandoffs, ...retryHandoff.handoffs],
                 resumeFellBack,
@@ -2752,7 +2921,7 @@ export const layer: Layer.Layer<
                 : {
                     inject: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
                       session.injectHistory!({
-                        providerThread: runningProviderThread,
+                        providerThread: targetThread,
                         ...history,
                       }),
                   }),
@@ -2875,7 +3044,7 @@ export const layer: Layer.Layer<
             yield* operation.pipe(
               // Clear pending handoff markers for refused prompts so the next turn retains the native session.
               Effect.tapError((error) =>
-                refusedBeforePrompt(error)
+                refusedBeforePrompt(error) || nativeSessionLoadFailed(error)
                   ? Effect.catchCause(delivery.unsent, () =>
                       Effect.logWarning("Failed to restore unsent context handoffs", {
                         runId: run.id,
@@ -2884,7 +3053,11 @@ export const layer: Layer.Layer<
                   : Effect.void,
               ),
               Effect.tapError((error) =>
-                knowledgeDelivery.settle(refusedBeforePrompt(error) ? "failed" : "uncertain"),
+                knowledgeDelivery.settle(
+                  refusedBeforePrompt(error) || nativeSessionLoadFailed(error)
+                    ? "failed"
+                    : "uncertain",
+                ),
               ),
             );
             yield* knowledgeDelivery.settle("sent");
@@ -2893,7 +3066,7 @@ export const layer: Layer.Layer<
               Effect.gen(function* () {
                 if (promptDroppedOnTerminal) return;
                 // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
-                const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
+                const nativeThreadId = targetThread.nativeThreadRef?.nativeId;
                 yield* Effect.forEach(
                   [
                     delivery.delivered,
@@ -2904,7 +3077,7 @@ export const layer: Layer.Layer<
                       : [
                           persistHandoff({
                             ...sideChatHandoff,
-                            toProviderThreadId: runningProviderThread.id,
+                            toProviderThreadId: targetThread.id,
                             delivery: {
                               nativeThreadId,
                               status: "inline" as const,
@@ -2941,6 +3114,126 @@ export const layer: Layer.Layer<
                 }),
           ),
         );
+        // The start, not the resume, found the native session gone (resume was skipped for a loaded
+        // thread), and nothing was prompted. Recover as a failed resume does, within this run.
+        const recoverLostNativeSession = Effect.fn(
+          "ProviderTurnStartService.recoverLostNativeSession",
+        )(
+          function* (
+            turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+            error: ProviderAdapter.ProviderAdapterV2Error,
+          ) {
+            if (
+              resumeFellBack ||
+              !nativeSessionLoadFailed(error) ||
+              outcomeUnknown(error) ||
+              !(yield* isCurrentAttemptInStatus("running")) ||
+              (yield* hasPendingWork(runningProviderThread))
+            )
+              return undefined;
+            yield* Effect.logWarning("Recovering provider context in a fresh native session", {
+              driver: session.driver,
+              providerThreadId: providerThread.id,
+              runId,
+              reason: "native_session_lost_on_start",
+              errorTag: error._tag,
+            });
+            const replacement = yield* session.ensureThread({
+              threadId: projection.thread.id,
+              title: projection.thread.title,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              providerSessionId,
+              existingProviderThread: { ...providerThread, nativeThreadRef: null },
+              forceNewNativeThread: true,
+            });
+            if (
+              replacement.nativeThreadRef?.nativeId == null ||
+              replacement.nativeThreadRef.nativeId ===
+                runningProviderThread.nativeThreadRef?.nativeId
+            )
+              return undefined;
+            const freshContext = handoffContextForThread(
+              replacement,
+              REPLACEMENT_HANDOFF_TOKEN_CAP,
+            );
+            const { nativeMetadata: _lostMetadata, ...running } = runningProviderThread;
+            const recoveredThread: OrchestrationV2ProviderThread = {
+              ...running,
+              ...(replacement.nativeMetadata === undefined
+                ? {}
+                : { nativeMetadata: replacement.nativeMetadata }),
+              nativeThreadRef: replacement.nativeThreadRef,
+              nativeConversationHeadRef: replacement.nativeConversationHeadRef,
+              contextUsage: freshContext.handoffUsage,
+              updatedAt: yield* DateTime.now,
+            };
+            const { handoff, turnItem, events: recoveryEventList } = yield* recoveryRecords();
+            const recoveryWrite = yield* eventSink.writeIfRunCurrent({
+              threadId: projection.thread.id,
+              runId: run.id,
+              activeAttemptId: attempt.id,
+              expectedStatus: "running",
+              events: [
+                ...recoveryEventList,
+                ...(yield* Effect.forEach(
+                  [
+                    ...(turnItem === undefined
+                      ? []
+                      : [{ type: "turn-item.updated" as const, payload: turnItem }]),
+                    { type: "provider-thread.updated" as const, payload: recoveredThread },
+                    {
+                      type: "run-attempt.updated" as const,
+                      payload: {
+                        ...runningAttempt,
+                        nativeThreadId: replacement.nativeThreadRef.nativeId,
+                      },
+                    },
+                  ],
+                  (event) =>
+                    Effect.map(
+                      idAllocator.allocate.event({ threadId: projection.thread.id }),
+                      (id): OrchestrationV2DomainEvent => ({
+                        id,
+                        threadId: projection.thread.id,
+                        runId: run.id,
+                        nodeId: rootNode.id,
+                        driver: session.driver,
+                        providerInstanceId: run.providerInstanceId,
+                        occurredAt: recoveredThread.updatedAt,
+                        ...event,
+                      }),
+                    ),
+                )),
+              ],
+            });
+            if (!recoveryWrite.committed) return undefined;
+            resumeFellBack = true;
+            effectiveHandoffs = withRecoveryHandoff(handoff);
+            deliveryTarget = {
+              providerThread: recoveredThread,
+              budget: freshContext.budget,
+              deliveredItemIds: new Set([
+                ...freshContext.deliveredItemIds,
+                ...freshContext.summarizedItemIds,
+              ]),
+              retryHandoff: yield* prepareRetryHandoff(freshContext),
+            };
+            yield* startWithHandoffs({ ...turnInput, providerThread: recoveredThread });
+            return recoveredThread;
+          },
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterTurnStartError"
+              ? cause
+              : new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: session.driver,
+                  threadId: projection.thread.id,
+                  providerThreadId: providerThread.id,
+                  runId: run.id,
+                  cause,
+                }),
+          ),
+        );
         const deliverySession =
           carriesPendingContext || composer.byteLength > 0 || composer.omissions.length > 0
             ? makeDeliverySession(session, startWithHandoffs)
@@ -2957,6 +3250,7 @@ export const layer: Layer.Layer<
           attempt: runningAttempt,
           attemptId: attempt.id,
           baseline,
+          recoverLostNativeSession,
           loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
           relatedThreadIds: routableSubagents.flatMap((subagent) =>
             subagent.childThreadId === null ? [] : [subagent.childThreadId],
@@ -3107,7 +3401,7 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: startWithWorkspaceLease,
       failStartingRun: Effect.fn("ProviderTurnStartService.failStartingRun")(
-        function* ({ threadId, runId, attemptId, rootNodeId }) {
+        function* ({ threadId, runId, attemptId, rootNodeId, message }) {
           const projection = yield* projectionStore.getTurnStartContext(threadId, runId);
           const run = projection.runs.find((candidate) => candidate.id === runId);
           if (
@@ -3137,7 +3431,7 @@ export const layer: Layer.Layer<
             item: {
               type: "error",
               title: "Turn failed to start",
-              failure: makeProviderFailure({ message: START_GAVE_UP_MESSAGE }),
+              failure: makeProviderFailure({ message: message ?? START_GAVE_UP_MESSAGE }),
             },
           });
         },

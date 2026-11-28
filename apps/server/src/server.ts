@@ -256,6 +256,7 @@ import * as WorkflowForge from "./workflows/WorkflowForge.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ToolSearch from "./orchestration-v2/ToolSearch.ts";
+import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -871,7 +872,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
         ),
       ),
     ),
-    Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, ToolSearch.layer)),
+    // Settlement registers queued settle scripts in PendingSettleScripts; storage cleanup reads them.
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ProjectStore.layer,
+        ThreadSearch.layer,
+        ToolSearch.layer,
+        PendingSettleScripts.layer,
+      ),
+    ),
     Layer.provideMerge(SecretCheck.layer),
     // Above the settings it writes when a theme is applied.
     Layer.provideMerge(EnvironmentTheme.layer),

@@ -13410,7 +13410,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         reason: "user",
       });
       const projections = yield* ProjectionStore.ProjectionStoreV2.pipe(
-        Effect.provide(ProjectionStore.layer),
+        Effect.provide(ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer))),
       );
       const [candidate] = yield* projections.getSettlementCandidates(threadId);
       assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);

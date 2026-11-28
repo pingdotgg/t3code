@@ -12,10 +12,9 @@ export const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 // `"a "'`b`'" c"`.
 const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)$/u;
 const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
-// Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
-const HEREDOC_BODY =
-  /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)|[\s\S]*$)/gu;
-const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*/gmu;
+const HEREDOC_OPENER = /<<-?[ \t]*(['"]?)(\w+)\1/uy;
+const COMMAND_SEPARATORS = new RegExp(COMMAND_SEPARATOR, "gu");
+const SUBSHELL_SEPARATORS = /&&|\|\||[;|\n()`]/gu;
 
 /** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
 export function shellScript(input: string): string {
@@ -29,49 +28,126 @@ export function shellScript(input: string): string {
       ).join("");
 }
 
-function splitShell(script: string, subshells: boolean): ReadonlyArray<string> {
-  const segments: Array<string> = [];
-  let current = "";
-  let quote: string | null = null;
-  for (let index = 0; index < script.length; index++) {
-    const char = script[index] ?? "";
-    if (quote !== null) {
-      current += char;
-      if (char === "\\" && quote === '"') current += script[++index] ?? "";
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"') quote = char;
-    if (char === "\\") {
-      current += char + (script[++index] ?? "");
-      continue;
-    }
-    const pair = script.slice(index, index + 2);
-    if (
-      pair === "&&" ||
-      pair === "||" ||
-      char === ";" ||
-      char === "|" ||
-      char === "\n" ||
-      (subshells && (char === "(" || char === ")" || char === "`"))
-    ) {
-      segments.push(current);
-      current = "";
-      if (pair === "&&" || pair === "||") index++;
-      continue;
-    }
-    current += char;
+/** Where a heredoc opened at `at` ends: after its terminator line, or at the end of the script. */
+function heredocEnd(script: string, at: number): number | undefined {
+  HEREDOC_OPENER.lastIndex = at;
+  const [opener, , tag] = HEREDOC_OPENER.exec(script) ?? [];
+  if (opener === undefined || tag === undefined) return undefined;
+  let lineStart = script.indexOf("\n", at + opener.length);
+  if (lineStart === -1) return undefined;
+  while (lineStart !== -1) {
+    const lineEnd = script.indexOf("\n", lineStart + 1);
+    const end = lineEnd === -1 ? script.length : lineEnd;
+    if (script.slice(lineStart + 1, end).trim() === tag) return end;
+    lineStart = lineEnd;
   }
-  segments.push(current);
+  return script.length;
+}
+
+/** Where a double-quoted string opened at `at` ends. A heredoc that `$(` opens inside it is read first. */
+function doubleQuoteEnd(script: string, at: number): number {
+  let index = at + 1;
+  while (index < script.length) {
+    const char = script[index];
+    if (char === '"') return index + 1;
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (script.startsWith("$(", index)) {
+      let opener = index + 2;
+      while (opener < script.length && !'"()'.includes(script[opener] ?? "")) {
+        if (script.startsWith("<<", opener)) break;
+        opener++;
+      }
+      const end = heredocEnd(script, opener);
+      index = end ?? index + 2;
+      continue;
+    }
+    index++;
+  }
+  return script.length;
+}
+
+type CarriedText = {
+  readonly start: number;
+  readonly end: number;
+  readonly kind: "escape" | "text" | "heredoc";
+};
+
+/**
+ * The text a script carries rather than runs: escapes, quoted strings, comments and heredoc
+ * bodies, read in one left-to-right scan as the shell does. A `#` opens a comment only where an
+ * unquoted, unescaped separator comes before it. An unclosed quote carries the rest of the script.
+ */
+function carriedText(script: string): ReadonlyArray<CarriedText> {
+  const pieces: Array<CarriedText> = [];
+  let wordStart = true;
+  let index = 0;
+  const carry = (end: number, kind: CarriedText["kind"]) => {
+    pieces.push({ start: index, end: Math.min(end, script.length), kind });
+    index = end;
+    wordStart = false;
+  };
+  while (index < script.length) {
+    const char = script[index] ?? "";
+    if (char === "\\") carry(index + 2, "escape");
+    else if (script.startsWith("$'", index)) {
+      let end = index + 2;
+      while (end < script.length && script[end] !== "'") end += script[end] === "\\" ? 2 : 1;
+      carry(end + 1, "text");
+    } else if (char === "'") {
+      const close = script.indexOf("'", index + 1);
+      carry(close === -1 ? script.length : close + 1, "text");
+    } else if (char === '"') carry(doubleQuoteEnd(script, index), "text");
+    else if (char === "#" && wordStart) {
+      const lineEnd = script.indexOf("\n", index);
+      carry(lineEnd === -1 ? script.length : lineEnd, "text");
+    } else {
+      const end = char === "<" ? heredocEnd(script, index) : undefined;
+      if (end !== undefined) carry(end, "heredoc");
+      else {
+        wordStart = /[\s;&|(]/u.test(char);
+        index++;
+      }
+    }
+  }
+  return pieces;
+}
+
+/** The script with each piece of text it carries replaced. */
+function replaceCarriedText(script: string, replace: (piece: CarriedText) => string): string {
+  let result = "";
+  let index = 0;
+  for (const piece of carriedText(script)) {
+    result += script.slice(index, piece.start) + replace(piece);
+    index = piece.end;
+  }
+  return result + script.slice(index);
+}
+
+/** A script split at the separators in its code, leaving carried text intact. */
+function splitShell(script: string, separators: RegExp): ReadonlyArray<string> {
+  const masked = replaceCarriedText(script, ({ start, end }) => "_".repeat(end - start));
+  const segments: Array<string> = [];
+  let start = 0;
+  for (const separator of masked.matchAll(separators)) {
+    segments.push(script.slice(start, separator.index));
+    start = separator.index + separator[0].length;
+  }
+  segments.push(script.slice(start));
   return segments;
 }
 
-/** A script split at command separators that sit outside quotes. */
-export const shellSegments = (script: string): ReadonlyArray<string> => splitShell(script, false);
+/** A script split at the command separators in its code, leaving carried text intact. */
+export const shellSegments = (script: string): ReadonlyArray<string> =>
+  splitShell(script, COMMAND_SEPARATORS);
 
 /** The commands a script runs, without the text it carries. */
 export const shellCode = (script: string) =>
-  script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
+  replaceCarriedText(script, ({ start, end, kind }) =>
+    kind === "escape" ? script.slice(start, end) : kind === "heredoc" ? "<<" : "''",
+  );
 
 /** One segment's words with quotes resolved, stopping at a comment. */
 function shellWords(segment: string): Array<string> {
@@ -135,8 +211,11 @@ function stripRedirections(words: ReadonlyArray<string>): Array<string> {
 
 /** The commands a shell input runs, in order. Text inside quotes and heredocs is not a command. */
 export function agentShellCommands(input: string): ReadonlyArray<AgentShellCommand> {
-  const script = shellScript(input).replace(HEREDOC_BODY, "<<");
-  const segments = splitShell(script, true);
+  const unwrapped = shellScript(input);
+  const script = replaceCarriedText(unwrapped, ({ start, end, kind }) =>
+    kind === "heredoc" ? "<<" : unwrapped.slice(start, end),
+  );
+  const segments = splitShell(script, SUBSHELL_SEPARATORS);
   const commands: Array<AgentShellCommand> = [];
   let loopDepth = 0;
   let offset = 0;

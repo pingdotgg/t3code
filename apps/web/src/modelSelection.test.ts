@@ -659,16 +659,16 @@ describe("instance-scoped model selection", () => {
     });
   });
 
-  it("falls back from an explicit non-OpenCode draft with a missing model", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const driver = ProviderDriverKind.make("codex");
-    const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
+  it("falls back from an explicit draft with a missing model on a static catalog", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] })];
     const state = deriveEffectiveComposerModelState({
       threadStarted: false,
       draft: {
         activeProvider: instanceId,
         modelSelectionByProvider: {
-          [instanceId]: createModelSelection(instanceId, "gpt-missing", [
+          [instanceId]: createModelSelection(instanceId, "claude-missing", [
             { id: "effort", value: "max" },
           ]),
         },
@@ -688,7 +688,7 @@ describe("instance-scoped model selection", () => {
       planModeEnabled: false,
     });
 
-    expect(state.selectedModel).toBe("gpt-5.6-sol");
+    expect(state.selectedModel).toBe("claude-opus-5-5");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
@@ -720,6 +720,30 @@ describe("instance-scoped model selection", () => {
     expect(
       createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
     ).toEqual(stored);
+  });
+
+  it("keeps a Codex thread's stored model when a catalog refresh omits it", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const stored = createModelSelection(instanceId, "gpt-6.2-sol", [
+      { id: "effort", value: "high" },
+    ]);
+    const codex = provider({ provider: driver, instanceId, models: ["gpt-6-astra"] });
+    const providers = [
+      { ...codex, models: codex.models.map((model) => ({ ...model, isDefault: true })) },
+    ];
+    const state = deriveEffectiveComposerModelState({
+      threadStarted: true,
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: stored,
+      projectModelSelection: null,
+      settings: settingsWithProviderInstances(),
+    });
+
+    expect(state.selectedModel).toBe("gpt-6.2-sol");
   });
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {

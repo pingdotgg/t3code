@@ -20,6 +20,7 @@ import {
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  trimAsciiWhitespace,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -751,7 +752,7 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
-  const automaticBaseRef = draft.workspace === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef = draft.workspace === "worktree" && !trimAsciiWhitespace(draft.baseRef);
   const automaticBaseRefCwd = automaticBaseRef
     ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
     : null;

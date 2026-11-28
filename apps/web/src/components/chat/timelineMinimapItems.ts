@@ -88,6 +88,12 @@ function markdownNodeText(node: Nodes): string {
   if (node.type === "element" && node.tagName === "br") return " ";
   if (node.type === "element" && node.tagName === "img") return String(node.properties.alt ?? "");
   if (node.type !== "element" && node.type !== "root") return "";
+  // Footnote markers and the footnote list are not part of the message's prose.
+  if (
+    node.type === "element" &&
+    (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+  )
+    return "";
   const separator = node.type === "element" && INLINE_PARENTS.has(node.tagName) ? "" : " ";
   const text = node.children.map(markdownNodeText).join(separator);
   // A thread autolink's only text is its URL.

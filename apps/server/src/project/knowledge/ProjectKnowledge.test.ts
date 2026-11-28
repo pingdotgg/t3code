@@ -114,7 +114,7 @@ const receiptStores = Layer.mergeAll(
   TurnItemPositionStore.layer,
   EventStore.layer,
   ProjectStore.layer,
-  ProjectionStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer)),
 );
 const receiptExecutor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
   execute: () => Effect.die("Unexpected effect"),

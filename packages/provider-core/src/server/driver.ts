@@ -129,6 +129,11 @@ export interface ProviderDriverCreateInput<Config> {
   readonly accentColor?: string | undefined;
   readonly environment: ResolvedProviderInstanceEnvironment;
   readonly enabled: boolean;
+  /**
+   * Whether the user lets T3 read this provider's usage files and sign-in. Absent means not
+   * allowed. Read it on each probe: it changes without recreating the instance.
+   */
+  readonly usageAccess?: Effect.Effect<boolean>;
   readonly config: Config;
 }
 

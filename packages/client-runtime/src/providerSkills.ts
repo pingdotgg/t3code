@@ -127,6 +127,13 @@ function hasCurrentProviderWorkspaceSnapshot(
   );
 }
 
+// The agent reloads skills on these, but the composer's per-cwd skill list is cached separately.
+const SKILL_RELOAD_COMMANDS = new Set(["/reload-skills", "/reload-plugins"]);
+
+export function isSkillReloadCommand(prompt: string): boolean {
+  return SKILL_RELOAD_COMMANDS.has(prompt.trim().toLowerCase());
+}
+
 /** Pack entries (`ServerConfig.pstackSkills`) shadow same-named provider skills. */
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider | null | undefined,

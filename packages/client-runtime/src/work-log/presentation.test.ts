@@ -7,6 +7,7 @@ import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
+  summarizeToolGroup,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -328,5 +329,46 @@ describe("workEntriesViewedImages", () => {
         read("again", "/repo/a.png", "completed"),
       ]),
     ).toEqual(["/repo/a.png", "/repo/b.png"]);
+  });
+});
+
+describe("summarizeToolGroup read counts", () => {
+  const read = (id: string, filePath: string, offset?: number): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-11-27T00:00:00.000Z",
+    label: "Read",
+    tone: "tool",
+    itemType: "dynamic_tool",
+    toolTitle: "Read",
+    toolLifecycleStatus: "completed",
+    structuredPayload: {
+      id: TurnItemId.make(id),
+      threadId: ThreadId.make("thread"),
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-11-27T00:00:00.000Z"),
+      type: "dynamic_tool",
+      toolName: "Read",
+      input: offset === undefined ? { file_path: filePath } : { file_path: filePath, offset },
+    },
+  });
+
+  it("counts a file read in several chunks once, as edits do", () => {
+    expect(
+      summarizeToolGroup([
+        read("a1", "/repo/src/a.ts"),
+        read("a2", "/repo/src/a.ts", 200),
+        read("b", "/repo/src/b.ts"),
+      ]).summary,
+    ).toBe("Read 2 files");
   });
 });

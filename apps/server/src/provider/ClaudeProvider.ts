@@ -514,8 +514,10 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
-  includeStatus = true,
+  includeStatus: boolean | "usageOnly" = true,
 ) => {
+  const includeUsage = includeStatus !== false;
+  const includeSettings = includeStatus === true;
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
     if (!abort.signal.aborted) abort.abort();
@@ -528,8 +530,8 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
-    // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
-    const graceMs = includeStatus
+    // Workspace and usage-only probes discard models; the machine probe refreshes the shared cache.
+    const graceMs = includeSettings
       ? claudeGatewayDiscoveryGraceMs({
           ...claudeEnvironment,
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
@@ -578,7 +580,7 @@ const probeClaudeCapabilities = (
         const { getSettings } = q as ClaudeSettingsQuery;
         const [usageResult, settingsResult] = yield* Effect.all(
           [
-            includeStatus
+            includeUsage
               ? Effect.tryPromise({
                   try: () =>
                     q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
@@ -588,7 +590,7 @@ const probeClaudeCapabilities = (
                     new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
                 }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
               : Effect.undefined,
-            includeStatus && getSettings
+            includeSettings && getSettings
               ? Effect.tryPromise({
                   try: () => getSettings.call(q),
                   catch: (cause) =>
@@ -817,7 +819,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const reportedModels = claudeReportedModels(
+  const { models: reportedModels, hasNonCatalogModels } = claudeReportedModels(
     modelCatalog,
     claudeSettings.customModels,
     capabilities?.models,
@@ -830,7 +832,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ),
     capabilities?.effortCapSources ?? [],
   );
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  // Skills are scanned per project when a composer asks (probeClaudeWorkspaceSnapshot), not at startup.
+  const skills: ServerProvider["skills"] = [];
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -941,8 +944,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     },
   });
   // Claude Code lists gateway models only while its one gateway cache holds this base URL, and
-  // then all of them, so a list without any may lack this gateway's models.
-  return reportedModels.length === 0 ? { ...provider, modelsIncomplete: true } : provider;
+  // then all of them, including those already configured as custom models.
+  return hasNonCatalogModels ? provider : { ...provider, modelsIncomplete: true };
 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);

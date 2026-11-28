@@ -38,10 +38,12 @@ import {
   TurnItemId,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2HistoricalMessage,
   ContextHandoffId,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1591,6 +1593,7 @@ function makeLocalCommandHarness(input: {
           getForkSourceRunIds: () => Effect.succeed(parentRecords.runs.map((run) => run.id)),
           getThreadRecords,
           getTurnStartContext,
+          getTurnItem: () => Effect.succeed(null),
           getRuntimeRecoveryProjection,
           getRun,
           getTurnStartHistory: () =>
@@ -1605,6 +1608,8 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
+          // A resume fallback forgets the abandoned load before opening a fresh session.
+          forgetLoadedProviderThread: () => Effect.void,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false
@@ -2775,6 +2780,94 @@ it("finds abandoned turns in a long history reading each record a bounded number
   const records = runs.length + attempts.length + providerTurns.length;
   expect(reads).toBeLessThanOrEqual(4 * records);
 });
+
+const ran = { status: "completed", checkpoint: "ready" };
+const removed = { status: "cancelled", checkpoint: null };
+// A queued message whose prompt now belongs to the run at `ordinal`.
+const steeredInto = (ordinal: number) => ({ ...removed, steeredInto: `run-${ordinal}` });
+effectIt.effect.each([
+  { label: "a queued message steered into it", runs: [ran, steeredInto(1)], source: 1 },
+  { label: "several steered into it", runs: [ran, steeredInto(1), steeredInto(1)], source: 1 },
+  { label: "a removed queued message", runs: [ran, removed], source: undefined },
+  { label: "a queued message that ran", runs: [ran, ran], source: undefined },
+  {
+    label: "a message steered into the starting run",
+    runs: [ran, steeredInto(3)],
+    source: undefined,
+  },
+  {
+    label: "a turn whose checkpoint was not captured",
+    runs: [{ ...ran, checkpoint: "error" }, steeredInto(1)],
+    source: undefined,
+  },
+  {
+    label: "a failed run",
+    runs: [{ ...ran, status: "failed" }, steeredInto(1)],
+    source: undefined,
+  },
+  { label: "a missing row", runs: [ran, null, steeredInto(1)], source: undefined },
+])("starts a turn from the last turn's checkpoint after $label", (input) =>
+  Effect.gen(function* () {
+    const ordinal = input.runs.length + 1;
+    const runs = [
+      ...input.runs.flatMap((run, index) =>
+        run === null
+          ? []
+          : [
+              {
+                ...run,
+                id: `run-${index + 1}`,
+                userMessageId: `message-${index + 1}`,
+                ordinal: index + 1,
+                checkpointId: run.checkpoint === null ? null : `checkpoint-${index + 1}`,
+              },
+            ],
+      ),
+      {
+        id: `run-${ordinal}`,
+        userMessageId: "message-starting",
+        ordinal,
+        status: "starting",
+        checkpoint: null,
+        checkpointId: null,
+      },
+    ];
+
+    const source = yield* ProviderTurnStart.findBaselineSourceOrdinal(
+      runs as unknown as Parameters<typeof ProviderTurnStart.findBaselineSourceOrdinal>[0],
+      { ordinal },
+      (messageId) => {
+        const queued = runs.find((run) => run.userMessageId === messageId);
+        return Effect.succeed(
+          queued !== undefined && "steeredInto" in queued
+            ? ({
+                type: "user_message",
+                inputIntent: "promoted_queued_to_steer",
+                runId: queued.steeredInto,
+              } as OrchestrationV2TurnItem)
+            : null,
+        );
+      },
+      (checkpointId) => {
+        const owner = runs.find((run) => run.checkpointId === checkpointId);
+        return Effect.succeed({
+          checkpoints:
+            owner === undefined
+              ? []
+              : [
+                  {
+                    id: checkpointId,
+                    runId: owner.id,
+                    appRunOrdinal: owner.ordinal,
+                    status: owner.checkpoint,
+                  } as OrchestrationV2Checkpoint,
+                ],
+        });
+      },
+    );
+    expect(source).toBe(input.source);
+  }),
+);
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
   Effect.gen(function* () {
@@ -5406,7 +5499,8 @@ effectIt.effect("declares no replayed runs to the summary lookup on a provider s
       (_, index) => ({
         itemId: TurnItemId.make(`peer-item-${index}`),
         role: index % 2 === 0 ? "user" : "assistant",
-        text: `Peer message ${index}. ${"Detail. ".repeat(180)}`,
+        // The handoff budget counts four bytes per configured token.
+        text: `Peer message ${index}. ${"Detail. ".repeat(720)}`,
         threadId: projection.thread.id,
         runId: sourceRunId,
         providerThreadId: peerThreadId,
@@ -5557,7 +5651,8 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
       (_, index) => ({
         itemId: TurnItemId.make(`receipt-item-${index}`),
         role: index % 2 === 0 ? "user" : "assistant",
-        text: "x".repeat(700),
+        // The handoff budget counts four bytes per configured token.
+        text: "x".repeat(2_800),
         threadId: projection.thread.id,
         runId: sourceRunId,
         providerThreadId: peerThreadId,

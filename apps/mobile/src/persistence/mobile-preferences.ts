@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
+import type { MobileFontId, MobileMonoFontId } from "../lib/fontFamilies";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -140,6 +141,7 @@ export interface Preferences {
   /** Whether pull requests or issues last held the tab bar slot they share. */
   readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestHideTestFiles?: boolean;
+  readonly pullRequestHideViewedFiles?: boolean;
   /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
   readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
@@ -150,6 +152,8 @@ export interface Preferences {
   readonly themeMode?: MobileThemeMode;
   readonly androidNavigationStyle?: AndroidNavigationStyle;
   readonly baseFontSize?: number;
+  readonly fontId?: MobileFontId;
+  readonly monoFontId?: MobileMonoFontId;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
   readonly codeFontSize?: number | null;
@@ -241,6 +245,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     hiddenNavigationTabs?: readonly string[];
     sharedSlotTab?: "pullRequests" | "issues";
     pullRequestHideTestFiles?: boolean;
+    pullRequestHideViewedFiles?: boolean;
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
@@ -250,6 +255,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     themeMode?: MobileThemeMode;
     androidNavigationStyle?: AndroidNavigationStyle;
     baseFontSize?: number;
+    fontId?: MobileFontId;
+    monoFontId?: MobileMonoFontId;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
     codeFontSize?: number | null;
@@ -304,6 +311,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
   }
 
+  if (typeof parsed.pullRequestHideViewedFiles === "boolean") {
+    preferences.pullRequestHideViewedFiles = parsed.pullRequestHideViewedFiles;
+  }
+
   if (isPullRequestActivityVisibility(parsed.pullRequestActivityVisibility)) {
     preferences.pullRequestActivityVisibility = parsed.pullRequestActivityVisibility;
   }
@@ -344,6 +355,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.androidNavigationStyle = parsed.androidNavigationStyle;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
+  if (parsed.fontId === "system" || parsed.fontId === "dm-sans") preferences.fontId = parsed.fontId;
+  if (parsed.monoFontId === "system" || parsed.monoFontId === "meslo") {
+    preferences.monoFontId = parsed.monoFontId;
+  }
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;
   }

@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -25,7 +26,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerDatabase = Layer.mergeAll(
   SqlitePersistence.layerMemory,
-  ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
+    Layer.provide(SqlitePersistence.layerMemory),
+  ),
 );
 
 it.effect.each(["sqlite"] as const)(

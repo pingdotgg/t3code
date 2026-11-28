@@ -243,8 +243,12 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text) / 4);
 }
 
-// One UTF-8 byte per token keeps the new turn and imported history pessimistic. It is
-// not a tokenizer or a guarantee for arbitrary custom models.
+export function handoffByteCap(tokenCap: number): number {
+  return Math.min(HANDOFF_BYTE_CAP, tokenCap * 4);
+}
+
+// One UTF-8 byte per remaining token keeps the native context window reservation pessimistic.
+// It is not a tokenizer or a guarantee for arbitrary custom models.
 export function handoffBudgetAssumptions(input: {
   readonly tokenCap: number;
   readonly userText: string;
@@ -266,12 +270,7 @@ export function handoffBudgetAssumptions(input: {
   const headroom = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   const knowledgeAllowance = Math.max(
     0,
-    Math.min(
-      input.tokenCap,
-      // Cap imported history only; adapters own attachment transport limits.
-      HANDOFF_BYTE_CAP,
-      window - native - current - headroom,
-    ),
+    Math.min(handoffByteCap(input.tokenCap), window - native - current - headroom),
   );
   return {
     capacity: window,
@@ -280,7 +279,7 @@ export function handoffBudgetAssumptions(input: {
     headroom,
     knowledgeAllowance,
     tokenCap: input.tokenCap,
-    byteCap: HANDOFF_BYTE_CAP,
+    byteCap: handoffByteCap(input.tokenCap),
   };
 }
 

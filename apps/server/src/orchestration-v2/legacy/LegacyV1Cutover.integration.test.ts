@@ -652,6 +652,7 @@ const layerBoot = (input: {
   );
   const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
   const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
     Layer.provideMerge(layerDatabase),
   );
   const layerStoresProvided = Layer.mergeAll(

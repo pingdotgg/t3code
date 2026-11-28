@@ -100,6 +100,36 @@ describe("createInboxReturnTracker", () => {
     expect(tracker.returnedAt(finished)).toBe(200_000);
   });
 
+  it("holds a thread whose background subagent finished long after its turn ended", () => {
+    const tracker = createInboxReturnTracker();
+    const latestRun = {
+      runId: RunId.make("launched-subagent"),
+      status: "completed" as const,
+      requestedAt: "1970-01-01T00:00:02.000Z",
+      startedAt: "1970-01-01T00:00:02.000Z",
+      completedAt: "1970-01-01T00:00:09.000Z",
+      assistantMessageId: null,
+    };
+    const runtime = thread("a", true).runtime!;
+    const waitingOnSubagent = {
+      ...thread("a", false),
+      latestRun,
+      runtime: { ...runtime, status: "idle" as const },
+    };
+    const subagentFinished = {
+      ...waitingOnSubagent,
+      runtime: { ...runtime, status: "completed" as const },
+    };
+    expect(isThreadWorking(waitingOnSubagent)).toBe(true);
+    tracker.observe([waitingOnSubagent]);
+    vi.setSystemTime(200_000);
+    tracker.observe([waitingOnSubagent]);
+    // The parent resumes about 300 ms after the subagent's notification.
+    tracker.observe([subagentFinished]);
+    expect(tracker.isWorking(subagentFinished)).toBe(true);
+    expect(tracker.returnedAt(subagentFinished)).toBeUndefined();
+  });
+
   it("cancels a transient return on resume and grants a fresh grace after the next finish", () => {
     const tracker = createInboxReturnTracker();
     tracker.observe([thread("a", false)]);

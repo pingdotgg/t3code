@@ -151,7 +151,12 @@ export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
-    { working: boolean; deadline: number | null; placement: string | null }
+    {
+      working: boolean;
+      deadline: number | null;
+      placement: string | null;
+      endedAt: number | null;
+    }
   >();
   const returns = new Map<string, number>();
   const listeners = new Set<() => void>();
@@ -244,14 +249,16 @@ export function createInboxReturnTracker() {
           effectiveSnoozed(thread, { now: observedAt });
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const endedAt = toSortableTimestamp(thread.latestRun?.completedAt ?? undefined);
-        const endedLongAgo = endedAt !== null && endedAt <= at - STALE_EXIT_MS;
+        // A run end already seen while the thread kept working (background subagents) is not stale.
+        const endedLongAgo =
+          endedAt !== null && endedAt <= at - STALE_EXIT_MS && previous?.endedAt !== endedAt;
         const deadline =
           !actual && previous?.working && !actionable && !moved && !excluded && !endedLongAgo
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);
         if (previous?.working && !working) returns.set(key, at);
-        states.set(key, { working, deadline: working ? deadline : null, placement });
+        states.set(key, { working, deadline: working ? deadline : null, placement, endedAt });
       }
       for (const key of states.keys()) {
         if (!present.has(key)) {

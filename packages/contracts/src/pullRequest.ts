@@ -282,6 +282,7 @@ export const PullRequestCommit = Schema.Struct({
   committedDate: IsoDateTime,
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
   authors: Schema.optional(Schema.Array(PullRequestActor)),
 });
 export type PullRequestCommit = typeof PullRequestCommit.Type;
@@ -603,6 +604,8 @@ export type PullRequestStack = typeof PullRequestStack.Type;
 
 export const PullRequestDiffStat = Schema.Struct({
   projectId: ProjectId,
+  /** Tells apart same-named repositories one project tracks on several hosts. Absent from older servers. */
+  host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
   additions: NonNegativeInt,

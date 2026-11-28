@@ -356,7 +356,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerReceipts,
         layerWorktreeBranches,
         layerOrchestrator,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
         NodeServices.layer,
         IdAllocator.layer,
         options.getLaunchSettings === undefined

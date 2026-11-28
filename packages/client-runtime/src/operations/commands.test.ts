@@ -134,6 +134,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -308,13 +309,14 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect("uses server-resolved delivery intent without fetching the full projection", () =>
+  it.effect("sends title seed and delivery intent without fetching the full projection", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const projectionRequests: ThreadId[] = [];
       const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
 
       for (const [mode, expectedType] of [
+        ["start", "start_immediately"],
         ["queue", "queue_after_active"],
         ["auto", "start_immediately"],
         ["steer", "start_immediately"],
@@ -331,13 +333,15 @@ describe("V2 environment commands", () => {
           },
           runtimeMode: "full-access",
           interactionMode: "default",
+          titleSeed: mode,
           dispatchMode: mode,
         }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
         expect(commands.at(-1)).toMatchObject({
           type: "message.dispatch",
+          titleSeed: mode,
           dispatchMode: { type: expectedType },
-          ...(mode === "queue" ? {} : { deliveryIntent: mode }),
+          ...(mode === "queue" || mode === "start" ? {} : { deliveryIntent: mode }),
         });
       }
       expect(projectionRequests).toEqual([]);

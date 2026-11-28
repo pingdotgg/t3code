@@ -1,4 +1,4 @@
-import { CommandId, GitCommandError, type RunId } from "@t3tools/contracts";
+import { CommandId, GitCommandError, type RunId, trimAsciiWhitespace } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -102,8 +102,8 @@ const make = Effect.gen(function* () {
     const head = yield* read(cwd, ["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return { _tag: "Unavailable" } as const;
     if (head.exitCode !== 0) return { _tag: "Detached" } as const;
-    const ref = head.stdout.trim();
-    const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
+    const ref = trimAsciiWhitespace(head.stdout);
+    const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : null;
     return branch === null
       ? ({ _tag: "Unavailable" } as const)
       : ({ _tag: "Named", branch } as const);
@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
     });
     const holders = stdout
       .split("\n")
-      .filter((line) => line.trim() === `branch refs/heads/${branch}`);
+      .filter((line) => trimAsciiWhitespace(line) === `branch refs/heads/${branch}`);
     return holders.length > 1;
   });
 

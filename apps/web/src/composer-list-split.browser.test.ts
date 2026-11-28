@@ -13,6 +13,7 @@ import {
   ComposerTaskItemExtension,
   serializeEditorDoc,
   type ComposerChipResolver,
+  splitOrLiftListItem,
 } from "./composer-rich-text-doc";
 
 const knownChips: ComposerChipResolver = {
@@ -102,5 +103,19 @@ describe("blocks that a list item or quote cannot hold", () => {
     const lines = buildTiptapContent("one\ntwo", knownChips);
     editor.commands.insertContent(lines);
     expect(storedDraft(editor)).toBe("- a\n\none\ntwo");
+  });
+});
+
+describe("Enter in a list item", () => {
+  it.each([
+    ["* [x] done", "* [x] done\n* [ ] "],
+    ["1. [x] done", "1. [x] done\n2. [ ] "],
+    ["* [ ] ", ""],
+    ["1. [x] a\n2. [ ] ", "1. [x] a\n"],
+  ])("continues or leaves the task list from %j", (value, expected) => {
+    using editor = makeEditor(value);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+    expect(splitOrLiftListItem(editor, () => true)).toBe(true);
+    expect(storedDraft(editor)).toBe(expected);
   });
 });

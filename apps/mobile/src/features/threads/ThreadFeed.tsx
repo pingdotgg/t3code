@@ -165,6 +165,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
+  Share,
   StyleSheet,
   type ColorValue,
   useWindowDimensions,
@@ -200,7 +201,6 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -232,7 +232,10 @@ import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
-import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+import {
+  parseReviewCommentMessageSegments,
+  reviewCommentChipLabel,
+} from "../review/reviewCommentSelection";
 import {
   ReviewCommentCard,
   useReviewCommentColors,
@@ -579,6 +582,42 @@ function AssistantForkButton(props: {
           type="monochrome"
         />
       )}
+    </Pressable>
+  );
+}
+
+function AssistantShareButton(props: {
+  readonly text: string;
+  readonly iconColor: ColorValue;
+  readonly buttonSize: number;
+  readonly iconSize: number;
+}) {
+  const gt = useGT();
+  if (props.text.trim().length === 0) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Share response")}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        Share.share({ message: props.text }).catch((cause: unknown) =>
+          console.error("Failed to share response.", cause),
+        );
+      }}
+      className="h-7 w-7 items-center justify-center"
+      style={
+        Platform.OS === "android"
+          ? { width: props.buttonSize, height: props.buttonSize }
+          : undefined
+      }
+    >
+      <SymbolView
+        name="square.and.arrow.up"
+        size={props.iconSize}
+        tintColor={props.iconColor}
+        type="monochrome"
+      />
     </Pressable>
   );
 }
@@ -1581,7 +1620,7 @@ function MarkdownDetailsFold(props: {
 }
 
 function useMarkdownStyles(): MarkdownStyleSets {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fontFamilies, monoFontFamily } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
   const markdownBodyColor = theme["--color-md-body"];
@@ -1602,8 +1641,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fontFamilies.regular;
+  const boldFontFamily = fontFamilies.bold;
 
   return {
     user: {
@@ -1626,6 +1665,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         fontFamily: regularFontFamily,
         headingFontFamily: boldFontFamily,
         boldFontFamily,
+        monoFontFamily,
       },
     },
     assistant: {
@@ -1648,6 +1688,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         fontFamily: regularFontFamily,
         headingFontFamily: boldFontFamily,
         boldFontFamily,
+        monoFontFamily,
       },
     },
   };
@@ -2811,6 +2852,12 @@ function renderFeedEntry(
                 iconSize={props.replyActionSize.icon}
               />
             )}
+            <AssistantShareButton
+              text={renderedText}
+              iconColor={iconSubtleColor}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
@@ -2868,6 +2915,7 @@ type UserMessageContentProps = {
 
 function UserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
+  const messages = useMessages();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const openThreadLink = useOpenThreadLink(props.environmentId);
@@ -2881,9 +2929,17 @@ function UserMessageContent(props: UserMessageContentProps) {
     ),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
+  const displayLabel = (label: string, contextId: string) => {
+    const record = props.context?.records.find((item) => item.contextId === contextId);
+    return record?.kind === "review-comment" && "rangeLabel" in record
+      ? reviewCommentChipLabel(label, record.rangeLabel, messages)
+      : label;
+  };
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
+    const label = available
+      ? displayLabel(ref.label, ref.contextId)
+      : gt("{label} (unavailable)", { label: ref.label });
     return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
@@ -2914,7 +2970,7 @@ function UserMessageContent(props: UserMessageContentProps) {
     }
     setSelected({
       contextId: reference.contextId,
-      label: record?.label ?? gt("Context unavailable"),
+      label: record ? displayLabel(record.label, record.contextId) : gt("Context unavailable"),
     });
   };
   return (
@@ -2966,7 +3022,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           },
           linkCustomization: (href) =>
             withChipIcon(
-              enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+              enrichedContextLinkCustomization(href, props.context?.records ?? [], messages) ??
                 props.linkHandlers.linkCustomization?.(href),
               threadIcons.get(href),
             ),

@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -62,7 +63,10 @@ const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProjectionStore.layer.pipe(
+        Layer.provide(NodeCrypto.layerDigest),
+        Layer.provide(layerDatabase),
+      ),
       EventStore.layer.pipe(Layer.provide(layerDatabase)),
       EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
@@ -2316,7 +2320,10 @@ it.effect.each([
         Layer.provideMerge(
           Layer.mergeAll(
             layerDatabase,
-            ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ProjectionStore.layer.pipe(
+              Layer.provide(NodeCrypto.layerDigest),
+              Layer.provide(layerDatabase),
+            ),
             EventStore.layer.pipe(Layer.provide(layerDatabase)),
             EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
             ProviderReplayHarness.layerWithRegistry(

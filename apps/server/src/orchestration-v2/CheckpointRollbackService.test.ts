@@ -522,9 +522,10 @@ it.effect.each([
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-          Layer.provideMerge(SqlitePersistence.layerMemory),
-        ),
+        Layer.mergeAll(
+          EventStore.layer,
+          ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+        ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
       ),
     ),
   ),
@@ -1039,7 +1040,12 @@ const seedRollbackHistory = Effect.fn(function* (
 });
 
 const layerRollbackHistory = EventSink.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(EventStore.layer, ProjectionStore.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      EventStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+    ),
+  ),
 );
 it.layer(layerRollbackHistory.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
   "rollback history reads",

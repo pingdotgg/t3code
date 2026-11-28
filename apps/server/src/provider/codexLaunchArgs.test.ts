@@ -23,6 +23,7 @@ describe("codexAppServerArgs", () => {
     {
       name: "preserves escaped TOML quotes in config values",
       launchArgs: String.raw`--config model=\"gpt-6.1-sol\" --strict-config -c analytics.enabled=true`,
+      version: "0.167.0",
       expected: [
         "--config",
         'model="gpt-6.1-sol"',
@@ -46,11 +47,12 @@ describe("codexAppServerArgs", () => {
       name: "uses configured arguments when the environment override is blank",
       launchArgs: "--strict-config",
       environment: { T3CODE_CODEX_LAUNCH_ARGS: " \t " },
+      version: "0.167.0",
       expected: ["--strict-config"],
     },
   ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {
     const launchArgs = resolveCodexLaunchArgs(row.launchArgs, row.environment ?? {});
-    NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs), [
+    NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs, row.version), [
       "app-server",
       "-c",
       "thread_unload_delay_secs=0",
@@ -58,6 +60,17 @@ describe("codexAppServerArgs", () => {
       ...privacyArgs,
     ]);
   });
+
+  it.each(["0.153.0", null])(
+    "keeps strict config on Codex %s without adding an unknown key",
+    (version) => {
+      NodeAssert.deepStrictEqual(codexAppServerArgs("--strict-config", version), [
+        "app-server",
+        "--strict-config",
+        ...privacyArgs,
+      ]);
+    },
+  );
 });
 
 describe("codexExecLaunchArgs", () => {
