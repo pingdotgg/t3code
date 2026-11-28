@@ -21,6 +21,8 @@ Devices run on the environment's server machine (or an SSH/Simlock device host):
 
 Restart the environment server after installing SDK tools or changing `PATH` / `SERVE_EMU_FFMPEG`.
 
+On macOS and Windows hosts, T3 Code starts Android emulators with `-gpu host` so headless rendering uses the host GPU instead of falling back to software rendering. To override the GPU mode, set `EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS` on the host (for example `-gpu swiftshader_indirect` or `-gpu auto`), restart the environment server (or turn device support off and on for SSH devices), and power off and start any already-running emulator so it launches with the new setting.
+
 ## Agents and devices
 
 Enable **Settings → Devices → Agents can use devices** so agents can drive devices through `agent-device` (restart existing agent sessions after enabling). First iOS tap builds a small test runner once per server (~2 minutes).

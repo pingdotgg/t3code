@@ -343,7 +343,7 @@ describe("AgentDevice startup", () => {
         yield* host.ensureReady(() => Effect.void);
         hub.running = true;
         expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(
-          "-camera-front emulated -camera-back emulated",
+          "-gpu host -camera-front emulated -camera-back emulated",
         );
 
         // A live hub with an unchanged emulator answers without probing it.
@@ -355,7 +355,9 @@ describe("AgentDevice startup", () => {
         yield* fs.writeFileString(`${sdk}/emulator/emulator`, "updated");
         hub.cameraHelp = "emulated imagefile:<filename> none";
         yield* host.ensureReady(() => Effect.void);
-        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBeUndefined();
+        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(
+          "-gpu host",
+        );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -769,15 +771,35 @@ it.effect(
 
 it.effect.each([
   {
-    name: "old SDK",
+    name: "old SDK on macOS",
+    platform: "darwin" as const,
     front: "emulated webcam<N> none",
     back: "emulated virtualscene none",
     code: 0,
     extra: undefined,
-    expected: "-camera-front emulated -camera-back emulated",
+    expected: "-gpu host -camera-front emulated -camera-back emulated",
   },
   {
-    name: "imagefile-capable SDK",
+    name: "imagefile-capable SDK on macOS",
+    platform: "darwin" as const,
+    front: "emulated imagefile:<path> none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: "-gpu host",
+  },
+  {
+    name: "imagefile-capable SDK on Windows",
+    platform: "win32" as const,
+    front: "emulated imagefile:<path> none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: "-gpu host",
+  },
+  {
+    name: "imagefile-capable SDK on Linux stays headless-safe",
+    platform: "linux" as const,
     front: "emulated imagefile:<path> none",
     back: "emulated imagefile:<path> none",
     code: 0,
@@ -785,49 +807,74 @@ it.effect.each([
     expected: undefined,
   },
   {
-    name: "user overrides",
+    name: "user overrides stay last",
+    platform: "win32" as const,
     front: "emulated none",
     back: "emulated none",
     code: 0,
-    extra: "-memory 4096 -camera-front none",
-    expected: "-camera-front emulated -camera-back emulated -memory 4096 -camera-front none",
+    extra: "-memory 4096 -camera-front none -gpu swiftshader_indirect",
+    expected:
+      "-gpu host -camera-front emulated -camera-back emulated -memory 4096 -camera-front none -gpu swiftshader_indirect",
   },
   {
     name: "different camera capabilities",
+    platform: "darwin" as const,
     front: "emulated none",
     back: "emulated imagefile:<path> none",
     code: 0,
     extra: undefined,
-    expected: "-camera-front emulated",
+    expected: "-gpu host -camera-front emulated",
   },
   {
-    name: "failed help probe",
+    name: "failed help probe on Linux",
+    platform: "linux" as const,
     front: "emulated none",
     back: "emulated none",
     code: 1,
     extra: undefined,
     expected: undefined,
   },
-])("configures supported emulator cameras for $name", ({ front, back, code, extra, expected }) =>
-  Effect.gen(function* () {
-    const result = yield* LocalDeviceHost.__testing
-      .hubEnvironment({ ANDROID_HOME: "/sdk", EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra })
-      .pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.UserId, 1000),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: (input) => {
-            expect(input.command).toBe("/sdk/emulator/emulator");
-            expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
-            return Effect.succeed(
-              processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
-            );
-          },
-        }),
-        Effect.provide(NodeServices.layer),
-      );
-    expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(expected);
-  }),
+  {
+    name: "failed help probe on Windows still opts into host GPU",
+    platform: "win32" as const,
+    front: "emulated none",
+    back: "emulated none",
+    code: 1,
+    extra: undefined,
+    expected: "-gpu host",
+  },
+])(
+  "configures emulator GPU and camera flags for $name",
+  ({ platform, front, back, code, extra, expected }) =>
+    Effect.gen(function* () {
+      const sdk = platform === "win32" ? "C:\\sdk" : "/sdk";
+      const result = yield* LocalDeviceHost.__testing
+        .hubEnvironment({ ANDROID_HOME: sdk, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra })
+        .pipe(
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(HostProcess.UserId, 1000),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              expect(input.command).toBe(
+                platform === "win32"
+                  ? `${sdk}\\emulator\\emulator.exe`
+                  : `${sdk}/emulator/emulator`,
+              );
+              expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
+              return Effect.succeed(
+                processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
+              );
+            },
+          }),
+          Effect.provide(
+            Layer.merge(
+              NodeServices.layer,
+              platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix,
+            ),
+          ),
+        );
+      expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(expected);
+    }),
 );
 
 it.effect("keeps local Android and iOS available without ffmpeg", () =>

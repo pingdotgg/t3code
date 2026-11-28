@@ -222,7 +222,10 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
           Effect.orElseSucceed(() => ""),
         ),
     );
-    const overrides = cameraArgs.filter(Boolean).join(" ");
+    // Headless `-gpu auto` falls back to software rendering (SwiftShader/llvmpipe)
+    // on Windows and macOS; opt desktop hosts into host GPU while keeping user flags last.
+    const gpuArgs = platform === "win32" || platform === "darwin" ? ["-gpu host"] : [];
+    const overrides = [...gpuArgs, ...cameraArgs].filter(Boolean).join(" ");
     if (overrides) {
       env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS = [overrides, env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS]
         .filter(Boolean)
