@@ -59,7 +59,7 @@ type QueuedRunMessage = NonNullable<
   NonNullable<ReturnType<typeof useThreadQueueWorkflow>>["queuedRuns"][number]["message"]
 >;
 
-/** Who sent a queued message, as the first line of its bubble, like its sent form's header. */
+/** Who sent a queued message, leading its text like a guest's name. */
 function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
@@ -94,24 +94,22 @@ function QueuedRunSender(props: {
           ? { icon: null, kind: gt("Sent by T3 Code"), title: undefined }
           : null;
   if (sender === null) return null;
+  // A run of text inside the message's own Text, so it flows with the message.
   return (
-    <View className="flex-row items-center gap-1.5">
+    <Text className="font-t3-medium text-foreground-muted">
       {sender.icon ? (
-        <SymbolView
-          name={sender.icon}
-          size={13}
-          weight="medium"
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
+        <View className="pr-1">
+          <SymbolView
+            name={sender.icon}
+            size={13}
+            weight="medium"
+            tintColorClassName="accent-foreground-muted"
+            type="monochrome"
+          />
+        </View>
       ) : null}
-      <Text className="font-t3-medium text-sm text-foreground-muted">{sender.kind}</Text>
-      {sender.title ? (
-        <Text numberOfLines={1} className="min-w-0 shrink text-sm text-foreground">
-          {sender.title}
-        </Text>
-      ) : null}
-    </View>
+      {sender.title ? `${sender.kind} · ${sender.title}  ` : `${sender.kind}  `}
+    </Text>
   );
 }
 
@@ -269,9 +267,6 @@ export function ThreadQueuedRuns(props: {
               className="min-w-0 gap-2 rounded-[20px] border border-dashed border-border bg-transparent px-3.5 py-2.5"
               style={{ maxWidth: props.bubbleMaxWidth }}
             >
-              {message ? (
-                <QueuedRunSender environmentId={target.environmentId} message={message} />
-              ) : null}
               {controls.displayText ? (
                 <Text
                   selectable
@@ -282,6 +277,9 @@ export function ThreadQueuedRuns(props: {
                       : "text-base text-foreground"
                   }
                 >
+                  {message ? (
+                    <QueuedRunSender environmentId={target.environmentId} message={message} />
+                  ) : null}
                   {context?.guest === undefined ? null : (
                     <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
                       {`${context.guest.name}  `}
