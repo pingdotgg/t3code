@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  fileBasename,
   isWslSharePath,
   workspaceRelativeFilePath,
   newProjectFolderName,
@@ -10,6 +11,19 @@ import {
 } from "./path.ts";
 
 describe("path helpers", () => {
+  it("splits basenames on backslashes only outside absolute POSIX paths", () => {
+    for (const [path, name] of [
+      ["/repo/build\\log.txt", "build\\log.txt"],
+      ["/repo/build\\/", "build\\"],
+      ["C:\\repo\\build\\log.txt\\", "log.txt"],
+      ["/C:/repo/build\\log.txt", "log.txt"],
+      ["//server/share/build\\log.txt", "log.txt"],
+      ["build\\log.txt", "log.txt"],
+    ] as const) {
+      expect(fileBasename(path)).toBe(name);
+    }
+  });
+
   it("recognizes WSL shares and nothing else", () => {
     expect(isWslSharePath("\\\\wsl.localhost\\Ubuntu\\home")).toBe(true);
     expect(isWslSharePath("\\\\wsl$\\Ubuntu")).toBe(true);
@@ -128,6 +142,8 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/docs/a/../b.md", "/repo/project", "docs/a/../b.md"],
     ["/repo/a\\b.txt", "/repo", "a\\b.txt"],
     ["/repo/a/b.txt", "/repo", "a/b.txt"],
+    ["/repo//src/app.ts", "/repo", "src/app.ts"],
+    ["C:\\repo\\\\src\\app.ts", "C:\\repo", "src/app.ts"],
     ["/repo/a\\", "/repo", "a\\"],
     ["/repo/..\\notes.md", "/repo", "..\\notes.md"],
     ["/repo/a\\/../../notes.md", "/repo", null],

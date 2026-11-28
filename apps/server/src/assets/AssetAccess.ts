@@ -549,6 +549,19 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       ),
     );
     if (!canonicalFile) {
+      // A link out of the root gets the single-file grant an absolute path would.
+      const linkedFile = yield* resolveCanonicalFile(resolved.absolutePath).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (linkedFile) {
+        return yield* finalizeAbsoluteMediaFileAsset({
+          ...input,
+          requestedPath: linkedFile,
+          expectedCanonicalPath: linkedFile,
+        });
+      }
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
       });

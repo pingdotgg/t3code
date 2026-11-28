@@ -29,7 +29,7 @@ const newerServiceStatus = { ...status, current: false, installedVersion: "999.0
 
 function makeTestService(
   serviceStatus: BootService.BootServiceStatus,
-  restartOutcome: "restarted" | "queued" = "restarted",
+  restartOutcome: "restarted" | "queued" | "skipped" = "restarted",
 ) {
   const installOptions: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
   const restarts: Array<true> = [];
@@ -156,6 +156,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       expect(lines.map(String).filter((line) => line.includes("other devices"))).toEqual(
         input.installed ? [] : [`Run \`${up.command}\` to choose how your other devices reach it.`],
       );
+    }),
+  );
+
+  it.effect("restart says a service whose home it cannot determine was not restarted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(
+          BootService.BootService,
+          makeTestService({ ...status, current: false }, "skipped").service,
+        ),
+      );
+
+      const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "restart",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(output).toContain("T3 home could not be determined, so it was not restarted");
+      expect(output).toContain(status.unitPath);
     }),
   );
 

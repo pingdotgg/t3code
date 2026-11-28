@@ -38,7 +38,16 @@ const clockTolerance = 100
 // advances in coarse ticks, for example. The tests run one at a time, since a
 // transaction on a single-connection database would hold up the other test's
 // offer.
-export const suiteWith = (testApi: Vitest.MethodsNonLive<SqlClient.SqlClient>) => {
+export const suiteWith = (
+  testApi: Vitest.MethodsNonLive<SqlClient.SqlClient>,
+  options?: {
+    /**
+     * Run the SQL claim tests concurrently. Disable on dialects where parallel
+     * table creation deadlocks the system catalog (e.g. SQL Server).
+     */
+    readonly concurrentClaims?: boolean | undefined
+  }
+) => {
   testApi.layer(Layer.empty, { concurrent: false, timeout: "90 seconds" })("PersistedQueue SQL delays", (it) => {
     it.effect("never delivers a delayed offer early at a second boundary", () =>
       Effect.gen(function*() {
@@ -145,7 +154,12 @@ export const suiteWith = (testApi: Vitest.MethodsNonLive<SqlClient.SqlClient>) =
       }).pipe(TestClock.withLive), { timeout: 30000 })
   })
 
-  testApi.layer(Layer.empty, { concurrent: false, timeout: "90 seconds" })("PersistedQueue SQL claims", (it) => {
+  // Each test uses its own table and private TestClock so paused lock refreshes
+  // do not interfere across concurrent runs.
+  testApi.layer(Layer.empty, {
+    concurrent: options?.concurrentClaims ?? true,
+    timeout: "90 seconds"
+  })("PersistedQueue SQL claims", (it) => {
     const makeOwnershipQueue = Effect.fnUntraced(function*(tableName: string) {
       const store = yield* PersistedQueue.makeStoreSql({
         tableName,
@@ -207,15 +221,16 @@ export const suiteWith = (testApi: Vitest.MethodsNonLive<SqlClient.SqlClient>) =
             const duplicate = yield* queue.take((value, metadata) => Effect.succeed({ value, ...metadata })).pipe(
               Effect.forkScoped
             )
-            // Longer than lockExpiration: stale settlement must neither release
-            // the replacement nor unregister its lock refresh.
-            yield* Effect.sleep("1500 millis").pipe(TestClock.withLive)
+            // Longer than lockExpiration, including dialects with whole-second
+            // timestamps: stale settlement must neither release the replacement
+            // nor unregister its lock refresh.
+            yield* Effect.sleep("2500 millis").pipe(TestClock.withLive)
             assert.isUndefined(duplicate.pollUnsafe())
 
             yield* Fiber.interrupt(replacement)
             const redelivered = yield* Fiber.join(duplicate).pipe(Effect.timeout("5 seconds"), TestClock.withLive)
             assert.deepStrictEqual(redelivered, { value: "job", id: "job-1", attempts: 2 })
-          }),
+          }).pipe(Effect.provide(TestClock.layer())),
         { timeout: 30000 }
       )
     }

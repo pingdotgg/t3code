@@ -1,11 +1,17 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { useRef, type KeyboardEventHandler, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { normalizeMarkdownFragmentId } from "~/components/chat/markdownFragments";
 import { Spinner } from "~/components/ui/spinner";
+import { isMacPlatform } from "~/lib/utils";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { createPositionMemory, previewPositionKey } from "./previewPosition";
 import {
   buildMarkdownFootnotesSection,
   findFootnoteRefChunkIndex,
@@ -18,7 +24,6 @@ import {
 } from "@t3tools/shared/markdownChunks";
 
 const ESTIMATED_LINE_PX = 24;
-const MAX_SAVED_POSITIONS = 100;
 const FOOTNOTE_TARGET_ID = /^fn-\d+$/;
 const FOOTNOTE_REF_ID = /^fnref-(\d+)(?:-(\d+))?$/;
 
@@ -26,8 +31,10 @@ const CHUNK_FOOTNOTES_OMIT: MarkdownExtensions = { footnotes: "omit" };
 const CHUNK_FOOTNOTES_OMIT_SEEDED: MarkdownExtensions = { footnotes: "omit-seeded" };
 const CHUNK_FOOTNOTES_ONLY: MarkdownExtensions = { footnotes: "only" };
 
-/** Reading positions outlive the preview, which unmounts when the file or thread changes. */
-const savedPositions = new Map<string, { readonly index: number; readonly viewOffset: number }>();
+const savedPositions = createPositionMemory<{
+  readonly index: number;
+  readonly viewOffset: number;
+}>();
 
 type ChunkItem =
   | {
@@ -52,6 +59,25 @@ function findScopedFragmentTarget(
   return null;
 }
 
+function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const mac = isMacPlatform(navigator.platform);
+  const selectAll =
+    event.key.toLowerCase() === "a" &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey;
+  // React bubbles keys from portaled children (the image dialog) through this surface.
+  if (
+    !selectAll ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  window.getSelection()?.selectAllChildren(event.currentTarget);
+}
+
 /** Renders Markdown pieces in a virtualized list; task offsets are file offsets. */
 export function ChunkedMarkdown(props: {
   readonly chunks: readonly MarkdownChunk[];
@@ -65,7 +91,6 @@ export function ChunkedMarkdown(props: {
   readonly relativePath: string;
   readonly threadRef: ScopedThreadRef;
   readonly workspaceMutationId: string | null;
-  readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   readonly onTaskListChange?:
     | ((input: { readonly markerOffset: number; readonly checked: boolean }) => void)
     | undefined;
@@ -86,12 +111,12 @@ export function ChunkedMarkdown(props: {
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
-  const positionKey = JSON.stringify([
+  const positionKey = previewPositionKey(
     props.threadRef.environmentId,
     props.threadRef.threadId,
     props.cwd,
     props.relativePath,
-  ]);
+  );
   const saved = savedPositions.get(positionKey);
   // The list applies its initial index once, so wait for the saved chunk to stream in.
   const awaitingSaved = props.loading && saved !== undefined && saved.index >= items.length;
@@ -170,7 +195,7 @@ export function ChunkedMarkdown(props: {
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col outline-none"
       onClickCapture={handleFragmentClickCapture}
-      onKeyDown={props.onKeyDown}
+      onKeyDown={selectRenderedContentOnSelectAll}
       onCopy={(event) => {
         // Select All only reaches rendered pieces; copying all of it copies the whole file.
         const list = event.currentTarget.firstElementChild;
@@ -206,14 +231,10 @@ export function ChunkedMarkdown(props: {
         onScroll={() => {
           const list = listRef.current?.getState();
           if (!list) return;
-          savedPositions.delete(positionKey);
           savedPositions.set(positionKey, {
             index: list.start,
             viewOffset: list.positionAtIndex(list.start) - list.scroll,
           });
-          if (savedPositions.size > MAX_SAVED_POSITIONS) {
-            savedPositions.delete(savedPositions.keys().next().value!);
-          }
         }}
         extraData={extraData}
         keyExtractor={(item) => (item.kind === "footnotes" ? "footnotes" : String(item.index))}

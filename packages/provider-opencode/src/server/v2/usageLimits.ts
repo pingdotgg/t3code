@@ -184,7 +184,12 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         });
       }
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), ...externalUsage };
+    return {
+      ...makeUsageLimits({ checkedAt, windows }),
+      // OpenCode reports no account email; the workspace is what environments share.
+      credentialFingerprint: `workspace:${workspace.id}`,
+      ...externalUsage,
+    };
   }).pipe(
     Effect.timeout("5 seconds"),
     Effect.orElseSucceed(() =>

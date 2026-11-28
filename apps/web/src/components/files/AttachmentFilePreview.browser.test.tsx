@@ -89,6 +89,7 @@ import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewErrorText } from "./previewFailureMessages";
+import { PreviewPositionKey } from "./previewPosition";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -241,14 +242,14 @@ describe("bounded binary previews", () => {
   });
 
   it("names archive folders whose paths have leading slashes, repeated slashes or ./", async () => {
-    const bytes = new Uint8Array(3072);
+    const bytes = new Uint8Array(3584);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    const member = (offset: number, name: string, content: string) => {
+    const member = (offset: number, name: string, content: string, type = "0") => {
       write(offset, name);
       write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, offset + 148, offset + 156);
-      write(offset + 156, "0");
+      write(offset + 156, type);
       write(
         offset + 148,
         bytes
@@ -263,6 +264,8 @@ describe("bounded binary previews", () => {
     member(1024, "a/hello.txt", "plain hello");
     // `tar cf x.tar .` names every member from "./".
     member(2048, "./a/dot.txt", "dot hello");
+    // ...and starts with a directory member for the root itself, named ".".
+    member(3072, ".", "", "5");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
@@ -948,6 +951,32 @@ describe("large text preview recovery", () => {
     }
   });
 
+  it("labels rows and columns with their sheet positions when some are hidden", async () => {
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="staff.ods"
+          count={2}
+          columns={2}
+          rowIndexes={[0, 4]}
+          columnIndexes={[0, 2]}
+          getRows={() => [
+            ["Name", "Team"],
+            ["Cy", "East"],
+          ]}
+        />
+      </div>,
+    );
+    await vi.waitFor(() => {
+      const text = (role: string) =>
+        Array.from(screen.container.querySelectorAll(`[role="${role}"]`), (node) =>
+          node.textContent?.trim(),
+        );
+      expect(text("columnheader")).toEqual(["A", "C"]);
+      expect(text("rowheader")).toEqual(["1", "5"]);
+    });
+  });
+
   it("fills the horizontal viewport using measured column widths", async () => {
     const header = Array.from({ length: 20 }, (_, i) => "C" + i);
     await using screen = await render(
@@ -1493,16 +1522,25 @@ describe("document output sanitization", () => {
   it("preserves table content and raster data while removing scripts and network resources", () => {
     const wrapped = "data:image/png;base64,iVBORw0K\nGgo=\n";
     const html = sanitizeDocumentHtml(
-      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><a href="https://example.com">Results</a>`,
+      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5" type="i"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.querySelector("td")?.textContent).toBe("Research");
+    expect(doc.querySelector("ol")?.outerHTML).toBe(
+      '<ol start="5" type="i"><li value="4">Step</li></ol>',
+    );
     expect([...doc.images].map((image) => image.getAttribute("src"))).toEqual([
       "data:image/png;base64,iVBORw0KGgo=",
       wrapped.trim(),
     ]);
     expect(doc.querySelector("script,style,iframe,a,[onerror]")).toBeNull();
     expect(html).not.toContain("https://");
+  });
+
+  it("keeps ruby readings above their base text", () => {
+    expect(
+      sanitizeDocumentHtml("<p><ruby>漢字<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby></p>"),
+    ).toBe("<p><ruby>漢字<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby></p>");
   });
 });
 it("keeps an attachment URL when the parent passes a fresh asset object for the same attachment", async () => {
@@ -2333,6 +2371,55 @@ it.each(["rtf", "epub", "ods"] as const)(
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );
+
+it("opens each spreadsheet sheet at its own reading position", async () => {
+  const table = (name: string) =>
+    `<table:table table:name="${name}">${Array.from(
+      { length: 500 },
+      (_, row) =>
+        `<table:table-row><table:table-cell><text:p>${name} ${row}</text:p></table:table-cell></table:table-row>`,
+    ).join("")}</table:table>`;
+  const file = await new JSZip()
+    .file("content.xml", `<office:document>${table("A")}${table("B")}</office:document>`)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <PreviewPositionKey value="book.ods">
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <AttachmentFilePreview
+          name="book.ods"
+          mimeType="application/octet-stream"
+          sizeBytes={file.size}
+          file={file}
+        />
+      </div>
+    </PreviewPositionKey>,
+  );
+  const scroller = () =>
+    screen.container
+      .querySelector<HTMLElement>("[data-preview-row]")
+      ?.closest<HTMLElement>(".overflow-auto") ?? expect.unreachable();
+  const firstVisibleRow = () => {
+    const top = scroller().getBoundingClientRect().top;
+    const row = Array.from(scroller().querySelectorAll<HTMLElement>("[data-preview-row]")).find(
+      (node) => node.getBoundingClientRect().bottom > top + 1,
+    );
+    return Number(row?.dataset.previewRow);
+  };
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("A 0"), {
+    timeout: 10_000,
+  });
+  scroller().scrollTop = 300 * 29;
+  scroller().dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(250));
+  const saved = firstVisibleRow();
+
+  await screen.getByRole("button", { name: "Next sheet" }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("B 0"));
+  expect(firstVisibleRow(), "an unopened sheet starts at the top").toBe(0);
+
+  await screen.getByRole("button", { name: "Previous sheet" }).click();
+  await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
+});
 
 it("renders EPUB publisher styles and follows an anchored link to a fixed-layout section", async () => {
   const archive = new JSZip()

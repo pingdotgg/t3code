@@ -224,3 +224,104 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
     ]);
   }),
 );
+
+// An empty `link` header marks the last page.
+const labelPage = (value: unknown) =>
+  Effect.succeed({
+    ...TestSourceControlHost.processOutput(JSON.stringify(value)),
+    stderr: "link: \n",
+  });
+
+it.effect("lists organization labels after repository labels, tolerating a personal owner", () =>
+  Effect.gen(function* () {
+    const make = (
+      orgLabels: ReturnType<typeof labelPage> | Effect.Effect<never, ForgejoCli.ForgejoCliError>,
+    ) =>
+      ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              const [route] = input.path.split("?");
+              if (route === "repos/forgejo/acme/web/labels") {
+                return labelPage([{ id: 3, name: "bug", color: "d73a4a" }]);
+              }
+              if (route === "orgs/acme/labels") return orgLabels;
+              return Effect.die(`unexpected route ${route}`);
+            },
+          }),
+        ),
+      );
+    const input = { cwd: "/forgejo", repository: "forgejo/acme/web", host: "forge.example:3000" };
+
+    const org = yield* make(
+      labelPage([
+        { id: 99, name: "bug", color: "000000" },
+        { id: 101, name: "security", color: "ff0000" },
+      ]),
+    );
+    assert.deepStrictEqual(yield* org.listRepositoryLabels!(input), {
+      items: [
+        { name: "bug", color: "d73a4a" },
+        { name: "security", color: "ff0000" },
+      ],
+      truncated: false,
+    });
+
+    const personal = yield* make(
+      Effect.fail(
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/forgejo",
+          detail: "404",
+          reason: "not-found",
+          httpStatus: 404,
+        }),
+      ),
+    );
+    assert.deepStrictEqual(yield* personal.listRepositoryLabels!(input), {
+      items: [{ name: "bug", color: "d73a4a" }],
+      truncated: false,
+    });
+  }),
+);
+
+it.effect("filters by a unique organization label id and skips an ambiguous name", () =>
+  Effect.gen(function* () {
+    const pullLabelParams: Array<string | null> = [];
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [route, query] = input.path.split("?");
+            if (route === "repos/acme/web/labels") {
+              return labelPage([{ id: 2, name: "shared", color: "0000ff" }]);
+            }
+            if (route === "orgs/acme/labels") {
+              return labelPage([
+                { id: 5, name: "shared", color: "00ff00" },
+                { id: 101, name: "Needs-Review", color: "ff0000" },
+              ]);
+            }
+            if (route === "repos/acme/web/pulls") {
+              pullLabelParams.push(new URLSearchParams(query).get("labels"));
+            }
+            return labelPage([]);
+          },
+        }),
+      ),
+    );
+
+    const base = {
+      cwd: "/forgejo",
+      repository: "acme/web",
+      host: "forge.example:3000",
+      state: "open" as const,
+      involvement: "all" as const,
+      viewer: "maria",
+      limit: 10,
+    };
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["needs-review"]] } });
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["shared"]] } });
+    assert.deepStrictEqual(pullLabelParams, ["101", null]);
+  }),
+);
