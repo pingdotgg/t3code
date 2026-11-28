@@ -21,12 +21,14 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -2135,6 +2137,79 @@ it.effect(
         ).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("answers a thread's MCP handshake while its forge check is still hanging", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const forgeCheck = yield* Deferred.make<boolean>();
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: "hungForgeToken",
+        thread: {
+          threadId: ThreadId.make("thread-hungForge"),
+          providerSessionId: "hungForgeToken",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          subagent: false,
+        },
+        client: undefined,
+        capabilities: new Set(["pull-requests"]),
+        issuedAt: 1,
+      };
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.layerPullRequestsToolkit,
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(token === "hungForgeToken" ? scope : undefined),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            McpToolAccessTestkit.liveThreadsLayer,
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+            // A `gh auth token` stuck on the system keyring never answers the forge check.
+            Layer.mock(PullRequestService.PullRequestService)({
+              servesProject: () => Deferred.await(forgeCheck),
+            }),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(Orchestrator.OrchestratorV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () => Effect.succeed({ projectId: ProjectId.make("p") } as never),
+            }),
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const initialize = yield* httpClient
+        .post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization: "Bearer hungForgeToken",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      // Claude gives up on an MCP server that has not connected within 30 seconds.
+      yield* TestClock.adjust("30 seconds");
+      const answered = yield* Fiber.join(initialize).pipe(
+        Effect.timeoutOption("5 seconds"),
+        TestClock.withLive,
+        Effect.ensuring(Deferred.succeed(forgeCheck, true)),
+      );
+      expect(answered._tag === "Some" ? answered.value.status : "no answer").toBe(200);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(
