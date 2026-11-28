@@ -307,6 +307,16 @@ describe("pressure levels", () => {
     expect(HostResources.roundCoarsely(0)).toBe(0);
   });
 
+  it("keeps a listed agent's small CPU use above zero cores", () => {
+    const agents = [
+      { threadId: null, agent: "codex", memoryBytes: 900 * MiB, cpuCores: 3.2 },
+      { threadId: null, agent: "preview-browser", memoryBytes: 400 * MiB, cpuCores: 0.2 },
+    ];
+    expect(HostResources.heaviestAgents(agents, "cpu").map((agent) => agent.cpuCores)).toEqual([
+      3, 0.5,
+    ]);
+  });
+
   it("ranks agents by exact size, so close ones cannot push out the largest", () => {
     // All four round to 3,328 MiB; the largest comes last.
     const agents = [3_201, 3_202, 3_203, 3_204].map((size) => ({
