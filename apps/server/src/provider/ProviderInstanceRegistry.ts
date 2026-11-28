@@ -446,6 +446,7 @@ const makeReconcile = <R>(input: {
           nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
         );
 
+        // Close changed/removed scopes before replacements to preserve one live scope per id.
         const removedIds: Array<ProviderInstanceId> = [];
         const replacedIds = new Set<ProviderInstanceId>();
         for (const [instanceId, live] of previousEntries) {
@@ -469,25 +470,21 @@ const makeReconcile = <R>(input: {
         };
 
         // Read every secret the builds below need in one go, so a vault unlocks once.
-        yield* restore(
+        const references = yield* Effect.forEach(nextRaw, ([rawInstanceId, entry]) =>
           Effect.gen(function* () {
-            const references = yield* Effect.forEach(nextRaw, ([rawInstanceId, entry]) =>
-              Effect.gen(function* () {
-                const instanceId = ProviderInstanceId.make(rawInstanceId);
-                const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
-                return kept ||
-                  carried.has(instanceId) ||
-                  parkedSnapshot(instanceId, entry) !== undefined ||
-                  !(yield* isEntryEnabled(driversById, entry))
-                  ? []
-                  : secretReferencesOf(driversById, entry);
-              }),
-            ).pipe(Effect.map((perEntry) => perEntry.flat()));
-            if (references.length > 0 && !deferSecrets) {
-              yield* (yield* SecretResolver.SecretResolver).read(references);
-            }
+            const instanceId = ProviderInstanceId.make(rawInstanceId);
+            const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
+            return kept ||
+              carried.has(instanceId) ||
+              parkedSnapshot(instanceId, entry) !== undefined ||
+              !(yield* isEntryEnabled(driversById, entry))
+              ? []
+              : secretReferencesOf(driversById, entry);
           }),
-        );
+        ).pipe(Effect.map((perEntry) => perEntry.flat()));
+        if (references.length > 0 && !deferSecrets) {
+          yield* restore((yield* SecretResolver.SecretResolver).read(references));
+        }
 
         // Once scopes retire, finish publishing their replacements even if the caller disconnects.
         const retiredIds = [...removedIds, ...replacedIds];
