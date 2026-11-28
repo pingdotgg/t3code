@@ -111,13 +111,21 @@ describe("normalizeGitRemoteUrl", () => {
 });
 
 describe("parseGitRemoteRepository", () => {
-  it("drops an encoded .git suffix and rejects an empty repository leaf", () => {
+  it("drops an encoded .git suffix like a literal one", () => {
     expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/repo%2Egit")).toEqual({
       host: "gitlab.com",
       path: "team/repo",
     });
-    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/group/%2Egit")).toBeNull();
-    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/group/.git")).toBeNull();
+    // A non-bare repository's `.git` directory names the checkout it sits in.
+    for (const remote of [
+      "ssh://me@myserver/home/me/project/.git",
+      "ssh://me@myserver/home/me/project/%2Egit/",
+    ]) {
+      expect(parseGitRemoteRepository(remote)).toEqual({
+        host: "myserver",
+        path: "home/me/project",
+      });
+    }
   });
 });
 

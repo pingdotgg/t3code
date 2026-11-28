@@ -170,7 +170,7 @@ export function parseGitRemoteRepository(
       const url = new URL(value.trim().toLowerCase());
       const path = dropSuffix(canonicalRepositoryPath(url.pathname.replace(/\/+$/, "")));
       const repositorySegments = path.split("/").filter((segment) => segment.length > 0);
-      if (url.hostname && repositorySegments.length > 1 && !path.endsWith("/")) {
+      if (url.hostname && repositorySegments.length > 1) {
         return { host: url.hostname, path: repositorySegments.join("/") };
       }
     } catch {
