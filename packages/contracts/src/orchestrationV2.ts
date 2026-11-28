@@ -1253,6 +1253,7 @@ export type OrchestrationV2ProviderGoalStatus = typeof OrchestrationV2ProviderGo
 export const OrchestrationV2ProviderGoal = Schema.Struct({
   objective: TrimmedNonEmptyString,
   status: OrchestrationV2ProviderGoalStatus,
+  resumeOnWake: Schema.optional(Schema.Literal(true)),
   tokensUsed: Schema.optional(NonNegativeInt),
   tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
   timeUsedSeconds: Schema.optional(NonNegativeInt),

@@ -2556,8 +2556,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const goalActivations = new Map<string, { stopped: boolean }>();
         // Held runs must not complete while Stop resolves its target.
         const goalStops = new Map<string, number>();
-        // Goals paused because a delegated task will wake the thread; the next ordinary turn resumes them.
+        // The projected goal records this pause across provider process restarts.
         const goalsPausedForWake = new Set<string>();
+        const recordNativeGoal = (
+          nativeThreadId: string,
+          goal: OrchestrationV2ProviderGoal | null,
+          previous = rootProviderThreads.get(nativeThreadId)?.goal,
+        ) => {
+          if (goal?.status !== "paused") {
+            goalsPausedForWake.delete(nativeThreadId);
+          } else if (
+            !goalsByNativeThread.has(nativeThreadId) &&
+            previous?.status === "paused" &&
+            previous.resumeOnWake === true &&
+            previous.objective === goal.objective
+          ) {
+            goalsPausedForWake.add(nativeThreadId);
+          }
+          goalsByNativeThread.set(nativeThreadId, goal);
+        };
         const latestRunTurnId = (providerTurnId: ProviderTurnId) =>
           continuedRuns.get(providerTurnId)?.at(-1)?.providerTurnId ?? providerTurnId;
         const isContinuedRunDescendant = (
@@ -2709,7 +2726,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             return;
           }
-          const goal = goalsByNativeThread.get(nativeThreadId) ?? null;
+          const nativeGoal = goalsByNativeThread.get(nativeThreadId) ?? null;
+          const goal =
+            nativeGoal?.status === "paused" && goalsPausedForWake.has(nativeThreadId)
+              ? { ...nativeGoal, resumeOnWake: true as const }
+              : nativeGoal;
           if (providerGoalsEqual(providerThread.goal ?? null, goal)) return;
           const updated = { ...providerThread, goal, updatedAt: yield* DateTime.now };
           rootProviderThreads.set(nativeThreadId, updated);
@@ -5644,14 +5665,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("thread/goal/updated", (payload) =>
           Effect.gen(function* () {
-            goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(payload.goal));
+            recordNativeGoal(payload.threadId, providerGoalFromCodex(payload.goal));
             yield* emitGoalUpdate(payload.threadId);
             if (payload.goal.status !== "active") yield* releaseGoalHold(payload.threadId);
           }).pipe(turnTerminalizationPermit.withPermits(1)),
         );
         yield* client.handleServerNotification("thread/goal/cleared", (payload) =>
           Effect.gen(function* () {
-            goalsByNativeThread.set(payload.threadId, null);
+            recordNativeGoal(payload.threadId, null);
             yield* emitGoalUpdate(payload.threadId);
             yield* releaseGoalHold(payload.threadId);
           }).pipe(turnTerminalizationPermit.withPermits(1)),
@@ -8275,14 +8296,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           threadId: string,
           codexInput: ReturnType<typeof toCodexInput>,
         ) {
-          goalsPausedForWake.delete(threadId);
+          const pausedForWake = goalsPausedForWake.delete(threadId);
           // Hold fast first turns until activation.
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
-            yield* applyThreadName(threadId, turnInput.appThread.title);
-            yield* startNativeTurn(turnInput, yield* codexInput);
+            yield* Effect.gen(function* () {
+              yield* applyThreadName(threadId, turnInput.appThread.title);
+              yield* startNativeTurn(turnInput, yield* codexInput);
+            }).pipe(
+              // A wake turn that never started leaves the goal waiting for the next wake.
+              Effect.onError(() =>
+                Effect.sync(() => {
+                  if (pausedForWake && !activation.stopped) goalsPausedForWake.add(threadId);
+                }),
+              ),
+            );
             if (activation.stopped) return;
+            // A blocked update can land while the first turn starts; do not force active.
+            if (goalsByNativeThread.get(threadId)?.status === "blocked") return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,
               status: "active",
@@ -8333,7 +8365,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               );
             const current = yield* readGoal;
-            goalsByNativeThread.set(threadId, current);
+            recordNativeGoal(threadId, current);
             if (command.type === "show") {
               return yield* completeGoalCommandTurn(
                 turnInput,
@@ -8796,6 +8828,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
             return Effect.gen(function* () {
               yield* rejectIfRetired;
+              const projectedGoal = turnInput.providerThread.goal;
+              if (
+                !continuation &&
+                nativeThreadId != null &&
+                projectedGoal?.status === "paused" &&
+                projectedGoal.resumeOnWake === true &&
+                !goalsByNativeThread.has(nativeThreadId)
+              ) {
+                const { goal } = yield* client.request("thread/goal/get", {
+                  threadId: nativeThreadId,
+                });
+                recordNativeGoal(
+                  nativeThreadId,
+                  goal == null ? null : providerGoalFromCodex(goal),
+                  projectedGoal,
+                );
+              }
               if (
                 !continuation &&
                 nativeThreadId != null &&
