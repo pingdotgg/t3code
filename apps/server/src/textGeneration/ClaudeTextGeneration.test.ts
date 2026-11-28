@@ -288,6 +288,32 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("runs voice cleanup in the fixed text-generation folder, not its scratch cwd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      // Voice cleanup hands every call a fresh scratch folder, as SpeechPostProcessing does.
+      const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-voice-cleanup-" });
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { transcription: "Hello there." } }),
+          cwdMustNotBe: scratch,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateTranscriptionPostProcessing({
+              cwd: scratch,
+              prompt: "hello there",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
+            expect(generated.transcription).toBe("Hello there.");
+          }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {
