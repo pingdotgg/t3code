@@ -820,6 +820,38 @@ Third}`;
     },
   );
 
+  it("hides ODS sheets whose table style sets table:display to false", async () => {
+    const ns =
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta1" style:family="table"><style:table-properties table:display="true"/></style:style>' +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '<style:style style:name="ta_extref" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        "</office:automatic-styles><office:body><office:spreadsheet>" +
+        '<table:table table:name="Summary" table:style-name="ta1"><table:table-row><table:table-cell><text:p>Visible</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Private" table:style-name="ta2"><table:table-row><table:table-cell><text:p>Secret</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Notes"><table:table-row><table:table-cell><text:p>Plain</text:p></table:table-cell></table:table-row></table:table>' +
+        `<table:table table:name="'file:///rates.ods'#Rates" table:style-name="ta_extref"><table:table-source table:mode="copy-results-only" table:table-name="Rates"/><table:table-row><table:table-cell><text:p>Cached</text:p></table:table-cell></table:table-row></table:table>` +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets.map((sheet) => sheet.name)).toEqual(["Summary", "Notes"]);
+    expect(result.sheets[0]!.rows).toEqual([["Visible"]]);
+    const hiddenOnly = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '</office:automatic-styles><office:body><office:spreadsheet><table:table table:name="Only" table:style-name="ta2"/></office:spreadsheet></office:body></office:document-content>',
+    );
+    await expect(openDocument(hiddenOnly, "ods")).rejects.toMatchObject({
+      _tag: "PreviewError",
+      code: "ods-sheet-count",
+    });
+  });
+
   const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
   const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
   it.each([

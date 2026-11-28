@@ -297,10 +297,17 @@ export async function openDocument(
   if (kind === "ods") {
     const tables = find(root, "table:table");
     if (!tables.length || tables.length > 100) throw new PreviewError({ code: "ods-sheet-count" });
+    const hidden = new Set<string>();
+    for (const style of find(root, "style:style", "office:body"))
+      if (style.attrs["style:family"] === "table" && style.attrs["style:name"])
+        if (find(style, "style:table-properties")[0]?.attrs["table:display"]?.trim() === "false")
+          hidden.add(style.attrs["style:name"]);
+    const visible = tables.filter((table) => !hidden.has(table.attrs["table:style-name"] ?? ""));
+    if (!visible.length) throw new PreviewError({ code: "ods-sheet-count" });
     let cellBytes = 0;
     return {
       type: "ods",
-      sheets: tables.map((table) => {
+      sheets: visible.map((table) => {
         const rows: string[][] = [];
         let truncated = false;
         let pendingEmptyRows = 0;

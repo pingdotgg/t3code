@@ -250,11 +250,13 @@ function renderScreen(render: () => ReactNode) {
 it.each([
   { name: "Back after two submissions in one render", repeatSubmit: true, unmount: true },
   { name: "Back before the screen unmounts" },
+  { name: "editing the repository name", edit: ["example/corrected"] },
+  { name: "batched edits back to the original name", edit: ["example/corrected", "example/slow"] },
   { name: "a change to the repository route parameters", changeParams: true },
   { name: "submitting from a render with stale route parameters", replaceBeforeSubmit: true },
 ])(
   "ignores a pending repository reply after $name",
-  async ({ repeatSubmit, unmount, changeParams, replaceBeforeSubmit }) => {
+  async ({ repeatSubmit, unmount, changeParams, replaceBeforeSubmit, edit }) => {
     const repository = AsyncResult.success({
       provider: "github",
       nameWithOwner: "example/slow",
@@ -319,7 +321,13 @@ it.each([
       });
       if (!replaceBeforeSubmit) {
         expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
-        if (changeParams) {
+        if (edit) {
+          await act(() =>
+            withRepositoryInput(screen, (input) => {
+              for (const value of edit) input.onChangeText(value);
+            }),
+          );
+        } else if (changeParams) {
           flow.setParams({ source: "gitlab" });
         } else {
           flow.back();
@@ -333,6 +341,15 @@ it.each([
       });
       expect(state.dispatch).not.toHaveBeenCalled();
       expect(state.lookupRepository).toHaveBeenCalledTimes(replaceBeforeSubmit ? 0 : 1);
+      if (edit) {
+        const submitCorrected = findAction(screen, "Lookup repository");
+        expect(submitCorrected).not.toBeNull();
+        await act(async () => {
+          await submitCorrected?.();
+        });
+        expect(state.lookupRepository).toHaveBeenCalledTimes(2);
+        expect(state.lookupRepository).toHaveBeenLastCalledWith(edit.at(-1));
+      }
     } finally {
       state.navigationState = undefined;
       state.dispatch.mockReset();
