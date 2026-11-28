@@ -149,9 +149,8 @@ export const make = Effect.gen(function* () {
       threadId === null ? { unsettledOnly: !(backfill || pendingBackfill.size > 0) } : { threadId },
     );
 
-  // The tracked repositories a thread changed each have their own branch, so an open pull
-  // request there is linked like one the thread opened. Only a thread's own events ask: the
-  // sweep would query the host for every repository of every thread each minute.
+  // Checkpoints record changes made by any process, so only look for PRs in the
+  // thread's isolated checkouts. The sweep skips these lookups to bound host requests.
   const linkRepositoryPullRequests = Effect.fn(
     "ThreadPullRequestServiceV2.linkRepositoryPullRequests",
   )(function* (
@@ -163,11 +162,18 @@ export const make = Effect.gen(function* () {
     refresh: boolean,
   ) {
     const tracked = project.trackedFolders ?? [];
-    if (tracked.length === 0 || thread.archivedAt !== null) return;
+    if (
+      tracked.length === 0 ||
+      thread.archivedAt !== null ||
+      thread.worktreePath === null ||
+      thread.branch === null
+    )
+      return;
     const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
     const cwds = new Set(
       checkpointScopes.flatMap((scope) =>
         typeof scope.repositoryPath === "string" &&
+        scope.cwd !== scope.repositoryPath &&
         tracked.some((folder) => folder.path === scope.repositoryPath)
           ? [scope.cwd]
           : [],
@@ -178,10 +184,13 @@ export const make = Effect.gen(function* () {
       (cwd) =>
         Effect.gen(function* () {
           const local = yield* git.localStatus({ cwd });
-          if (!local.isRepo || local.refName === null || local.isDefaultRef) return;
-          // A worktree thread's repositories are on its branch. A scope recorded before the
-          // thread moved still names the shared checkout, whose branch is someone else's.
-          if (thread.worktreePath !== null && local.refName !== thread.branch) return;
+          if (
+            !local.isRepo ||
+            local.refName === null ||
+            local.refName !== thread.branch ||
+            local.isDefaultRef
+          )
+            return;
           const detected = yield* git.branchPullRequest(
             { cwd, branch: local.refName },
             { refresh, confirmTerminal: false },
@@ -205,6 +214,7 @@ export const make = Effect.gen(function* () {
             number: key.number,
             url: detected.url,
             source: "created",
+            discovered: true,
           });
         }).pipe(
           Effect.catchCauseIf(

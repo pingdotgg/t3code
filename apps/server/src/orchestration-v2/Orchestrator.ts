@@ -5369,13 +5369,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const key = normalizeThreadPullRequestKey(command);
           const links = threadPullRequestsOf(thread);
           const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
+          const dismissed = thread.dismissedPullRequests ?? [];
+          const wasDismissed = dismissed.some((entry) => threadPullRequestKeysEqual(entry, key));
+          let dismissedPullRequests = dismissed;
           let pullRequests = links;
           if (command.type === "thread.pull-request.link") {
+            if (command.discovered && (wasDismissed || existing?.source === "stack-dismissed")) {
+              return thread;
+            }
             const undismisses =
               existing?.source === "stack-dismissed" &&
               command.source !== "stack" &&
               command.source !== "stack-dismissed";
             if (existing && !undismisses) return thread;
+            if (wasDismissed) {
+              dismissedPullRequests = dismissed.filter(
+                (entry) => !threadPullRequestKeysEqual(entry, key),
+              );
+            }
             const link = existing
               ? {
                   ...existing,
@@ -5448,6 +5459,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     : link,
                 )
               : links.filter((link) => link !== existing);
+            if (!belongsToStack && !wasDismissed) dismissedPullRequests = [...dismissed, key];
           } else {
             if (!existing) return thread;
             pullRequests = links.map((link) =>
@@ -5459,6 +5471,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             pullRequests,
+            ...(dismissedPullRequests !== dismissed && { dismissedPullRequests }),
             linkedPullRequest:
               thread.linkedPullRequest &&
               pullRequests.some(

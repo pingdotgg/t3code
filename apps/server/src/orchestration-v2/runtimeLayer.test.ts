@@ -4235,6 +4235,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         number: 1,
       });
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("multi-pr-rediscover-unlinked"),
+        threadId,
+        ...key,
+        number: 1,
+        url: "https://github.com/pingdotgg/t3code/pull/1",
+        source: "created",
+        discovered: true,
+      });
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map(({ number, source }) => ({
           number,
@@ -4272,6 +4283,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
         "manual",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("multi-pr-relink-unlinked"),
+        threadId,
+        ...key,
+        number: 1,
+        url: "https://github.com/pingdotgg/t3code/pull/1",
+        source: "manual",
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map(({ number, source }) => ({
+          number,
+          source,
+        })),
+        [2, 1].map((number) => ({ number, source: "manual" })),
       );
     }),
   );

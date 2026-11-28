@@ -514,25 +514,28 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   );
 
   it.effect.each([
-    // The repositories are the project's own checkouts, each on whatever branch it is on.
-    { name: "in the project folder", checkouts: "/workspace/wrapper", branch: null },
-    // The repositories are the thread's worktrees; `web` stands for a checkout off its branch.
-    { name: "in a task folder", checkouts: "/worktrees/wrapper/task", branch: "feature/api" },
+    { name: "ignores shared project checkouts", worktreePath: null, branch: null },
+    {
+      name: "links only the task folder checkout on the thread's branch",
+      worktreePath: "/worktrees/wrapper/task",
+      branch: "feature/api",
+    },
   ])(
-    "links the open pull request of each tracked repository a thread $name changed",
-    ({ checkouts, branch }) =>
+    "at turn end, $name when looking up pull requests in tracked repositories",
+    ({ worktreePath, branch }) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const checkouts = worktreePath ?? "/workspace/wrapper";
           let thread: OrchestrationV2ThreadShell = {
             ...threadShell("repositories-thread"),
             branch,
-            worktreePath: branch === null ? null : checkouts,
+            worktreePath,
           };
           const project: OrchestrationProjectShell = {
             id: thread.projectId,
             title: "Wrapper",
             workspaceRoot: "/workspace/wrapper",
-            trackedFolders: ["api", "web", "docs"].map((name) => ({
+            trackedFolders: ["api", "web", "docs", "shared"].map((name) => ({
               name,
               path: `/workspace/wrapper/${name}`,
             })),
@@ -543,29 +546,34 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           };
           const activation = yield* Deferred.make<void>();
           const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-          const lookedUp = yield* Queue.unbounded<void>();
+          const requested = yield* Queue.unbounded<void>();
           const lookups: Array<{ readonly cwd: string; readonly branch: string }> = [];
           const dispatched: Array<OrchestrationV2ServerCommand> = [];
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.fromQueue(domainEvents),
-              getPullRequestSnapshot: () =>
-                Effect.sync(() => ({
-                  schemaVersion: 2,
-                  snapshotSequence: 1,
-                  threads: [thread],
-                  archivedThreads: [],
-                })),
-              // The thread changed api and web, and a folder the project no longer tracks.
+              getPullRequestSnapshot: (input) =>
+                (input.threadId === undefined
+                  ? Effect.void
+                  : Queue.offer(requested, undefined)
+                ).pipe(
+                  Effect.map(() => ({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [thread],
+                    archivedThreads: [],
+                  })),
+                ),
+              // A shared scope can persist after the thread moves to a task folder.
               getCheckpointContext: () =>
                 Effect.succeed({
                   runs: [],
                   checkpoints: [],
-                  checkpointScopes: ["api", "web", "removed"].map((name) => ({
+                  checkpointScopes: ["api", "web", "removed", "shared"].map((name) => ({
                     id: `scope-${name}`,
                     runId: null,
                     kind: "manual",
-                    cwd: `${checkouts}/${name}`,
+                    cwd: `${name === "shared" ? project.workspaceRoot : checkouts}/${name}`,
                     repositoryPath: `/workspace/wrapper/${name}`,
                   })),
                 } as never),
@@ -583,32 +591,28 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               localStatus: ({ cwd }) =>
                 Effect.succeed({
                   isRepo: true,
-                  refName: cwd.endsWith("/api")
-                    ? "feature/api"
-                    : branch === null
-                      ? "main"
-                      : "other",
-                  isDefaultRef: !cwd.endsWith("/api") && branch === null,
+                  refName: cwd.endsWith("/web") ? "other" : "feature/api",
+                  isDefaultRef: false,
                 } as never),
               branchPullRequest: (input) =>
-                Queue.offer(lookedUp, undefined).pipe(
-                  Effect.map(() => {
-                    lookups.push(input);
-                    return {
-                      number: 7,
-                      title: "API change",
-                      url: "https://github.com/Acme/API/pull/7",
-                      baseRef: "main",
-                      headRef: input.branch,
-                      state: "open" as const,
-                      repositoryKey: "github.com/acme/api",
-                      updatedAt: null,
-                    };
-                  }),
-                ),
+                Effect.sync(() => {
+                  lookups.push(input);
+                  return {
+                    number: 7,
+                    title: "API change",
+                    url: "https://github.com/Acme/API/pull/7",
+                    baseRef: "main",
+                    headRef: input.branch,
+                    state: "open" as const,
+                    repositoryKey: "github.com/acme/api",
+                    updatedAt: null,
+                  };
+                }),
             }),
             Layer.mock(PullRequestService.PullRequestService)({}),
-            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () => Effect.succeed(null),
+            }),
             Layer.mock(BackgroundPolicy.BackgroundPolicy)({
               shouldRunScopeWork: () => Effect.succeed(false),
               shouldRunOpportunisticWork: Effect.succeed(false),
@@ -634,11 +638,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               threadId: thread.id,
             } as OrchestrationV2DomainEvent;
             yield* Queue.offer(domainEvents, turnEnd);
-            yield* Queue.take(lookedUp);
+            yield* Queue.take(requested);
             yield* service.drain;
 
-            // Only the repository on a branch of its own is asked, and nothing touches the
-            // thread's own branch.
+            if (worktreePath === null) {
+              expect(dispatched).toEqual([]);
+              expect(lookups).toEqual([]);
+              return;
+            }
             expect(lookups).toEqual([{ cwd: `${checkouts}/api`, branch: "feature/api" }]);
             expect(dispatched).toMatchObject([
               {
@@ -648,6 +655,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 repository: "acme/api",
                 number: 7,
                 source: "created",
+                discovered: true,
               },
             ]);
 
@@ -667,7 +675,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               ],
             };
             yield* Queue.offer(domainEvents, turnEnd);
-            yield* Queue.take(lookedUp);
+            yield* Queue.take(requested);
             yield* service.drain;
             expect(dispatched).toHaveLength(1);
           }).pipe(Effect.provide(dependencies));
