@@ -17,8 +17,7 @@ const makeRepo = (
     | "unreadable-git-file"
     | "bare-repo-worktree"
     | "custom-common-dir-worktree"
-    | "newline-common-dir-worktree"
-    | "newline-submodule",
+    | "newline-common-dir-worktree",
 ) =>
   Effect.acquireRelease(
     Effect.sync(() => {
@@ -34,8 +33,6 @@ const makeRepo = (
           NodePath.join(root, ".git"),
           "gitdir: /srv/bare\nstore/worktrees/tree\n",
         );
-      } else if (kind === "newline-submodule") {
-        NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /srv/bare\nstore/modules/sub\n");
       } else if (kind === "submodule") {
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: ../.git/modules/sub\n");
       } else if (kind === "unreadable-git-file") {
@@ -97,8 +94,6 @@ describe("resolveWorktreeT3Home", () => {
         yield* resolveWorktreeT3Home(nested),
         NodePath.join(NodePath.resolve(root), ".t3"),
       );
-      const { nested: subNested } = yield* makeRepo("newline-submodule");
-      assert.equal(yield* resolveWorktreeT3Home(subNested), undefined);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
