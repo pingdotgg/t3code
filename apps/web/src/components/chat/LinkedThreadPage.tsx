@@ -26,7 +26,9 @@ export function LinkedThreadPage(props: {
   const gt = useGT();
   const own = useEnvironment(environmentId);
   const connected = own?.connection.phase === "connected";
-  const linkedLabel = useLinkedEnvironments(connected ? null : viaEnvironmentId).get(environmentId);
+  const linkedLabel = useLinkedEnvironments(connected ? null : viaEnvironmentId, environmentId).get(
+    environmentId,
+  );
   if (connected) {
     return (
       <Navigate

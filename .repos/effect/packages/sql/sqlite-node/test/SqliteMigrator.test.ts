@@ -39,6 +39,28 @@ describe("SqliteMigrator", () => {
       assert.deepStrictEqual(yield* migratorClient`SELECT migration_id FROM effect_sql_migrations`, [])
     }))
 
+  it.effect("runs migration id 0 on a fresh database", () =>
+    Effect.gen(function*() {
+      const { migratorClient } = yield* makeClients
+      const run = SqliteMigrator.run({
+        loader: SqliteMigrator.fromRecord({
+          "0000_init": Effect.gen(function*() {
+            const sql = yield* SqlClient.SqlClient
+            yield* sql`CREATE TABLE items (id integer)`
+          })
+        })
+      }).pipe(Effect.provideService(SqlClient.SqlClient, migratorClient))
+
+      assert.deepStrictEqual(yield* run, [[0, "init"]])
+      assert.deepStrictEqual(yield* migratorClient`SELECT id FROM items`, [])
+      assert.deepStrictEqual(
+        yield* migratorClient`SELECT migration_id, name FROM effect_sql_migrations`,
+        [{ migration_id: 0, name: "init" }]
+      )
+
+      assert.deepStrictEqual(yield* run, [])
+    }))
+
   it.effect("fails on lock errors", () =>
     Effect.gen(function*() {
       const { lockClient, migratorClient } = yield* makeClients

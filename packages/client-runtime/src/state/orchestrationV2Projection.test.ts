@@ -486,7 +486,13 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
   it("hides a steer that fell back to the queue until its run starts", () => {
     const queuedRunId = RunId.make("run-requeued-steer");
-    const queuedRun = { ...run, id: queuedRunId, ordinal: 2, status: "queued" } as const;
+    const queuedRun = {
+      ...run,
+      id: queuedRunId,
+      ordinal: 2,
+      status: "queued",
+      startedAt: null,
+    } as const;
     const reply = commandItem("item-reply", "reply", 102);
     const steer: OrchestrationV2TurnItem = {
       id: TurnItemId.make("item-steer"),

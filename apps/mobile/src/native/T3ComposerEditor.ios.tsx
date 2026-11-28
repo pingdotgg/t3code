@@ -28,7 +28,7 @@ import {
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -63,6 +63,8 @@ type NativeSelectionEvent = NativeSyntheticEvent<{
 type NativePasteImagesEvent = NativeSyntheticEvent<{
   readonly uris: ReadonlyArray<string>;
 }>;
+
+type NativePasteImagesPendingEvent = NativeSyntheticEvent<{ readonly delta: number }>;
 
 type NativePasteTextEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -107,6 +109,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  readonly onComposerPasteImagesPending?: (event: NativePasteImagesPendingEvent) => void;
   readonly onComposerContextPress?: (
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
   ) => void;
@@ -148,6 +151,7 @@ export function ComposerEditor({
   onChangeText,
   onSelectionChange,
   onPasteImages,
+  onPasteImagesPending,
   onPasteText,
   onFocus,
   onBlur,
@@ -182,7 +186,7 @@ export function ComposerEditor({
   }
   const bodyText = useComposerTextRole();
   const theme = useUniwindTheme();
-  const fontFamily = FONT_FAMILIES.regular;
+  const fontFamily = useAppearancePreferences().fontFamilies.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
@@ -394,6 +398,7 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+      onComposerPasteImagesPending={(event) => onPasteImagesPending?.(event.nativeEvent.delta)}
       onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
       onComposerPasteContext={(event) => {
         const paste = event.nativeEvent;

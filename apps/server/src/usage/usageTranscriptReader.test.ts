@@ -162,8 +162,8 @@ describe("compressed transcripts", () => {
       assert.strictEqual(expected.tailRecords.length, 1);
       assert.deepStrictEqual(actual.records, expected.records);
       assert.deepStrictEqual(actual.tailRecords, expected.tailRecords);
-      assert.strictEqual(expected.malformedRecords, 1);
-      assert.strictEqual(actual.malformedRecords, expected.malformedRecords);
+      assert.strictEqual(expected.malformedRecords.length, 1);
+      assert.deepStrictEqual(actual.malformedRecords, expected.malformedRecords);
       assert.strictEqual(actual.records[0]?.speed, "ultrafast");
       assert.isFalse(actual.resumed);
       assert.strictEqual(actual.position.resumeOffset, 0);
@@ -226,7 +226,7 @@ describe("readTranscriptRecords resume", () => {
         }
         return TEST_FORMATS.claude.parseProjected(value, undefined);
       },
-      readMalformedRecords: (state: { errors: number }) => state.errors,
+      readMalformedRecords: (state: { errors: number }) => Array(state.errors).fill(0),
     };
     const path = NodePath.join(dir, "diagnostics.jsonl");
     const malformed = JSON.stringify({ usage: "malformed" });
@@ -243,7 +243,7 @@ describe("readTranscriptRecords resume", () => {
     assert.deepStrictEqual(first.tailRecords, []);
     assert.strictEqual(first.position.resumeOffset, Buffer.byteLength(committed));
     assert.deepStrictEqual(first.position.state, { errors: 1 });
-    assert.strictEqual(first.malformedRecords, 2);
+    assert.strictEqual(first.malformedRecords.length, 2);
 
     const savedPosition = JSON.parse(JSON.stringify(first.position));
     await NodeFSP.appendFile(path, `\n${claudeLine(2, 7)}${malformed}\n`);
@@ -255,14 +255,14 @@ describe("readTranscriptRecords resume", () => {
       [7],
     );
     assert.deepStrictEqual(resumed.position.state, { errors: 3 });
-    assert.strictEqual(resumed.malformedRecords, 3);
+    assert.strictEqual(resumed.malformedRecords.length, 3);
 
     const full = await readTranscriptRecords(path, format, undefined, options);
     assert.isNotNull(full);
     assert.deepStrictEqual([...first.records, ...resumed.records], full.records);
     assert.deepStrictEqual(resumed.tailRecords, full.tailRecords);
     assert.deepStrictEqual(resumed.position, full.position);
-    assert.strictEqual(resumed.malformedRecords, full.malformedRecords);
+    assert.deepStrictEqual(resumed.malformedRecords, full.malformedRecords);
   });
 
   it("parses only appended lines when resuming a grown file", async () => {
@@ -272,7 +272,7 @@ describe("readTranscriptRecords resume", () => {
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 2);
     assert.isFalse(first.resumed);
-    assert.strictEqual(first.malformedRecords, 0);
+    assert.deepStrictEqual(first.malformedRecords, []);
 
     await NodeFSP.appendFile(path, claudeLine(3, 11));
     const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
@@ -380,7 +380,7 @@ describe("readTranscriptRecords resume", () => {
         first.tailRecords.map((r) => [r.totals.outputTokens, r.speed]),
         [[20, "ultrafast"]],
       );
-      assert.strictEqual(first.malformedRecords, 0);
+      assert.deepStrictEqual(first.malformedRecords, []);
 
       await NodeFSP.appendFile(path, `\n${firstLine}\n${event(usage(10, 2), usage(510, 62))}\n`);
       const resumed = await readTranscriptRecords(
@@ -402,7 +402,7 @@ describe("readTranscriptRecords resume", () => {
         ],
       );
       assert.deepStrictEqual(resumed.tailRecords, []);
-      assert.strictEqual(resumed.malformedRecords, 0);
+      assert.deepStrictEqual(resumed.malformedRecords, []);
       assert.deepStrictEqual(resumed.position, full.position);
     },
   );
@@ -476,7 +476,7 @@ describe("readTranscriptRecords resume", () => {
         {
           billedTokens: requests.reduce((sum, tokens) => sum + tokens, 0),
           requests,
-          malformedRecords: result.malformedRecords,
+          malformedRecords: result.malformedRecords.length,
         },
         { billedTokens: 510, requests: [120, 160, 230], malformedRecords: 0 },
       );

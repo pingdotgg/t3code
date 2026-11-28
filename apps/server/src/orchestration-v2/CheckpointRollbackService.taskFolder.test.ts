@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -94,6 +95,7 @@ const layerFor = (state: State, options: Options) => {
   );
   const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(Layer.provide(layerGit));
   const layerProjections = ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
   const layerProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -238,12 +240,17 @@ const taskFolderThread = Effect.fn(function* (state: State, options: Options) {
     { path: path.join(tmp, "web"), name: "web" },
   ];
   const plan = yield* taskFolders.plan({ projectId });
-  const { taskFolder } = yield* taskFolders.create({
-    plan: plan!,
-    branch,
-    projectStart: { refName: "main", baseRefName: "main" },
-    startFromOrigin: false,
-  });
+  // On the live clock a new worktree swaps in a refreshed index a second later, briefly holding
+  // index.lock; a rewind landing then fails. The test clock keeps that refresh in the foreground.
+  const { taskFolder } = yield* taskFolders
+    .create({
+      plan: plan!,
+      branch,
+      projectStart: { refName: "main", baseRefName: "main" },
+      startFromOrigin: false,
+      projectCommands: "permitted",
+    })
+    .pipe(Effect.provide(TestClock.layer()));
   const worktreePath = taskFolder.projectPath;
   const folders = {
     shop: worktreePath,
@@ -728,6 +735,7 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
           root: taskFolder.root,
           force: true,
           forget: false,
+          projectCommands: "permitted",
         });
         assert.deepEqual(removal.kept, []);
         assert.isFalse(yield* fileSystem.exists(taskFolder.root));

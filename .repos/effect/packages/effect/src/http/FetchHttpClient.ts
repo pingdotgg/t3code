@@ -26,7 +26,8 @@ import * as HttpClientResponse from "./HttpClientResponse.ts"
  *
  * **Details**
  *
- * Defaults to `globalThis.fetch`.
+ * Defaults to `globalThis.fetch`. When not explicitly provided in context,
+ * `FetchHttpClient` uses the current `globalThis.fetch` on each request.
  *
  * @stability unstable
  * @category services
@@ -116,7 +117,7 @@ const fetch: HttpClient.HttpClient = HttpClient.make((request, url, signal, fibe
       })
     )
   }
-  const fetch = fiber.getRef(Fetch)
+  const fetch = Context.getOrUndefined(fiber.context, Fetch)
   const options: globalThis.RequestInit = Context.getOrUndefined(fiber.context, RequestInit) ?? {}
   let headers = options.headers
     ? Headers.merge(Headers.fromInput(options.headers as Headers.Input), request.headers)
@@ -129,15 +130,17 @@ const fetch: HttpClient.HttpClient = HttpClient.make((request, url, signal, fibe
   const send = (body: BodyInit | undefined) =>
     Effect.map(
       Effect.tryPromise({
-        try: () =>
-          fetch(url, {
+        try: () => {
+          const init: any = {
             ...options,
             method: request.method,
             headers,
             body,
             duplex: typeof ReadableStream !== "undefined" && body instanceof ReadableStream ? "half" : undefined,
             signal: uploadController ? AbortSignal.any([signal, uploadController.signal]) : signal
-          } as any),
+          }
+          return fetch ? fetch(url, init) : globalThis.fetch(url, init)
+        },
         catch: (cause) =>
           new HttpClientError.HttpClientError({
             reason: new HttpClientError.TransportError({

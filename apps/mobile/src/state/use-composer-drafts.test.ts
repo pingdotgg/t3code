@@ -131,7 +131,7 @@ const composerDraftFileMocks = vi.hoisted(() => {
 });
 
 const composerAttachmentCleanupMocks = vi.hoisted(() => ({
-  remove: vi.fn(async () => undefined),
+  remove: vi.fn(async (_uri: string) => undefined),
   releaseUploads: vi.fn(async () => undefined),
 }));
 
@@ -1222,7 +1222,8 @@ describe("mobile composer drafts", () => {
       appAtomRegistry.get(composerDraftsAtom)[pasteKey]?.attachments.map(({ id }) => id),
     ).toEqual(["red", "blue"]);
 
-    const makeStoredPaste = (id: string) => ({
+    // Each paste is stored under a new file name, so only the content digest catches a repeat.
+    const makeStoredPaste = (id: string, contentDigest?: string) => ({
       id,
       type: "image" as const,
       name: "pasted-image.png",
@@ -1230,13 +1231,27 @@ describe("mobile composer drafts", () => {
       sizeBytes: 3,
       fileUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
       previewUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
+      ...(contentDigest === undefined ? {} : { contentDigest }),
     });
     const storedKey = "new-task:environment-1:project-stored-pastes";
-    appendComposerDraftAttachments(storedKey, [makeStoredPaste("red")]);
-    appendComposerDraftAttachments(storedKey, [makeStoredPaste("green")]);
+    appendComposerDraftAttachments(storedKey, [makeStoredPaste("red", "digest-red")]);
+    const repeatCleanup = Promise.withResolvers<void>();
+    onTestFinished(() => {
+      composerAttachmentCleanupMocks.remove.mockImplementation(async () => undefined);
+    });
+    composerAttachmentCleanupMocks.remove.mockImplementation(async (uri) => {
+      if (uri === makeStoredPaste("red-2").fileUri) repeatCleanup.resolve();
+      return undefined;
+    });
+    appendComposerDraftAttachments(storedKey, [
+      makeStoredPaste("green", "digest-green"),
+      makeStoredPaste("red-2", "digest-red"),
+      makeStoredPaste("legacy"),
+    ]);
     expect(
       appAtomRegistry.get(composerDraftsAtom)[storedKey]?.attachments.map(({ id }) => id),
-    ).toEqual(["red", "green"]);
+    ).toEqual(["red", "green", "legacy"]);
+    await repeatCleanup.promise;
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {

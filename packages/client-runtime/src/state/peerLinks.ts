@@ -87,17 +87,37 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         ),
       )
       .pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-stream:${key}`));
-    return Atom.make((get) => {
-      const live = get(stream);
-      if (AsyncResult.isSuccess(live)) {
-        get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
-      }
-      return live;
-    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
+    return Atom.readable(
+      (get) => {
+        const live = get(stream);
+        if (AsyncResult.isSuccess(live)) {
+          get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
+        }
+        return live;
+      },
+      (refresh) => refresh(stream),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
   });
   return {
     list,
     names,
+    /**
+     * Rereads `environmentId`'s link names when they lack one of `wanted`, however fresh they
+     * are. Links made elsewhere (the CLI, another client, a batch) are not pushed, so a reader
+     * that meets a machine the names lack asks once more; a read under way already answers it.
+     */
+    refreshNamesLacking: (
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentId,
+      wanted: ReadonlyArray<EnvironmentId>,
+    ) => {
+      const atom = names({ environmentId, input: {} });
+      const result = registry.get(atom);
+      if (!AsyncResult.isSuccess(result) || result.waiting) return;
+      const known = new Set(result.value.links.map((link) => link.environmentId));
+      if (wanted.every((id) => known.has(id))) return;
+      registry.refresh(atom);
+    },
     link: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:link",
       tag: WS_METHODS.peerLinksLink,

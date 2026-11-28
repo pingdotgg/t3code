@@ -188,11 +188,15 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   expect(state.activeQueries).toBe(0);
   const refreshStart = state.calls.length;
   state.resetPeakQueries();
-  await act(async () => state.view.refresh());
+  const refreshOnScreen = () => {
+    state.view.refresh();
+    for (const folder of folders) state.view.revalidate(folder.path);
+  };
+  await act(async () => refreshOnScreen());
   expect(state.peakQueries).toBe(4);
   expect(state.activeQueries).toBe(4);
   await act(async () => {
-    for (let index = 0; index < 20; index++) state.view.refresh();
+    for (let index = 0; index < 20; index++) refreshOnScreen();
   });
   for (let index = refreshStart; index < state.calls.length; index++) {
     await state.settle(index, state.calls[index]!.path === "" ? folders : []);
@@ -203,6 +207,40 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   for (const path of ["", ...folders.map((folder) => folder.path)]) {
     expect(state.calls.filter((call) => call.path === path).length).toBeLessThanOrEqual(3);
   }
+  expect(state.view.isPending).toBe(false);
+});
+
+it("refreshes the root, and another folder only once one of its rows is on screen", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const folders = ["src", "src/ui", "docs"].map((path) => ({ path, kind: "directory" as const }));
+  const listing = (path: string) =>
+    folders.filter((folder) => folder.path.slice(0, folder.path.lastIndexOf("/") + 1) === path);
+  await state.settle(0, listing(""));
+  await act(async () => {
+    for (const folder of folders) void state.view.load(folder.path);
+  });
+  await state.settle(1, listing("src/"));
+  await state.settle(2);
+  await state.settle(3);
+
+  await act(async () => {
+    state.view.refresh();
+    state.view.refresh();
+  });
+  expect(state.calls.slice(4).map((call) => call.path)).toEqual([""]);
+  await act(async () => {
+    state.view.revalidate("src/ui");
+    state.view.revalidate("src/ui");
+  });
+  expect(state.calls.slice(4).map((call) => call.path)).toEqual(["", "src/ui", "src"]);
+  await state.settle(4, listing(""));
+  await state.settle(5);
+  await state.settle(6, listing("src/"));
+  await state.settle(7, listing(""));
+  expect(state.calls).toHaveLength(8); // The second refresh reads the root once more; `docs` is never read.
+  expect(state.view.entries.map((entry) => entry.path)).toEqual(["src", "src/ui", "docs"]);
   expect(state.view.isPending).toBe(false);
 });
 

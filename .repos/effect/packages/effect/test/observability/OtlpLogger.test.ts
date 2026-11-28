@@ -62,8 +62,18 @@ describe("OtlpLogger", () => {
       yield* flush
       assert.lengthOf(requests, 1)
     }).pipe(
-      Effect.provide(Logger.layer([observer], { mergeWithExisting: true })),
-      Effect.provide(makeTestLayer(httpClient))
+      Effect.provide(
+        OtlpLogger.layer({
+          url: "http://localhost:4318/v1/logs",
+          resource: { serviceName: "test", serviceVersion: "service-version" },
+          exportInterval: "1 hour",
+          mergeWithExisting: true
+        }).pipe(
+          Layer.provide(OtlpSerialization.layerJson),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient))
+        )
+      ),
+      Effect.provide(Logger.layer([observer], { mergeWithExisting: false }))
     )
   })
 

@@ -237,6 +237,94 @@ function escapeProse(text: string): string {
   });
 }
 
+/** Restores link destinations only when the HTML and plain clipboard describe the same text. */
+export function restorePastedMarkdownLinks(plain: string, html: string): string {
+  if (!plain || !/<a[\s>]/i.test(html)) return plain;
+  // Template contents stay inert, including resources and custom elements.
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const fragment = template.content;
+  const destinations = new Map<Node, string>();
+  for (const element of fragment.querySelectorAll("script, style, [hidden]")) element.remove();
+  for (const element of fragment.querySelectorAll<HTMLElement | SVGElement>("[style]")) {
+    if (element.style.display === "none") element.remove();
+  }
+  // Visibility inherits, but a visible descendant can override a hidden ancestor.
+  const invisible = new WeakSet<Element>();
+  const nodes = document.createNodeIterator(
+    fragment,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+  );
+  for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+    const inheritsHidden = node.parentElement !== null && invisible.has(node.parentElement);
+    if (node instanceof Text) {
+      if (inheritsHidden) node.remove();
+    } else if (node instanceof Element) {
+      const visibility =
+        node instanceof HTMLElement || node instanceof SVGElement ? node.style.visibility : "";
+      if (
+        visibility === "hidden" ||
+        visibility === "collapse" ||
+        (inheritsHidden && visibility !== "visible" && visibility !== "initial")
+      ) {
+        invisible.add(node);
+      }
+    }
+  }
+  for (const anchor of fragment.querySelectorAll("a[href]")) {
+    // Linked identifiers in API docs code samples must stay literal code.
+    if (anchor.closest("pre, code")) continue;
+    const href = anchor.getAttribute("href")?.trim() ?? "";
+    if (!/^(?:https?:\/\/|mailto:)/i.test(href)) continue;
+    let url: URL;
+    try {
+      url = new URL(href);
+    } catch {
+      continue;
+    }
+    const label = document.createTextNode(anchor.textContent ?? "");
+    anchor.replaceWith(label);
+    destinations.set(label, url.href);
+  }
+  if (destinations.size === 0) return plain;
+
+  // Match visible characters in order. The plain rendition owns line breaks and spacing.
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
+  const characters = plain.matchAll(/\S/g);
+  const parts: string[] = [];
+  let resultEnd = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    let start: number | undefined;
+    let end = 0;
+    for (const character of (node.textContent ?? "").matchAll(/\S/g)) {
+      const match = characters.next().value;
+      if (match?.[0] !== character[0]) return plain;
+      start ??= match.index;
+      end = match.index + 1;
+    }
+    const href = destinations.get(node);
+    if (href === undefined || start === undefined) continue;
+    const label = plain.slice(start, end);
+    if (label === href) continue;
+    const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)([!\\])$/, "$1\\$2");
+    const destination = href.replaceAll("&", "&amp;");
+    parts.push(
+      prefix,
+      label.replace(/\S(?:[^\n]*\S)?/g, (line) =>
+        markdownAnchor(escapeProse(line), destination, false),
+      ),
+    );
+    resultEnd = end;
+  }
+  if (!characters.next().done || parts.length === 0) return plain;
+  return parts.join("") + plain.slice(resultEnd);
+}
+
+function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
+}
+
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
@@ -251,8 +339,7 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   // GFM autolinks a bare address only when it fits this shape.
   if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
     return shown;
-  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  return markdownAnchor(label, href, inTableCell);
 }
 
 /**
@@ -273,7 +360,9 @@ function serializeChildren(node: Node, inTableCell = false): string {
 
 function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? "";
+    let text = node.textContent ?? "";
+    // A <br> already wrote the line ending that follows it.
+    if (node.previousSibling?.nodeName === "BR") text = text.replace(/^\n/, "");
     if (text.includes("\n") && text.trim().length === 0) return "\n";
     return escapeTablePipes(escapeProse(text), inTableCell);
   }
@@ -436,14 +525,11 @@ export function mathWrapperOf(element: Element | null): Element | null {
   return element?.closest(MATH_SELECTOR) ?? null;
 }
 
-/** A cell's text, with each formula as its TeX. */
+/** A cell's text on one line, with each formula as its TeX. */
 function csvCellText(cell: Element): string {
-  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
-  const copy = cell.cloneNode(true) as Element;
-  for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
-    wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
-  }
-  return copy.textContent ?? "";
+  const parts: string[] = [];
+  collectHtmlCellText(cell, parts, false);
+  return parts.join("").replace(/[\u0001\u0002]+/g, " ");
 }
 
 function csvCell(value: string): string {

@@ -1,6 +1,10 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -14,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -25,21 +29,24 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
-import { SidebarProvider } from "./ui/sidebar";
+import { SidebarProvider, useSidebar } from "./ui/sidebar";
 
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
   const actual = await original();
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
 });
 vi.mock("../state/entities", { spy: true });
+vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
@@ -129,6 +136,65 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+// regression: #41549 a grouped project's folder New thread went to the primary copy
+describe("sidebar project folder new thread", () => {
+  it("starts in the copy of the viewed thread, as the new-thread shortcut does", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+    const primary = EnvironmentId.make("local");
+    const dev1 = EnvironmentId.make("dev1");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/acme/demo-repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/demo-repo.git",
+      },
+      displayName: "acme/demo-repo",
+    };
+    const primaryCopy = { ...project("demo-primary"), repositoryIdentity };
+    const dev1Copy = {
+      ...project("demo-dev1"),
+      environmentId: dev1,
+      repositoryIdentity,
+    };
+    vi.mocked(usePrimaryEnvironmentId).mockReturnValue(primary);
+    vi.mocked(useConnectedEnvironmentIds).mockReturnValue([primary, dev1]);
+    vi.mocked(useProjects).mockReturnValue([primaryCopy, dev1Copy]);
+    const dev1Thread = makeThreadFixture({
+      environmentId: dev1,
+      id: ThreadId.make("dev1-thread"),
+      projectId: dev1Copy.id,
+      title: "dev1 work",
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([dev1Thread]);
+    const threadRef = scopeThreadRef(dev1, dev1Thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    const dev1ProjectRef = scopeProjectRef(dev1, dev1Copy.id);
+    const startThread = vi.fn().mockResolvedValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: dev1Thread,
+      defaultProjectRef: dev1ProjectRef,
+      defaultProjectFallbackReady: true,
+      handleNewThread: startThread,
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "New thread in acme/demo-repo" }));
+
+    expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef);
   });
 });
 
@@ -329,6 +395,57 @@ describe("sidebar thread rename", () => {
   );
 });
 
+describe("sidebar thread click", () => {
+  // regression: #40715 macOS counts quick clicks on different rows, so the next row got detail 2 and was ignored
+  it("opens another thread when the click arrives with a double-click count", async () => {
+    const activeProject = project("active");
+    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[0]!.id,
+    };
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+      { router: "/local/thread-0" },
+    );
+    const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+
+    const openRow = screen.getByText("Thread 0").first().element();
+    await act(() => {
+      openRow.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }),
+      );
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
+    const row = screen.getByText("Thread 1").first().element();
+    await act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }));
+    });
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ threadId: "thread-1" }) }),
+    );
+  });
+});
+
 describe("sidebar thread menu", () => {
   it("tells the menu whether the keyboard opened it", async () => {
     const activeProject = project("active");
@@ -365,6 +482,143 @@ describe("sidebar thread menu", () => {
     await userEvent.click(row, { button: "right" });
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
     expect(show.mock.lastCall?.[2]).toBe("mouse");
+  });
+});
+
+function MobileSheetProbe() {
+  const { openMobile, setOpenMobile } = useSidebar();
+  return (
+    <button type="button" onClick={() => setOpenMobile(true)}>
+      {openMobile ? "Sheet open" : "Sheet closed"}
+    </button>
+  );
+}
+
+async function usePhoneViewport() {
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(390, 844);
+  return { [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height) };
+}
+
+describe("sidebar thread menu on a phone", () => {
+  it("closes the sheet when New thread on branch starts the thread", async () => {
+    await using _viewport = await usePhoneViewport();
+    const activeProject = project("active");
+    const thread = makeThreadFixture({
+      environmentId: EnvironmentId.make("local"),
+      id: ThreadId.make("thread-branch"),
+      projectId: activeProject.id,
+      title: "Branch thread",
+      branch: "feature/login",
+    });
+    const threadRef = { environmentId: activeProject.environmentId, threadId: thread.id };
+    const show = vi.fn().mockResolvedValue("new-thread-on-branch");
+    const startThread = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: startThread,
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <MobileSheetProbe />
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sheet closed" }));
+    await expect.element(screen.getByRole("button", { name: "Sheet open" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Branch thread").first(), { button: "right" });
+    await vi.waitFor(() => expect(startThread).toHaveBeenCalledTimes(1));
+    expect(startThread.mock.lastCall?.[1]).toMatchObject({ branch: "feature/login" });
+    await expect.element(screen.getByRole("button", { name: "Sheet closed" })).toBeInTheDocument();
+  });
+
+  it("closes the sheet when Add project opens the picker, as New thread does", async () => {
+    await using _viewport = await usePhoneViewport();
+    vi.mocked(useProjects).mockReturnValue([]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(openCommandPalette).mockClear();
+    await using screen = await render(
+      <SidebarProvider>
+        <MobileSheetProbe />
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sheet closed" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add project" }));
+    expect(openCommandPalette).toHaveBeenCalledExactlyOnceWith({ open: "add-project" });
+    await expect.element(screen.getByRole("button", { name: "Sheet closed" })).toBeInTheDocument();
+  });
+});
+
+describe("sidebar selection menu", () => {
+  it("counts only the selected threads Settle will settle", async () => {
+    const activeProject = project("active");
+    const activeThread = threadShell(activeProject.id, 0);
+    const settledThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("thread-1"),
+      title: "Thread 1",
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    const settledRef = { environmentId: activeProject.environmentId, threadId: settledThread.id };
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([activeThread, settledThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: settledRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: settledRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Thread 1").first()).toBeInTheDocument();
+    const selection = useThreadSelectionStore.getState();
+    selection.clearSelection();
+    selection.toggleThread(
+      scopedThreadKey(scopeThreadRef(activeProject.environmentId, activeThread.id)),
+    );
+    selection.toggleThread(scopedThreadKey(settledRef));
+    await userEvent.click(screen.getByText("Thread 0").first(), { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const settleItem = show.mock.lastCall?.[0].find((item: { id: string }) => item.id === "settle");
+    expect(settleItem?.label).toBe("Settle (1)");
+    selection.clearSelection();
   });
 });
 
