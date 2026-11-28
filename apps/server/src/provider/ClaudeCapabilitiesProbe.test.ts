@@ -74,11 +74,22 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+/** Resolves once the probe closes the prompt input it handed the SDK. */
+function whenInputCloses(prompt: string | AsyncIterable<unknown>): Promise<void> {
+  return (async () => {
+    if (typeof prompt === "string") return;
+    for await (const _message of prompt);
+  })();
+}
+
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
-    let abortSignal: AbortSignal | undefined;
-    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
-      abortSignal = options?.abortController?.signal;
+    let inputClosed = false;
+    let closing: Promise<void> = Promise.resolve();
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ prompt }) => {
+      closing = whenInputCloses(prompt).then(() => {
+        inputClosed = true;
+      });
       return {
         initializationResult: async () => ({
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
@@ -110,8 +121,44 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
       capabilities.models?.map((model) => model.value),
       ["gateway/claude-relay"],
     );
-    assert.equal(abortSignal?.aborted, false);
+    assert.equal(inputClosed, false);
     yield* TestClock.adjust("3 seconds");
-    assert.equal(abortSignal?.aborted, true);
+    yield* Effect.promise(() => closing);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ends a probe by closing its input, and stops it only if it is still running", () =>
+  Effect.gen(function* () {
+    let abortSignal: AbortSignal | undefined;
+    let inputClosed: Promise<void> = Promise.resolve();
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ prompt, options }) => {
+      abortSignal = options?.abortController?.signal;
+      inputClosed = whenInputCloses(prompt);
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+          commands: [],
+        }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+          rate_limits_available: false,
+        }),
+        // The process never exits, like a Claude Code stuck in its teardown.
+        [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+
+    yield* probeClaudeCapabilities(yield* decodeClaudeSettings({ binaryPath: "claude" }), {
+      PATH: (yield* HostProcess.Environment).PATH,
+      CLAUDE_CONFIG_DIR: configDir,
+    });
+    // An abort would have the SDK SIGTERM a login renewal still in flight.
+    yield* Effect.promise(() => inputClosed);
+    assert.equal(abortSignal?.aborted, false);
+
+    const stopped = new Promise((resolve) => abortSignal?.addEventListener("abort", resolve));
+    yield* TestClock.adjust("1 minute");
+    yield* Effect.promise(() => stopped);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

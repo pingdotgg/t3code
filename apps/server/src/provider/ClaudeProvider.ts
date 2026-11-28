@@ -453,13 +453,19 @@ function dedupeSlashCommands(
   return [...commandsByName.values()];
 }
 
-function waitForAbortSignal(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) {
-    return Promise.resolve();
+/**
+ * How long a probe's Claude process may take to exit once its input closes. Claude Code first
+ * finishes requests in flight, a login renewal included, so one still running after this is stuck.
+ */
+const CLAUDE_PROBE_EXIT_GRACE_MS = 60_000;
+
+/** Settles once the probe's Claude process has exited. */
+async function claudeProbeExited(query: AsyncIterable<unknown>): Promise<void> {
+  try {
+    for await (const _message of query);
+  } catch {
+    // An exit error ends the stream as well.
   }
-  return new Promise((resolve) => {
-    signal.addEventListener("abort", () => resolve(), { once: true });
-  });
 }
 
 /**
@@ -495,7 +501,20 @@ const probeClaudeCapabilities = (
   const includeUsage = includeStatus !== false;
   const includeSettings = includeStatus === true;
   const abort = new AbortController();
-  const abortProbe = Effect.sync(() => {
+  const input = Promise.withResolvers<void>();
+  let probe: AsyncIterable<unknown> | undefined;
+  // Closing the input lets Claude Code exit on its own once it has finished, a login renewal
+  // included. An abort makes the SDK send SIGTERM 2 s later, and a renewal cut off after
+  // Anthropic rotated the refresh token, but before Claude Code saved it, signs the folder out.
+  const endProbe = Effect.gen(function* () {
+    input.resolve();
+    const started = probe;
+    if (started !== undefined) {
+      const exited = yield* Effect.promise(() => claudeProbeExited(started)).pipe(
+        Effect.timeoutOption(CLAUDE_PROBE_EXIT_GRACE_MS),
+      );
+      if (Option.isSome(exited)) return;
+    }
     if (!abort.signal.aborted) abort.abort();
   });
   return Effect.gen(function* () {
@@ -524,7 +543,7 @@ const probeClaudeCapabilities = (
         const q = claudeQuery({
           // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
           prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-            await waitForAbortSignal(abort.signal);
+            await input.promise;
           })(),
           options: buildClaudeCapabilitiesProbeQueryOptions({
             executablePath,
@@ -535,6 +554,7 @@ const probeClaudeCapabilities = (
             spawnVia,
           }),
         });
+        probe = q;
         const init = await q.initializationResult();
         return { q, init, graceMs };
       },
@@ -606,13 +626,13 @@ const probeClaudeCapabilities = (
         } satisfies ClaudeCapabilitiesProbe;
       }).pipe(
         Effect.tap(() =>
-          graceMs > 0
-            ? Effect.sleep(graceMs).pipe(Effect.andThen(abortProbe), Effect.forkDetach)
-            : abortProbe,
+          (graceMs > 0 ? Effect.sleep(graceMs).pipe(Effect.andThen(endProbe)) : endProbe).pipe(
+            Effect.forkDetach,
+          ),
         ),
       ),
     ),
-    Effect.onError(() => abortProbe),
+    Effect.onError(() => Effect.forkDetach(endProbe)),
     Effect.tapError((error) =>
       Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
     ),
