@@ -13068,5 +13068,21 @@
   "b45f0b467e9406d0": "Responder al cliente",
   "d454bfdeea6f1129": "Abrir vista previa",
   "8363b914aade0bdc": "Maximizar el panel ({shortcut})",
-  "6f9f7ac334779864": "Restaurar el tamaño del panel ({shortcut})"
+  "6f9f7ac334779864": "Restaurar el tamaño del panel ({shortcut})",
+  "2d4b888d587a5b70": "Dibujar en {name}",
+  "cfa1fc62923d3d32": "Herramienta de dibujo",
+  "3b7a720d84d54cd5": "Dibujar a mano alzada (D)",
+  "2f5782fab3b69ec0": "Dibujar",
+  "d921a0a1ba87a665": "Borrar un trazo (E)",
+  "449a265c477785b0": "Borrar",
+  "a8ed2dbdd7333ead": "Color del trazo",
+  "650afcc1cdb79840": "Color del tema",
+  "42102b61a3c388ad": "No se pudo guardar el dibujo. Inténtalo de nuevo o cancela.",
+  "e1abc4e22afc6c41": "Dibujar en la imagen",
+  "677fbda9e901b45e": "Rojo",
+  "c23be241b9d249c9": "Naranja",
+  "c63d942911808821": "Verde",
+  "75f923f6e3e41def": "Blanco",
+  "04cabf0f2aa08368": "Negro",
+  "a992afd4cdaa1317": "Cancelar dibujo"
 }

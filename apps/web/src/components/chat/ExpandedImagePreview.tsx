@@ -20,6 +20,8 @@ import {
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
+import { isHeicImageFile } from "../../lib/imageCompression";
+import type { EditedImage, ImageAnnotationTarget } from "./ImageAnnotationOverlay";
 
 export interface ExpandedImageItem {
   src: string | null;
@@ -30,6 +32,8 @@ export interface ExpandedImageItem {
   ownsSrc?: boolean;
   source?: SnapShotSource;
   onCopySnapshot?: (() => Promise<void>) | undefined;
+  /** Draft images can be drawn on in place; only they have bytes to replace. */
+  edit?: ImageAnnotationTarget | undefined;
   autoPlay?: boolean;
   originalUrl?: string;
   srcFragment?: string;
@@ -168,6 +172,7 @@ export function buildExpandedImagePreview(
   images: ReadonlyArray<ChatImageAttachment | ComposerFileAttachment>,
   selectedImageId: string,
   onCopySnapshot?: (id: string) => Promise<void>,
+  onSaveImageEdit?: (id: string, file: File) => Promise<EditedImage | null>,
 ): ExpandedImagePreview | null {
   const selected = images.find((image) => image.id === selectedImageId);
   if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
@@ -192,6 +197,12 @@ export function buildExpandedImagePreview(
             name: image.name,
             mimeType: image.mimeType,
             source: image.source,
+            file:
+              "file" in image &&
+              image.file instanceof File &&
+              !isHeicImageFile({ name: image.name, type: image.mimeType })
+                ? image.file
+                : null,
           },
         ]
       : [],
@@ -208,6 +219,16 @@ export function buildExpandedImagePreview(
       src: image.src,
       name: image.name,
       mimeType: image.mimeType,
+      ...(onSaveImageEdit && image.file
+        ? {
+            edit: {
+              file: image.file,
+              name: image.name,
+              mimeType: image.mimeType,
+              save: (file: File) => onSaveImageEdit(image.id, file),
+            },
+          }
+        : {}),
       ...(image.source?.kind === "snap-shot"
         ? {
             source: image.source,

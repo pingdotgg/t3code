@@ -218,8 +218,8 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 const IMAGE_EXTENSIONS = Object.keys(IMAGE_MIME_TYPES).join("|");
 const ABSOLUTE_PATH = String.raw`(?:/(?!/)|[a-z]:[\\/])`;
 const LOCAL_IMAGE_PATTERN = new RegExp(
-  String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))\1` +
-    String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
+  String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))(?:(?<=\.svg)#(?:(?!\1)[^\r\n]){0,2048})?\1` +
+    String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))(?:(?<=\.svg)#[^\s"'\x60()]{0,2048})?\s*\)`,
   "gid",
 );
 const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
