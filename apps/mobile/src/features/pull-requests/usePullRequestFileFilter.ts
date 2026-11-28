@@ -1,8 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   filterPullRequestTestFiles,
   filterPullRequestViewedFiles,
@@ -12,17 +13,36 @@ import type { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
 const PATH_SEPARATOR = "\0";
 
+export function useHideTestFilesPreference() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const hideTestFiles =
+    AsyncResult.isSuccess(preferences) && preferences.value.pullRequestHideTestFiles === true;
+  return {
+    hideTestFiles,
+    toggle: () => {
+      void savePreferences({ pullRequestHideTestFiles: !hideTestFiles });
+    },
+    showAll: () => {
+      void savePreferences({ pullRequestHideTestFiles: false });
+    },
+  };
+}
+
 export function usePullRequestFileFilter(
   parsed: ReviewParsedDiff,
   viewed: ReturnType<typeof usePullRequestFilesViewed>,
   includePath?: string,
   keptPaths: readonly string[] = [],
 ) {
+  const preference = useHideTestFilesPreference();
+  const { hideTestFiles } = preference;
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const saved = AsyncResult.isSuccess(preferences) ? preferences.value : null;
-  const hideTestFiles = saved?.pullRequestHideTestFiles === true;
-  const hideViewedFiles = viewed.supported && saved?.pullRequestHideViewedFiles === true;
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const hideViewedFiles =
+    viewed.supported &&
+    AsyncResult.isSuccess(preferences) &&
+    preferences.value.pullRequestHideViewedFiles === true;
   const withoutTests = useMemo(
     () => filterPullRequestTestFiles(parsed, hideTestFiles, includePath),
     [parsed, hideTestFiles, includePath],
@@ -48,16 +68,18 @@ export function usePullRequestFileFilter(
       ? parsed.fileCount - withoutTests.fileCount
       : 0;
   return {
+    ...preference,
     parsed: visible,
-    hideTestFiles,
     hiddenCount,
-    toggle: () => savePreferences({ pullRequestHideTestFiles: !hideTestFiles }),
-    showAll: () => savePreferences({ pullRequestHideTestFiles: false }),
     hideViewedFiles,
     viewedCount: viewedPaths.length,
     hiddenViewedCount: hiddenViewedPaths.length,
     canHideViewedFiles: viewed.supported && (viewedPaths.length > 0 || hideViewedFiles),
-    toggleViewedFiles: () => savePreferences({ pullRequestHideViewedFiles: !hideViewedFiles }),
-    showViewedFiles: () => savePreferences({ pullRequestHideViewedFiles: false }),
+    toggleViewedFiles: () => {
+      void savePreferences({ pullRequestHideViewedFiles: !hideViewedFiles });
+    },
+    showViewedFiles: () => {
+      void savePreferences({ pullRequestHideViewedFiles: false });
+    },
   };
 }

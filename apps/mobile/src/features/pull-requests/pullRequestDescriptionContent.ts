@@ -1,5 +1,8 @@
+import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
+import { msg } from "gt-react-native";
 import type { MarkdownNode } from "../../lib/markdownDocument";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 function isWebUrl(url: string): boolean {
   try {
@@ -13,6 +16,7 @@ function isWebUrl(url: string): boolean {
 export function pullRequestDescriptionContent(
   document: MarkdownNode,
   media: readonly PullRequestBodySegment[] = [],
+  resolve: MessageResolver = m,
 ) {
   const attachments = new Map<
     string,
@@ -24,7 +28,7 @@ export function pullRequestDescriptionContent(
       if (node.url && isWebUrl(node.url) && !attachments.has(node.url)) {
         attachments.set(node.url, {
           uri: node.url,
-          caption: node.alt || node.title || "Image",
+          caption: node.alt || node.title || resolve(msg("Image")),
           kind: "image",
         });
       }
@@ -43,10 +47,12 @@ export function pullRequestDescriptionContent(
       return;
     }
     if (segment.kind === "attachment" && !attachments.has(segment.url)) {
-      const name = new URL(segment.url).pathname.split("/").pop();
+      const name = mediaReferenceFileName({ kind: "url", url: segment.url });
       attachments.set(segment.url, {
         uri: segment.url,
-        caption: segment.media === "video" ? "Video" : name || "Image",
+        caption:
+          segment.label ||
+          (segment.media === "video" ? resolve(msg("Video")) : name || resolve(msg("Image"))),
         kind: segment.media,
       });
     }

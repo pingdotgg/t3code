@@ -9,6 +9,8 @@ import {
   preferredMicrophoneId,
   rememberMicrophones,
 } from "./microphoneOrder";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 export type BrowserMicrophone = Pick<MediaDeviceInfo, "deviceId" | "label">;
 
@@ -23,7 +25,7 @@ export async function listAudioInputs(): Promise<BrowserMicrophone[]> {
 export async function listBrowserMicrophones(): Promise<BrowserMicrophone[]> {
   return (await listAudioInputs()).map(({ deviceId, label }, index) => ({
     deviceId,
-    label: label || `Microphone ${index + 1}`,
+    label: label || m(msg("Microphone {number}", { number: index + 1 })),
   }));
 }
 

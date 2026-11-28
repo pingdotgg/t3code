@@ -1,9 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,6 +15,8 @@ import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { Menu } from "../../components/ui/Menu";
+import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
+import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
 
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { type PullRequestParams } from "./usePullRequestDiff";
@@ -105,39 +109,64 @@ export function PullRequestCardRow(props: {
   );
 }
 
+/** The Duo's vertical bar, where this toolbar and the screen's bar share one column of buttons. */
+export function usePullRequestVerticalControls() {
+  const nativeMetrics = useNativeLayoutMetrics();
+  return nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none";
+}
+
 export function PullRequestActionToolbar(props: {
   readonly pr: PullRequestDetail | null;
   readonly params: PullRequestParams;
   readonly filePath?: string;
+  /** The head of the diff on screen, when the screen shows one. */
+  readonly reviewedHeadSha?: string | undefined;
+  /** The screen's actions menu; the vertical bar shows it here with the toolbar's tools. */
+  readonly menu: AppBarMenu;
   readonly onOpenFiles?: () => void;
   readonly onHeightChange?: (height: number) => void;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
   const { draft } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
-  const nativeMetrics = useNativeLayoutMetrics();
-  const verticalControls = nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none";
+  const verticalControls = usePullRequestVerticalControls();
   const permissions = usePullRequestPermissions(props.params, props.pr);
   const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
   const canReview = permissions.verdicts.length > 0;
   const pendingReview = canReview && draft.comments.length > 0;
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
-  const { shortLabel } = sourceControlClients.get(
-    (props.pr ?? props.params.initialSummary)?.provider,
-  ).changeRequest;
-  const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
-  const primaryLabel = pendingReview ? `Submit review · ${draft.comments.length}` : threadLabel;
+  const term = changeRequestTermKind(
+    sourceControlClients.get((props.pr ?? props.params.initialSummary)?.provider).changeRequest,
+  );
+  const threadLabel = agent.threads.length
+    ? gt("Continue thread")
+    : gt("Work on {term, select, mr {MR} cr {change request} other {PR}}", { term });
+  const primaryLabel = pendingReview
+    ? gt("Submit review · {count}", { count: draft.comments.length })
+    : threadLabel;
+  const agentActionsLabel = gt(
+    "{term, select, mr {MR} cr {change request} other {PR}} agent actions",
+    { term },
+  );
   const chooseThread = agent.chooseThread;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
   const open = (mode: "review" | "comment") =>
-    navigation.navigate("PullRequestReview", { ...props.params, mode });
+    navigation.navigate("PullRequestReview", {
+      ...props.params,
+      mode,
+      reviewedHeadSha: props.reviewedHeadSha ?? props.pr?.headSha,
+    });
   const primaryPress = () => (pendingReview ? open("review") : agent.start("ask"));
   const threadMenuItems = agent.threadActions("ask");
   const openFiles =
     props.onOpenFiles ?? (() => navigation.navigate("PullRequestFiles", props.params));
-  if (!props.pr) return null;
+  if (!props.pr)
+    return verticalControls ? (
+      <Toolbar placement="bottom">{createNativeHeaderMenu(props.menu)}</Toolbar>
+    ) : null;
   const primaryDisabled = pendingReview ? false : agent.disabled;
   const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
@@ -160,14 +189,14 @@ export function PullRequestActionToolbar(props: {
           <View className="flex-row items-center gap-2">
             {showAgentControls ? (
               <Menu
-                title="AI helpers"
+                title={gt("AI helpers")}
                 actions={agentActions.map((action) => agent.menuAction(action.task))}
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
               >
                 <View pointerEvents="none">
                   <IconButton
                     icon="ellipsis.bubble"
-                    accessibilityLabel={`${shortLabel} agent actions`}
+                    accessibilityLabel={agentActionsLabel}
                     disabled={agent.disabled}
                   />
                 </View>
@@ -177,7 +206,7 @@ export function PullRequestActionToolbar(props: {
               <View className="min-w-0 shrink">
                 {!pendingReview && chooseThread ? (
                   <Menu
-                    title="Open thread"
+                    title={gt("Open thread")}
                     actions={threadMenuItems}
                     onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
                   >
@@ -188,7 +217,11 @@ export function PullRequestActionToolbar(props: {
                 )}
               </View>
             ) : null}
-            <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
+            <IconButton
+              icon="file.diff"
+              accessibilityLabel={gt("Changed files")}
+              onPress={openFiles}
+            />
           </View>
         </Toolbar>
       </View>
@@ -238,8 +271,8 @@ export function PullRequestActionToolbar(props: {
     <Toolbar.Menu
       identifier="pull-request-agent"
       icon="ellipsis.bubble"
-      title="AI helpers"
-      accessibilityLabel={`${shortLabel} agent actions`}
+      title={gt("AI helpers")}
+      accessibilityLabel={agentActionsLabel}
       disabled={agent.disabled}
       separateBackground
     >
@@ -265,17 +298,57 @@ export function PullRequestActionToolbar(props: {
     <Toolbar.Button
       identifier="workspace-trailing-action"
       icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
-      accessibilityLabel="Changed files"
+      accessibilityLabel={gt("Changed files")}
       onPress={openFiles}
       separateBackground
     />
   );
+  // The vertical bar never overflows into a menu, and with a Live Activity it fits about three
+  // buttons above the workspace tabs: back, the primary action and one menu.
   if (verticalControls)
     return (
       <Toolbar placement="bottom">
-        {filesControl}
-        {agentControl}
         {primaryControl}
+        {createNativeHeaderMenu({
+          ...props.menu,
+          items: [
+            {
+              id: "changed-files",
+              title: gt("Changed files"),
+              icon: "doc.text.magnifyingglass",
+              onPress: openFiles,
+            },
+            ...(showAgentControls
+              ? [
+                  {
+                    id: "ai-helpers",
+                    title: gt("AI helpers"),
+                    icon: "ellipsis.bubble",
+                    items: agentActions.map((action): AppBarMenuItem =>
+                      chooseThread && !action.disabled
+                        ? {
+                            id: action.task,
+                            title: action.title,
+                            icon: action.icon,
+                            items: appBarThreadMenuItems(
+                              agent.threadActions(action.task),
+                              agent.select,
+                            ),
+                          }
+                        : {
+                            id: action.task,
+                            title: action.title,
+                            icon: action.icon,
+                            disabled: action.disabled || agent.disabled,
+                            onPress: () => agent.start(action.task),
+                          },
+                    ),
+                  },
+                ]
+              : []),
+            ...props.menu.items,
+          ],
+        })}
       </Toolbar>
     );
   return (
@@ -286,6 +359,29 @@ export function PullRequestActionToolbar(props: {
       <Toolbar.Spacer flexible />
       {filesControl}
     </Toolbar>
+  );
+}
+
+function appBarThreadMenuItems(
+  items: MenuAction[],
+  select: (id: string) => void,
+): ReadonlyArray<AppBarMenuItem> {
+  return items.map((item) =>
+    item.subactions
+      ? {
+          id: item.id ?? item.title,
+          title: item.title,
+          icon: item.image,
+          items: appBarThreadMenuItems(item.subactions, select),
+        }
+      : {
+          id: item.id ?? item.title,
+          title: item.title,
+          icon: item.image,
+          subtitle: item.subtitle,
+          disabled: item.attributes?.disabled,
+          onPress: () => item.id && select(item.id),
+        },
   );
 }
 

@@ -29,6 +29,13 @@ const childPids = (pid: number): ReadonlyArray<number> => {
   );
 };
 
+// A zygote rewrites its argv into one space-separated title.
+const isZygote = (pid: number): boolean =>
+  (readProc(`/proc/${pid}/cmdline`) ?? "")
+    .replaceAll("\0", " ")
+    .split(" ")
+    .includes("--type=zygote");
+
 // A zombie has already released its memory mappings.
 const isRunning = (pid: number): boolean => {
   const stat = readProc(`/proc/${pid}/stat`);
@@ -67,4 +74,14 @@ export const stopChildProcessesBeforeExit = (pid: number): ReadonlyArray<number>
   signal(survivors, "SIGKILL");
   waitUntilStopped(survivors, KILL_WAIT_MS);
   return survivors;
+};
+
+/**
+ * Chromium's zygotes exit only after main does, so on an AppImage they outlive the mount even on
+ * an orderly quit. Kills them while main still holds the image mounted. Linux only (/proc).
+ */
+export const stopZygotesBeforeExit = (pid: number): void => {
+  const zygotes = childPids(pid).filter(isZygote);
+  signal(zygotes, "SIGKILL");
+  waitUntilStopped(zygotes, KILL_WAIT_MS);
 };

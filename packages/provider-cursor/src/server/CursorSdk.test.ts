@@ -68,6 +68,22 @@ describe("CursorSdk unhandled rejection guard", () => {
     }),
   );
 
+  it.effect("keeps the server running when the SDK aborts a stalled request", () =>
+    Effect.gen(function* () {
+      const stall = new DOMException("This operation was aborted", "AbortError");
+      stall.stack = "AbortError: This operation was aborted\n    at Is.onStall (689.js:1:111536)";
+      assert.deepStrictEqual(yield* rejectThroughGuard(stall), []);
+    }),
+  );
+
+  it.effect("still exits on an abort that was not raised from onStall", () =>
+    Effect.gen(function* () {
+      const abort = new DOMException("onStall was aborted", "AbortError");
+      abort.stack = "AbortError: onStall was aborted\n    at somewhereElse (app.js:1:1)";
+      assert.deepStrictEqual(yield* rejectThroughGuard(abort), [[1]]);
+    }),
+  );
+
   it.effect("keeps the server running when the SDK writes after its request stream ended", () =>
     Effect.gen(function* () {
       // Shaped like `ConnectError.from(e, Code.Aborted)` from the SDK's connect-node body pump.

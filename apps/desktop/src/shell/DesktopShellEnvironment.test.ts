@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
@@ -54,6 +55,26 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
     all: stdout,
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
+function makeSlowProcess(
+  output: string,
+  delay: Duration.Input,
+): ChildProcessSpawner.ChildProcessHandle {
+  const stdout = Stream.fromEffect(Effect.as(Effect.sleep(delay), textEncoder.encode(output)));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(125),
+    stdout,
+    stderr: Stream.empty,
+    all: stdout,
+    exitCode: Effect.as(Effect.sleep(delay), ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(true),
     kill: () => Effect.void,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
@@ -163,30 +184,134 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery when the cache is missing", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      yield* runShellEnvironment({
-        env: { SHELL: "/test-shell", PATH: "/usr/bin" },
-        platform: "darwin",
-        handler: () => "",
-        processSpawner: ChildProcessSpawner.make(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
-          ),
-        ),
-        use: (service) =>
-          Effect.gen(function* () {
-            const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
-            yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
+  it.effect.each([
+    { platform: "linux" as const, runtime: { APPDIR: "/opt/t3.AppDir/" }, scrub: true },
+    { platform: "linux" as const, runtime: { APPIMAGE: "/opt/T3.AppImage" }, scrub: true },
+    { platform: "linux" as const, runtime: {}, scrub: false },
+    { platform: "darwin" as const, runtime: { APPDIR: "/opt/t3.AppDir/" }, scrub: false },
+  ])(
+    "keeps AppImage mounts out of cached and discovered PATH: %j",
+    ({ platform, runtime, scrub }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped();
+        const cachePath = `${stateDir}/shell-environment-cache.json`;
+        const inheritedPath =
+          "/tmp/.mount_T3-Codold123/usr/bin:/launcher/bin:/opt/t3.AppDir/usr/bin";
+        const cachedPath = "/cached/bin:/tmp/.mount_T3-Codcache1/usr/bin";
+        const discoveredPath = "/fresh/bin:/tmp/.mount_T3-Codprobe1/usr/bin";
+        const retainedPath = "/tmp/tools:/tmp/.mount_Other123/usr/bin:/opt/t3.AppDir-backup/bin";
+        const cleanInherited = scrub
+          ? `/launcher/bin${runtime.APPDIR ? "" : ":/opt/t3.AppDir/usr/bin"}`
+          : inheritedPath;
+        const cleanCached = scrub ? "/cached/bin" : cachedPath;
+        const cleanDiscovered = scrub ? "/fresh/bin" : discoveredPath;
+        const env: NodeJS.ProcessEnv = {
+          ...runtime,
+          SHELL: "/bin/bash",
+          PATH: `${inheritedPath}:${retainedPath}`,
+        };
+        yield* fs.writeFileString(
+          cachePath,
+          encodeCache({
+            version: 1,
+            key: JSON.stringify([platform, "/test-home", "/bin/bash", ""]),
+            environment: { PATH: cachedPath, __MISE_DIFF: "cached-mise" },
           }),
-      });
-    }),
+        );
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const probePath = yield* Deferred.make<string | undefined>();
+        yield* runShellEnvironment({
+          env,
+          platform,
+          stateDir,
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const value =
+                command._tag === "StandardCommand" ? command.options.env?.PATH : undefined;
+              const path = typeof value === "string" ? value : undefined;
+              yield* Deferred.succeed(probePath, path);
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return makeProcess(
+                envOutput({ PATH: `${discoveredPath}:${path}`, __MISE_DIFF: "fresh-mise" }),
+              );
+            }),
+          ),
+          use: (service) =>
+            Effect.gen(function* () {
+              yield* service.installIntoProcess;
+              const expectedCached = `${cleanCached}:${cleanInherited}:${retainedPath}`;
+              assert.equal(env.PATH, expectedCached);
+              assert.equal(env.__MISE_DIFF, "cached-mise");
+              const cached = yield* Stream.runHead(service.updates);
+              assert.equal(Option.getOrThrow(cached).environment.PATH, expectedCached);
+              yield* Deferred.await(started);
+              assert.equal(yield* Deferred.await(probePath), `${cleanInherited}:${retainedPath}`);
+              yield* Deferred.succeed(release, undefined);
+              yield* service.awaitDiscovery;
+              const expectedFresh = `${cleanDiscovered}:${cleanInherited}:${retainedPath}`;
+              assert.equal(env.PATH, expectedFresh);
+              assert.equal(env.__MISE_DIFF, "fresh-mise");
+              const fresh = yield* Stream.runHead(service.updates);
+              assert.equal(Option.getOrThrow(fresh).environment.PATH, expectedFresh);
+              return true;
+            }),
+        });
+        const cached = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
+        assert.equal(cached.environment.PATH, env.PATH);
+        assert.equal(cached.environment.__MISE_DIFF, "fresh-mise");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { platform: "darwin" as const, env: { PATH: "/usr/bin" }, expectedPath: "/usr/bin" },
+    {
+      platform: "linux" as const,
+      env: { APPDIR: "/tmp/.mount_T3-Codnew123", PATH: ":/tmp/.mount_T3-Codold123/bin::/usr/bin:" },
+      expectedPath: "::/usr/bin:",
+    },
+    {
+      platform: "linux" as const,
+      env: { APPDIR: "/tmp/.mount_T3-Codnew123", PATH: "/tmp/.mount_T3-Codnew123/bin" },
+      expectedPath: undefined,
+    },
+  ])(
+    "does not wait for discovery when the cache is missing: %j",
+    ({ platform, env: initial, expectedPath }) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", ...initial };
+        let probePath: string | undefined;
+        yield* runShellEnvironment({
+          env,
+          platform,
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const value =
+                command._tag === "StandardCommand" ? command.options.env?.PATH : undefined;
+              probePath = typeof value === "string" ? value : undefined;
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return makeProcess(envOutput({ PATH: "/fresh/bin" }));
+            }),
+          ),
+          use: (service) =>
+            Effect.gen(function* () {
+              const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
+              yield* Deferred.await(started);
+              assert.isDefined(startup.pollUnsafe());
+              assert.equal(env.PATH, expectedPath);
+              assert.equal(probePath, expectedPath);
+              yield* Deferred.succeed(release, undefined);
+              return yield* service.awaitDiscovery;
+            }),
+        });
+      }),
   );
 
   it.effect(
@@ -210,12 +335,14 @@ describe("DesktopShellEnvironment", () => {
               __MISE_DIFF: "old-mise",
               SSH_AUTH_SOCK: "/old-session.sock",
               JAVA_HOME: "/old/java",
+              PNPM_HOME: "/old/pnpm",
               SSL_CERT_FILE: "/old/cert.pem",
             }),
         });
         const cachePath = `${stateDir}/shell-environment-cache.json`;
         const cached = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
         assert.equal(cached.environment.PATH, "/old/bin:/usr/bin");
+        assert.equal(cached.environment.PNPM_HOME, "/old/pnpm");
         assert.notProperty(cached.environment, "SSH_AUTH_SOCK");
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
@@ -264,6 +391,7 @@ describe("DesktopShellEnvironment", () => {
               assert.equal(env.PATH, "/fresh/bin:/launcher/bin");
               assert.equal(env.__MISE_DIFF, "fresh-mise");
               assert.isUndefined(env.JAVA_HOME);
+              assert.isUndefined(env.PNPM_HOME);
               assert.isUndefined(env.SSL_CERT_FILE);
               const fresh = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(fresh));
@@ -277,6 +405,7 @@ describe("DesktopShellEnvironment", () => {
         const refreshed = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
         assert.equal(refreshed.environment.PATH, "/fresh/bin:/launcher/bin");
         assert.notProperty(refreshed.environment, "JAVA_HOME");
+        assert.notProperty(refreshed.environment, "PNPM_HOME");
         assert.notProperty(refreshed.environment, "SSL_CERT_FILE");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -331,9 +460,11 @@ describe("DesktopShellEnvironment", () => {
             PATH: "/cached/bin",
             __MISE_DIFF: "cached-mise",
             JAVA_HOME: "/cached/java",
+            PNPM_HOME: "/cached/pnpm",
             NODE_EXTRA_CA_CERTS: "/cached/ca.pem",
             SSL_CERT_FILE: "/cached/cert.pem",
             SSL_CERT_DIR: "/cached/certs",
+            T3CODE_TELEMETRY_ENABLED: "false",
             SSH_AUTH_SOCK: "/stale.sock",
             NODE_OPTIONS: "--bad",
           },
@@ -370,9 +501,11 @@ describe("DesktopShellEnvironment", () => {
         assert.equal(env.PATH, "/cached/bin:/usr/bin");
         assert.equal(env.__MISE_DIFF, "cached-mise");
         assert.equal(env.JAVA_HOME, "/launcher/java");
+        assert.equal(env.PNPM_HOME, "/cached/pnpm");
         assert.equal(env.NODE_EXTRA_CA_CERTS, "/launcher/ca.pem");
         assert.equal(env.SSL_CERT_FILE, "");
         assert.equal(env.SSL_CERT_DIR, "/cached/certs");
+        assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
         assert.equal(env.SSH_AUTH_SOCK, "/current.sock");
         assert.isUndefined(env.NODE_OPTIONS);
         assert.equal(yield* fs.readFileString(cachePath), contents);
@@ -482,11 +615,11 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
+  it.effect("hydrates PATH, SSH_AUTH_SOCK, and DO_NOT_TRACK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
-        PATH: "/Users/test/.local/bin:/usr/bin",
+        PATH: " /Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
 
@@ -496,18 +629,20 @@ describe("DesktopShellEnvironment", () => {
         handler: (command) => {
           commands.push(command);
           return envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
+            PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
+            DO_NOT_TRACK: "1",
           });
         },
       });
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+      assert.equal(env.DO_NOT_TRACK, "1");
       assert.isTrue(prepared);
     }),
   );
@@ -580,6 +715,39 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "hydrates both Android SDK names when neither is inherited",
+      inherited: {},
+      expected: { ANDROID_HOME: "/shell/android-home", ANDROID_SDK_ROOT: "/shell/android-root" },
+    },
+    {
+      // The device host reads ANDROID_HOME before ANDROID_SDK_ROOT, so a shell
+      // ANDROID_HOME next to an inherited ANDROID_SDK_ROOT would change the SDK.
+      name: "keeps an inherited ANDROID_SDK_ROOT selected over a login-shell ANDROID_HOME",
+      inherited: { ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+      expected: { ANDROID_HOME: undefined, ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+    },
+  ])("$name", ({ inherited, expected }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin", ...inherited };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/shell/android-home",
+            ANDROID_SDK_ROOT: "/shell/android-root",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, expected.ANDROID_HOME);
+      assert.equal(env.ANDROID_SDK_ROOT, expected.ANDROID_SDK_ROOT);
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -634,6 +802,131 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.isFalse(prepared);
+    }),
+  );
+
+  it.effect("retries the user's shell when only the fallback shell answered", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/usr/bin/fish", PATH: "/usr/bin" };
+      const commands: string[] = [];
+      let fishReady = false;
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          if (command.command !== "/usr/bin/fish") return envOutput({ PATH: "/usr/bin" });
+          return fishReady
+            ? envOutput({ PATH: "/fish/bin:/usr/bin" })
+            : { output: "", exitCode: 7 };
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            assert.equal(env.PATH, "/usr/bin");
+            // The user's shell may still opt out of telemetry, so discovery has not settled.
+            assert.isFalse(yield* service.discoveryFinished);
+            // The Linux probe checks the D-Bus socket on the real filesystem, which the clock does not await.
+            const published = yield* service.updates.pipe(
+              Stream.filter((snapshot) => snapshot.environment.PATH === "/fish/bin:/usr/bin"),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+
+            fishReady = true;
+            yield* TestClock.adjust("30 seconds");
+            assert.isTrue(Option.isSome(yield* Fiber.join(published)));
+            assert.equal(env.PATH, "/fish/bin:/usr/bin");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/usr/bin/fish", "/bin/bash", "/usr/bin/fish"]);
+
+      // With no user shell to wait for, the fallback's answer is final.
+      commands.length = 0;
+      yield* runShellEnvironment({
+        env: { PATH: "/usr/bin" },
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag === "StandardCommand") commands.push(command.command);
+          return envOutput({ PATH: "/usr/bin" });
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            yield* TestClock.adjust("5 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/bin/bash"]);
+    }),
+  );
+
+  it.effect("gives background retries time for a locked or slow shell, then publishes", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      // Startup fails fast, the first retry meets a shell blocked on a lock, the second a slow one.
+      const spawned = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
+      const stopped = yield* Deferred.make<ChildProcess.KillOptions>();
+      let attempts = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          const attempt = attempts++;
+          const spawn = Deferred.succeed(spawned[attempt]!, undefined);
+          if (attempt === 0) return spawn.pipe(Effect.as(makeProcess("")));
+          if (attempt === 1) {
+            return spawn.pipe(
+              Effect.andThen(
+                Effect.acquireRelease(Effect.succeed(makeHungProcess()), () =>
+                  Deferred.succeed(stopped, command.options),
+                ),
+              ),
+            );
+          }
+          return spawn.pipe(
+            Effect.as(makeSlowProcess(envOutput({ PATH: "/fresh/bin" }), "20 seconds")),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isFalse(yield* service.awaitDiscovery);
+            const published = yield* service.updates.pipe(
+              Stream.drop(1),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+
+            yield* TestClock.adjust("30 seconds");
+            yield* Deferred.await(spawned[1]!);
+            // pyenv waits up to 60 s on its rehash lock before the shell continues.
+            yield* TestClock.adjust("1 minute");
+            assert.isFalse(yield* Deferred.isDone(stopped));
+            yield* TestClock.adjust("1 minute");
+            const stop = yield* Deferred.await(stopped);
+            // pyenv releases that lock in an EXIT trap, which SIGTERM runs and SIGKILL skips.
+            assert.equal(stop.killSignal, "SIGTERM");
+            assert.isAtLeast(Duration.toMillis(stop.forceKillAfter ?? 0), 5_000);
+
+            yield* TestClock.adjust("30 seconds");
+            yield* Deferred.await(spawned[2]!);
+            yield* TestClock.adjust("20 seconds");
+            const snapshot = yield* Fiber.join(published);
+            assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+            assert.isTrue(Option.isSome(snapshot) && snapshot.value.discovered);
+            assert.equal(
+              Option.isSome(snapshot) ? snapshot.value.environment.PATH : undefined,
+              "/fresh/bin:/usr/bin",
+            );
+            return true;
+          }),
+      });
     }),
   );
 
@@ -692,11 +985,13 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const scripts: Array<string> = [];
       const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          scripts.push(String(command.args.at(-1)));
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -730,6 +1025,13 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+      assert.isNotEmpty(scripts);
+      for (const script of scripts) {
+        assert.include(
+          script,
+          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+        );
+      }
     }),
   );
 
@@ -784,6 +1086,29 @@ describe("DesktopShellEnvironment", () => {
       yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(fiber);
       assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
+  );
+
+  it.effect("applies saved Windows user telemetry opt-outs missing from the launcher", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) =>
+          command._tag === "StandardCommand" &&
+          String(command.args.at(-1)).includes("T3CODE_TELEMETRY_ENABLED")
+            ? envOutput({
+                PATH: "C:\\Windows\\System32",
+                T3CODE_TELEMETRY_ENABLED: "false",
+                DO_NOT_TRACK: "1",
+              })
+            : envOutput({ PATH: "C:\\Windows\\System32" }),
+      });
+
+      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
+      assert.equal(env.DO_NOT_TRACK, "1");
     }),
   );
 

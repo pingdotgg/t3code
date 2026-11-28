@@ -8,7 +8,7 @@ const { test } = require("node:test");
 const release = readFileSync(join(__dirname, "../workflows/release.yml"), "utf8");
 const preview = readFileSync(join(__dirname, "../workflows/web-preview.yml"), "utf8");
 const stepPattern =
-  /        name: (?:Build staged deployment|Deploy preview)\n        shell: bash\n        run: \|\n((?:          .*\n|\n)+)/g;
+  /        name: (?:Build staged deployment|Deploy preview)\n        shell: bash\n(?:        env:\n(?:          .*\n)+)?        run: \|\n((?:          .*\n|\n)+)/g;
 const steps = [
   ...Array.from(release.matchAll(stepPattern), (match, index) => [
     index === 0 ? "hosted web" : "marketing",

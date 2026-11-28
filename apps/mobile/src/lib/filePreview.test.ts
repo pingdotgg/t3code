@@ -12,6 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
+import {
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "../features/threads/ThreadMarkdownVideo";
 import { AudioFilePreview } from "../features/files/AudioFilePreview";
 import { MediaVideoPlayer } from "../components/MediaVideoPlayer";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
@@ -19,6 +23,7 @@ import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
+import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
 
 const audio = vi.hoisted(() => ({
   status: {
@@ -85,6 +90,7 @@ vi.mock("react-native", () => ({
     addEventListener: () => ({ remove() {} }),
   },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
+  ScrollView: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
     onPress: () => void;
@@ -113,6 +119,7 @@ vi.mock("../components/ui/Button", () => ({
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
 vi.mock("expo", () => ({
+  requireNativeModule: () => ({ is24HourFormat: () => true }),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -178,7 +185,10 @@ vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironm
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
+  useEnvironmentPreviewTunnelOff: () => false,
 }));
+vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
+vi.mock("../features/threads/useOpenThreadLink", () => ({ useOpenThreadLink: () => vi.fn() }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
@@ -194,12 +204,18 @@ vi.mock("../native/SelectableMarkdownText", () => ({
     onLinkPress(href: string): void;
     renderImage?: MarkdownImageRenderer;
   }) => {
-    const embed = props.markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    const embeds = [...props.markdown.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)];
     return createElement(
       "div",
       null,
       createElement("button", { onClick: () => props.onLinkPress("target.ts") }, props.markdown),
-      embed && props.renderImage?.({ href: embed[2]!, alt: embed[1]!, title: null }),
+      embeds.map(([, alt, href], index) =>
+        createElement(
+          Fragment,
+          { key: index },
+          props.renderImage?.({ href: href!, alt: alt!, title: null }),
+        ),
+      ),
     );
   },
 }));
@@ -229,21 +245,37 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }));
 vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
-vi.mock("expo-image", () => ({}));
+vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("expo/fetch", () => ({}));
+vi.mock("react-native-svg", () => ({}));
 vi.mock("uniwind", () => ({}));
 vi.mock("../components/ui/Dialog", () => ({}));
+vi.mock("../components/ui/Sheet", () => ({
+  Sheet: ({ children }: { children?: ReactNode }) => children,
+}));
+vi.mock("../components/ui/ListActionRow", () => ({
+  ListActionRow: ({ label, onPress }: { label: string; onPress(): void }) =>
+    createElement("button", { onClick: onPress }, label),
+}));
 vi.mock("../components/ui/NativePresentation", () => ({
   PresentationSource: ({ children }: { children?: ReactNode }) => children,
 }));
 vi.mock("../components/ui/Menu", () => ({
   Menu: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/ui/FilePreviewGallery", () => ({
-  FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
-}));
+function previewPath(item: FilePreviewItem) {
+  return "resource" in item && "path" in item.resource ? item.resource.path : null;
+}
+
 vi.mock("../components/ui/FilePreviewModal", () => ({
-  FilePreviewModal: (props: { source: { name: string } | null }) =>
-    props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
+  FilePreviewModal: ({ source }: { source: FilePreviewSource | null }) =>
+    source
+      ? createElement("div", {
+          "data-file-preview": source.name,
+          "data-selected-path": previewPath(source),
+          "data-gallery": JSON.stringify(source.gallery?.map(previewPath)),
+        })
+      : null,
 }));
 vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../components/ComposerContextSheet", () => ({}));
@@ -268,7 +300,12 @@ vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
 vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ appearance: { baseFontSize: 14 }, themeAppearance: "dark" }),
+  useAppearancePreferences: () => ({
+    appearance: { baseFontSize: 14 },
+    themeAppearance: "dark",
+    fontFamilies: { regular: "System", medium: "System", bold: "System" },
+    monoFontFamily: "ui-monospace",
+  }),
 }));
 vi.mock("./useUniwindTheme", () => ({
   useUniwindTheme: () => new Proxy({}, { get: () => "#000000" }),
@@ -286,6 +323,9 @@ vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => n
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));
+vi.mock("../features/threads/CollapsibleUserMessageBody", () => ({
+  CollapsibleUserMessageBody: (props: { children: ReactNode }) => props.children,
+}));
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
 vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
@@ -293,10 +333,6 @@ vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
 }));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
-vi.mock("../features/threads/ThreadMarkdownImage", async () => {
-  const { createContext } = await import("react");
-  return { MarkdownImageAvailableWidthContext: createContext(390) };
-});
 vi.mock("../features/threads/ZoomableImagePressable", async () => {
   const { Pressable } = await import("react-native");
   return { ZoomableImagePressable: Pressable };
@@ -1299,6 +1335,59 @@ describe("ThreadInlineFilePreview playback", () => {
       expect(audio.player.play).toHaveBeenCalledTimes(isLoaded ? 3 : 2);
     },
   );
+
+  it("keeps a started inline audio player mounted when its row scrolls out of view", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    audio.status = { ...audio.status, isLoaded: true };
+    const container = document.createElement("div");
+    root = createRoot(container);
+    const retainRow = vi.fn();
+    const render = (visible: boolean) =>
+      root!.render(
+        createElement(
+          ThreadMediaRetainContext,
+          { value: retainRow },
+          createElement(
+            ThreadMediaVisibleContext,
+            { value: visible },
+            createElement(ThreadInlineFilePreview, {
+              source: { kind: "document", name: "sound.mp3", uri: "https://example.com/sound.mp3" },
+              onOpen() {},
+            }),
+          ),
+        ),
+      );
+    await act(async () => render(true));
+    const playButton = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Play audio"]');
+    const pauseButton = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Pause audio"]');
+    expect(playButton()).not.toBeNull();
+    // An idle preview still unmounts off-screen, so off-screen rows stay cheap.
+    await act(async () => render(false));
+    expect(playButton()).toBeNull();
+    await act(async () => render(true));
+    await act(async () => playButton()!.click());
+    expect(audio.player.play).toHaveBeenCalledOnce();
+    expect(pauseButton()).not.toBeNull();
+    // The feed list recycles rows beyond its draw distance, so the row itself is pinned too.
+    expect(retainRow).toHaveBeenLastCalledWith(true);
+    audio.player.release.mockClear();
+    audio.player.pause.mockClear();
+    // Scrolling the playing chip out of view (or a new reply pushing it out)
+    // must not unmount it: unmounting disposes the native player mid-playback.
+    await act(async () => render(false));
+    expect(pauseButton()).not.toBeNull();
+    expect(audio.player.release).not.toHaveBeenCalled();
+    expect(audio.player.pause).not.toHaveBeenCalled();
+    // Once playback finishes, the off-screen preview can unmount again.
+    audio.status = { ...audio.status, didJustFinish: true, currentTime: 10 };
+    await act(async () => render(false));
+    expect(pauseButton()).toBeNull();
+    expect(playButton()).toBeNull();
+    expect(audio.player.release).toHaveBeenCalledOnce();
+    expect(retainRow).toHaveBeenLastCalledWith(false);
+  });
 });
 
 describe("PDF preview detection", () => {
@@ -1335,6 +1424,70 @@ describe("inline file previews", () => {
 });
 
 describe("ThreadFeed previews", () => {
+  it("opens a tapped workspace image on its own gallery page, in message order", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const threadId = ThreadId.make("thread-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () =>
+        root.render(
+          createElement(ThreadFeed, {
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId,
+            detailRef: null,
+            threadTitle: "preview",
+            workspaceRoot: "/repo",
+            feed: [
+              {
+                type: "message",
+                id: messageId,
+                createdAt: timestamp,
+                message: {
+                  id: messageId,
+                  role: "assistant",
+                  text: "![Red](./red.png)\n\n![Blue](./blue.png)",
+                  attachments: [],
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                  runId: null,
+                  streaming: false,
+                  visibility: "local",
+                  sourceThreadId: threadId,
+                },
+              },
+            ],
+            queuedMessages: [],
+            dispatchingMessageId: null,
+            onEditPendingMessage: null,
+            contentPresentation: { kind: "ready" },
+            latestRun: null,
+            activeWorkStartedAt: null,
+            listRef: { current: null },
+            freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+            contentInsetEndAdjustment: { value: 0 } as Parameters<
+              typeof ThreadFeed
+            >[0]["contentInsetEndAdjustment"],
+            anchorMessageId: null,
+            keyboardOffset: 0,
+          }),
+        ),
+      );
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>(`[aria-label="Red"]`)!.click(),
+      );
+      const preview = container.querySelector("[data-file-preview]");
+      expect(preview?.getAttribute("data-selected-path")).toBe("/repo/./red.png");
+      expect(preview?.getAttribute("data-gallery")).toBe(
+        JSON.stringify(["/repo/./red.png", "/repo/./blue.png"]),
+      );
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("does not commit an open preview over a different thread", async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const environmentId = EnvironmentId.make("environment-1");

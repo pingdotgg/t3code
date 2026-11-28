@@ -256,8 +256,14 @@ function promptTokens(totals: UsageTokenTotals): number {
 }
 
 // A tier without the requested speed keeps the base tier's rate for that speed.
-function ratesAt(rate: ModelRate, speed: UsageSpeed, totals: UsageTokenTotals): TokenRates {
-  const prompt = promptTokens(totals);
+function ratesAt(
+  rate: ModelRate,
+  speed: UsageSpeed,
+  totals: UsageTokenTotals,
+  modelCalls?: number,
+): TokenRates {
+  // Tiers apply per request; a multi-call turn sums its calls, so compare the average.
+  const prompt = promptTokens(totals) / Math.max(1, modelCalls ?? 1);
   const tier = rate.contextTiers.find((tier) => prompt > tier.thresholdTokens)?.rate;
   if (speed === "standard") return tier ?? rate;
   return tier?.[speed] ?? rate[speed] ?? tier ?? rate;
@@ -310,6 +316,14 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
   return rate;
 }
 
+/** A priceable model the table has no rate for; a newer table may list it. */
+export function isUnlistedModel(table: RateTable, model: string): boolean {
+  const bareName = bareModelName(stripVariantSuffix(normalizeRateKey(model)));
+  return (
+    bareName.length > 0 && !UNPRICEABLE_MODELS.has(bareName) && lookupRate(table, model) === null
+  );
+}
+
 function resolveRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
@@ -319,7 +333,13 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
 
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "cacheCreation1hTokens" | "speed" | "reportedCostUsd"
+  | "model"
+  | "rateModel"
+  | "totals"
+  | "cacheCreation1hTokens"
+  | "speed"
+  | "modelCalls"
+  | "reportedCostUsd"
 >;
 
 function recordRate(table: RateTable, record: PricedRecord): ModelRate | null {
@@ -374,13 +394,14 @@ export function priceUsage(
     return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }
 
-  const listCost = costByCategory(record, ratesAt(rate, record.speed, totals));
+  const listCost = costByCategory(record, ratesAt(rate, record.speed, totals, record.modelCalls));
   const listCostUsd = sumCategories(listCost);
   if (reported !== null && listCostUsd <= 0) return unsplit(reported, "providerReported");
   const premiumUsd =
     record.speed === "standard"
       ? 0
-      : listCostUsd - sumCategories(costByCategory(record, ratesAt(rate, "standard", totals)));
+      : listCostUsd -
+        sumCategories(costByCategory(record, ratesAt(rate, "standard", totals, record.modelCalls)));
   const scale = reported === null ? 1 : reported / listCostUsd;
   return {
     costUsd: reported ?? listCostUsd,
@@ -402,6 +423,6 @@ export function cacheSavingsUsd(
 ): number {
   const rate = overrides?.get(record.model.trim()) ?? recordRate(table, record);
   if (rate === null) return 0;
-  const rates = ratesAt(rate, record.speed, record.totals);
+  const rates = ratesAt(rate, record.speed, record.totals, record.modelCalls);
   return record.totals.cachedInputTokens * (rates.inputCostPerToken - rates.cacheReadCostPerToken);
 }

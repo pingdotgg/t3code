@@ -35,6 +35,28 @@ it("keeps async questions in live notifications and thread history", () => {
   }
 });
 
+it("accepts generated images identified by fileId without inline result", () => {
+  const item = {
+    type: "imageGeneration",
+    id: "image-1",
+    status: "completed",
+    fileId: "file-1",
+    savedPath: "/tmp/generated.png",
+    revisedPrompt: null,
+  } as const;
+  for (const schema of [
+    CodexSchema.ServerNotification__ThreadItem,
+    CodexSchema.V2ItemStartedNotification__ThreadItem,
+    CodexSchema.V2ItemCompletedNotification__ThreadItem,
+    CodexSchema.V2ThreadReadResponse__ThreadItem,
+    CodexSchema.V2ThreadResumeResponse__ThreadItem,
+    CodexSchema.V2ThreadForkResponse__ThreadItem,
+    CodexSchema.V2TurnCompletedNotification__ThreadItem,
+  ]) {
+    assert.deepEqual(Schema.decodeSync(schema)(item), item);
+  }
+});
+
 it("keeps partial answers in notifications and persisted thread histories", () => {
   const item = {
     type: "agentMessage",

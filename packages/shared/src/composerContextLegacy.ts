@@ -229,8 +229,8 @@ function reviewRecord(
   for (const match of rawAttributes.matchAll(REVIEW_ATTRIBUTE)) {
     attributes[match[1]!] = unescapeAttribute(match[2] ?? "");
   }
-  const filePath = attributes.filePath?.trim();
-  const sectionId = attributes.sectionId?.trim();
+  const filePath = attributes.filePath;
+  const sectionId = attributes.sectionId;
   const startIndex = attributes.startIndex;
   const endIndex = attributes.endIndex;
   if (!filePath || !sectionId || !/^\d+$/.test(startIndex ?? "") || !/^\d+$/.test(endIndex ?? "")) {

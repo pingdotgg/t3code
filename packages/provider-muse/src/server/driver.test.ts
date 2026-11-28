@@ -211,6 +211,6 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
         const refreshed = yield* instance.snapshot.refresh;
         expect(refreshed.usageLimits).toEqual(latest.usageLimits);
         expect(refreshed.auth.label).toBe("tier-2");
-      }).pipe(Effect.scoped),
+      }),
   );
 });
