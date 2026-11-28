@@ -507,12 +507,15 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
     const cell = record(value);
-    const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
-    if (outputs.length > 100) throw new PreviewError({ code: "notebook-too-many-outputs" });
+    // Count outputs as shown: consecutive stream records of one name join into one block.
+    const groups = Array.from(
+      notebookOutputGroups(Array.isArray(cell.outputs) ? cell.outputs : [], notebookText),
+    );
+    if (groups.length > 100) throw new PreviewError({ code: "notebook-too-many-outputs" });
     return {
       kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
       source: notebookText(cell.source),
-      outputs: Array.from(notebookOutputGroups(outputs, notebookText), (group) => {
+      outputs: Array.from(groups, (group) => {
         if (group.kind === "stream") {
           return {
             kind: "text" as const,
