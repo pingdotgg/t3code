@@ -13,6 +13,9 @@ consume the runtime. Keeping retry and session ownership here prevents competing
 - Foregrounding, network changes, explicit retries, offline reports, and a request the socket
   leaves unanswered probe the established session rather than blindly reconnecting (OS offline
   reports are often wrong, especially for loopback). Only a failed probe replaces the socket.
+- A route that keeps losing live sessions is tried last for a cooldown, then the better-route check
+  moves back to it. iOS can tear down every socket through a reconfiguring Tailscale tunnel while
+  the host stays healthy, and reconnecting over that route again only repeats the drop.
 - The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes connections by
   environment. An involuntary disconnect keeps the registration and cached projections; explicit
   removal closes the scope and clears credentials, caches, and drafts. Cloud-account changes apply
