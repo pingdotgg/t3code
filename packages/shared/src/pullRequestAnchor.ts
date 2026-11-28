@@ -33,10 +33,9 @@ function pullRequestUrlHash(url: string | null | undefined): string {
 }
 
 function normalizePullRequestCommentAnchor(anchor: string): string {
-  return anchor.replace(
-    /^(?:r|discussion-diff-)(\d+)(?:[LR]\d+(?:-[LR]\d+)?)?$/i,
-    "discussion_r$1",
-  );
+  return anchor
+    .toLowerCase()
+    .replace(/^(?:r|discussion-diff-)(\d+)(?:[lr]\d+(?:-[lr]\d+)?)?$/, "discussion_r$1");
 }
 
 // GitHub pull request tabs and their GitLab merge request equivalents. Forgejo and Gitea spell the
@@ -163,7 +162,10 @@ export function pullRequestAnchorMatchesUrl(
   anchor: string,
   url: string | null | undefined,
 ): boolean {
-  return normalizePullRequestCommentAnchor(pullRequestUrlHash(url)) === anchor;
+  return (
+    normalizePullRequestCommentAnchor(pullRequestUrlHash(url)) ===
+    normalizePullRequestCommentAnchor(anchor)
+  );
 }
 
 interface AnchoredComment {
