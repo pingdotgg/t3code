@@ -81,6 +81,7 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     readonly name: string;
     readonly publishTo: NewProjectPublishTarget | null;
     readonly assignToTeam?: boolean;
+    readonly teamEnvironmentId?: EnvironmentId | null;
   }): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
@@ -145,11 +146,12 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
       return null;
     });
     if (input.assignToTeam) {
+      const targetTeamEnvironmentId = input.teamEnvironmentId ?? input.environmentId;
       const repoIdentityKey = project
         ? extractProjectRepoIdentityKey(project.repositoryIdentity)
         : null;
       const assignResult = await assignProjectToTeam({
-        environmentId: input.environmentId,
+        environmentId: targetTeamEnvironmentId,
         input: {
           projectId,
           defaultViewId: null,

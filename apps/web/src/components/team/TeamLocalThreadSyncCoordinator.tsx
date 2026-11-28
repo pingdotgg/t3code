@@ -24,12 +24,7 @@ import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
-import {
-  clearPendingLocalThreadViewId,
-  readPendingLocalThreadViewId,
-  teamEnvironment,
-  useTeamStatesByEnvironment,
-} from "~/state/team";
+import { readLocalThreadAccess, teamEnvironment, useTeamStatesByEnvironment } from "~/state/team";
 import { environmentThreadStateAtom } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -39,14 +34,106 @@ import {
 } from "~/threadNotifications";
 import { toastManager } from "../ui/toast";
 
+export const STREAMING_SYNC_THROTTLE_MS = 750;
+
+export interface StreamingSyncThrottleController {
+  readonly schedule: (
+    key: string,
+    options: { readonly isActive: boolean; readonly immediate?: boolean },
+  ) => void;
+  readonly flushAllPending: () => void;
+  readonly clear: (key: string) => void;
+  readonly dispose: () => void;
+}
+
+export function createStreamingSyncThrottleController(input: {
+  readonly throttleMs?: number;
+  readonly onFlush: (key: string) => void;
+  readonly now?: () => number;
+}): StreamingSyncThrottleController {
+  const throttleMs = input.throttleMs ?? STREAMING_SYNC_THROTTLE_MS;
+  const now = input.now ?? Date.now;
+  const timerByKey = new Map<string, ReturnType<typeof setTimeout>>();
+  const lastSentAtByKey = new Map<string, number>();
+  const wasActiveByKey = new Map<string, boolean>();
+
+  const cancelTimer = (key: string) => {
+    const existing = timerByKey.get(key);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      timerByKey.delete(key);
+    }
+  };
+
+  const flushNow = (key: string) => {
+    cancelTimer(key);
+    lastSentAtByKey.set(key, now());
+    input.onFlush(key);
+  };
+
+  return {
+    schedule(key, options) {
+      const prevActive = wasActiveByKey.get(key) === true;
+      wasActiveByKey.set(key, options.isActive);
+      // Flush immediately on turn start (inactive -> active), terminal/idle states, or explicit immediate flushes.
+      if (!options.isActive || options.immediate || !prevActive) {
+        flushNow(key);
+        return;
+      }
+      if (timerByKey.has(key)) {
+        return;
+      }
+      const lastSentAt = lastSentAtByKey.get(key);
+      const elapsed = lastSentAt === undefined ? throttleMs : now() - lastSentAt;
+      if (elapsed >= throttleMs) {
+        flushNow(key);
+        return;
+      }
+      const delayMs = Math.max(0, throttleMs - elapsed);
+      const timer = setTimeout(() => {
+        timerByKey.delete(key);
+        lastSentAtByKey.set(key, now());
+        input.onFlush(key);
+      }, delayMs);
+      timerByKey.set(key, timer);
+    },
+    flushAllPending() {
+      for (const [key, timer] of Array.from(timerByKey.entries())) {
+        clearTimeout(timer);
+        timerByKey.delete(key);
+        lastSentAtByKey.set(key, now());
+        input.onFlush(key);
+      }
+    },
+    clear(key) {
+      cancelTimer(key);
+      lastSentAtByKey.delete(key);
+      wasActiveByKey.delete(key);
+    },
+    dispose() {
+      this.flushAllPending();
+      lastSentAtByKey.clear();
+      wasActiveByKey.clear();
+    },
+  };
+}
+
 function buildLocalSyncPayload(input: {
   readonly localEnvironmentId: EnvironmentId;
   readonly localEnvironmentLabel: string;
   readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
   readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
+  readonly initialLocked?: boolean;
   readonly shell: ReturnType<typeof useThreadShells>[number];
 }): TeamSyncLocalThreadInput {
-  const { localEnvironmentId, localEnvironmentLabel, teamProjectId, defaultViewId, shell } = input;
+  const {
+    localEnvironmentId,
+    localEnvironmentLabel,
+    teamProjectId,
+    defaultViewId,
+    initialLocked,
+    shell,
+  } = input;
   const detailResult = appAtomRegistry.get(
     environmentThreadStateAtom(localEnvironmentId, shell.id),
   );
@@ -90,6 +177,7 @@ function buildLocalSyncPayload(input: {
     threadId: shell.id,
     projectId: teamProjectId,
     ...(defaultViewId ? { viewId: defaultViewId } : {}),
+    ...(initialLocked ? { locked: true } : {}),
     executionEnvironmentId: localEnvironmentId,
     executionEnvironmentLabel: localEnvironmentLabel,
     title: shell.title.trim() || m(msg("Untitled thread")),
@@ -99,6 +187,9 @@ function buildLocalSyncPayload(input: {
     interactionMode: shell.interactionMode,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
+    ...(Option.isSome(detailState) && detailState.value.sequence > 0
+      ? { syncSeq: NonNegativeInt.make(detailState.value.sequence) }
+      : {}),
     ...(shell.archivedAt !== null ? { archivedAt: shell.archivedAt } : { archivedAt: null }),
     ...(shell.deletedAt !== null ? { deletedAt: shell.deletedAt } : { deletedAt: null }),
     runs,
@@ -120,11 +211,13 @@ function buildShellFingerprint(input: {
   readonly shell: ReturnType<typeof useThreadShells>[number];
   readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
   readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
+  readonly initialLocked?: boolean;
 }): string {
-  const { shell, teamProjectId, defaultViewId } = input;
+  const { shell, teamProjectId, defaultViewId, initialLocked } = input;
   return [
     teamProjectId,
     defaultViewId ?? "",
+    initialLocked ? "1" : "0",
     shell.title,
     shell.branch ?? "",
     shell.updatedAt,
@@ -144,6 +237,7 @@ interface SyncEntry {
   readonly teamEnvironmentId: EnvironmentId;
   readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
   readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
+  readonly initialLocked: boolean;
   readonly shellFingerprint: string;
   readonly isActive: boolean;
 }
@@ -203,17 +297,50 @@ export function TeamLocalThreadSyncCoordinator() {
   const retryTimerByKeyRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const liveTeamEnvIdsRef = useRef(new Set<EnvironmentId>());
   const subscriptionsByKeyRef = useRef(new Map<string, () => void>());
+  const executeSyncRef = useRef<(syncKey: string, options?: { readonly force?: boolean }) => void>(
+    () => {},
+  );
+  const streamingThrottleRef = useRef<StreamingSyncThrottleController | null>(null);
 
   const seenNoteIdsRef = useRef(new Set<TeamThreadNoteId>());
   const initializedTeamEnvsRef = useRef(new Set<EnvironmentId>());
 
-  // Clean up all detail subscriptions and retry timers only on unmount so unrelated state changes
-  // never trigger a full unsubscribe/resubscribe storm.
+  // Clean up all detail subscriptions and timers only on unmount (flushing any pending throttled
+  // streaming snapshots first so final state is never lost), and flush on visibility-hide / pagehide.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes persistent background sync subscriptions and timers on unmount
   useEffect(() => {
     const subscriptions = subscriptionsByKeyRef.current;
     const retryTimers = retryTimerByKeyRef.current;
+    const throttle = createStreamingSyncThrottleController({
+      throttleMs: STREAMING_SYNC_THROTTLE_MS,
+      onFlush: (syncKey) => {
+        executeSyncRef.current(syncKey);
+      },
+    });
+    streamingThrottleRef.current = throttle;
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        throttle.flushAllPending();
+      }
+    };
+    const handlePageHide = () => {
+      throttle.flushAllPending();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", handlePageHide);
+    }
     return () => {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("pagehide", handlePageHide);
+      }
+      throttle.dispose();
+      streamingThrottleRef.current = null;
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const timer of retryTimers.values()) clearTimeout(timer);
@@ -238,7 +365,14 @@ export function TeamLocalThreadSyncCoordinator() {
       if (shell.environmentId !== primaryEnvironmentId) continue;
       const localProject = localProjectsById.get(shell.projectId);
       if (!localProject) continue;
-      const assignment = resolveProjectTeamAssignment({ project: localProject, teamStates });
+      const savedAccess = readLocalThreadAccess(shell.environmentId, shell.id);
+      const targetId = savedAccess?.teamEnvironmentId;
+      const targetState = targetId ? teamStates.get(targetId) : undefined;
+      if (targetId && !targetState) continue;
+      const assignment = resolveProjectTeamAssignment({
+        project: localProject,
+        teamStates: targetId && targetState ? new Map([[targetId, targetState]]) : teamStates,
+      });
       if (!assignment || assignment.teamEnvironmentId === primaryEnvironmentId) continue;
       const syncKey = `${assignment.teamEnvironmentId}\0${shell.id}`;
       const existingAttribution = assignment.teamState.attributionByThreadId.get(shell.id);
@@ -252,16 +386,17 @@ export function TeamLocalThreadSyncCoordinator() {
       ) {
         continue;
       }
-      const pendingViewId = readPendingLocalThreadViewId(shell.id);
       const defaultViewId =
-        pendingViewId ??
         existingAttribution?.viewId ??
+        savedAccess?.viewId ??
         assignment.assignment.defaultViewId ??
         undefined;
+      const initialLocked = existingAttribution === undefined && savedAccess?.locked === true;
       const shellFingerprint = buildShellFingerprint({
         shell,
         teamProjectId: assignment.assignment.projectId,
         defaultViewId,
+        initialLocked,
       });
       const entry: SyncEntry = {
         syncKey,
@@ -271,6 +406,7 @@ export function TeamLocalThreadSyncCoordinator() {
         teamEnvironmentId: assignment.teamEnvironmentId,
         teamProjectId: assignment.assignment.projectId,
         defaultViewId,
+        initialLocked,
         shellFingerprint,
         isActive: isRunActive(shell.latestRun?.status),
       };
@@ -377,6 +513,7 @@ export function TeamLocalThreadSyncCoordinator() {
         latestEntryByKeyRef.current.delete(syncKey);
         syncedShellFingerprintByKeyRef.current.delete(syncKey);
         syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+        streamingThrottleRef.current?.clear(syncKey);
         retryAttemptsByKeyRef.current.delete(syncKey);
         retryScheduledFingerprintByKeyRef.current.delete(syncKey);
         const timer = retryTimerByKeyRef.current.get(syncKey);
@@ -404,21 +541,22 @@ export function TeamLocalThreadSyncCoordinator() {
       }
     };
 
-    const triggerSync = (syncKey: string, options?: { readonly force?: boolean }) => {
+    const executeSync = (syncKey: string, options?: { readonly force?: boolean }) => {
       const entry = latestEntryByKeyRef.current.get(syncKey);
       if (!entry) return;
       const isClosingRequest = pendingClosingEntriesByKeyRef.current.get(syncKey) === entry;
       if (!liveTeamEnvIdsRef.current.has(entry.teamEnvironmentId)) {
         return;
       }
-      const payload = buildLocalSyncPayload({
+      const basePayload = buildLocalSyncPayload({
         localEnvironmentId: entry.localEnvironmentId,
         localEnvironmentLabel: entry.localEnvironmentLabel,
         teamProjectId: entry.teamProjectId,
         defaultViewId: entry.defaultViewId,
+        initialLocked: entry.initialLocked,
         shell: entry.shell,
       });
-      const fingerprint = JSON.stringify(payload);
+      const fingerprint = JSON.stringify({ ...basePayload, syncSeq: undefined });
       if (syncedPayloadFingerprintByKeyRef.current.get(syncKey) === fingerprint) {
         syncedShellFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
         if (isClosingRequest) {
@@ -428,6 +566,7 @@ export function TeamLocalThreadSyncCoordinator() {
           }
           syncedShellFingerprintByKeyRef.current.delete(syncKey);
           syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+          streamingThrottleRef.current?.clear(syncKey);
           retryAttemptsByKeyRef.current.delete(syncKey);
           retryScheduledFingerprintByKeyRef.current.delete(syncKey);
         } else {
@@ -461,7 +600,7 @@ export function TeamLocalThreadSyncCoordinator() {
       pendingRetryByKeyRef.current.delete(syncKey);
       void syncLocalThread({
         environmentId: entry.teamEnvironmentId,
-        input: payload,
+        input: basePayload,
       })
         .then((result) => {
           if (result._tag === "Success") {
@@ -469,7 +608,6 @@ export function TeamLocalThreadSyncCoordinator() {
             syncedShellFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
             retryAttemptsByKeyRef.current.delete(syncKey);
             retryScheduledFingerprintByKeyRef.current.delete(syncKey);
-            clearPendingLocalThreadViewId(entry.shell.id);
             if (isClosingRequest) {
               if (pendingClosingEntriesByKeyRef.current.get(syncKey) === entry) {
                 pendingClosingEntriesByKeyRef.current.delete(syncKey);
@@ -478,6 +616,7 @@ export function TeamLocalThreadSyncCoordinator() {
                 }
                 syncedShellFingerprintByKeyRef.current.delete(syncKey);
                 syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+                streamingThrottleRef.current?.clear(syncKey);
               }
             } else {
               releaseSubscriptionIfSettled(syncKey);
@@ -505,7 +644,7 @@ export function TeamLocalThreadSyncCoordinator() {
               const delayMs = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
               const timer = setTimeout(() => {
                 retryTimerByKeyRef.current.delete(syncKey);
-                triggerSync(syncKey, { force: true });
+                executeSyncRef.current(syncKey, { force: true });
               }, delayMs);
               retryTimerByKeyRef.current.set(syncKey, timer);
             }
@@ -516,9 +655,21 @@ export function TeamLocalThreadSyncCoordinator() {
           const pending = pendingRetryByKeyRef.current.get(syncKey);
           if (pending) {
             pendingRetryByKeyRef.current.delete(syncKey);
-            triggerSync(pending.syncKey);
+            scheduleSync(pending.syncKey);
           }
         });
+    };
+
+    executeSyncRef.current = executeSync;
+
+    const scheduleSync = (syncKey: string, options?: { readonly immediate?: boolean }) => {
+      const entry = latestEntryByKeyRef.current.get(syncKey);
+      if (!entry) return;
+      const isClosingRequest = pendingClosingEntriesByKeyRef.current.get(syncKey) === entry;
+      streamingThrottleRef.current?.schedule(syncKey, {
+        isActive: entry.isActive && !isClosingRequest,
+        immediate: options?.immediate === true || isClosingRequest,
+      });
     };
 
     for (const [syncKey, entry] of currentEntriesByKey) {
@@ -531,15 +682,15 @@ export function TeamLocalThreadSyncCoordinator() {
       if (!subscriptionsByKeyRef.current.has(syncKey)) {
         const atom = environmentThreadStateAtom(entry.localEnvironmentId, entry.shell.id);
         const unsubscribe = appAtomRegistry.subscribe(atom, () => {
-          triggerSync(syncKey);
+          scheduleSync(syncKey);
         });
         subscriptionsByKeyRef.current.set(syncKey, unsubscribe);
       }
-      triggerSync(syncKey);
+      scheduleSync(syncKey);
     }
 
     for (const syncKey of pendingClosingEntriesByKeyRef.current.keys()) {
-      triggerSync(syncKey);
+      scheduleSync(syncKey, { immediate: true });
     }
   }, [environments, primaryEnvironmentId, projects, syncLocalThread, teamStates, threadShells]);
 

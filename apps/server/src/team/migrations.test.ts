@@ -34,6 +34,7 @@ describe("team sidecar migrations", () => {
         "team_invites",
         "team_local_bindings",
         "team_local_sync_tokens",
+        "team_local_sync_watermarks",
         "team_member_preferences",
         "team_members",
         "team_pairing_meta",

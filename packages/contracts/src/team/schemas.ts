@@ -556,7 +556,7 @@ export type TeamThreadEnvironmentAccess =
   | { readonly canExecute: true; readonly reason: "ok" }
   | {
       readonly canExecute: false;
-      readonly reason: "other_member_local" | "environment_acl_denied";
+      readonly reason: "other_member_local" | "own_local_mirror" | "environment_acl_denied";
       readonly environmentLabel: string;
     };
 
@@ -594,16 +594,14 @@ export function resolveTeamThreadEnvironmentAccess(input: {
     const label =
       attribution.executionEnvironmentLabel ??
       `${attribution.creatorPseudo ?? "Member"}'s local environment`;
-    if (
-      viewingOnLocalExecutionEnvironment &&
-      attribution.creatorMemberId !== null &&
-      attribution.creatorMemberId === member.id
-    ) {
+    const isCreator =
+      attribution.creatorMemberId !== null && attribution.creatorMemberId === member.id;
+    if (viewingOnLocalExecutionEnvironment && isCreator) {
       return { canExecute: true, reason: "ok" };
     }
     return {
       canExecute: false,
-      reason: "other_member_local",
+      reason: isCreator ? "own_local_mirror" : "other_member_local",
       environmentLabel: label,
     };
   }
@@ -1834,6 +1832,7 @@ export const TeamSyncLocalThreadInput = Schema.Struct({
   messages: Schema.Array(TeamSyncedMessageSnapshot),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  syncSeq: Schema.optionalKey(NonNegativeInt),
   archivedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
 });

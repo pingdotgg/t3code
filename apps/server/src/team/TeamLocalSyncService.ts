@@ -36,6 +36,18 @@ const localSyncMirroredTurnItemId = (threadId: ThreadId, rawMessageId: string): 
     `local-sync:${encodeURIComponent(threadId)}:item:${encodeURIComponent(rawMessageId)}`,
   );
 
+const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "rolled_back",
+]);
+
+function isTerminalRunStatus(status: OrchestrationV2Run["status"]): boolean {
+  return TERMINAL_RUN_STATUSES.has(status);
+}
+
 /**
  * Mirrors a member's local-environment team thread into the Team Server's orchestration
  * projection via read-only `EventSink.write` (zero provider effects). Colleagues with Read
@@ -57,6 +69,7 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
   const now = yield* DateTime.now;
   const createdAt = DateTime.makeUnsafe(sync.createdAt);
   const updatedAt = DateTime.makeUnsafe(sync.updatedAt);
+  if (existing?.thread.deletedAt != null) return;
   const archivedAt =
     sync.archivedAt !== undefined
       ? sync.archivedAt !== null
@@ -181,20 +194,29 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
         type: "run.created",
         payload: runPayload,
       });
-    } else if (
-      prevRun.status !== runPayload.status ||
-      prevRun.ordinal !== runPayload.ordinal ||
-      prevRun.userMessageId !== runPayload.userMessageId ||
-      (prevRun.completedAt !== null ? DateTime.toEpochMillis(prevRun.completedAt) : null) !==
-        (runPayload.completedAt !== null ? DateTime.toEpochMillis(runPayload.completedAt) : null)
-    ) {
-      events.push({
-        id: yield* nextEventId(),
-        threadId: sync.threadId,
-        occurredAt: now,
-        type: "run.updated",
-        payload: runPayload,
-      });
+    } else {
+      const regressesTerminalStatus =
+        isTerminalRunStatus(prevRun.status) && !isTerminalRunStatus(runPayload.status);
+      const clearsCompletedAt = prevRun.completedAt !== null && runPayload.completedAt === null;
+      if (
+        !regressesTerminalStatus &&
+        !clearsCompletedAt &&
+        (prevRun.status !== runPayload.status ||
+          prevRun.ordinal !== runPayload.ordinal ||
+          prevRun.userMessageId !== runPayload.userMessageId ||
+          (prevRun.completedAt !== null ? DateTime.toEpochMillis(prevRun.completedAt) : null) !==
+            (runPayload.completedAt !== null
+              ? DateTime.toEpochMillis(runPayload.completedAt)
+              : null))
+      ) {
+        events.push({
+          id: yield* nextEventId(),
+          threadId: sync.threadId,
+          occurredAt: now,
+          type: "run.updated",
+          payload: runPayload,
+        });
+      }
     }
   }
 
@@ -214,6 +236,12 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
       syncedMessage.runId !== null
         ? localSyncMirroredRunId(sync.threadId, syncedMessage.runId)
         : null;
+    const isStaleMessage =
+      prevMessage !== undefined &&
+      DateTime.toEpochMillis(msgUpdatedAt) < DateTime.toEpochMillis(prevMessage.updatedAt);
+    if (isStaleMessage) {
+      continue;
+    }
     const messageChanged =
       !prevMessage ||
       prevMessage.text !== syncedMessage.text ||

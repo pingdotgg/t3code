@@ -8,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { isTeamHubOnlyServerConfig } from "@t3tools/client-runtime/team";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
@@ -48,7 +49,9 @@ export function createScratchProjectActions(input: {
     for (const entry of input.environments()) {
       if (entry.environmentId === environmentId) environment = entry;
     }
-    return availableScratchWorkspaceRoot(environment?.connection.phase, environment?.serverConfig);
+    return isTeamHubOnlyServerConfig(environment?.serverConfig)
+      ? null
+      : availableScratchWorkspaceRoot(environment?.connection.phase, environment?.serverConfig);
   };
 
   // The primary (local) environment wins; `fallback` only applies when it offers no scratch root.

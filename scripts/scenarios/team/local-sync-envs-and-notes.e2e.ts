@@ -567,6 +567,16 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
     })
     .toContain("Milestone 5 Team");
 
+  const localViewRule = { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] };
+  const localView = await callBearerRpc(topology.teamServer.origin, claraBearerToken, (client) =>
+    client["team.createView"]({
+      name: "Local work",
+      readRule: localViewRule,
+      postRule: localViewRule,
+    }),
+  );
+  if (!localView.ok) throw new Error(localView.error);
+
   // 5. Bob enables desktop notifications and starts a thread on his LOCAL environment for the team-assigned project.
   await bob.open("/settings/general");
   const notificationSelect = bob.page.getByLabel("Thread notifications");
@@ -605,6 +615,8 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
   await bob.page.getByRole("button", { name: "New thread" }).first().click();
   // Verify the new-thread environment picker offers Bob's local env & Team Server, and hides restricted GPU Runner.
   await selectDraftEnvironment(bob.page, /Local \(bob\)/i, "GPU Runner");
+  await bob.page.getByTestId("team-draft-view-select").click();
+  await bob.page.getByRole("option", { name: "Local work" }).click();
   const bobEditor = bob.page.locator('[contenteditable="true"]').first();
   await bobEditor.waitFor({ state: "visible", timeout: 15_000 });
   await bobEditor.click();
@@ -630,11 +642,12 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
         if (!attr) {
           return `missing(teamProjects=${JSON.stringify(state.result.teamProjects)}, attrs=${state.result.threadAttributions.length})`;
         }
-        return attr.isLocalSynced ? "synced" : "not-local-synced";
+        return attr.isLocalSynced ? attr.viewId : "not-local-synced";
       },
       { timeout: 20_000, interval: 500 },
     )
-    .toBe("synced");
+    .toBe(localView.result.id);
+  await expect.poll(() => bob.page.locator(`[data-thread-item$="${bobThreadId}"]`).count()).toBe(1);
 
   // 6. Alice (owner) sees Bob's local-synced thread on the Team Server, sees the inaccessible-environment banner,
   //    cannot execute on Bob's laptop (enforced server-side for even owner/admin), and leaves a note via in-place Note Mode.

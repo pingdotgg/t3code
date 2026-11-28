@@ -36,7 +36,10 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import {
+  wasBootstrapThreadDeleted,
+  wasBootstrapThreadNotCreated,
+} from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -134,14 +137,14 @@ import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import {
-  clearPendingLocalThreadViewId,
+  clearLocalThreadAccess,
   clearTeamDraftAccessOptions,
   readTeamDraftAccessOptions,
   readTeamEnvironmentStateFromRegistry,
   readTeamThreadNoteMode,
   readTeamThreadNotesForSend,
   readTeamThreadPostPermission,
-  setPendingLocalThreadViewId,
+  prepareTeamThreadAccess,
   setTeamThreadNoteMode,
   teamEnvironment,
 } from "../../state/team";
@@ -1542,10 +1545,12 @@ export function useComposerSend(input: ComposerSendInput) {
       usesAttachmentUploads: turnUsesAttachmentUploads,
       draftTarget: composerDraftTarget,
     });
+    const teamDraftAccess = isLocalDraftThread ? readTeamDraftAccessOptions(routeThreadKey) : null;
     if (multipleModelSelections !== null) {
       await sendToMultipleModels({
         threadId: threadIdForSend,
         project: activeProject,
+        teamDraftAccess,
         branch: activeThreadBranch!,
         selections: multipleModelSelections,
         targets: multipleTargets,
@@ -1677,7 +1682,6 @@ export function useComposerSend(input: ComposerSendInput) {
 
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
-    const teamDraftAccess = isLocalDraftThread ? readTeamDraftAccessOptions(routeThreadKey) : null;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
@@ -1693,8 +1697,7 @@ export function useComposerSend(input: ComposerSendInput) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
-                      ...(teamDraftAccess?.viewId ? { teamViewId: teamDraftAccess.viewId } : {}),
-                      ...(teamDraftAccess?.locked ? { teamLocked: true } : {}),
+                      ...prepareTeamThreadAccess(environmentId, threadIdForSend, teamDraftAccess),
                     },
                   }
                 : {}),
@@ -1765,21 +1768,7 @@ export function useComposerSend(input: ComposerSendInput) {
           teamAcceptedNoteRefs = refs;
         }
       }
-      const shouldSetPendingLocalDraftView = Boolean(
-        isLocalDraftThread &&
-        teamDraftAccess?.viewId &&
-        readTeamThreadNotesForSend({
-          environmentId,
-          threadId: threadIdForSend,
-          project: activeProject,
-          connectedEnvironmentIds,
-        }).isViewingOnLocalExecutionEnvironment,
-      );
       if (failure === null) {
-        if (shouldSetPendingLocalDraftView && teamDraftAccess?.viewId) {
-          // Preserve restricted-View selection when TeamLocalThreadSyncCoordinator mirrors a local draft.
-          setPendingLocalThreadViewId(threadIdForSend, teamDraftAccess.viewId);
-        }
         if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
         const startPromise = startThreadTurn({
           environmentId,
@@ -1833,8 +1822,12 @@ export function useComposerSend(input: ComposerSendInput) {
         const startResult = await startPromise;
         if (startResult._tag === "Failure") {
           failure = startResult;
-          if (shouldSetPendingLocalDraftView) {
-            clearPendingLocalThreadViewId(threadIdForSend);
+          const error = squashAtomCommandFailure(startResult);
+          if (
+            isLocalDraftThread &&
+            (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error))
+          ) {
+            clearLocalThreadAccess(environmentId, threadIdForSend);
           }
           if (localNoteReservation !== null) {
             void releaseAcceptedTeamNotes({

@@ -5,6 +5,7 @@ import {
   AlertCircleIcon,
   EyeIcon,
   GitForkIcon,
+  LaptopIcon,
   LockIcon,
   MonitorOffIcon,
   StickyNoteIcon,
@@ -37,8 +38,24 @@ export function formatTeamThreadEnvBlockReason(
   envAccess: TeamThreadEnvironmentAccess,
   ownerPseudo: string | null,
   resolve: MessageResolver,
+  options?: { readonly canOpenLocalThread?: boolean },
 ): string | null {
   if (envAccess.canExecute) return null;
+  if (envAccess.reason === "own_local_mirror") {
+    return options?.canOpenLocalThread
+      ? resolve(
+          msg(
+            "This thread runs on your local environment ({environment}). Open the live local thread to continue sending messages.",
+            { environment: envAccess.environmentLabel },
+          ),
+        )
+      : resolve(
+          msg(
+            "This thread runs on your local environment ({environment}), which is not connected here. Open it on that machine or fork it to an accessible environment.",
+            { environment: envAccess.environmentLabel },
+          ),
+        );
+  }
   if (envAccess.reason === "other_member_local") {
     return ownerPseudo
       ? resolve(
@@ -90,6 +107,7 @@ export function teamInaccessibleEnvironmentBannerItem(input: {
   readonly ownerPseudo: string | null;
   readonly environmentLabel: string | null;
   readonly canLeaveNote: boolean;
+  readonly onOpenLocalThread?: () => void;
   readonly onForkThread: () => void;
   readonly onEnterNoteMode: () => void;
   readonly resolve: MessageResolver;
@@ -99,14 +117,19 @@ export function teamInaccessibleEnvironmentBannerItem(input: {
     ownerPseudo,
     environmentLabel,
     canLeaveNote,
+    onOpenLocalThread,
     onForkThread,
     onEnterNoteMode,
     resolve,
   } = input;
   if (envAccess.canExecute) return null;
 
-  const title =
-    envAccess.reason === "other_member_local"
+  const isOwnLocalMirror = envAccess.reason === "own_local_mirror";
+  const canOpenLocalThread = isOwnLocalMirror && onOpenLocalThread !== undefined;
+
+  const title = isOwnLocalMirror
+    ? resolve(msg("Viewing mirrored copy of your local thread"))
+    : envAccess.reason === "other_member_local"
       ? ownerPseudo
         ? resolve(msg("Running on {owner}'s local environment", { owner: ownerPseudo }))
         : resolve(msg("Running on owner's local environment"))
@@ -114,12 +137,18 @@ export function teamInaccessibleEnvironmentBannerItem(input: {
         ? resolve(msg("Environment restricted ({environment})", { environment: environmentLabel }))
         : resolve(msg("Environment restricted"));
 
-  const description = formatTeamThreadEnvBlockReason(envAccess, ownerPseudo, resolve);
+  const description = formatTeamThreadEnvBlockReason(envAccess, ownerPseudo, resolve, {
+    canOpenLocalThread,
+  });
 
   return {
     id: "team-inaccessible-environment",
-    variant: "warning",
-    icon: <MonitorOffIcon aria-hidden className="size-3.5" />,
+    variant: isOwnLocalMirror ? "info" : "warning",
+    icon: isOwnLocalMirror ? (
+      <LaptopIcon aria-hidden className="size-3.5" />
+    ) : (
+      <MonitorOffIcon aria-hidden className="size-3.5" />
+    ),
     title: (
       <span data-testid="team-inaccessible-env-banner" data-reason={envAccess.reason}>
         {title}
@@ -128,6 +157,18 @@ export function teamInaccessibleEnvironmentBannerItem(input: {
     description,
     actions: (
       <div className="flex flex-wrap items-center gap-1.5">
+        {canOpenLocalThread ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="default"
+            data-testid="team-open-local-thread-button"
+            onClick={onOpenLocalThread}
+          >
+            <LaptopIcon />
+            {resolve(msg("Open local thread"))}
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="xs"

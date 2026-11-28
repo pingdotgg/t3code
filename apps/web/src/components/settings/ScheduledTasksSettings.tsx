@@ -5,6 +5,7 @@ import {
   canCurrentMemberCreateTeamScheduledTask,
   canCurrentMemberMutateTeamScheduledTask,
   filterProviderEntriesForTeamProject,
+  isTeamHubOnlyServerConfig,
   listAccessibleTeamViews,
   resolveProjectTeamAssignment,
   resolveTeamDefaultView,
@@ -475,6 +476,7 @@ export function ScheduledTasksSettings(target: {
   );
   const permittedEnvironments = connectedEnvironments.filter(
     (entry, index) =>
+      !isTeamHubOnlyServerConfig(entry.serverConfig) &&
       createPermissions[index] &&
       canCurrentMemberCreateTeamScheduledTask(
         teamStates.get(entry.environmentId),
@@ -1739,11 +1741,13 @@ function ScheduledTaskEditorForm({
   const selectableEnvironments =
     task !== null
       ? connectedEnvironments
-      : connectedEnvironments.filter((entry) =>
-          canCurrentMemberCreateTeamScheduledTask(
-            teamStates.get(entry.environmentId),
-            entry.environmentId,
-          ),
+      : connectedEnvironments.filter(
+          (entry) =>
+            !isTeamHubOnlyServerConfig(entry.serverConfig) &&
+            canCurrentMemberCreateTeamScheduledTask(
+              teamStates.get(entry.environmentId),
+              entry.environmentId,
+            ),
         );
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
