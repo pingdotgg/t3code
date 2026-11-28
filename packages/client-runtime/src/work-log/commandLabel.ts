@@ -449,6 +449,7 @@ function readHeredocDelimiter(
   let index = start;
   while (command[index] === " " || command[index] === "\t") index += 1;
 
+  const wordStart = index;
   let delimiter = "";
   let quote: '"' | "'" | null = null;
   let escaping = false;
@@ -476,7 +477,7 @@ function readHeredocDelimiter(
     delimiter += character;
   }
 
-  if (!delimiter || quote !== null || escaping) return null;
+  if (index === wordStart || quote !== null || escaping) return null;
   return { heredoc: { delimiter, stripTabs }, end: index };
 }
 
