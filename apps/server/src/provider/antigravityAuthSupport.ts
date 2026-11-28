@@ -35,7 +35,6 @@ const maxBrowserHelperLineLength =
   Math.max(ANTIGRAVITY_AUTH_BROWSER_MARKER.length, ANTIGRAVITY_AUTH_STDOUT_PREFIX.length) +
   maxAuthorizationUrlLength +
   2;
-const maxStdoutLineBytes = 16 * 1024 * 1024;
 const authPrefixBytes = new TextEncoder().encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX);
 const decodeUrl = Schema.decodeUnknownEffect(Schema.URLFromString);
 const decodeBrowserHelperUrl = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
@@ -644,6 +643,10 @@ export function antigravityLoginResponse(
   return value;
 }
 
+type StdoutSegment =
+  | { readonly _tag: "pass"; readonly bytes: Uint8Array }
+  | { readonly _tag: "auth"; readonly line: Uint8Array };
+
 export function makeAntigravityStdoutTransform(
   input: {
     readonly onAuthorizationUrl?: (
@@ -651,10 +654,9 @@ export function makeAntigravityStdoutTransform(
     ) => Effect.Effect<void, AcpErrors.AcpError>;
   } = {},
 ) {
-  const handleLine = Effect.fn("antigravityAuthSupport.handleStdoutLine")(function* (
+  const handleAuthLine = Effect.fn("antigravityAuthSupport.handleStdoutLine")(function* (
     line: Uint8Array,
   ) {
-    if (!authPrefixBytes.every((byte, index) => line[index] === byte)) return [line];
     const message = new TextDecoder().decode(line).replace(/\r?\n$/, "");
     const request = yield* parseAntigravityAuthorizationUrl(
       message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length),
@@ -663,48 +665,118 @@ export function makeAntigravityStdoutTransform(
       return yield* authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE);
     }
     yield* input.onAuthorizationUrl(request.authorizationUrl);
-    return [];
   });
 
   return (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
   ): Stream.Stream<Uint8Array, PlatformError.PlatformError | AcpErrors.AcpError> =>
     Stream.suspend(() => {
+      let state: "prefix" | "passthrough" | "auth" = "prefix";
       let pending: Uint8Array[] = [];
       let pendingBytes = 0;
-      const finishLine = () => {
-        const line = Buffer.concat(pending, pendingBytes);
+
+      const drainPending = () => {
+        const chunks = pending;
         pending = [];
         pendingBytes = 0;
-        return line;
+        return chunks;
       };
+
+      const finishPending = () => {
+        const bytes = Buffer.concat(pending, pendingBytes);
+        pending = [];
+        pendingBytes = 0;
+        return bytes;
+      };
+
+      const emitPendingAsPass = (segments: StdoutSegment[]) => {
+        for (const bytes of drainPending()) {
+          segments.push({ _tag: "pass", bytes });
+        }
+      };
+
       return stdout.pipe(
         Stream.mapEffect(
           Effect.fn("antigravityAuthSupport.splitStdoutLines")(function* (chunk: Uint8Array) {
-            const lines: Uint8Array[] = [];
+            const segments: StdoutSegment[] = [];
             let offset = 0;
             while (offset < chunk.byteLength) {
               const newline = chunk.indexOf(10, offset);
               const end = newline === -1 ? chunk.byteLength : newline + 1;
               const part = chunk.subarray(offset, end);
-              if (pendingBytes + part.byteLength > maxStdoutLineBytes) {
-                return yield* authSupportError(
-                  "Antigravity sent a protocol line that is too large.",
-                );
+              const endsLine = newline !== -1;
+
+              if (state === "passthrough") {
+                segments.push({ _tag: "pass", bytes: part });
+                if (endsLine) state = "prefix";
+              } else if (state === "prefix") {
+                const prefixRemaining = authPrefixBytes.byteLength - pendingBytes;
+                const checkLen = Math.min(prefixRemaining, part.byteLength);
+                let matched = true;
+                for (let index = 0; index < checkLen; index++) {
+                  if (part[index] !== authPrefixBytes[pendingBytes + index]) {
+                    matched = false;
+                    break;
+                  }
+                }
+                if (!matched) {
+                  emitPendingAsPass(segments);
+                  segments.push({ _tag: "pass", bytes: part });
+                  state = endsLine ? "prefix" : "passthrough";
+                } else if (pendingBytes + part.byteLength < authPrefixBytes.byteLength) {
+                  pending.push(part);
+                  pendingBytes += part.byteLength;
+                } else {
+                  if (pendingBytes + part.byteLength > maxBrowserHelperLineLength) {
+                    return yield* authSupportError(
+                      "Antigravity returned an invalid Google sign-in URL.",
+                    );
+                  }
+                  pending.push(part);
+                  pendingBytes += part.byteLength;
+                  if (endsLine) {
+                    segments.push({ _tag: "auth", line: finishPending() });
+                    state = "prefix";
+                  } else {
+                    state = "auth";
+                  }
+                }
+              } else {
+                if (pendingBytes + part.byteLength > maxBrowserHelperLineLength) {
+                  return yield* authSupportError(
+                    "Antigravity returned an invalid Google sign-in URL.",
+                  );
+                }
+                pending.push(part);
+                pendingBytes += part.byteLength;
+                if (endsLine) {
+                  segments.push({ _tag: "auth", line: finishPending() });
+                  state = "prefix";
+                }
               }
-              pending.push(part);
-              pendingBytes += part.byteLength;
-              if (newline !== -1) lines.push(finishLine());
+
               offset = end;
             }
-            return lines;
+            return segments;
           }),
         ),
         Stream.flatMap(Stream.fromIterable),
         Stream.concat(
-          Stream.suspend(() => (pendingBytes > 0 ? Stream.succeed(finishLine()) : Stream.empty)),
+          Stream.suspend(() => {
+            if (pendingBytes === 0) return Stream.empty;
+            if (state === "auth") {
+              return Stream.succeed<StdoutSegment>({ _tag: "auth", line: finishPending() });
+            }
+            return Stream.fromIterable(
+              drainPending().map((bytes): StdoutSegment => ({ _tag: "pass", bytes })),
+            );
+          }),
         ),
-        Stream.mapEffect(handleLine),
+        Stream.mapEffect((segment) =>
+          segment._tag === "pass"
+            ? Effect.succeed([segment.bytes])
+            : handleAuthLine(segment.line).pipe(Effect.as<ReadonlyArray<Uint8Array>>([])),
+        ),
         Stream.flatMap(Stream.fromIterable),
       );
     });
