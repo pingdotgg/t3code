@@ -57,7 +57,8 @@ export function pullRequestProjectChoices<
 ) {
   const isSelected = (project: Project) =>
     project.id === input.controls.projectId &&
-    project.environmentId === input.controls.projectEnvironmentId;
+    (input.controls.projectEnvironmentId === undefined ||
+      project.environmentId === input.controls.projectEnvironmentId);
   return pullRequestFilterProjects(
     projects.filter(
       (project) =>
@@ -68,6 +69,25 @@ export function pullRequestProjectChoices<
     input.groups,
     projects.find(isSelected),
   );
+}
+
+export function selectedPullRequestProjectRefs(
+  projects: ReadonlyArray<{
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+  }>,
+  selectedProject: { readonly id: string; readonly environmentId?: string | undefined } | undefined,
+): ReadonlyArray<ScopedProjectRef> | undefined {
+  if (selectedProject === undefined) return undefined;
+  const match = projects.find((project) =>
+    project.memberProjectRefs.some(
+      (ref) =>
+        ref.projectId === selectedProject.id &&
+        (selectedProject.environmentId === undefined ||
+          ref.environmentId === selectedProject.environmentId),
+    ),
+  );
+  if (match) return match.memberProjectRefs;
+  return selectedProject.environmentId === undefined ? undefined : [];
 }
 
 export function pullRequestListKey(

@@ -43,6 +43,7 @@ import {
   filterPullRequestList,
   pullRequestListFacets,
   pullRequestListInput,
+  selectedPullRequestProjectRefs,
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
@@ -162,14 +163,7 @@ export function PullRequestsScreen(
   const selectedProject = controls.projectId
     ? { id: controls.projectId, environmentId: controls.projectEnvironmentId }
     : undefined;
-  const projectRefs =
-    selectedProject === undefined
-      ? undefined
-      : (projects.find(
-          (project) =>
-            project.id === selectedProject.id &&
-            project.environmentId === selectedProject.environmentId,
-        )?.memberProjectRefs ?? []);
+  const projectRefs = selectedPullRequestProjectRefs(projects, selectedProject);
   const targets = pullRequestProjectFilterQueries(
     projects,
     environments

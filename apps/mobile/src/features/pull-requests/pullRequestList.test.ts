@@ -23,6 +23,7 @@ import {
   pullRequestListHead,
   pullRequestListInput,
   scopedPullRequestListKey,
+  selectedPullRequestProjectRefs,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
   withAnsweredPullRequestStats,
@@ -506,6 +507,56 @@ describe("pullRequestProjectChoices", () => {
     expect(choices(() => false, scope)).toEqual([
       { id: "worktree", environmentId: laptop, title: "t3code" },
     ]);
+  });
+
+  it("retains a project-only saved selection without an environment", () => {
+    const scope = { projectId: "worktree" };
+    const matched = pullRequestProjectChoices(projects, {
+      environmentId: null,
+      controls: { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      groups: [
+        {
+          label: "t3code",
+          memberProjectRefs: projects.map((project) => ({
+            environmentId: project.environmentId,
+            projectId: project.id,
+          })),
+        },
+      ],
+      servesPullRequests: () => true,
+    });
+    const refs = selectedPullRequestProjectRefs(matched, { id: "worktree" });
+    expect(refs).toHaveLength(3);
+    const filtered = filterPullRequestList(
+      [
+        { ...entry(1, { projectId: ProjectId.make("worktree") }), environmentId: laptop },
+        { ...entry(2, { projectId: ProjectId.make("other") }), environmentId: laptop },
+      ],
+      { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      {},
+      "",
+      new Set(),
+      undefined,
+      refs,
+    );
+    expect(filtered.map((row) => row.number)).toEqual([1]);
+
+    // Before groups load, a project-only selection still falls back to matching by projectId.
+    const fallbackRefs = selectedPullRequestProjectRefs([], { id: "worktree" });
+    expect(fallbackRefs).toBeUndefined();
+    const fallbackFiltered = filterPullRequestList(
+      [
+        { ...entry(1, { projectId: ProjectId.make("worktree") }), environmentId: laptop },
+        { ...entry(2, { projectId: ProjectId.make("other") }), environmentId: laptop },
+      ],
+      { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      {},
+      "",
+      new Set(),
+      undefined,
+      fallbackRefs,
+    );
+    expect(fallbackFiltered.map((row) => row.number)).toEqual([1]);
   });
 });
 
