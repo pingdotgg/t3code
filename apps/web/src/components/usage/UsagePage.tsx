@@ -18,6 +18,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
+  emptyUsageReason,
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageLoadingState,
@@ -178,6 +179,7 @@ function UsageModelDialogHost({
 
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const gt = useGT();
@@ -246,6 +248,7 @@ export function UsagePage() {
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
+  const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
 
   const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
     const nextPreferences = { ...preferences, ...patch };
@@ -557,9 +560,9 @@ export function UsagePage() {
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
               />
-            ) : shown === null ? (
+            ) : shown === null || emptyReason === "pending" ? (
               <UsageSkeleton />
-            ) : !canReadDiagnostics ? (
+            ) : !canReadDiagnostics || emptyReason === "failed" ? (
               <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
                 {selectedEnvironments.map((environment) => (
                   <p key={environment.environmentId}>
@@ -574,6 +577,8 @@ export function UsagePage() {
               </div>
             ) : (
               <UsageOverview
+                breakdown={breakdown}
+                onBreakdownChange={setBreakdown}
                 merged={merged}
                 shownWindow={shownWindow}
                 hour12={hour12}
@@ -622,6 +627,8 @@ export function UsagePage() {
 }
 
 function UsageOverview({
+  breakdown,
+  onBreakdownChange,
   merged,
   shownWindow,
   hour12,
@@ -635,6 +642,8 @@ function UsageOverview({
   showChatGptSharing,
   onSelectModel,
 }: {
+  readonly breakdown: "model" | "time";
+  readonly onBreakdownChange: (value: "model" | "time") => void;
   readonly merged: MergedUsage;
   readonly shownWindow: UsageSummaryInput;
   readonly hour12: boolean;
@@ -651,7 +660,6 @@ function UsageOverview({
   const gt = useGT();
   const locale = useLocale();
   const m = useMessages();
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -920,7 +928,7 @@ function UsageOverview({
             value={[breakdown]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "model" || value === "time") setBreakdown(value);
+              if (value === "model" || value === "time") onBreakdownChange(value);
             }}
           >
             {(
