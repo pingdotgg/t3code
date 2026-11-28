@@ -10,6 +10,8 @@ import {
   type DesktopUpdateChannel,
   type EnvironmentId,
   type ProviderInstanceId,
+  type ProjectId,
+  type ProjectScript,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerFeatureFlags,
@@ -27,6 +29,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -1536,6 +1539,47 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
+  const editFileProjectScript = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:file-project-script",
+    tag: WS_METHODS.serverUpdateSettings,
+    scheduler: configScheduler,
+    concurrency: configConcurrency,
+    execute: Effect.fn("Server.editFileProjectScript")(function* (
+      input: EnvironmentRpcInput<typeof WS_METHODS.serverUpdateSettings> & {
+        project: { id: ProjectId; scripts: readonly ProjectScript[] };
+        removeScriptId?: string;
+      },
+      registry,
+      environmentId,
+    ) {
+      const settings = yield* request(WS_METHODS.serverGetSettings, {});
+      const scripts = resolveProjectScripts(settings, input.project);
+      const additions = input.patch.projectScriptOverrides?.[input.project.id] ?? [];
+      const next = input.removeScriptId
+        ? scripts.filter((script) => script.id !== input.removeScriptId)
+        : [
+            ...scripts,
+            ...additions.filter(
+              (added) => !scripts.some((script) => script.command === added.command),
+            ),
+          ];
+      const folded =
+        registry.get(configValueAtom(environmentId))?.environment.capabilities
+          .projectSettingsOverrides === true;
+      return yield* requestGuarded(WS_METHODS.serverUpdateSettings, {
+        patch: folded
+          ? {
+              projectSettingsOverrides: {
+                [input.project.id]: {
+                  ...settings.projectSettingsOverrides[input.project.id],
+                  defaultProjectScripts: next,
+                },
+              },
+            }
+          : { projectScriptOverrides: { [input.project.id]: next } },
+      });
+    }),
+  });
 
   return {
     configValueAtom,
@@ -1899,6 +1943,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: configConcurrency,
     }),
     updateSettings,
+    editFileProjectScript,
     mutateProviderInstance: updateSettings,
     prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:acp-registry:prepare",

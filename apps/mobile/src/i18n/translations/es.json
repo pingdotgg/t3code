@@ -5766,5 +5766,9 @@
   "5d9bc70d1cb3b596": "{count} máquinas casi no tienen espacio en disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas están sobrecargadas",
   "b48a4b390016a4f0": "Usa {usage} mientras la memoria ralentiza los agentes. Detenerlo ayuda al resto.",
-  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto."
+  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto.",
+  "142c582f7f3f4bca": "Eliminar script del proyecto",
+  "6896cd0818d78d22": "Script del proyecto eliminado",
+  "6fff510c4a9d42c7": "Añadido a los scripts del proyecto",
+  "e8a087a38558e37b": "Añadir a los scripts del proyecto"
 }

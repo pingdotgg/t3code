@@ -2,7 +2,12 @@ import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
 import { ProjectId } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptFileCommand,
+  projectScriptForFile,
+  settleProjectScript,
+  setupProjectScript,
+} from "@t3tools/shared/projectScripts";
 
 import {
   commandForProjectScript,
@@ -13,6 +18,32 @@ import {
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
+  it.each([
+    ["scripts/build.sh", 'sh "./scripts/build.sh"'],
+    ["Bob's scripts/build & check.js", 'node "./Bob\'s scripts/build & check.js"'],
+    ["-check.py", 'python3 "./-check.py"'],
+    ["README.md", null],
+    ["sh", null],
+    ["file.constructor", null],
+    ["file.toString", null],
+    ["scripts/BUILD.SH", 'sh "./scripts/BUILD.SH"'],
+    ["scripts/$(touch pwned).sh", null],
+    ["scripts/%PATH%.sh", null],
+    ["scripts/`id`.sh", null],
+    ['scripts/a".sh', null],
+    ["scripts/line\nbreak.sh", null],
+    ["../outside.sh", null],
+    ["/absolute.sh", null],
+  ])("only offers an interpreter command for a safe script path %s", (path, command) => {
+    expect(projectScriptFileCommand(path)).toBe(command);
+    const script = projectScriptForFile(path);
+    if (command === null) expect(script).toBeNull();
+    else {
+      expect(script).toMatchObject({ command, runOnWorktreeCreate: false, icon: "play" });
+      expect(script && commandForProjectScript(script.id)).not.toBeNull();
+    }
+  });
+
   it.each(["install-javascript-dependencies", "A", "a.b", "a b", "-a", "", "a".repeat(25)])(
     "omits the shortcut for legacy script ID %j without crashing script menus",
     (id) => {

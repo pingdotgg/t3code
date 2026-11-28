@@ -1986,6 +1986,7 @@ function FilePreviewPanelContent({
               <FileBrowserPanel
                 key={`${environmentId}:${hostFolderPath ?? cwd}`}
                 environmentId={environmentId}
+                {...(projectId ? { projectId } : {})}
                 cwd={hostFolderPath ?? cwd}
                 projectName={hostFolderPath ?? projectName}
                 hostFolder={hostFolderPath !== null}

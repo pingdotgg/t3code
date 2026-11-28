@@ -23,6 +23,12 @@ Use the **"Applying settings for …"** selector at the top of Settings (web/des
 - **Icons**: In **Settings → Projects**, set an icon, emoji, monogram, or image (applies across checkouts). Without one, T3 Code generates a two-character monogram (or single CJK character) from the project name.
 - **Multiple repositories**: See [Projects with several repositories](./multi-repo-projects.md).
 
+## Project scripts
+
+Right-click a script in **Files** (long-press on mobile) and choose **Add to project scripts**. The saved action runs from the thread's workspace through its usual terminal controls; adding it does not run the file. The menu offers known shell, JavaScript, Python, Ruby, Perl, and PHP extensions when the path can be quoted safely. The interpreter must be installed on the connected machine.
+
+Choose **Remove project script** from the same file menu to remove the saved action and keep the file.
+
 ## Worktree settings
 
 Configure worktrees in **Settings → Worktrees** (environment default or project override):

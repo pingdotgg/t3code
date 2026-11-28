@@ -13169,5 +13169,9 @@
   "236911500e5aff7c": "Agenci ciągle czekają, aż system zwolni pamięć.",
   "81aafe06d7fede9a": "Miejsce, w którym T3 Code trzyma dane i worktree",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno."
+  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno.",
+  "142c582f7f3f4bca": "Usuń skrypt projektu",
+  "6896cd0818d78d22": "Usunięto skrypt projektu",
+  "6fff510c4a9d42c7": "Dodano do skryptów projektu",
+  "e8a087a38558e37b": "Dodaj do skryptów projektu"
 }

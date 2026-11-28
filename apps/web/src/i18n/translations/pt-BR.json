@@ -13162,5 +13162,9 @@
   "236911500e5aff7c": "Os agentes ficam esperando enquanto o sistema libera memória.",
   "81aafe06d7fede9a": "Onde o T3 Code guarda seus dados e worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "O trabalho espera por uma CPU livre ou pelo disco, então os agentes ficam lentos."
+  "79a21371b8db96da": "O trabalho espera por uma CPU livre ou pelo disco, então os agentes ficam lentos.",
+  "142c582f7f3f4bca": "Remover script do projeto",
+  "6896cd0818d78d22": "Script do projeto removido",
+  "6fff510c4a9d42c7": "Adicionado aos scripts do projeto",
+  "e8a087a38558e37b": "Adicionar aos scripts do projeto"
 }

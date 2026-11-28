@@ -5772,5 +5772,9 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "142c582f7f3f4bca": "Ta bort projektskript",
+  "6896cd0818d78d22": "Projektskript borttaget",
+  "6fff510c4a9d42c7": "Tillagt i projektskript",
+  "e8a087a38558e37b": "Lägg till i projektskript"
 }

@@ -6,7 +6,24 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  type ContextMenuSource,
+  type EnvironmentId,
+  type ProjectEntry,
+  type ProjectId,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  projectScriptFileCommand,
+  projectScriptForFile,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
+import { useProject } from "~/state/entities";
+import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { useEnvironmentScope } from "~/state/session";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -55,6 +72,7 @@ import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
+  projectId?: ProjectId;
   cwd: string;
   projectName: string;
   selectedPath: string | null;
@@ -172,6 +190,7 @@ const MAX_FOLDERS_OPENED_WITH_PARENT = 16;
 
 export default function FileBrowserPanel({
   environmentId,
+  projectId,
   cwd,
   projectName,
   selectedPath,
@@ -190,6 +209,17 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const project = useProject(projectId ? { environmentId, projectId } : null);
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const editScript = useAtomCommand(serverEnvironment.editFileProjectScript);
+  const canOperateScripts = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const canEditScript = useAtomValue(
+    serverEnvironment.editFileProjectScript.permissionAtom(environmentId, {
+      patch: { defaultProjectScripts: [] },
+    }),
+  );
+  const scripts = project && settings ? resolveProjectScripts(settings, project) : [];
   const downloadFile = useFileDownload(environmentId);
   const {
     entries: directoryEntries,
@@ -250,6 +280,16 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      const scriptCommand =
+        !hostFolder &&
+        item.kind !== "directory" &&
+        project &&
+        canEditScript &&
+        canOperateScripts &&
+        canWriteSettings
+          ? projectScriptFileCommand(relativePath)
+          : null;
+      const savedScript = scripts.find((script) => script.command === scriptCommand);
       const canOpenPreview =
         onOpenFilePreview !== undefined &&
         entryKindsRef.current.get(relativePath) === "file" &&
@@ -267,11 +307,37 @@ export default function FileBrowserPanel({
             { id: "copy-path", label: gt("Copy path") },
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
+            ...(scriptCommand
+              ? [
+                  {
+                    id: "project-script",
+                    label: savedScript ? gt("Remove project script") : gt("Add to project scripts"),
+                  },
+                ]
+              : []),
           ],
           position,
           pointerIsFresh ? pointer.source : undefined,
         );
         if (clicked === null) return;
+        if (clicked === "project-script" && project) {
+          const script = projectScriptForFile(relativePath);
+          if (!script) return;
+          const result = await editScript({
+            environmentId,
+            input: {
+              project,
+              patch: { projectScriptOverrides: { [project.id]: savedScript ? [] : [script] } },
+              ...(savedScript ? { removeScriptId: savedScript.id } : {}),
+            },
+          });
+          if (result._tag === "Success")
+            toastManager.add({
+              type: "success",
+              title: savedScript ? gt("Removed project script") : gt("Added to project scripts"),
+            });
+          return;
+        }
         // Open-with submenu ids are absent from the top-level item list.
         const isFileMenuAction =
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");

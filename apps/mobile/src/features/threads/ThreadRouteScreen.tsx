@@ -631,6 +631,7 @@ function ThreadRouteContent(
       <InspectorSheetContext.Consumer>
         {(closeInspectorSheet) => (
           <ThreadFileNavigatorPane
+            project={selectedThreadProject}
             cwd={selectedThreadCwd}
             environmentId={selectedThread.environmentId}
             projectName={selectedThreadProject?.title ?? gt("Files")}

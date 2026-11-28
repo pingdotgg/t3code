@@ -1,4 +1,45 @@
-import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+import {
+  MAX_SCRIPT_ID_LENGTH,
+  type ProjectId,
+  type ProjectScript,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+
+const FILE_SCRIPT_RUNNERS: Readonly<Record<string, string>> = {
+  sh: "sh",
+  bash: "bash",
+  js: "node",
+  mjs: "node",
+  cjs: "node",
+  py: "python3",
+  rb: "ruby",
+  pl: "perl",
+  php: "php",
+};
+
+export function projectScriptFileCommand(path: string): string | null {
+  // Double quotes work in POSIX, PowerShell and cmd; reject characters they expand differently.
+  if (!path || /["$`%!^\\\x00-\x1f]/.test(path) || path.startsWith("/")) return null;
+  if (path.split("/").some((part) => part === ".." || part === "." || !part)) return null;
+  const extension = /\.([a-z]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
+  const runner = Object.hasOwn(FILE_SCRIPT_RUNNERS, extension)
+    ? FILE_SCRIPT_RUNNERS[extension]
+    : undefined;
+  return runner ? `${runner} "./${path}"` : null;
+}
+
+export function projectScriptForFile(path: string): ProjectScript | null {
+  const command = projectScriptFileCommand(path);
+  if (command === null) return null;
+  return {
+    id: SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, MAX_SCRIPT_ID_LENGTH),
+    name: path.split("/").at(-1) ?? path,
+    command,
+    icon: "play",
+    runOnWorktreeCreate: false,
+  };
+}
 
 type ProjectScriptSettings = Pick<
   ServerSettings,

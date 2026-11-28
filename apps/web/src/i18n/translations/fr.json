@@ -13162,5 +13162,9 @@
   "236911500e5aff7c": "Les agents attendent sans cesse que le système libère de la mémoire.",
   "81aafe06d7fede9a": "Là où T3 Code conserve ses données et ses worktrees",
   "9429f8ff8866edac": "Processeur",
-  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents."
+  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents.",
+  "142c582f7f3f4bca": "Retirer le script du projet",
+  "6896cd0818d78d22": "Script du projet retiré",
+  "6fff510c4a9d42c7": "Ajouté aux scripts du projet",
+  "e8a087a38558e37b": "Ajouter aux scripts du projet"
 }

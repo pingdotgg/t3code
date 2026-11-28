@@ -1,5 +1,6 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import {
@@ -421,15 +422,17 @@ function useThreadFilesWorkspace(params: {
       ? EnvironmentId.make(routeEnvironmentId)
       : (selectedThread?.environmentId ?? null);
   const threadId = routeThreadId !== null ? ThreadId.make(routeThreadId) : null;
-  const project = selectedThreadProject as {
-    readonly title?: string;
-    readonly workspaceRoot?: string;
-  } | null;
+  const project = selectedThreadProject;
 
   return {
     cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
+    project:
+      project?.environmentId === environmentId &&
+      (routeCwd === null || routeCwd === selectedThreadCwd || routeCwd === project.workspaceRoot)
+        ? project
+        : null,
     relativePath: normalizeRoutePath(params.path),
     selectedThread,
     threadId,
@@ -500,9 +503,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, project, selectedThread, threadId } =
+    useThreadFilesWorkspace(props.route.params);
   const hasFileInspector = fileInspector.supported && threadId !== null;
   const messages = useMessages();
   const fileAccessSession = useEnvironmentQuery(
@@ -561,6 +563,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const renderInspector = () =>
     environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
+        project={project}
         cwd={cwd}
         environmentId={environmentId}
         projectName={projectName}
@@ -630,6 +633,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       />
       <ScreenContent>
         <FileTreeBrowser
+          project={project}
           key={JSON.stringify([environmentId, cwd])}
           revealSelection={entriesQuery.revealSelection}
           expandedPaths={entriesQuery.expandedPaths}
@@ -664,7 +668,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
+  const { cwd, environmentId, projectName, project, relativePath, selectedThread, threadId } =
     useThreadFilesWorkspace(props.route.params);
   const messages = useMessages();
   const fileAccessSession = useEnvironmentQuery(
@@ -690,6 +694,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   );
   const metadataPending = !metadata.isSuccess && metadata.error === null;
   const directoryPath = metadata.data?.kind === "directory" ? targetPath : null;
+  const scriptPathPrefix =
+    directoryPath && cwd ? workspaceRelativeFilePath(directoryPath, cwd) : null;
   const [searchQuery, setSearchQuery] = useState("");
   const entriesQuery = useFileTreeEntries({
     environmentId,
@@ -891,6 +897,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const renderInspector = () =>
     fileInspector.supported && environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
+        project={directoryPath === null || scriptPathPrefix !== null ? project : null}
+        {...(scriptPathPrefix ? { scriptPathPrefix } : {})}
         cwd={directoryPath ?? cwd}
         environmentId={environmentId}
         projectName={directoryPath ?? projectName}
@@ -1112,6 +1120,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         <ScreenContent>
           <FileTreeBrowser
             key={JSON.stringify([environmentId, directoryPath])}
+            project={scriptPathPrefix !== null ? project : null}
+            {...(scriptPathPrefix ? { scriptPathPrefix } : {})}
             revealSelection={entriesQuery.revealSelection}
             expandedPaths={entriesQuery.expandedPaths}
             setExpandedPaths={entriesQuery.setExpandedPaths}

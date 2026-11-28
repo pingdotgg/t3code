@@ -2,6 +2,9 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { Button } from "../../components/ui/Button";
 import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { Menu } from "../../components/ui/Menu";
+import { useFileProjectScripts } from "./useFileProjectScripts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { T, useGT } from "gt-react-native";
@@ -41,11 +44,12 @@ const FileTreeRow = function FileTreeRow(props: {
   readonly onPressDirectory: (path: string, expand: boolean) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onPressFile: (path: string) => void;
+  readonly scriptAction?: { title: string; onPress: () => Promise<void> } | undefined;
 }) {
   const { node, depth } = props.item;
   const gt = useGT();
 
-  return (
+  const row = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={node.path}
@@ -100,9 +104,22 @@ const FileTreeRow = function FileTreeRow(props: {
       ) : null}
     </Pressable>
   );
+  return props.scriptAction ? (
+    <Menu
+      shouldOpenOnLongPress
+      actions={[{ id: "project-script", title: props.scriptAction.title }]}
+      onPressAction={() => void props.scriptAction?.onPress()}
+    >
+      {row}
+    </Menu>
+  ) : (
+    row
+  );
 };
 
 export function FileTreeBrowser(props: {
+  readonly project?: EnvironmentProject | null;
+  readonly scriptPathPrefix?: string;
   readonly revealSelection: (path: string | null) => void;
   readonly expandedPaths: ReadonlySet<string>;
   readonly setExpandedPaths: (
@@ -124,6 +141,7 @@ export function FileTreeBrowser(props: {
 }) {
   const { expandedPaths, setExpandedPaths } = props;
   const gt = useGT();
+  const scriptAction = useFileProjectScripts(props.project);
   const [pendingSelection, setPendingSelection] = useState<{
     readonly path: string;
     readonly selectedPathAtPress: string | null;
@@ -213,10 +231,25 @@ export function FileTreeBrowser(props: {
       onPressDirectory={toggleDirectory}
       onPreviewFile={onPreviewFile}
       onPressFile={handleSelectFile}
+      scriptAction={
+        item.node.kind === "file"
+          ? scriptAction(
+              props.scriptPathPrefix
+                ? `${props.scriptPathPrefix}/${item.node.path}`
+                : item.node.path,
+            )
+          : undefined
+      }
     />
   );
 
-  const extraData = { expandedPaths, loadingDirectories, selectedPath };
+  const extraData = {
+    expandedPaths,
+    loadingDirectories,
+    selectedPath,
+    scriptAction,
+    scriptPathPrefix: props.scriptPathPrefix,
+  };
 
   // Keep the list as direct screen content so UIKit can apply header insets.
   return (

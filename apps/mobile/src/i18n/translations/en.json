@@ -5774,5 +5774,9 @@
   "5d9bc70d1cb3b596": "{count} machines are almost out of disk space",
   "7bb6d3c4fe5cea0f": "{count} machines are overloaded",
   "b48a4b390016a4f0": "Using {usage} while memory is slowing agents down. Stopping it helps the rest.",
-  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest."
+  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest.",
+  "142c582f7f3f4bca": "Remove project script",
+  "6896cd0818d78d22": "Removed project script",
+  "6fff510c4a9d42c7": "Added to project scripts",
+  "e8a087a38558e37b": "Add to project scripts"
 }
