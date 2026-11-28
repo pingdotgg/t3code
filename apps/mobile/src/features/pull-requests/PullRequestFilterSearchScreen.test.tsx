@@ -7,7 +7,11 @@ import { expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
   hostLabels: {
-    "": [{ name: "triage", color: "cccccc" }],
+    "": [
+      { name: "triage", color: "cccccc" },
+      { name: "constructor", color: null },
+      { name: "__proto__", color: null },
+    ],
     release: [{ name: "release-blocker", color: "d73a4a" }],
   } as Record<string, readonly PullRequestLabel[]>,
   setQuery: (_query: string) => {},
@@ -30,7 +34,9 @@ vi.mock("../../components/ui/SelectionRow", () => ({
   ),
 }));
 vi.mock("./PullRequestLabelDot", () => ({
-  PullRequestLabelDot: (props: { color: string | null }) => <span data-color={props.color ?? ""} />,
+  PullRequestLabelDot: (props: { color: string | null }) => (
+    <span data-color={props.color === null ? undefined : String(props.color)} />
+  ),
 }));
 vi.mock("./PullRequestSearchSheet", () => ({
   PullRequestSearchSheet: (props: {
@@ -69,7 +75,7 @@ vi.mock("../../state/pull-requests", async () => {
 
 import { PullRequestFilterSearchScreen } from "./PullRequestFilterSearchScreen";
 
-it("keeps a selected host label's color after the search that found it is cleared", () => {
+it("keeps a selected host label's color after clearing search and ignores inherited prototype keys", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const registry = AtomRegistry.make();
   const container = document.createElement("div");
@@ -81,8 +87,8 @@ it("keeps a selected host label's color after the search that found it is cleare
       vi.unstubAllGlobals();
     },
   };
-  const dot = () =>
-    container.querySelector('[aria-label="release-blocker"] span')?.getAttribute("data-color");
+  const dot = (label: string) =>
+    container.querySelector(`[aria-label="${label}"] span`)?.getAttribute("data-color");
   act(() => {
     root.render(
       <RegistryContext.Provider value={registry}>
@@ -101,7 +107,9 @@ it("keeps a selected host label's color after the search that found it is cleare
   });
 
   act(() => harness.setQuery("release"));
-  expect(dot()).toBe("#d73a4a");
+  expect(dot("release-blocker")).toBe("#d73a4a");
   act(() => harness.setQuery(""));
-  expect(dot()).toBe("#d73a4a");
+  expect(dot("release-blocker")).toBe("#d73a4a");
+  expect(dot("constructor")).toBeNull();
+  expect(dot("__proto__")).toBeNull();
 });

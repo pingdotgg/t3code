@@ -385,6 +385,20 @@ describe("withoutScratchProjectScope", () => {
 });
 
 describe("pullRequestLabelColors", () => {
+  it("keeps own colors for labels named constructor or __proto__", () => {
+    const colors = pullRequestLabelColors([
+      { name: "constructor", color: "ff0000" },
+      { name: "__proto__", color: "00ff00" },
+      { name: "normal", color: "112233" },
+      { name: "CONSTRUCTOR", color: "000000" },
+      { name: "__PROTO__", color: "000000" },
+    ]);
+    expect(Object.keys(colors)).toEqual(["constructor", "__proto__", "normal"]);
+    expect(colors.constructor).toBe("#ff0000");
+    expect(colors.__proto__).toBe("#00ff00");
+    expect(colors.normal).toBe("#112233");
+  });
+
   it("keeps the first usable color each label name carries", () => {
     expect(
       pullRequestLabelColors([

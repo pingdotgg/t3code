@@ -405,7 +405,7 @@ export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) 
 export function pullRequestLabelColors(
   labels: readonly { readonly name: string; readonly color: string | null }[],
 ): Readonly<Record<string, string>> {
-  const colors: Record<string, string> = {};
+  const colors: Record<string, string> = Object.create(null);
   for (const label of labels) {
     const key = label.name.toLowerCase();
     const color = pullRequestLabelColor(label.color);
