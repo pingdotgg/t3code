@@ -42,11 +42,6 @@ export function withoutRemoteUrlCredentials(url: string): string {
   return url.replace(/^(https?:\/\/)[^/?#]*@/i, "$1").replace(/\?[^#]*/, "");
 }
 
-export function isScpLikeCloneUrl(url: string): boolean {
-  const trimmed = url.trim();
-  return !isWindowsDrivePath(trimmed) && SCP_LIKE_URL.test(trimmed);
-}
-
 export function cloneUrlProtocol(url: string): CloneProtocol | null {
   return parseCloneUrl(url)?.protocol ?? null;
 }
@@ -100,7 +95,7 @@ const WINDOWS_DEVICE_NAME =
 export function cloneUrlRepositoryPath(url: string): string | null {
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
-  let repositoryPath = parsed.path.split(parsed.scp ? "?" : /[?#]/, 1)[0]!;
+  let repositoryPath = parsed.path.split(parsed.protocol === "ssh" ? "?" : /[?#]/, 1)[0]!;
   try {
     if (!parsed.scp) repositoryPath = decodeURIComponent(repositoryPath);
   } catch {
