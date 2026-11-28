@@ -1703,6 +1703,32 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("passes the fetched base's branch to worktree creation", () => {
+  let created: Deferred.Deferred<unknown> | null = null;
+  const harness = makeHarness({
+    createWorktree: (input, options) =>
+      Deferred.succeed(created!, {
+        baseRefName: input.baseRefName,
+        baseBranchName: options?.baseBranchName,
+      }).pipe(Effect.andThen(Effect.never)),
+  });
+  return Effect.gen(function* () {
+    created = yield* Deferred.make<unknown>();
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    yield* launches.launch(
+      launchInput({
+        command: "command:launch:fetched-base-branch",
+        thread: "thread:launch:fetched-base-branch",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      }),
+    );
+    assert.deepEqual(yield* Deferred.await(created), {
+      baseRefName: "refs/remotes/origin/main",
+      baseBranchName: "main",
+    });
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";

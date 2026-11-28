@@ -2263,9 +2263,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd: string, gitCommonDir?: string | null) {
       const commonDir =
         gitCommonDir === undefined
-          ? yield* readGitCommonDir(cwd).pipe(
+          ? (yield* resolveRepositoryPaths(cwd).pipe(
               Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-            )
+            ))?.gitCommonDir
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
@@ -6335,8 +6335,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : gitCommonDir;
     if (commonDir == null) return;
     yield* invalidateListRefsSnapshots(commonDir, currentListRefsGeneration(commonDir));
-    yield* Cache.invalidate(repositoryPathsRefreshCache, repositoryPathsCacheKey);
-    yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
   // Single-flight only: concurrent ref lists share one read, and none outlives a checkout.
@@ -6569,8 +6567,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     reason: string,
     remove: boolean,
   ) {
-    const commonDir = yield* readGitCommonDir(cwd);
-    if (commonDir === null) return;
+    const commonDir = (yield* resolveRepositoryPaths(cwd))?.gitCommonDir;
+    if (commonDir === undefined) return;
     const registrations = path.join(commonDir, "worktrees");
     const entries = yield* fileSystem.readDirectory(registrations).pipe(
       Effect.catchIf(
@@ -6621,7 +6619,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
-      const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
+      const identity = `${(yield* resolveRepositoryPaths(input.cwd))?.gitCommonDir ?? null}\0${targetBranch}`;
       const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
       // UTF-8 bytes bound UTF-16 length too, leaving room for files on Windows.
       let prefix = "";
@@ -6689,7 +6687,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [
         readConfigValue(input.cwd, "checkout.workers"),
         input.newRefName && input.baseRefName
-          ? resolveBranchBase(input.cwd, input.baseRefName)
+          ? options?.baseBranchName === undefined
+            ? resolveBranchBase(input.cwd, input.baseRefName)
+            : Effect.succeed({ baseRef: input.baseRefName, branchName: options.baseBranchName })
           : Effect.succeed(null),
       ],
       { concurrency: "unbounded" },
@@ -7770,26 +7770,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ]),
       ),
     );
-  const invalidateWorktreeCreationCaches = Effect.fn(
-    "GitVcsDriverCore.invalidateWorktreeCreationCaches",
-  )(function* (cwd: string) {
-    let gitCommonDir = yield* readGitCommonDir(cwd).pipe(
-      Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-    );
-    if (gitCommonDir === null) {
-      gitCommonDir = yield* Cache.getOption(
-        repositoryPathsCache,
-        normalizeRepositoryPathsCacheKey(cwd),
-      ).pipe(
-        Effect.map((cached) => Option.getOrNull(cached)?.gitCommonDir ?? null),
-        Effect.orElseSucceed(() => null),
-      );
-    }
-    yield* Effect.all([
-      invalidateListRefsSnapshot(cwd, gitCommonDir).pipe(Effect.ignore),
-      invalidateStatusStaticCaches(cwd, gitCommonDir).pipe(Effect.ignore),
-    ]);
-  });
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
@@ -7838,9 +7818,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     resolveBranchName,
     listRefs,
     createWorktree: Effect.fnUntraced(function* (input, options) {
-      return yield* createWorktree(input, options).pipe(
-        Effect.ensuring(invalidateWorktreeCreationCaches(input.cwd)),
-      );
+      return yield* withListRefsInvalidation(input.cwd, createWorktree(input, options));
     }),
     clearWorktreeCheckoutCache: checkoutCache?.clear ?? Effect.void,
     fetchRefIntoBranch: Effect.fnUntraced(function* (input) {

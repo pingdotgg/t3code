@@ -172,6 +172,8 @@ export interface CreateWorktreeOptions {
   readonly worktreesDirectory?: string;
   /** Clone the checkout from the macOS worktree checkout cache. */
   readonly fastCheckout?: boolean;
+  /** The branch `baseRefName` tracks, when the caller already resolved it against the remotes. */
+  readonly baseBranchName?: string;
 }
 
 export interface GitCommitProgress {
