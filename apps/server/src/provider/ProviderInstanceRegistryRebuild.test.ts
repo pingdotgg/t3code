@@ -10,91 +10,95 @@ import * as Schema from "effect/Schema";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 
 describe("provider instance rebuild", () => {
-  it.effect("uses prepared credentials when teardown invalidates the resolver cache", () =>
-    Effect.gen(function* () {
-      const first = ProviderInstanceId.make("first");
-      const second = ProviderInstanceId.make("second");
-      const driverKind = ProviderDriverKind.make("fake");
-      const rebuilding = yield* Deferred.make<void>();
-      const finish = yield* Deferred.make<void>();
-      let revision = "original";
-      let cacheInvalidated = false;
-      const driver: AnyProviderDriver = {
-        driverKind,
-        metadata: { displayName: "Fake" },
-        configSchema: Schema.Unknown,
-        defaultConfig: () => ({}),
-        create: (input) =>
-          Effect.gen(function* () {
-            const continuationKey = input.environment[0]?.value ?? "missing";
-            let open = true;
-            yield* Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                open = false;
-                if (continuationKey === "original") cacheInvalidated = true;
-              }),
-            );
-            if (input.instanceId === second && continuationKey === "rotated") {
-              yield* Deferred.succeed(rebuilding, undefined);
-              yield* Deferred.await(finish);
-            }
-            const instance: Partial<ProviderInstance> = {
-              instanceId: input.instanceId,
-              enabled: input.enabled,
-              continuationIdentity: { driverKind, continuationKey },
-              refreshModels: () => Effect.sync(() => expect(open).toBe(true)),
-            };
-            return instance as ProviderInstance;
+  it.effect.each(["rebuild", "reloadSecrets"] as const)(
+    "%s publishes live providers with rotated credentials after interruption",
+    (operation) =>
+      Effect.gen(function* () {
+        const first = ProviderInstanceId.make("first");
+        const second = ProviderInstanceId.make("second");
+        const driverKind = ProviderDriverKind.make("fake");
+        const rebuilding = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        let revision = "original";
+        let cacheInvalidated = false;
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "Fake" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const continuationKey = input.environment[0]?.value ?? "missing";
+              let open = true;
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  open = false;
+                  if (continuationKey === "original") cacheInvalidated = true;
+                }),
+              );
+              if (input.instanceId === second && revision === "rotated") {
+                yield* Deferred.succeed(rebuilding, undefined);
+                yield* Deferred.await(finish);
+              }
+              const instance: Partial<ProviderInstance> = {
+                instanceId: input.instanceId,
+                enabled: input.enabled,
+                continuationIdentity: { driverKind, continuationKey },
+                refreshModels: () => Effect.sync(() => expect(open).toBe(true)),
+              };
+              return instance as ProviderInstance;
+            }),
+        };
+        const entry = {
+          driver: driverKind,
+          config: {},
+          environment: [
+            {
+              name: "API_KEY",
+              value: { provider: SecretProviderId.make("vault"), reference: "test-key" },
+              sensitive: true,
+            },
+          ],
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [first]: entry, [second]: entry },
+        }).pipe(
+          Effect.provideService(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            invalidate: () => Effect.void,
+            read: (references) =>
+              Effect.sync(() => references.map(() => (cacheInvalidated ? undefined : revision))),
           }),
-      };
-      const entry = {
-        driver: driverKind,
-        config: {},
-        environment: [
-          {
-            name: "API_KEY",
-            value: { provider: SecretProviderId.make("vault"), reference: "test-key" },
-            sensitive: true,
-          },
-        ],
-      };
-      const { registry, mutator } = yield* makeProviderInstanceRegistry({
-        drivers: [driver],
-        configMap: { [first]: entry, [second]: entry },
-      }).pipe(
-        Effect.provideService(SecretResolver.SecretResolver, {
-          label: (provider) => Effect.succeed(provider),
-          invalidate: () => Effect.void,
-          read: (references) =>
-            Effect.sync(() => references.map(() => (cacheInvalidated ? undefined : revision))),
-        }),
-      );
-      yield* mutator.reloadSecrets();
-      revision = "rotated";
-      const rebuild = yield* mutator.rebuild([first, second]).pipe(Effect.forkChild);
-      const started = yield* Effect.raceFirst(
-        Deferred.await(rebuilding).pipe(Effect.as(true)),
-        Fiber.await(rebuild).pipe(Effect.as(false)),
-      );
-      expect(started).toBe(true);
-      yield* Fiber.interrupt(rebuild).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.succeed(finish, undefined);
-      yield* Fiber.await(rebuild);
+        );
+        yield* mutator.reloadSecrets();
+        revision = "rotated";
+        const update =
+          operation === "rebuild" ? mutator.rebuild([first, second]) : mutator.reloadSecrets();
+        const updateFiber = yield* update.pipe(Effect.forkChild);
+        const started = yield* Effect.raceFirst(
+          Deferred.await(rebuilding).pipe(Effect.as(true)),
+          Fiber.await(updateFiber).pipe(Effect.as(false)),
+        );
+        expect(started).toBe(true);
+        yield* Fiber.interrupt(updateFiber).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.await(updateFiber);
 
-      const instances = yield* registry.listInstances;
-      expect(
-        instances.map(({ instanceId, continuationIdentity }) => [
-          instanceId,
-          continuationIdentity.continuationKey,
-        ]),
-      ).toEqual([
-        [first, "rotated"],
-        [second, "rotated"],
-      ]);
-      for (const instance of instances) {
-        expect(instance.refreshModels).toBeDefined();
-        yield* instance.refreshModels?.() ?? Effect.void;
-      }
-    }),
+        const instances = yield* registry.listInstances;
+        expect(
+          instances.map(({ instanceId, continuationIdentity }) => [
+            instanceId,
+            continuationIdentity.continuationKey,
+          ]),
+        ).toEqual([
+          [first, "rotated"],
+          [second, "rotated"],
+        ]);
+        for (const instance of instances) {
+          expect(instance.refreshModels).toBeDefined();
+          yield* instance.refreshModels?.() ?? Effect.void;
+        }
+      }),
   );
 });
