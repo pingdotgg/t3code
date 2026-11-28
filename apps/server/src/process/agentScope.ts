@@ -207,12 +207,35 @@ export const make = Effect.gen(function* () {
         });
         return false;
       });
+      // Swap that a cgroup above the agents forbids (memory.swap.max 0, as some VM
+      // images set on user.slice) stalls them at MemoryHigh like no swap at all.
+      let agentsControlGroup = "";
+      const swapForbidden = Effect.gen(function* () {
+        if (agentsControlGroup === "") {
+          const shown = yield* run(systemctl, [
+            "--user",
+            "show",
+            AGENT_SLICE,
+            "--property=ControlGroup",
+          ]);
+          if (shown._tag === "Some" && shown.value.code === 0) {
+            agentsControlGroup = parseKeyValues(shown.value.stdout).get("ControlGroup") ?? "";
+          }
+        }
+        for (let group = agentsControlGroup; group.length > 1; group = path.dirname(group)) {
+          if ((yield* readCgroupFile(group, "memory.swap.max")).trim() === "0") return true;
+        }
+        return false;
+      });
       // VMs and containers can resize RAM live, so each launch re-checks the total
       // the limits came from. A failed update is retried by the next launch.
       // An unreadable meminfo keeps the throttle, as before swap was checked.
       const readHasSwap = fileSystem.readFileString("/proc/meminfo").pipe(
         Effect.map((text) => /^SwapTotal:\s*0 kB$/m.exec(text) === null),
         Effect.orElseSucceed(() => true),
+        Effect.flatMap((hasSwap) =>
+          hasSwap ? Effect.map(swapForbidden, (forbidden) => !forbidden) : Effect.succeed(false),
+        ),
       );
       let appliedTotal: number | undefined;
       let appliedHasSwap: boolean | undefined;
