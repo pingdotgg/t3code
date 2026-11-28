@@ -4169,6 +4169,70 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 keeps an idle timer when a lookup is interrupted while it reschedules",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const firstCheck = yield* Ref.make(true);
+      const checkEntered = yield* Deferred.make<void>();
+      const checkGate = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-interrupted-lookup-idle");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(checkEntered);
+
+        const lookup = yield* manager
+          .get(providerSessionId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.interrupt(lookup).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(checkGate, undefined);
+        yield* Fiber.await(lookup);
+
+        yield* TestClock.adjust("3 seconds");
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            hasPendingBackgroundWork: Effect.uninterruptible(
+              Effect.gen(function* () {
+                if (yield* Ref.getAndSet(firstCheck, false)) {
+                  yield* Deferred.succeed(checkEntered, undefined);
+                  yield* Deferred.await(checkGate);
+                }
+                return false;
+              }),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
