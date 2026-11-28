@@ -55,7 +55,7 @@ import {
   PI_PROVIDER,
   type PiAdapterV2Options,
 } from "./adapter.ts";
-import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
+import { makePiRpcConnection, terminatePiProcess, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
@@ -7858,5 +7858,21 @@ process.stdout.write('{"type":"ready"}\\n');
         yield* Fiber.join(closing);
         assert.isTrue(closedBeforeGrace);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("sends no SIGKILL once it has seen the process group gone", () =>
+    Effect.gen(function* () {
+      const signals: Array<NodeJS.Signals> = [];
+      let probes = 0;
+      const teardown = yield* terminatePiProcess(
+        (signal) => (signals.push(signal), true),
+        // A later lookup of the freed id finds a recycled process group.
+        () => false,
+        () => signals.includes("SIGTERM") && ++probes > 1,
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(40));
+      yield* Fiber.join(teardown);
+      assert.deepEqual(signals, ["SIGTERM"]);
+    }),
   );
 });
