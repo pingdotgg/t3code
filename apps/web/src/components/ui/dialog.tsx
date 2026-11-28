@@ -75,6 +75,27 @@ function DialogClose(props: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
+// Windows and Linux draw the window's caption buttons at full contrast above the backdrop, so a
+// muted X here reads as the weaker close and users hit the app's close instead.
+function DialogCloseButton({
+  size = "icon",
+  children,
+  ...props
+}: DialogPrimitive.Close.Props & { size?: ButtonSize }) {
+  const gt = useGT();
+  return (
+    <DialogPrimitive.Close
+      aria-label={gt("Close", { $context: "button, closes the dialog" })}
+      render={
+        <Button size={size} variant="ghost" className="[--control-icon-color:currentColor]" />
+      }
+      {...props}
+    >
+      {children ?? <XIcon />}
+    </DialogPrimitive.Close>
+  );
+}
+
 function DialogBackdrop({
   className,
   variant = "default",
@@ -123,7 +144,6 @@ function DialogPopup({
   variant?: "default" | "media";
   mediaControlsPlacement?: "inside" | "outside";
 }) {
-  const gt = useGT();
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -143,13 +163,7 @@ function DialogPopup({
       >
         {children}
         {showCloseButton && (
-          <DialogPrimitive.Close
-            aria-label={gt("Close", { $context: "button, closes the dialog" })}
-            className="absolute end-2 top-2"
-            render={<Button size={closeButtonSize} variant="ghost" />}
-          >
-            <XIcon />
-          </DialogPrimitive.Close>
+          <DialogCloseButton className="absolute end-2 top-2" size={closeButtonSize} />
         )}
       </DialogPrimitive.Popup>
     ),
@@ -269,6 +283,7 @@ export {
   DialogTrigger,
   DialogPortal,
   DialogClose,
+  DialogCloseButton,
   DialogAction,
   useDialogActionInitialFocus,
   DialogBackdrop,

@@ -1,6 +1,5 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { T, useGT } from "gt-react";
-import { XIcon } from "lucide-react";
 import { useRouter } from "@tanstack/react-router";
 import {
   useEffect,
@@ -16,8 +15,7 @@ import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
 import { requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
-import { Button } from "./ui/button";
-import { DialogBackdrop } from "./ui/dialog";
+import { DialogBackdrop, DialogCloseButton } from "./ui/dialog";
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
@@ -161,20 +159,13 @@ export function AppRouteModalClose() {
   const gt = useGT();
   return (
     <SharedTooltipTrigger
-      render={
-        <DialogPrimitive.Close
-          aria-label={gt("Close")}
-          render={<Button size="icon-sm" variant="ghost" />}
-        />
-      }
+      render={<DialogCloseButton aria-label={gt("Close")} size="icon-sm" />}
       label={
         <>
           <T>Close (Esc)</T>
         </>
       }
       side="bottom"
-    >
-      <XIcon />
-    </SharedTooltipTrigger>
+    />
   );
 }
