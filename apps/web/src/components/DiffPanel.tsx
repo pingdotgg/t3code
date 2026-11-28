@@ -45,11 +45,14 @@ import {
   type DiffPanelSelection,
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
+  chooseThreadGitRepository,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
+  useThreadGitRepositoryPath,
 } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useThreadGitRepositories } from "../hooks/useThreadGitRepositories";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
@@ -74,7 +77,6 @@ import {
   useThreadCheckpointSummaries,
   useQuietThreadShell,
   useQuietThreadVisibleTurnItems,
-  useQuietThreadProjection,
 } from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
 import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
@@ -115,7 +117,6 @@ import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query"
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
-import { filesystemEnvironment } from "../state/filesystem";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
@@ -129,8 +130,8 @@ import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
 import {
   isRelativePathInsideFolder,
   repositorySectionForPath,
-  threadChangedRepositories,
-  threadGitRepositories,
+  resolveThreadGitRepository,
+  threadGitRepositoryLabel,
   turnDiffSections,
   type TurnDiffSection,
 } from "@t3tools/client-runtime/state/thread-repositories";
@@ -140,7 +141,6 @@ type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const ALL_REPOSITORIES = "__all_repositories__";
 const THREAD_FOLDER = "__thread_folder__";
-const NO_GIT_REPOSITORIES: ReturnType<typeof threadChangedRepositories> = Object.freeze([]);
 const NO_TURN_DIFF_SECTIONS: ReadonlyArray<TurnDiffSection> = [];
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
 
@@ -314,43 +314,54 @@ export default function DiffPanel({
   const storedDiffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, panelThreadRef),
   );
-  const threadFolderIsRepo = gitStatusQuery.data?.isRepo ?? true;
   // The checkout the Git scopes read: the thread's folder, or a repository the thread changed.
   // A plain folder has no history of its own, so it starts on the latest one changed.
-  const repositoryStructure = useQuietThreadProjection(routeThreadRef);
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
-  const threadWorktreePath = activeThread?.worktreePath ?? null;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
-  const taskFolderQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath !== null
-      ? filesystemEnvironment.taskFolder({
-          environmentId: activeThread.environmentId,
-          input: { worktreePath: threadWorktreePath },
-        })
-      : null,
-  );
-  const projectFoldersQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath === null
-      ? filesystemEnvironment.listFolders({
-          environmentId: activeThread.environmentId,
-          input: { projectId: activeThread.projectId },
-        })
-      : null,
-  );
-  const gitRepositories = threadGitRepositories({
-    changed:
-      repositoryStructure === null
-        ? NO_GIT_REPOSITORIES
-        : threadChangedRepositories(repositoryStructure.projection),
-    taskFolder: taskFolderQuery.data?.taskFolder ?? null,
-    folders: projectFoldersQuery.data?.folders ?? null,
+  const threadWorktreePath = activeThread?.worktreePath ?? null;
+  // Keyed like the commit and base ref it scopes, so a new thread's draft keeps them together.
+  const chosenGitRepositoryPath = useThreadGitRepositoryPath(panelThreadRef);
+  const {
+    repositories: gitRepositories,
+    taskFolder,
+    settled: gitRepositoriesSettled,
+  } = useThreadGitRepositories({
+    threadRef: panelThreadRef,
+    isServerThread: serverThread != null,
+    projectId: activeProjectId,
+    worktreePath: threadWorktreePath,
     threadCwd: activeCwd ?? null,
+    // As in the thread details panel, which this must resolve the same repository as.
+    // Also while hidden once a repository is chosen: the diff still loads then, for that repository.
+    enabled:
+      (visible || chosenGitRepositoryPath !== null) &&
+      (tracksFolders || threadWorktreePath !== null),
   });
-  const [gitRepositoryPath, setGitRepositoryPath] = useState<string | null>(null);
-  const gitRepository =
-    gitRepositories.find((repository) => repository.repositoryPath === gitRepositoryPath) ??
-    (threadFolderIsRepo ? null : (gitRepositories[0] ?? null));
-  const gitCwd = gitRepository?.cwd ?? activeCwd;
+  // A task folder's plain project directory can sit inside someone else's repository.
+  const threadFolderIsRepo =
+    (gitStatusQuery.data?.isRepo ?? true) && taskFolder?.projectIsWorktree !== false;
+  const chosenRepositoryListed =
+    chosenGitRepositoryPath !== null &&
+    gitRepositories.some((repository) => repository.repositoryPath === chosenGitRepositoryPath);
+  // A chosen repository still missing once the folders are read (or failed to be) is out of
+  // reach: the panel goes back to the thread's folder and sets aside the commit and base ref
+  // chosen in it, which mean nothing there. The next choice replaces them.
+  const chosenRepositoryUnreachable =
+    chosenGitRepositoryPath !== null &&
+    !chosenRepositoryListed &&
+    gitRepositoriesSettled &&
+    activeThread != null &&
+    activeProject != null;
+  const gitRepository = resolveThreadGitRepository({
+    repositories: gitRepositories,
+    chosenPath: chosenRepositoryUnreachable ? null : chosenGitRepositoryPath,
+    threadFolderIsRepo,
+  });
+  // Until then, nothing is read: the thread's folder is another repository, where the chosen
+  // one's commit, base ref, commits and refs mean nothing.
+  const awaitingChosenRepository =
+    chosenGitRepositoryPath !== null && !chosenRepositoryListed && !chosenRepositoryUnreachable;
+  const gitCwd = awaitingChosenRepository ? undefined : (gitRepository?.cwd ?? activeCwd);
   const isGitRepo = threadFolderIsRepo || gitRepository !== null;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
@@ -372,10 +383,14 @@ export default function DiffPanel({
     storedDiffSelection.kind !== "turn" &&
     storedDiffSelection.kind !== "tool-call"
       ? { kind: "turn", turnId: latestTurn.runId, filePath: null, revealRequestId: 0 }
-      : storedDiffSelection;
-  const rememberedBaseRef = useDiffPanelStore((state) =>
+      : chosenRepositoryUnreachable &&
+          (storedDiffSelection.kind === "branch" || storedDiffSelection.kind === "commit")
+        ? { kind: "branch", baseRef: null }
+        : storedDiffSelection;
+  const storedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, panelThreadRef),
   );
+  const rememberedBaseRef = chosenRepositoryUnreachable ? null : storedBaseRef;
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
   // Turn and git diffs name files from the repository root; a tool call's diff names them as
   // its provider recorded them, absolute or relative to the workspace.
@@ -562,6 +577,10 @@ export default function DiffPanel({
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
   const threadFolderName = activeProject?.title ?? gt("Project folder");
+  const gitRepositoryLabel =
+    gitRepository === null
+      ? threadFolderName
+      : threadGitRepositoryLabel(gitRepository, activeProject?.workspaceRoot ?? null);
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
@@ -984,22 +1003,29 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
+  // Acting in the thread's folder settles an out-of-reach choice, so its refs stay set aside.
+  const settleUnreachableRepository = (ref: ScopedThreadRef) => {
+    if (chosenRepositoryUnreachable) chooseThreadGitRepository(ref, null);
+  };
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!panelThreadRef) return;
+    settleUnreachableRepository(panelThreadRef);
     useDiffPanelStore.getState().selectGitScope(panelThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!panelThreadRef) return;
+    settleUnreachableRepository(panelThreadRef);
     useDiffPanelStore.getState().selectBranchBaseRef(panelThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (nextPath === (gitRepository?.repositoryPath ?? null)) return;
-    setGitRepositoryPath(nextPath);
-    // A commit or base ref of the repository being left means nothing in the next one.
-    if (selectedCommitSha === null && rememberedBaseRef === null) return;
-    selectBranchBaseRef(null);
-    if (selectedGitScope === "unstaged") selectGitScope("unstaged");
+    if (!panelThreadRef || nextPath === chosenGitRepositoryPath) return;
+    // The repository shown is already the choice, unless it only stands in for one out of reach:
+    // picking it then replaces that choice, so the panel does not move back when it returns.
+    if (!chosenRepositoryUnreachable && nextPath === (gitRepository?.repositoryPath ?? null)) {
+      return;
+    }
+    chooseThreadGitRepository(panelThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
@@ -1027,6 +1053,7 @@ export default function DiffPanel({
       selectGitScope("branch");
     } else if (value.startsWith("commit:")) {
       if (panelThreadRef) {
+        settleUnreachableRepository(panelThreadRef);
         useDiffPanelStore.getState().selectCommit(panelThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
@@ -1238,12 +1265,12 @@ export default function DiffPanel({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="xs" variant="ghost-muted" />}
-              className="min-w-14 max-w-48 shrink"
-              aria-label={gt("Repository: {name}", {
-                name: gitRepository?.name ?? threadFolderName,
-              })}
+              // The path tells same-named repositories apart, so the comparison gives way first. A
+              // narrower row caps it so it still fits; only a phone-width row truncates it further.
+              className="max-w-48 shrink-0 @max-[18rem]/diff-refs:max-w-32 @max-[14rem]/diff-refs:min-w-14 @max-[14rem]/diff-refs:shrink"
+              aria-label={gt("Repository: {name}", { name: gitRepositoryLabel })}
             >
-              <span className="truncate">{gitRepository?.name ?? threadFolderName}</span>
+              <span className="truncate">{gitRepositoryLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="max-h-80 max-w-72">
@@ -1252,7 +1279,14 @@ export default function DiffPanel({
                 onValueChange={selectGitRepository}
               >
                 {threadFolderIsRepo ? (
-                  <DropdownMenuRadioItem value={THREAD_FOLDER} closeOnClick>
+                  <DropdownMenuRadioItem
+                    value={THREAD_FOLDER}
+                    closeOnClick
+                    // Shown as checked in place of a choice out of reach, so it reports no change.
+                    {...(chosenRepositoryUnreachable
+                      ? { onClick: () => selectGitRepository(THREAD_FOLDER) }
+                      : {})}
+                  >
                     <span className="min-w-0 truncate">{threadFolderName}</span>
                   </DropdownMenuRadioItem>
                 ) : null}
@@ -1261,8 +1295,13 @@ export default function DiffPanel({
                     key={repository.repositoryPath}
                     value={repository.repositoryPath}
                     closeOnClick
+                    {...(chosenRepositoryUnreachable
+                      ? { onClick: () => selectGitRepository(repository.repositoryPath) }
+                      : {})}
                   >
-                    <span className="min-w-0 truncate">{repository.name}</span>
+                    <span className="min-w-0 truncate">
+                      {threadGitRepositoryLabel(repository, activeProject?.workspaceRoot ?? null)}
+                    </span>
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>

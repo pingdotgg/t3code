@@ -16,6 +16,12 @@ const state = vi.hoisted(() => ({
   folder: "",
   pullRequests: [] as unknown[],
   configLoaded: true,
+  /** Repositories the project covers besides its own folder, all on `main`. */
+  repositories: [] as string[],
+  /** Whether the project tracks `repositories`; false once tracking stopped. */
+  tracked: true,
+  /** A worktree thread's task folder: each repository's path, keyed to its worktree. */
+  taskFolder: null as null | { readonly repositories: ReadonlyArray<[string, string]> },
 }));
 
 // The read of t3.json is a cache: a re-read is the only way to see what is on disk now.
@@ -70,6 +76,11 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           title: state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain",
           workspaceRoot: state.workspaceRoot,
           scripts: [],
+          trackedFolders: (state.tracked ? state.repositories : []).map((path) => ({
+            path,
+            name: path.split("/").at(-1)!,
+            discovered: true,
+          })),
         }) as never,
   useProjects: (() => []) as never,
   useQuietThreadShell: ((ref: unknown) =>
@@ -98,31 +109,83 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
         : [],
     )) as never,
 }));
-// Neither folder is a repository, which is what the server reports for both.
+// Neither folder is a repository, which is what the server reports for both; the project's
+// other repositories are.
 vi.mock(import("~/state/vcs"), async (importOriginal) => {
   const actual = await importOriginal();
-  const notARepo = Atom.make(
-    AsyncResult.success({
-      isRepo: false,
-      hasPrimaryRemote: false,
-      isDefaultRef: false,
-      refName: null,
-      hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
-      hasUpstream: false,
-      aheadCount: 0,
-      behindCount: 0,
-      aheadOfDefaultCount: 0,
-      pr: null,
-    }),
-  );
+  const status = (isRepo: boolean) =>
+    Atom.make(
+      AsyncResult.success({
+        isRepo,
+        hasPrimaryRemote: false,
+        isDefaultRef: isRepo,
+        refName: isRepo ? "main" : null,
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 0,
+        pr: null,
+      }),
+    );
+  const notARepo = status(false);
+  const repo = status(true);
   return {
     ...actual,
-    vcsEnvironment: { ...actual.vcsEnvironment, status: (() => notARepo) as never },
+    vcsEnvironment: {
+      ...actual.vcsEnvironment,
+      status: ((query: { input: { cwd: string } }) =>
+        state.repositories.includes(query.input.cwd) ? repo : notARepo) as never,
+    },
+  };
+});
+vi.mock(import("~/state/filesystem"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    filesystemEnvironment: {
+      ...actual.filesystemEnvironment,
+      taskFolder: (() =>
+        Atom.make(
+          AsyncResult.success({
+            taskFolder:
+              state.taskFolder === null
+                ? null
+                : {
+                    root: "/task",
+                    projectId: "project",
+                    projectRoot: state.workspaceRoot,
+                    anchor: state.workspaceRoot,
+                    projectPath: state.folder,
+                    projectIsWorktree: false,
+                    repositories: state.taskFolder.repositories.map(
+                      ([repositoryPath, worktreePath]) => ({
+                        repositoryPath,
+                        worktreePath,
+                        name: repositoryPath.split("/").at(-1)!,
+                      }),
+                    ),
+                  },
+          }),
+        )) as never,
+      listFolders: (() =>
+        Atom.make(
+          AsyncResult.success({
+            folders: state.repositories.map((path) => ({
+              path,
+              name: path.split("/").at(-1)!,
+              state: "git" as const,
+              discovered: true,
+            })),
+          }),
+        )) as never,
+    },
   };
 });
 
 import { render } from "../../../test/render";
+import { useDiffPanelStore } from "../../diffPanelStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
@@ -151,8 +214,13 @@ function setup(input: {
   folder: string;
   pullRequests?: ThreadPullRequestLink[];
   configLoaded?: boolean;
+  repositories?: string[];
 }) {
   state.configLoaded = input.configLoaded ?? true;
+  state.repositories = input.repositories ?? [];
+  state.tracked = true;
+  state.taskFolder = null;
+  useDiffPanelStore.setState({ gitRepositoryPathByThreadKey: {} });
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
   state.pullRequests = input.pullRequests ?? [];
@@ -179,12 +247,15 @@ function Panel({
   draftEnvMode,
   onMachines = false,
   withScripts = false,
+  inPlace = false,
 }: {
   fixture: ReturnType<typeof setup>;
   /** Renders an unsent draft in this mode instead of a started thread. */
   draftEnvMode?: "local" | "worktree";
   onMachines?: boolean;
   withScripts?: boolean;
+  /** A started thread that runs in the project folder rather than a worktree. */
+  inPlace?: boolean;
 }) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
@@ -209,7 +280,7 @@ function Panel({
         threadId={threadRef.threadId}
         projectId={ProjectId.make("project")}
         composerDraftTarget={threadRef}
-        worktreePath={draftEnvMode === undefined ? state.folder : null}
+        worktreePath={draftEnvMode === undefined && !inPlace ? state.folder : null}
         isServerThread={draftEnvMode === undefined}
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
         activeProjectScripts={withScripts ? [] : undefined}
@@ -315,4 +386,50 @@ it("lists the t3.json actions on disk when the actions menu opens again after th
 
   await chooser.click();
   await expect.element(page.getByRole("menuitem", { name: /Dev 4200/ })).toBeVisible();
+});
+
+it("acts in a project's nested repository when its folder is none, and names the one picked", async () => {
+  using fixture = setup({
+    workspaceRoot: "/work",
+    folder: "/work",
+    repositories: ["/work/docs/server", "/work/server", "/work/web"],
+  });
+  await using _screen = await render(<Panel fixture={fixture} inPlace />);
+  // Two repositories share a name, so each is named by its folder in the project.
+  const picker = page.getByRole("button", { name: "Repository: docs/server" });
+  await expect.element(picker).toBeVisible();
+  await expect.element(picker.getByText("main")).toBeVisible();
+  // The Git actions read the nested repository, not the plain project folder.
+  await expect
+    .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
+
+  await picker.click();
+  await expect.element(page.getByRole("menuitemradio", { name: "plain" })).not.toBeInTheDocument();
+  await page.getByRole("menuitemradio", { name: "web" }).click();
+  await expect.element(page.getByRole("button", { name: "Repository: web" })).toBeVisible();
+});
+
+it("keeps a worktree thread's repositories after the project stops tracking folders", async () => {
+  using fixture = setup({ workspaceRoot: "/work", folder: "/task/work" });
+  state.tracked = false;
+  state.taskFolder = {
+    repositories: [
+      ["/work/web", "/task/web"],
+      ["/work/server", "/task/server"],
+    ],
+  };
+  await using _screen = await render(<Panel fixture={fixture} />);
+  // The task folder still holds both worktrees; its plain project folder is no repository.
+  const picker = page.getByRole("button", { name: "Repository: web" });
+  await expect.element(picker).toBeVisible();
+  await picker.click();
+  await expect.element(page.getByRole("menuitemradio", { name: "server" })).toBeVisible();
+});
+
+it("hides the repository picker when the project covers no other repository", async () => {
+  using fixture = setup({ workspaceRoot: "/work/plain", folder: "/work/plain" });
+  await using _screen = await render(<Panel fixture={fixture} inPlace />);
+  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /^Repository:/ })).not.toBeInTheDocument();
 });

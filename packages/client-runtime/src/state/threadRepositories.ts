@@ -484,6 +484,38 @@ export function threadGitRepositories(input: {
 }
 
 /**
+ * The repository a thread's Git controls act in, or null for the thread's own folder. A folder
+ * that is no repository itself falls to the first one it reaches, as does a choice it no longer
+ * reaches.
+ */
+export function resolveThreadGitRepository<Repository extends ThreadGitRepository>(input: {
+  readonly repositories: ReadonlyArray<Repository>;
+  /** The `repositoryPath` the user chose; null for the thread's own folder. */
+  readonly chosenPath: string | null;
+  readonly threadFolderIsRepo: boolean;
+}): Repository | null {
+  return (
+    input.repositories.find((repository) => repository.repositoryPath === input.chosenPath) ??
+    (input.threadFolderIsRepo ? null : (input.repositories[0] ?? null))
+  );
+}
+
+/**
+ * How a picker names a repository: its folder from the project folder when it sits inside it,
+ * which tells apart two of the same name, and its name otherwise.
+ */
+export function threadGitRepositoryLabel(
+  repository: Pick<ThreadGitRepository, "repositoryPath" | "name">,
+  projectRoot: string | null,
+): string {
+  const relative =
+    projectRoot === null ? undefined : relativeFolderPath(projectRoot, repository.repositoryPath);
+  return relative === undefined || relative === "" || !isRelativePathInsideFolder(relative)
+    ? repository.name
+    : relative;
+}
+
+/**
  * A task folder's repositories, each bound to its worktree: changed ones first, then the rest.
  * A changed repository inside one of those worktrees, such as a submodule, follows them.
  */
@@ -599,10 +631,29 @@ export function pinnableThreadRepositories(input: {
   const shown = new Set(
     [...input.sections.visible, ...input.sections.hidden].map((section) => section.key),
   );
-  return input.folders.flatMap((folder) =>
-    folder.state !== "git" || folder.path === input.threadCwd || shown.has(folder.path)
-      ? []
-      : [{ repositoryPath: folder.path, name: folder.name }],
+  return distinctRepositoryNames(
+    input.folders.flatMap((folder) =>
+      folder.state !== "git" || folder.path === input.threadCwd || shown.has(folder.path)
+        ? []
+        : [{ repositoryPath: folder.path, name: folder.name }],
+    ),
+    input.threadCwd,
+  );
+}
+
+/** Repositories that share a folder name, like `server` and `docs/server`, go by their path. */
+function distinctRepositoryNames(
+  repositories: ReadonlyArray<PinnedThreadRepository>,
+  root: string | null,
+): ReadonlyArray<PinnedThreadRepository> {
+  const counts = new Map<string, number>();
+  for (const repository of repositories) {
+    counts.set(repository.name, (counts.get(repository.name) ?? 0) + 1);
+  }
+  return repositories.map((repository) =>
+    (counts.get(repository.name) ?? 0) > 1
+      ? { ...repository, name: threadGitRepositoryLabel(repository, root) }
+      : repository,
   );
 }
 
@@ -614,12 +665,15 @@ export function addableTaskFolderRepositories(input: {
   const present = new Set(
     input.taskFolder.repositories.map((repository) => repository.repositoryPath),
   );
-  return input.folders.flatMap((folder) =>
-    folder.state !== "git" ||
-    folder.path === input.taskFolder.projectRoot ||
-    present.has(folder.path)
-      ? []
-      : [{ repositoryPath: folder.path, name: folder.name }],
+  return distinctRepositoryNames(
+    input.folders.flatMap((folder) =>
+      folder.state !== "git" ||
+      folder.path === input.taskFolder.projectRoot ||
+      present.has(folder.path)
+        ? []
+        : [{ repositoryPath: folder.path, name: folder.name }],
+    ),
+    input.taskFolder.projectRoot,
   );
 }
 

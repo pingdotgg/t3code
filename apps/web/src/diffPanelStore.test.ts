@@ -4,7 +4,9 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  chooseThreadGitRepository,
   resolveToolCallDiffTarget,
+  selectThreadBranchBaseRef,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -14,8 +16,51 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      gitRepositoryPathByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+  });
+
+  it("drops a commit and base ref of the repository a thread's Git controls leave", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const key = scopedThreadKey(ref);
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "origin/main");
+    store.selectCommit(ref, "abc123");
+    chooseThreadGitRepository(ref, "/work/web");
+    expect(useDiffPanelStore.getState().gitRepositoryPathByThreadKey[key]).toBe("/work/web");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
+
+    // Uncommitted changes and a turn read whichever repository is picked, so they stay.
+    store.selectBranchBaseRef(ref, "origin/main");
+    store.selectGitScope(ref, "unstaged");
+    chooseThreadGitRepository(ref, null);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
+    expect(selectThreadBranchBaseRef(useDiffPanelStore.getState(), ref)).toBeNull();
+    store.selectTurn(ref, RunId.make("run"));
+    chooseThreadGitRepository(ref, "/work/web");
+    expect(useDiffPanelStore.getState().byThreadKey[key]?.kind).toBe("turn");
+  });
+
+  it("restores a nested repository with the base ref chosen in it after a reload", async () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    chooseThreadGitRepository(ref, "/work/web");
+    useDiffPanelStore.getState().selectBranchBaseRef(ref, "origin/release");
+
+    const { storage, name } = useDiffPanelStore.persist.getOptions();
+    const persisted = await storage!.getItem(name!);
+    expect(persisted).not.toBeNull();
+    useDiffPanelStore.setState(useDiffPanelStore.getInitialState());
+    await storage!.setItem(name!, persisted!);
+    await useDiffPanelStore.persist.rehydrate();
+
+    // The base ref still applies to the repository it was chosen in, not the thread's folder.
+    const state = useDiffPanelStore.getState();
+    expect(state.gitRepositoryPathByThreadKey[scopedThreadKey(ref)]).toBe("/work/web");
+    expect(selectThreadBranchBaseRef(state, ref)).toBe("origin/release");
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {

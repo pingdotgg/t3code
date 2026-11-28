@@ -27,6 +27,7 @@ T3 Code automatically discovers every Git repository inside the project folder�
 
 - **Turn diffs**: Each turn groups changed files by repository. In the Diff pane (web/desktop), **Uncommitted**, **Changes**, and **Commits** read one repository at a time via the repository picker. See [Review turn changes](./source-control.md#review-turn-changes).
 - **Git actions**: Commit, push, and PR actions run per repository—expand a repository in the thread details panel (web/desktop) or open **Git controls** (mobile). Use **Other repositories…** to include untouched repos. PRs link under their own repository.
+- **Repository picker** (web/desktop): The picker at the top of the thread details panel's Git rows chooses the repository the branch, Git actions, and **Changes** rows act in, and is shared with the Diff pane. Repositories inside the project folder go by their path there, such as `docs/server`. When the project folder is not a repository, the first one is picked. The choice is kept per thread; another repository's branch is shown next to its name, not switched there.
 
 ## Worktree threads
 
@@ -88,4 +89,4 @@ T3 Code prompts you to approve the exact `create` and `remove` command strings o
 ## Rewind and limits
 
 - **Rewind**: Restores every repository with an earlier snapshot. Plain-folder files outside repositories and repositories with no earlier snapshot keep their current contents (the rewind reports any skipped repos).
-- **Limits**: Git actions run one repository at a time; only the project folder's `t3.json` is read; the Diff pane repository picker and plain-folder base branch field are web/desktop only.
+- **Limits**: Git actions run one repository at a time; only the project folder's `t3.json` is read; the repository pickers in the Diff pane and the thread details panel, and the plain-folder base branch field, are web/desktop only.

@@ -45,6 +45,14 @@ interface DiffPanelStoreState {
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
+  /**
+   * The repository a thread's Git controls and Git diff act in, by `repositoryPath`; null is
+   * the thread's own folder. Saved with the commit and base ref it scopes, so a reload cannot
+   * apply a nested repository's refs to the thread's folder.
+   */
+  gitRepositoryPathByThreadKey: Record<string, string | null>;
+  /** A commit or base ref of the repository being left means nothing in the next one. */
+  chooseGitRepository: (ref: ScopedThreadRef, repositoryPath: string | null) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -69,6 +77,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      gitRepositoryPathByThreadKey: {},
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -163,6 +172,26 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
           };
         }),
+      chooseGitRepository: (ref, repositoryPath) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const gitRepositoryPathByThreadKey = {
+            ...state.gitRepositoryPathByThreadKey,
+            [threadKey]: repositoryPath,
+          };
+          const previous = state.byThreadKey[threadKey];
+          if (previous?.kind !== "commit" && branchBaseRef(state, threadKey) === null) {
+            return { gitRepositoryPathByThreadKey };
+          }
+          return {
+            gitRepositoryPathByThreadKey,
+            byThreadKey:
+              previous?.kind === "branch" || previous?.kind === "commit"
+                ? { ...state.byThreadKey, [threadKey]: { kind: "branch", baseRef: null } }
+                : state.byThreadKey,
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: null },
+          };
+        }),
       reconcileTurnSelection: (ref, availableTurnIds) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -185,13 +214,19 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.gitRepositoryPathByThreadKey)
+          ) {
             return state;
           }
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          const { [threadKey]: _removedRepository, ...gitRepositoryPathByThreadKey } =
+            state.gitRepositoryPathByThreadKey;
+          return { byThreadKey, branchBaseRefByThreadKey, gitRepositoryPathByThreadKey };
         }),
     }),
     {
@@ -203,6 +238,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        gitRepositoryPathByThreadKey: state.gitRepositoryPathByThreadKey,
       }),
     },
   ),
@@ -236,6 +272,16 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
   ignoreWhitespace: null,
   setIgnoreWhitespace: (ignoreWhitespace) => set({ ignoreWhitespace }),
 }));
+
+export function useThreadGitRepositoryPath(ref: ScopedThreadRef | null | undefined): string | null {
+  return useDiffPanelStore((state) =>
+    ref ? (state.gitRepositoryPathByThreadKey[scopedThreadKey(ref)] ?? null) : null,
+  );
+}
+
+export function chooseThreadGitRepository(ref: ScopedThreadRef, repositoryPath: string | null) {
+  useDiffPanelStore.getState().chooseGitRepository(ref, repositoryPath);
+}
 
 export function selectThreadDiffPanelSelection(
   byThreadKey: Record<string, DiffPanelSelection>,
