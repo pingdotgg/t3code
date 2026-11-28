@@ -476,6 +476,42 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
+  it.effect("counts abandoned rotation payloads toward the log budget", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const abandoned = ownedLogPath(basePath, "abandoned");
+      const unrelated = ownedLogPath(basePath, "unrelated");
+      const rotation = [
+        `${abandoned}.rotating`,
+        `${abandoned}.rotating.oldest`,
+        `${abandoned}.rotating.json`,
+        `${abandoned}.2`,
+      ];
+
+      try {
+        for (const file of rotation) {
+          NodeFS.writeFileSync(file, "pending");
+          NodeFS.utimesSync(file, 1, 1);
+        }
+        NodeFS.truncateSync(rotation[0]!, 512 * 1024 * 1024);
+        NodeFS.utimesSync(rotation[0]!, 1, 1);
+        NodeFS.writeFileSync(unrelated, "unrelated");
+        NodeFS.utimesSync(unrelated, 2, 2);
+
+        const store = yield* makeEventNdjsonLogStore(basePath);
+        yield* store.close();
+        assert.equal(
+          rotation.some((file) => NodeFS.existsSync(file)),
+          false,
+        );
+        assert.equal(NodeFS.readFileSync(unrelated, "utf8"), "unrelated");
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("retires a thread log once a retention interval passes without writes", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

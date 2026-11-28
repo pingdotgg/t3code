@@ -2,6 +2,7 @@ import { useGT } from "gt-react-native";
 import { useId, useState } from "react";
 import { Image, Pressable, View } from "react-native";
 
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import { FilePreviewLoading } from "./FilePreviewFeedback";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -16,6 +17,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
   readonly actionsSource?: MediaActionsSource;
 }) {
   const gt = useGT();
+  const barOverlap = useBarOverlap();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
@@ -23,7 +25,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
   const imageSource = { uri: props.uri, cache: "force-cache" as const };
 
   return (
-    <View className="relative flex-1 bg-subtle">
+    <View className="relative flex-1 bg-subtle" style={{ marginTop: barOverlap }}>
       <MediaActionsMenu media={mediaActions} style={{ flex: 1 }}>
         <Pressable
           accessibilityRole="button"

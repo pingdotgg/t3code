@@ -85,6 +85,8 @@ const SETTINGS_SEARCH_TERMS = {
     msg("overview", { $context: "settings search keyword" }),
     msg("checkouts", { $context: "settings search keyword" }),
     msg("delete project", { $context: "settings search keyword" }),
+    msg("pin", { $context: "settings search keyword" }),
+    msg("pinned projects", { $context: "settings search keyword" }),
   ],
   SettingsOrganization: [
     msg("language", { $context: "settings search keyword" }),
@@ -159,6 +161,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("link machine", { $context: "settings search keyword" }),
     msg("fast worktree checkout", { $context: "settings search keyword" }),
     msg("clone cache", { $context: "settings search keyword" }),
+    msg("agent feedback", { $context: "settings search keyword" }),
   ],
   SettingsEnvironmentMaintenance: [
     msg("updates", { $context: "settings search keyword" }),

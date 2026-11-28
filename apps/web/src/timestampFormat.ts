@@ -84,15 +84,21 @@ function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
   timeZone = "UTC",
+  locale = timestampLocale,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone}:${locale ?? ""}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(timestampLocale, {
+  const hourCycle =
+    timestampFormat === "locale" && locale !== timestampLocale
+      ? getTimestampFormatter(timestampFormat, includeSeconds).resolvedOptions().hourCycle
+      : undefined;
+  const formatter = new Intl.DateTimeFormat(locale, {
     ...getTimestampFormatOptions(timestampFormat, includeSeconds),
+    ...(hourCycle === undefined ? {} : { hourCycle }),
     timeZone,
   });
   timestampFormatterCache.set(cacheKey, formatter);
@@ -170,15 +176,19 @@ export function formatChatTimestampTooltip(
 
 export function formatFullTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
   return new Date(isoDate).toLocaleString(
-    undefined,
+    timestampLocale,
     timestampFormat === "locale" ? undefined : { hour12: timestampFormat === "12-hour" },
   );
 }
 
-export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+export function formatShortTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  locale?: string,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  return formatTime(date, timestampFormat);
+  return getTimestampFormatter(timestampFormat, false, "UTC", locale).format(wallClockAsUtc(date));
 }
 
 const dateTimeFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
@@ -191,11 +201,12 @@ export function formatDateTimeTimestamp(isoDate: string, timestampFormat: Timest
     formatter = new Intl.DateTimeFormat(timestampLocale, {
       dateStyle: "medium",
       timeStyle: "short",
+      timeZone: "UTC",
       ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
     });
     dateTimeFormatterCache.set(timestampFormat, formatter);
   }
-  return formatter.format(date);
+  return formatter.format(wallClockAsUtc(date));
 }
 
 /** A wall-clock `H:MM` or `HH:MM` that names no date or zone, such as a daily schedule's time. */

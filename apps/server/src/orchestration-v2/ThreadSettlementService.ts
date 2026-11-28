@@ -8,6 +8,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
@@ -19,6 +20,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -43,6 +45,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as PendingSettleScripts from "./PendingSettleScripts.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { QUIET_AFTER_MS, QUIET_SYNC_INTERVAL_MS } from "./PullRequestSyncReactor.ts";
 
@@ -53,7 +56,7 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const SETTLE_SCRIPT_SLOT_TIMEOUT = "5 minutes";
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -146,7 +149,7 @@ export function threadHasQueuedTurnStart(
   const messageAtMs = toMillis(thread.latestUserMessageAt);
   if (messageAtMs === null || thread.status === "failed") return false;
   const age = nowMs - messageAtMs;
-  if (Number.isNaN(age) || Math.abs(age) > QUEUED_TURN_START_GRACE_MS) return false;
+  if (Number.isNaN(age) || Math.abs(age) > Orchestrator.QUEUED_TURN_START_GRACE_MS) return false;
   if (thread.latestRunId === null) return true;
   return [
     toMillis(thread.latestRunRequestedAt),
@@ -158,7 +161,7 @@ export function threadHasQueuedTurnStart(
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt"
+    "createdAt" | "latestResumingMessageAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -170,7 +173,7 @@ function pullRequestSettles(
   if (terminalAt == null) return false;
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
-    toMillis(thread.latestUserAuthoredMessageAt),
+    toMillis(thread.latestResumingMessageAt),
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
@@ -179,7 +182,7 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestResumingMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
@@ -382,17 +385,18 @@ export const make = Effect.gen(function* () {
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
       (thread) =>
-        (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
+        (automaticSettlementEnabled || isDelegatedAppThread(thread)) &&
         isAutoSettlementCandidate(thread, nowMs),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        if (thread.lineage.relationshipToParent === "subagent") {
+        if (isDelegatedAppThread(thread)) {
           if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
-          // The store returns a subagent only once its parent is done, so it
-          // settles with the parent and never runs its own lookup.
+          // The store returns a subagent once its parent is done, or once its own run ended and
+          // the parent holds its result. A task delegated from a linked environment has no parent
+          // here, so it settles once its own work is done. Neither runs its own lookup.
           const uuid = yield* random.uuidV4();
           yield* orchestrator.dispatch({
             type: "thread.auto-settle",
@@ -442,10 +446,11 @@ export const make = Effect.gen(function* () {
         ),
     );
 
+    const deferred = new Set<ThreadId>();
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => {
-        if (thread.lineage.relationshipToParent === "subagent") return settleThread(thread, null);
+        if (isDelegatedAppThread(thread)) return settleThread(thread, null);
         const projectSettings = resolveProjectSettings(settings, thread.projectId).settings;
         // Skip no-op decisions; actual settlement still reads fresh settings before dispatch.
         const settledAt = resolveAutoSettlementAt({
@@ -456,7 +461,17 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
         });
-        return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
+        if (settledAt === null) return Effect.succeed(thread);
+        if (
+          projectSettings.sidebarAutoSettleKeepPullRequests &&
+          thread.branch !== null &&
+          visibleThreadPullRequests(thread.pullRequests ?? []).length === 0
+        ) {
+          // Retention needs the branch lookup to see whether an open PR keeps this thread.
+          deferred.add(thread.id);
+          return Effect.succeed(thread);
+        }
+        return settleThread(thread, null);
       },
       { concurrency: 8 },
     ))
@@ -636,7 +651,10 @@ export const make = Effect.gen(function* () {
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
       const key = lookupKey(thread);
-      if (scheduledLookups !== null && !refresh && !scheduledLookups.has(key)) return undefined;
+      const hasDeferred = group.some((member) => deferred.has(member.id));
+      if (scheduledLookups !== null && !refresh && !hasDeferred && !scheduledLookups.has(key)) {
+        return undefined;
+      }
       // Remembered git state is enough to rule a thread out; only an answer
       // that would settle it is confirmed against fresh git state.
       const remembered = yield* git.branchPullRequest(
@@ -644,9 +662,16 @@ export const make = Effect.gen(function* () {
         { refresh, confirmTerminal: false },
       );
       noPullRequestRechecks.record(key, nowMs, remembered !== null);
-      if (ownedByAnotherThread(remembered)) return undefined;
-      if (refresh || remembered === null || remembered.state === "open") return remembered;
-      if (!(yield* wouldSettle(group, remembered))) return undefined;
+      if (refresh || remembered === null || remembered.state === "open") {
+        return ownedByAnotherThread(remembered) ? undefined : remembered;
+      }
+      // A deferred thread confirms first: a reused branch can have a new open PR.
+      if (
+        !hasDeferred &&
+        (ownedByAnotherThread(remembered) || !(yield* wouldSettle(group, remembered)))
+      ) {
+        return undefined;
+      }
       const fresh = yield* git.branchPullRequest(
         { cwd, branch: thread.branch },
         { freshGitState: true },
@@ -661,12 +686,22 @@ export const make = Effect.gen(function* () {
         : noPullRequestRechecks.select(
             nowMs,
             [...groups]
-              .filter(([key]) => key.startsWith('["branch",'))
+              .filter(
+                ([key, group]) =>
+                  key.startsWith('["branch",') && !group.some((member) => deferred.has(member.id)),
+              )
               .map(([key, group]) => ({
                 key,
                 activityAtMs: Math.max(...group.map(threadActivityAtMs)),
               })),
           );
+
+    const settleDeferred = (group: ReadonlyArray<(typeof lookupCandidates)[number]>) =>
+      Effect.forEach(
+        group.filter((thread) => deferred.has(thread.id)),
+        (thread) => settleThread(thread, null),
+        { discard: true },
+      );
 
     yield* Effect.forEach(
       groups.values(),
@@ -679,10 +714,16 @@ export const make = Effect.gen(function* () {
               () => Effect.void,
             ),
           );
-          if (pullRequest === undefined) return;
-          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
-            discard: true,
-          });
+          if (pullRequest === undefined) return yield* settleDeferred(group);
+          yield* Effect.forEach(
+            group,
+            (thread) =>
+              settleThread(
+                thread,
+                deferred.has(thread.id) && pullRequest?.state !== "open" ? null : pullRequest,
+              ),
+            { discard: true },
+          );
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
@@ -690,7 +731,7 @@ export const make = Effect.gen(function* () {
               Effect.logWarning("automatic thread settlement skipped", {
                 threadIds: group.map((thread) => thread.id),
                 cause: Cause.pretty(cause),
-              }),
+              }).pipe(Effect.andThen(settleDeferred(group))),
           ),
         ),
       { concurrency: 8, discard: true },
@@ -753,17 +794,23 @@ export const make = Effect.gen(function* () {
       return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
+  // Settle scripts run one at a time: a script may clean up across the repository, and a burst of
+  // settlements (a restart sweep, a bulk settle) would otherwise start one shell per thread at once.
+  const settleScriptRuns = yield* FiberSet.make<void>();
+  const settleScriptSlot = yield* Semaphore.make(1);
+  const pendingSettleScripts = yield* PendingSettleScripts.PendingSettleScripts;
+
   // Skip settle scripts in shared checkouts where other threads may still work.
-  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
+  const runSettleScript = Effect.fn("ThreadSettlementServiceV2.runSettleScript")(
     function* (threadId: ThreadId) {
-      const settled = yield* projections.getThread(threadId);
-      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
-      yield* terminals.closeOnSettle({ threadId });
-      const worktreePath = settled.worktreePath;
+      // Read the thread once the slot is held: it may have re-engaged, moved or gone while queued.
+      const queued = yield* projections.getThread(threadId);
+      if (queued.deletedAt !== null || queued.settledOverride !== "settled") return;
+      const worktreePath = queued.worktreePath;
       if (worktreePath === null) return;
       if (!(yield* fileSystem.exists(worktreePath))) {
         // A settle script that tears something down would otherwise be skipped with no trace.
-        const project = Option.getOrUndefined(yield* projectStore.getShell(settled.projectId));
+        const project = Option.getOrUndefined(yield* projectStore.getShell(queued.projectId));
         if (
           project !== undefined &&
           settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
@@ -775,17 +822,15 @@ export const make = Effect.gen(function* () {
         }
         return;
       }
-      // Recheck after closing and worktree I/O; only live, settled threads may run scripts.
+      // Recheck after worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
       if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
+      if (thread.worktreePath !== worktreePath) return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // The parent's worktree belongs to the parent; shared-worktree children
-      // skip duplicate cleanup there.
-      if (
-        thread.lineage.relationshipToParent === "subagent" &&
-        thread.lineage.parentThreadId !== null
-      ) {
+      // (subagents, forks, side chats) skip duplicate cleanup there.
+      if (thread.lineage.parentThreadId !== null) {
         const parent = yield* projections.getThread(thread.lineage.parentThreadId).pipe(
           Effect.catchTags({
             ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
@@ -802,8 +847,43 @@ export const make = Effect.gen(function* () {
       });
       settleActionRunAt.set(threadId, settledAtMs);
       if (run.status === "started" && run.completion) {
-        yield* run.completion.pipe(Effect.forkDetach);
+        // Interrupting the completion closes the script's terminal, so only the wait is bounded:
+        // a script that never finishes keeps running but stops holding back later settlements.
+        const completion = yield* run.completion.pipe(Effect.forkDetach);
+        const finished = yield* Fiber.await(completion).pipe(
+          Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT),
+        );
+        if (Option.isNone(finished)) {
+          yield* Effect.logWarning("settle script still running; starting the next one", {
+            threadId,
+            worktreePath,
+            terminalId: run.terminalId,
+          });
+        }
       }
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        settleScriptSlot.withPermits(1),
+        pendingSettleScripts.track(threadId),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("running a settle script failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      ),
+  );
+
+  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
+    function* (threadId: ThreadId) {
+      const settled = yield* projections.getThread(threadId);
+      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
+      yield* terminals.closeOnSettle({ threadId });
+      if (settled.worktreePath === null) return;
+      yield* runSettleScript(threadId).pipe(FiberSet.run(settleScriptRuns));
     },
     (effect, threadId) =>
       effect.pipe(

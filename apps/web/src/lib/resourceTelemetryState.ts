@@ -60,7 +60,9 @@ export function useResourceTelemetry(
     return result.value.snapshot;
   };
 
-  return { ...query, retry };
+  // The live subscription keeps waiting for updates after its first snapshot.
+  const isPending = query.isPending && query.data === null && query.error === null;
+  return { ...query, isPending, retry };
 }
 
 export function useResourceTelemetryHistory(

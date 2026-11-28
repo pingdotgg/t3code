@@ -41,7 +41,7 @@ const sh = (cwd: string, args: ReadonlyArray<string>) =>
     cwd,
     encoding: "utf8",
     env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-  }).trim();
+  }).replace(/\r?\n$/u, "");
 
 const setup = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -142,22 +142,24 @@ const indexMatchesFiles = (worktreePath: string) => {
 
 // The feature is macOS-only; the fixtures need symlinks.
 describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
-  it.effect("clones a cached checkout that matches what git worktree add writes", () =>
-    Effect.gen(function* () {
-      const fixture = yield* setup;
-      const stock = yield* fixture.create("stock", "main", false);
-      yield* fixture.build(stock);
+  it.effect.each(["fast", "fast\u00a0"])(
+    "clones a cached checkout that matches what git worktree add writes (%s)",
+    (branch) =>
+      Effect.gen(function* () {
+        const fixture = yield* setup;
+        const stock = yield* fixture.create("stock", "main", false);
+        yield* fixture.build(stock);
 
-      const fast = yield* fixture.create("fast");
-      assert.isFalse(fixture.checkedOutWithGit("fast"));
-      assert.deepStrictEqual(snapshot(fast), snapshot(stock));
-      assert.equal(sh(fast, ["status", "--porcelain"]), "");
-      assert.equal(sh(fast, ["rev-parse", "--abbrev-ref", "HEAD"]), "fast");
-      assert.isTrue(indexMatchesFiles(fast));
-      // The clone has its own files: editing one leaves the cache and the other worktree alone.
-      NodeFS.writeFileSync(NodePath.join(fast, "README.md"), "changed\n");
-      assert.equal(sh(stock, ["status", "--porcelain"]), "");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        const fast = yield* fixture.create(branch);
+        assert.isFalse(fixture.checkedOutWithGit(branch));
+        assert.deepStrictEqual(snapshot(fast), snapshot(stock));
+        assert.equal(sh(fast, ["status", "--porcelain"]), "");
+        assert.equal(sh(fast, ["rev-parse", "--abbrev-ref", "HEAD"]), branch);
+        assert.isTrue(indexMatchesFiles(fast));
+        // The clone has its own files: editing one leaves the cache and the other worktree alone.
+        NodeFS.writeFileSync(NodePath.join(fast, "README.md"), "changed\n");
+        assert.equal(sh(stock, ["status", "--porcelain"]), "");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("moves an older cached checkout to the requested commit", () =>

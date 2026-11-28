@@ -247,11 +247,33 @@ function isOnlyFileNames(text: string, files: ReadonlyArray<File>): boolean {
     .every((line) => names.has(line));
 }
 
-/** A browser's Copy Image puts only an <img> in text/html; rich text sources put the text there. */
-export function isImageOnlyClipboardHtml(html: string): boolean {
-  if (html.length === 0) return false;
+/**
+ * A browser's Copy Image puts only an <img> in text/html; a chat message (QQ, WeChat) puts its text
+ * beside the <img>; rich text sources (Word, Pages) put only the text there.
+ */
+export function clipboardHtmlImageContent(html: string): "only-image" | "image-and-text" | "none" {
+  if (html.length === 0) return "none";
   const body = new DOMParser().parseFromString(html, "text/html").body;
-  return body.querySelector("img") !== null && (body.textContent ?? "").trim().length === 0;
+  if (body.querySelector("img") === null) return "none";
+  return (body.textContent ?? "").trim().length === 0 ? "only-image" : "image-and-text";
+}
+
+function isPastedImageFile(file: File): boolean {
+  const classification = classifyComposerAttachmentFile(file);
+  return classification === "image" || classification === "unsupported-image";
+}
+
+/** The images of a message copied with its text: they attach while the text pastes as text. */
+export function imagesToAttachBesidePastedText(input: {
+  readonly files: ReadonlyArray<File>;
+  readonly plainText: string;
+  readonly bypassAutoAttachment?: boolean;
+  readonly htmlHasImageAndText: boolean;
+}): File[] {
+  if (input.bypassAutoAttachment || input.plainText.length === 0 || !input.htmlHasImageAndText) {
+    return [];
+  }
+  return input.files.filter(isPastedImageFile);
 }
 
 export function shouldHandleComposerAttachmentPaste(input: {
@@ -269,10 +291,7 @@ export function shouldHandleComposerAttachmentPaste(input: {
   ) {
     return true;
   }
-  const hasImage = input.files.some((file) => {
-    const classification = classifyComposerAttachmentFile(file);
-    return classification === "image" || classification === "unsupported-image";
-  });
+  const hasImage = input.files.some(isPastedImageFile);
   if (input.plainText.length === 0) {
     return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
   }

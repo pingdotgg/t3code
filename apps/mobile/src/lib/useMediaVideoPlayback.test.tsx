@@ -53,6 +53,7 @@ vi.mock("expo", async () => {
     },
   };
 });
+vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 vi.mock("expo-video", async () => {
   const { useState } = await import("react");
   return {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -53,9 +53,7 @@ describe("ExpandedImageDialog", () => {
       await userEvent.keyboard("{Tab}");
       await userEvent.keyboard("{Enter}");
     }
-    await expect
-      .element(page.getByRole("button", { name: "Back, close image preview" }))
-      .toHaveFocus();
+    await expect.element(page.getByRole("button", { name: "Close image preview" })).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     await expect.element(opener).toHaveFocus();
     expect(opener.element().matches(":focus-visible")).toBe(c.focusVisible);
@@ -116,9 +114,7 @@ describe("ExpandedImageDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
 
     // Focus returns to the popup's trigger and opens its tooltip; leave it for a plain control.
-    (
-      screen.getByRole("button", { name: "Back, close image preview" }).element() as HTMLElement
-    ).focus();
+    (screen.getByRole("button", { name: "Close image preview" }).element() as HTMLElement).focus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
@@ -191,4 +187,104 @@ describe("ExpandedImageDialog", () => {
     expect(pointerFraction().x).toBeCloseTo(anchor.x, 2);
     expect(pointerFraction().y).toBeCloseTo(anchor.y, 2);
   });
+
+  it("draws in place: the image, its caption and the controls stay put", async () => {
+    const file = new File([await (await fetch(PIXEL)).blob()], "shot.png", { type: "image/png" });
+    const save = vi.fn(async () => null);
+    const onClose = vi.fn();
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{
+          images: [
+            {
+              src: PIXEL,
+              name: "shot.png",
+              mimeType: "image/png",
+              edit: { file, name: "shot.png", mimeType: "image/png", save },
+            },
+            { src: PIXEL, name: "other.png" },
+          ],
+          index: 0,
+        }}
+        onClose={onClose}
+      />,
+      // The dialog renders no links and reads no route.
+      { router: false },
+    );
+    const image = screen.getByRole("img", { name: "shot.png", exact: true });
+    const caption = screen.getByText("shot.png (1/2)");
+    await expect.element(image).toBeVisible();
+    const rects = () =>
+      [image, caption].map((locator) => locator.element().getBoundingClientRect().toJSON());
+    const before = rects();
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
+    await expect.element(screen.getByRole("button", { name: "Done" })).toHaveFocus();
+    expect(rects()).toEqual(before);
+    await expect
+      .element(screen.getByRole("button", { name: "Draw on image" }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeEnabled();
+
+    // The close button cancels the drawing and keeps the preview open.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel drawing" }));
+    await expect.element(screen.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(rects()).toEqual(before);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { gesture: "backdrop to image", closes: false },
+    { gesture: "image to backdrop", closes: false },
+    { gesture: "backdrop to backdrop", closes: true },
+  ])(
+    "a press dragged from the $gesture closes the preview: $closes",
+    async ({ gesture, closes }) => {
+      await page.viewport(1280, 800);
+      const onClose = vi.fn();
+      await using screen = await render(
+        <ExpandedImageDialog
+          preview={{ images: [{ src: PIXEL, name: "shot.png" }], index: 0 }}
+          onClose={onClose}
+        />,
+        // The dialog renders no links and reads no route.
+        { router: false },
+      );
+      const image = screen.getByRole("img", { name: "shot.png", exact: true });
+      await expect.element(image).toBeVisible();
+      const popup = screen.getByRole("dialog").element();
+      const box = popup.getBoundingClientRect();
+      const imageBox = image.element().getBoundingClientRect();
+      // The empty part of the preview around the image closes it on a plain click.
+      const empty = { x: box.left + 8, y: box.top + box.height / 2 };
+      expect(document.elementFromPoint(empty.x, empty.y)).toBe(popup);
+      const onImage = {
+        x: imageBox.left + imageBox.width / 2,
+        y: imageBox.top + imageBox.height / 2,
+      };
+      const from = gesture.startsWith("image") ? onImage : empty;
+      const to = gesture.endsWith("image") ? onImage : empty;
+      const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+      const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
+        cdp().send("Input.dispatchMouseEvent", {
+          type,
+          x: frame.left + x,
+          y: frame.top + y,
+          button: "left",
+          buttons: type === "mouseReleased" ? 0 : 1,
+          clickCount: 1,
+        });
+
+      await mouse("mousePressed", from.x, from.y);
+      await mouse("mouseMoved", to.x, to.y);
+      await mouse("mouseReleased", to.x, to.y);
+
+      if (closes) await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      else {
+        await expect.element(image).toBeVisible();
+        expect(onClose).not.toHaveBeenCalled();
+      }
+    },
+  );
 });

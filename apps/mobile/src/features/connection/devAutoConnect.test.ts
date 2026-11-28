@@ -124,6 +124,16 @@ it("only prefills without the flag, and ignores the flag in production builds", 
   expect(harness.pair).not.toHaveBeenCalled();
 });
 
+it("auto-connects in a production bundle only when mobile:metrics built it with the probe", () => {
+  harness.pair.mockClear();
+  harness.pair.mockResolvedValueOnce({ ok: false, error: null });
+  vi.stubGlobal("__DEV__", false);
+  vi.stubEnv("EXPO_PUBLIC_T3_BEHAVIOR_PROBE", "1");
+  startDevAutoConnect(settingsLink({ pairingUrl: PAIRING_URL, autoConnect: "1" }));
+  vi.unstubAllEnvs();
+  expect(harness.pair).toHaveBeenCalledOnce();
+});
+
 it("forgets a failed auto-connect once the form is opened again without the flag", async () => {
   vi.stubGlobal("__DEV__", true);
   const failed = Promise.withResolvers<{ ok: boolean; error: string | null }>();

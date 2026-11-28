@@ -19,6 +19,16 @@ let columns = 1;
 function reply(value: TextPreviewResult) {
   self.postMessage(value, { transfer: [] });
 }
+function meta() {
+  reply({
+    type: "meta",
+    count: entries - 1,
+    columns: Math.min(LARGE_TEXT_MAX_COLUMNS, columns),
+    columnsTruncated: columns > LARGE_TEXT_MAX_COLUMNS,
+    complete,
+    sizeBytes: size,
+  });
+}
 function at(index: number) {
   return offsets[index >>> 16]![index & 65535]!;
 }
@@ -40,7 +50,9 @@ async function read(start: number, end: number) {
     if (part.start >= end) break;
     parts.push(part.blob.slice(Math.max(0, start - part.start), end - part.start));
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(await new Blob(parts).arrayBuffer());
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: start > 0 }).decode(
+    await new Blob(parts).arrayBuffer(),
+  );
 }
 async function page(index: number) {
   const start = index * PREVIEW_PAGE_ROWS;
@@ -53,6 +65,7 @@ async function page(index: number) {
         maxColumns: LARGE_TEXT_MAX_COLUMNS,
         maxCellLength: 1024 * 1024,
         detectCsv: false,
+        stripBom: false,
       }).rows
     : text
         .replace(/\r?\n$|\r$/, "")
@@ -109,7 +122,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
         }
       }
       prefix = new Uint8Array(await new Blob(parts).arrayBuffer());
-      delimiter = csvPreviewDelimiter(new TextDecoder().decode(prefix));
+      delimiter = csvPreviewDelimiter(new TextDecoder().decode(prefix), false);
     }
     while (true) {
       const { value, done } = prefix ? { value: prefix, done: false } : await reader.read();
@@ -163,7 +176,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
         if (byte === 10 || byte === 13) {
           if (entries > LARGE_TEXT_MAX_ROWS) throw new PreviewError({ code: "text-too-many-rows" });
           set(entries++, pos + 1);
-          columns = Math.min(LARGE_TEXT_MAX_COLUMNS, Math.max(columns, rowColumns));
+          columns = Math.max(columns, rowColumns);
           rowColumns = 1;
           fieldStart = true;
           cr = byte === 13;
@@ -171,7 +184,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       }
       size += value.length;
       if (!first && entries > 1) {
-        reply({ type: "meta", count: entries - 1, columns, complete: false, sizeBytes: size });
+        meta();
         await page(0);
         first = true;
       }
@@ -180,10 +193,10 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
     if (size > at(entries - 1)) {
       if (entries > LARGE_TEXT_MAX_ROWS) throw new PreviewError({ code: "text-too-many-rows" });
       set(entries++, size);
-      columns = Math.min(LARGE_TEXT_MAX_COLUMNS, Math.max(columns, rowColumns));
+      columns = Math.max(columns, rowColumns);
     }
     complete = true;
-    reply({ type: "meta", count: entries - 1, columns, complete, sizeBytes: size });
+    meta();
     await page(0);
   } finally {
     await reader.cancel();

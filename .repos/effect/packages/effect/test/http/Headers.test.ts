@@ -47,6 +47,14 @@ describe("Headers", () => {
     deepStrictEqual({ ...headers }, { accept: "text/html, application/json" })
   })
 
+  it("append creates, joins and ignores an empty value", () => {
+    const created = Headers.append(Headers.empty, "Vary", "Accept")
+    const joined = Headers.append(created, "vary", "Origin")
+    deepStrictEqual({ ...created }, { vary: "Accept" })
+    deepStrictEqual({ ...joined }, { vary: "Accept, Origin" })
+    deepStrictEqual({ ...Headers.append(joined, "Vary", "") }, { vary: "Accept, Origin" })
+  })
+
   it("remove", () => {
     const headers = Headers.fromInput({ foo: "bar", baz: "qux", hello: "world" })
     const result = Headers.remove(headers, "baz")
@@ -257,5 +265,64 @@ describe("RetryAfter", () => {
     assertTrue(is({ _tag: "Duration", duration: Duration.seconds(5) }))
     assertFalse(is({ _tag: "Duration", duration: Duration.seconds(-5) }))
     assertFalse(is({ _tag: "Duration", duration: Duration.infinity }))
+  })
+})
+
+describe("Link", () => {
+  it("parses quoted values containing commas and semicolons and multiple relation types", () => {
+    deepStrictEqual(
+      Headers.parseLink("</items?page=2>; title=\"Page 2, continued; details\"; rel=\"next last\""),
+      [{ target: "/items?page=2", rel: ["next", "last"], params: { title: "Page 2, continued; details" } }]
+    )
+  })
+
+  it("parses mixed case names, tokens, valueless and repeated parameters and title*", () => {
+    deepStrictEqual(
+      Headers.parseLink(
+        "<https://a.example/app.js>; REL=Preload; AS=script; nopush, " +
+          "<https://b.example/de>; rel=\"alternate\"; hreflang=de; hreflang=fr; title=\"plain\"; title*=UTF-8''Gr%C3%BC%C3%9Fe"
+      ),
+      [
+        { target: "https://a.example/app.js", rel: ["preload"], params: { as: "script", nopush: "" } },
+        { target: "https://b.example/de", rel: ["alternate"], params: { hreflang: "de", title: "Grüße" } }
+      ]
+    )
+  })
+
+  it("stops at malformed input and keeps the links read so far", () => {
+    deepStrictEqual(Headers.parseLink("<a>; rel=\"next\", garbage"), [{ target: "a", rel: ["next"], params: {} }])
+    deepStrictEqual(Headers.parseLink("garbage"), [])
+    deepStrictEqual(Headers.parseLink("<a>; title=\"x\\"), [{ target: "a", rel: [], params: { title: "x" } }])
+  })
+
+  it("ends parameter names at whitespace and keeps the first rel and extended parameter", () => {
+    deepStrictEqual(Headers.parseLink("<a>; rel=next; anchor junk, <b>; rel=last"), [
+      { target: "a", rel: ["next"], params: { anchor: "" } }
+    ])
+    deepStrictEqual(
+      Headers.parseLink("<a>; rel=prev; rel*=UTF-8''next; title=plain; title*=bad; title*=UTF-8''later"),
+      [{ target: "a", rel: ["prev"], params: { title: "plain" } }]
+    )
+  })
+
+  it("formatLink escapes quoted values, writes non-ASCII values as name* and round trips", () => {
+    const links = [
+      { target: "/a", rel: ["next", "https://example.com/rel;v=1,2"], params: { title: "say \"hi\" \\ there" } },
+      { target: "/b", rel: ["alternate"], params: { title: "Grüße" } }
+    ]
+    const formatted = Headers.formatLink(links)
+    strictEqual(
+      formatted,
+      "</a>; rel=\"next https://example.com/rel;v=1,2\"; title=\"say \\\"hi\\\" \\\\ there\", </b>; rel=\"alternate\"; title*=UTF-8''Gr%C3%BC%C3%9Fe"
+    )
+    deepStrictEqual(Headers.parseLink(formatted), links)
+    strictEqual(Headers.formatLink([{ target: "/c", rel: ["x\"; a=\"b c"] }]), "</c>; rel=\"x%22;%20a=%22b%20c\"")
+  })
+
+  it("Schema.LinkHeaderFromString decodes and encodes through Schema", () => {
+    const header = "<https://example.com/>; rel=\"canonical\""
+    const links = Schema.decodeUnknownSync(Schema.LinkHeaderFromString)(header)
+    deepStrictEqual(links, [{ target: "https://example.com/", rel: ["canonical"], params: {} }])
+    strictEqual(Schema.encodeSync(Schema.LinkHeaderFromString)(links), header)
   })
 })

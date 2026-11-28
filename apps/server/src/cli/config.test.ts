@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -22,6 +23,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
@@ -31,6 +33,8 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import { deriveServerPaths } from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { acquireServerOwnership } from "../serverOwnership.ts";
 import { resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
@@ -173,44 +177,123 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect(
-    "refuses a manual web launch when a runtime record belongs to another live process",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
-        const child = yield* liveProcess;
-        assert(child.pid !== undefined);
-        const stateDir = path.join(baseDir, "userdata");
-        yield* fs.makeDirectory(stateDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(stateDir, "server-runtime.json"),
-          yield* encodeUnknownJson({
-            version: 1,
-            pid: child.pid,
-            port: 3773,
-            origin: "http://127.0.0.1:3773",
-            startedAt: "2026-10-01T00:00:00.000Z",
-          }),
-        );
-        const cwd = path.join(baseDir, "project");
-        const error = yield* resolveServerConfig(
-          { ...minimalWebFlags(baseDir), cwd: Option.some(cwd) },
-          Option.none(),
-          { rejectRunningServer: true },
-        ).pipe(
+  const acquireOwnership = (baseDir: string) =>
+    acquireServerOwnership(NodePath.join(baseDir, "userdata", "server-runtime.json")).pipe(
+      Effect.provide(Layer.merge(ProcessRunner.layer, NodeCrypto.layer)),
+      Effect.provideService(HostProcess.HomeDirectory, baseDir),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+
+  const resolveManualWebLaunch = (baseDir: string, cwd: string) =>
+    resolveServerConfig({ ...minimalWebFlags(baseDir), cwd: Option.some(cwd) }, Option.none(), {
+      rejectRunningServer: true,
+    }).pipe(
+      Effect.provide(
+        Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      ),
+      Effect.mapError(String),
+      Effect.result,
+    );
+
+  it.effect("keeps leading spaces only in a relative startup directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-cwd-spaces-" });
+      const resolveCwd = (cwd: string) =>
+        resolveServerConfig({ ...minimalWebFlags(baseDir), cwd: Option.some(cwd) }, Option.none(), {
+          prepareDirectories: false,
+        }).pipe(
           Effect.provide(
             Layer.merge(
               NetService.layer,
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
             ),
           ),
-          Effect.flip,
+          Effect.map((config) => config.cwd),
         );
-        expect(String(error)).toContain("A T3 Code server is already running");
-        expect(String(error)).toContain(`pid ${child.pid}`);
-        expect(yield* fs.exists(cwd)).toBe(false);
+      expect(yield* resolveCwd(" project ")).toBe(path.resolve(" project"));
+      const absolute = path.join(baseDir, "project");
+      expect(yield* resolveCwd(`  ${absolute}  `)).toBe(absolute);
+    }),
+  );
+
+  it.effect("refuses a manual web launch while a lock-aware server owns the T3 home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
+      const owner = yield* acquireOwnership(baseDir);
+      yield* owner.publish({
+        version: 1,
+        pid: child.pid,
+        port: 3773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-10-01T00:00:00.000Z",
+      });
+      const cwd = path.join(baseDir, "project");
+      const result = yield* resolveManualWebLaunch(baseDir, cwd);
+      assert(Result.isFailure(result));
+      expect(result.failure).toContain("A T3 Code server is already running");
+      expect(result.failure).toContain(`pid ${child.pid}`);
+      expect(yield* fs.exists(cwd)).toBe(false);
+    }),
+  );
+
+  it.effect("refuses a manual web launch when a pre-lock record belongs to a live process", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-legacy-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
+      const stateDir = path.join(baseDir, "userdata");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(stateDir, "server-runtime.json"),
+        yield* encodeUnknownJson({
+          version: 1,
+          pid: child.pid,
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+        }),
+      );
+      const cwd = path.join(baseDir, "project");
+      const result = yield* resolveManualWebLaunch(baseDir, cwd);
+      assert(Result.isFailure(result));
+      expect(result.failure).toContain(`pid ${child.pid}`);
+      expect(yield* fs.exists(cwd)).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "allows a manual web launch when a lock-aware record's PID was reused by an unrelated process",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-reused-" });
+        const child = yield* liveProcess;
+        assert(child.pid !== undefined);
+        // The killed server's lock file stays behind, released.
+        yield* Effect.scoped(acquireOwnership(baseDir));
+        yield* fs.writeFileString(
+          path.join(baseDir, "userdata", "server-runtime.json"),
+          yield* encodeUnknownJson({
+            version: 1,
+            pid: child.pid,
+            ownerId: "4ec9f94a-0000-4000-8000-000000000000",
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-10-01T00:00:00.000Z",
+          }),
+        );
+        const cwd = path.join(baseDir, "project");
+        const result = yield* resolveManualWebLaunch(baseDir, cwd);
+        expect(result).toEqual(Result.succeed(expect.objectContaining({ cwd })));
       }),
   );
 
@@ -807,20 +890,47 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     lan: Option.none<boolean>(),
   });
 
+  it.effect("uses the same unbracketed IPv6 wildcard for port selection and startup", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-ipv6-host-" })),
+      );
+      const config = yield* resolveServerConfig(
+        { ...minimalWebFlags(baseDir), port: Option.none() },
+        Option.none(),
+        {
+          selectAutomaticPort: (_preferred, host) =>
+            Effect.succeed(host === "::" ? 50_123 : 50_124),
+        },
+      ).pipe(
+        Effect.provide(
+          Layer.merge(
+            NetService.layer,
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOST: "[::]" } })),
+          ),
+        ),
+      );
+
+      expect(config.host).toBe("::");
+      expect(config.port).toBe(50_123);
+    }),
+  );
+
   it.effect("uses the automatic port selector only when no port is configured", () =>
     Effect.gen(function* () {
       const baseDir = yield* FileSystem.FileSystem.pipe(
         Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-auto-port-" })),
       );
-      const selected: number[] = [];
-      const selectAutomaticPort = (preferred: number) =>
+      const selected: Array<readonly [number, string | undefined]> = [];
+      const selectAutomaticPort = (preferred: number, host: string | undefined) =>
         Effect.sync(() => {
-          selected.push(preferred);
+          selected.push([preferred, host]);
           return 50_123;
         });
       const resolvePort = (flags: {
         readonly mode?: Option.Option<"web" | "desktop">;
         readonly port: Option.Option<number>;
+        readonly host?: Option.Option<string>;
       }) =>
         resolveServerConfig({ ...minimalWebFlags(baseDir), ...flags }, Option.none(), {
           selectAutomaticPort,
@@ -835,12 +945,18 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         );
 
       expect(yield* resolvePort({ port: Option.none() })).toBe(50_123);
-      expect(selected).toEqual([3773]);
+      expect(yield* resolvePort({ port: Option.none(), host: Option.some("100.64.0.7") })).toBe(
+        50_123,
+      );
+      expect(selected).toEqual([
+        [3773, undefined],
+        [3773, "100.64.0.7"],
+      ]);
       expect(yield* resolvePort({ port: Option.some(8788) })).toBe(8788);
       expect(
         yield* resolvePort({ mode: Option.some("desktop" as const), port: Option.none() }),
       ).toBe(3773);
-      expect(selected).toEqual([3773]);
+      expect(selected).toHaveLength(2);
     }),
   );
 

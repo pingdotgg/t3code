@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   useEffect,
@@ -9,7 +10,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
+import { PasswordResponses, TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { msg, useGT } from "gt-react";
 import { m } from "~/i18n/messages";
 import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
@@ -27,6 +28,7 @@ import {
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfResizedScrollTop,
   pdfRestoredScrollTop,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
@@ -258,12 +260,14 @@ export default function PdfViewer(props: {
   );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
+  const submitPassword = useRef<((password: string) => void) | null>(null);
   const [revision, setRevision] = useState(0);
   const [ratios, setRatios] = useState<readonly number[]>([]);
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
-  const [scrollTop, setScrollTop] = useState(0);
+  const [scrolled, setScrolled] = useState({ top: 0, width: 0, pdf });
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<number[]>([]);
   const [finding, setFinding] = useState(false);
@@ -278,11 +282,13 @@ export default function PdfViewer(props: {
     const controller = new AbortController();
     let disposed = false;
     let task: ReturnType<typeof openPdf> | undefined;
-    const timeout = setTimeout(() => {
-      setError(m(msg("This PDF took too long to load. Try again.")));
-      controller.abort();
-      void task?.destroy();
-    }, 30_000);
+    const startTimeout = () =>
+      setTimeout(() => {
+        setError(m(msg("This PDF took too long to load. Try again.")));
+        controller.abort();
+        void task?.destroy();
+      }, 30_000);
+    let timeout = startTimeout();
     void readBoundedDocument(
       props.src,
       controller.signal,
@@ -292,6 +298,16 @@ export default function PdfViewer(props: {
       .then(async (bytes) => {
         controller.signal.throwIfAborted();
         task = openPdf(bytes);
+        task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
+          if (controller.signal.aborted) return;
+          clearTimeout(timeout);
+          submitPassword.current = (password) => {
+            submitPassword.current = null;
+            timeout = startTimeout();
+            updatePassword(password);
+          };
+          setIncorrectPassword(reason === PasswordResponses.INCORRECT_PASSWORD);
+        };
         const document = await task.promise;
         if (document.numPages > MAX_PAGES)
           throw new Error(
@@ -323,6 +339,7 @@ export default function PdfViewer(props: {
       .finally(() => clearTimeout(timeout));
     return () => {
       disposed = true;
+      submitPassword.current = null;
       controller.abort();
       clearTimeout(timeout);
       void task?.destroy();
@@ -338,6 +355,9 @@ export default function PdfViewer(props: {
   }, []);
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
+  // A new page width moves every page, so the place in view has a new offset before the DOM scrolls.
+  const resized = pdf !== null && scrolled.pdf === pdf && scrolled.width !== width;
+  const scrollTop = resized ? pdfResizedScrollTop(ratios, scrolled, width) : scrolled.top;
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
@@ -374,7 +394,7 @@ export default function PdfViewer(props: {
       top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
       left: initialView.left,
     });
-    setScrollTop(node.scrollTop);
+    setScrolled({ top: node.scrollTop, width, pdf });
     saveView(node);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
@@ -392,7 +412,7 @@ export default function PdfViewer(props: {
     };
     setZoom(value);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after a zoom or resize has committed the new page width.
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
@@ -402,7 +422,7 @@ export default function PdfViewer(props: {
       node.scrollTo({
         top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
       });
-    }
+    } else if (resized) node.scrollTo({ top: scrollTop });
     saveView(node, anchor !== null);
   });
   const firstMatch = matches[0];
@@ -518,10 +538,12 @@ export default function PdfViewer(props: {
           <ScanIcon className="size-3.5" />
         </FileSurfaceAction>
         <div className="w-28">
+          {/* Native search inputs clear on Escape even during IME composition. */}
           <Input
             ref={find}
             size="compact"
-            type="search"
+            type="text"
+            role="searchbox"
             aria-label={gt("Find in PDF")}
             placeholder={gt("Find in PDF")}
             value={query}
@@ -529,6 +551,13 @@ export default function PdfViewer(props: {
               setQuery(event.target.value);
               setMatches([]);
               setFindError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
+              if (!query && !event.repeat) return;
+              event.stopPropagation();
+              setQuery("");
             }}
           />
         </div>
@@ -561,8 +590,7 @@ export default function PdfViewer(props: {
         tabIndex={0}
         className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
         onScroll={(event) => {
-          const top = event.currentTarget.scrollTop;
-          setScrollTop(top);
+          setScrolled({ top: event.currentTarget.scrollTop, width, pdf });
           saveView(event.currentTarget);
         }}
         onKeyDown={(event) => {
@@ -580,6 +608,14 @@ export default function PdfViewer(props: {
               setError(null);
               setPdf(null);
               setRevision((value) => value + 1);
+            }}
+          />
+        ) : incorrectPassword !== null ? (
+          <FilePasswordPrompt
+            incorrect={incorrectPassword}
+            onSubmit={(password) => {
+              setIncorrectPassword(null);
+              submitPassword.current?.(password);
             }}
           />
         ) : !pdf ? (

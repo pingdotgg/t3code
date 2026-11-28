@@ -74,7 +74,7 @@ vi.mock(import("../../state/threads"), async (original) => ({
 }));
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -413,6 +413,58 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
 });
 
+it("shows how long a running remote subagent has been running, as a local one does", async () => {
+  setup();
+  const remoteTitle = "Remote subagent running on a linked machine";
+  using _timers = fakeTimers();
+  vi.setSystemTime(new Date("2026-11-23T12:12:00.000Z"));
+  const startedAt = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    subagents: [
+      {
+        id: NodeId.make("remote-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "remote",
+        providerInstanceId: "provider",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Run remote task",
+        title: remoteTitle,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+        remoteChild: {
+          environmentId: EnvironmentId.make("remote-env"),
+          threadId: ThreadId.make("remote-thread"),
+          label: "127x05",
+        },
+      },
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  // Assert synchronously: expect.element polls on timers this test fakes.
+  const row = screen.getByRole("button", { name: new RegExp(remoteTitle) });
+  expect(row.element().textContent).toContain("12m");
+});
+
 it("explains why Merge back is unavailable before the fork completes a run", async () => {
   setup();
   state.projection = { ...(state.projection as Record<string, unknown>), runs: [] };
@@ -593,6 +645,35 @@ it.each([false, true])(
       .toHaveClass("ms-4");
   },
 );
+
+it("shares the hover delay between adjacent lineage rows", async () => {
+  setup();
+  state.relatedShells = [
+    { id: "source", title: "First agent", lineage: { parentThreadId: null } },
+    {
+      id: "child",
+      title: "Second agent",
+      lineage: { parentThreadId: threadId, relationshipToParent: "fork", sideChat: false },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+  using _timers = fakeTimers();
+  const first = screen.getByRole("button", { name: /^First agent/ });
+  const second = screen.getByRole("button", { name: /^Second agent/ });
+  await userEvent.hover(first);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(first.element()).toHaveAttribute("data-popup-open");
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(1));
+  expect(second.element()).toHaveAttribute("data-popup-open");
+});
 
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {
   setup();

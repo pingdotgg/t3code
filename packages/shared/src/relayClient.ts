@@ -197,6 +197,7 @@ function resolveReleaseAsset(
 }
 
 const VERSION_PATTERN = /\b(\d{4})\.(\d{1,2})\.(\d+)\b/u;
+const MANAGED_VERSION_PATTERN = /^\d{4}\.\d{1,2}\.\d+$/u;
 
 function parseVersion(value: string): readonly [number, number, number] | null {
   const match = VERSION_PATTERN.exec(value);
@@ -363,24 +364,38 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     const entries = yield* fileSystem
       .readDirectory(managedRoot)
       .pipe(Effect.orElseSucceed(() => []));
-    return entries
+    const candidates = entries
       .filter(
         (entry) =>
-          parseVersion(entry) !== null &&
+          MANAGED_VERSION_PATTERN.test(entry) &&
           compareCloudflaredVersions(entry, CLOUDFLARED_VERSION) < 0,
       )
       .sort((left, right) => compareCloudflaredVersions(right, left));
+    return yield* Effect.filter(candidates, (entry) =>
+      fileSystem.stat(path.join(managedRoot, entry)).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
   });
 
   const resolvePathExecutable = Effect.gen(function* () {
     // Read hydrated PATH directly; ConfigProvider may have cached it before fixPath.
-    const pathValue = (yield* HostProcess.Environment).PATH?.trim();
+    const rawPathValue = (yield* HostProcess.Environment).PATH;
+    // POSIX keeps the raw value, so trimming never turns " :/bin" into an empty entry.
+    const pathValue = platform === "win32" ? rawPathValue?.trim() : rawPathValue;
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
+    const cwd = yield* HostProcess.WorkingDirectory;
     for (const directory of pathValue.split(delimiter)) {
-      const trimmed = directory.trim().replace(/^"|"$/gu, "");
-      if (trimmed.length === 0) continue;
-      const candidate = path.join(trimmed, executableFileName(platform));
+      // POSIX shells search the working directory for an empty entry. Resolve it now: the
+      // connector may be launched from elsewhere.
+      const workingDirectoryEntry = directory === "" && platform !== "win32";
+      const entry = platform === "win32" ? directory.trim().replace(/^"|"$/gu, "") : directory;
+      if (entry.length === 0 && !workingDirectoryEntry) continue;
+      const candidate = workingDirectoryEntry
+        ? path.resolve(cwd, executableFileName(platform))
+        : path.join(entry, executableFileName(platform));
       if (!(yield* isExecutableFile(candidate))) continue;
       const available = yield* compatibleCandidate(candidate, "path");
       if (available) return available;
@@ -434,8 +449,11 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
+  // Node can finish an in-flight rename after interruption. Wait for each attempt before
+  // releasing the install scope, while keeping Windows retry delays interruptible.
   const renameWhenUnlocked = (from: string, to: string) =>
     fileSystem.rename(from, to).pipe(
+      Effect.uninterruptible,
       Effect.retry({
         times: ACTIVATE_RETRY_COUNT,
         schedule: Schedule.spaced(ACTIVATE_RETRY_DELAY),
@@ -667,12 +685,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const stagedPath = `${managedPath}.${yield* random.uuidV4()}.tmp`;
       yield* report("activating");
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore),
+      );
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),
       );
       yield* renameWhenUnlocked(stagedPath, managedPath).pipe(
         wrapInstallFailure("write_failed", "Could not activate the relay client."),
-        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
       );
       return {
         status: "available",

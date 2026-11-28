@@ -338,6 +338,21 @@ describe("omitOlderSettledShells", () => {
     ]);
     expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
   });
+
+  // Clients list a task delegated from a linked environment under its parent there, so an older
+  // one counted here and dropped from the shell is a Settled row "Show N more" never shows.
+  it("does not count an older task delegated from a linked environment as a Settled row", () => {
+    const delegated = row("delegated", 30, {
+      delegatedFrom: {
+        environmentId: "environment-a",
+        threadId: ThreadId.make("parent-elsewhere"),
+        title: "Parent",
+      },
+    } as Partial<OrchestrationV2ThreadShell>);
+    const result = omit([...newest, delegated]);
+    expect(result.olderSettled.counts).toEqual([]);
+    expect(result.threads.map((thread) => thread.id)).toContain("delegated");
+  });
 });
 
 describe("shellStreamItemsFromInitialSnapshot", () => {

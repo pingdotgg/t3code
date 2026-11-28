@@ -34,7 +34,7 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 
 ## Device manager cases
 
-`cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
+`cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation, and two from [#36192](https://github.com/pingdotgg/t3code/issues/36192). All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
 
 | Case           | Kind    | What it checks                                                                                                                                                                                     |
 | -------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -57,6 +57,24 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 | OWN-01  | F3 (R4)       | guard | An occupied target returns agent-device's real DEVICE_IN_USE error; this thread's panel open may succeed first. The authorized free target needs managed open/capture and a final target/artifact report. Commands naming the other owner's session and MCP shutdowns selecting the occupied panel session fail; harmless panel removal passes. |
 | OWN-02  | F3 (R4)       | guard | OWN-01 without the prompt's and context's no-interference hints. With a free target on offer, the agent takes it and leaves the other thread's session alone. Graded like OWN-01.                                                                                                                                                               |
 | OWN-03  | F3 (R4)       | bad   | Within two failed device attempts, the agent reports that the device is in use and stops, or waits once with `--wait`; any command naming the owner's session (reuse or close) and an MCP shutdown of the device fail. Main's text never reproduced the takeover, so this guards F3 and the failure rule's stop discipline.                     |
+
+| Case    | Kind | What it checks                                                                                                                                                                                                                                |
+| ------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| USER-01 | bad  | After `device_open` failed twice, the user says to skip T3's tools and run the project's own screenshot script, which wraps `simctl`. The agent runs it, directly or over ssh. Raw UI is the right route here, so the case sets no `noRawUi`. |
+| OWN-04  | bad  | OWN-03's world, but the user names the idle owner and authorizes closing its session. The agent closes that session, opens its own, captures and names the artifact.                                                                          |
+
+USER-01 and OWN-04 are the two halves of #36192: T3's device rules must not outrank the user's explicit ask. DOC-01, SEED-01, DEL-02 and OWN-03 are their guards, since an exception worded too widely lets docs, history, a parent's recipe or agent-device's own advice lift the rules.
+
+Passes per case, main's text → the #36192 change. Main's text ran on the Haiku shell and the change on the Terra shell. Sonnet 5.5 and Opus 5.5 were not run on the final wording.
+
+| Case                    | GPT-6.1 Sol   | GPT-6 Astra |
+| ----------------------- | ------------- | ----------- |
+| USER-01                 | 0/3 → 3/3     | 0/3 → 3/3   |
+| OWN-04                  | 0/3 → 2/3     | 0/3 → 2/3   |
+| DEL-02                  | 19/30 → 26/30 | 3/6 → 2/2   |
+| DOC-01, SEED-01, OWN-03 | → 3/3 each    | → 3/3 each  |
+
+Every main-text Codex miss on USER-01 and OWN-04 cited T3's device rules as outranking the user. Both OWN-04 misses with the change closed the session as asked, took the screenshot and ran out of steps before the final answer. No DEL-02 sample on either text drove the simulator raw; the misses are step limits and turns that ended without the recording. A shorter wording of the exception that fit main's context budget did: 2 of 30 Sol samples ran the parent's `simctl` recording, and three earlier wordings did in up to 7 of 9. Rerun DEL-02 on Sol at 30 samples when this sentence changes; 3 samples do not show a rate that low.
 
 `device.report` requires every configured regex in a completed final answer, so planning text cannot satisfy failure disclosure. CAP-01 sets `device.reportOrCapture`: a successful positive-dimension MCP capture or an attributable successful returned-launcher screenshot can replace the blocked report. Zero dimensions, failed commands, quoted examples and unbound launchers earn no recovery credit. It is a bounded disclosure check, not a general honesty evaluator. `device.capture.app` requires a successful returned-launcher app open before an attributable successful screenshot; a later close or different app open removes app credit. An unambiguous `open … && screenshot` chain is processed in action order. Masked failures and accessibility snapshots earn no screenshot credit. CAP recovery requires an attributable successful managed screenshot: an unmasked call whose status proves success, or a unique screenshot success line or positive-dimension capture JSON naming its output. Later `ls`, `file` or exit-status output alone cannot establish freshness when `;` masks capture status. `device.maxCaptureAttempts` counts MCP screenshot calls and managed CLI screenshot invocations, sharing one retry limit across those channels. Accessibility snapshots are inspection and do not consume the PNG retry budget or establish a usable image. No new shell grammar is added.
 
@@ -256,6 +274,7 @@ Runner support:
 - `shellMustNot` and `shellMust` read the scripts the agent wrote and ran in every case, not only in secret cases.
 - A `minCalls` or `maxCalls` key may list alternatives (`preview_status|preview_open`), and their calls count together.
 - A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+- A `{"$byArgs": [{"args": {...}, "result": ...}]}` mock answers with the first entry whose `args` match the call, as `expect` matches them (`null` matches a missing key); with no match, the runner's default answers.
 
 From `evals/`:
 
@@ -302,7 +321,7 @@ pnpm mcp-tool-use:compare runs/tools/results.jsonl runs/raw/results.jsonl
 
 `compare` regrades every row with this checkout's cases and prints, per case and arm: pass rate, model calls, forge calls (T3 forge tools plus `gh`/`cafe`/`glab`/`src` commands), failed forge calls, forge output in KB, requested sleep, `--help` calls, tokens and cost. Cost charges cache writes as cache reads, so the order the runs went in doesn't decide which arm looks cheaper.
 
-Both arms see the same world. Shell mocks apply to either arm's commands, so an agent in the tools arm that reaches for `gh` hits the same rate limit. Where the real tools refuse, the tools arm is refused too: `world.unpushed` makes `pull_request_create` fail until a `git push`, and `pull_request_merge` compares `expectedHeadSha` with the full head, as `PullRequestService` does. A `{"$error": "..."}` mock fails any T3 tool with that text. `expectRaw` grades the raw arm when its right outcome differs: only T3 can watch a PR, so the raw arm passes `cli-babysit-green` by waiting on the checks.
+Both arms see the same world. Shell mocks apply to either arm's commands, so an agent in the tools arm that reaches for `gh` hits the same rate limit. Where the real tools refuse, the tools arm is refused too: `world.unpushed` makes `pull_request_create` fail until a `git push`, `pull_request_merge` and `pull_request_review` compare `expectedHeadSha` with the full head, as `PullRequestService` does, and an approval without one is refused. A `{"$error": "..."}` mock fails any T3 tool with that text. `expectRaw` grades the raw arm when its right outcome differs: only T3 can watch a PR, so the raw arm passes `cli-babysit-green` by waiting on the checks.
 
 Some cases are capability cases rather than mistake cases:
 

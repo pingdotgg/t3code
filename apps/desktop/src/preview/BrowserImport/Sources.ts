@@ -71,7 +71,9 @@ const chromiumSource = (input: {
     }
     return input.linuxSegments
       ? context.path.join(
-          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
+          input.id === "chrome" || input.id === "chromium"
+            ? context.linuxChromeConfigHome
+            : context.linuxConfigHome,
           ...input.linuxSegments,
         )
       : undefined;
@@ -88,6 +90,15 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["Google", "Chrome"],
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
+  }),
+  chromiumSource({
+    id: "chromium",
+    name: "Chromium",
+    keychainService: "Chromium Safe Storage",
+    keychainAccount: "Chromium",
+    macSegments: ["Chromium"],
+    linuxSegments: ["chromium"],
+    linuxSecretApplication: "chromium",
   }),
   chromiumSource({
     id: "edge",

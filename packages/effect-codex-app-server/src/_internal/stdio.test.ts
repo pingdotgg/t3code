@@ -225,6 +225,30 @@ describe("Codex App Server stderr excerpt", () => {
     assert.isAtMost(excerpt.length, 512);
   });
 
+  it("keeps the Rust fatal cause ahead of the trailing backtrace hint", () => {
+    const excerpt = stderrExcerpt(
+      [
+        "thread 'tokio-rt-worker' (51304) has overflowed its stack",
+        "memory allocation of 45408 bytes failed",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      ].join("\n"),
+    );
+
+    assert.include(excerpt, "memory allocation of 45408 bytes failed");
+  });
+
+  it("keeps the Rust panic location ahead of the trailing backtrace hint", () => {
+    const excerpt = stderrExcerpt(
+      [
+        "thread 'main' panicked at codex-rs/core/src/codex.rs:120:5:",
+        "called `Option::unwrap()` on a `None` value",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      ].join("\n"),
+    );
+
+    assert.include(excerpt, "thread 'main' panicked at");
+  });
+
   it("returns nothing for blank stderr", () => {
     assert.isUndefined(stderrExcerpt("\n \t\r\n\u001b[0m\n"));
   });

@@ -93,7 +93,8 @@ import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
 import { cn } from "~/lib/utils";
@@ -309,6 +310,12 @@ function RemoteSubagentRow(props: {
   const { remoteChild } = props.agent;
   const status = props.agent.status;
   const failed = status === "failed";
+  const timing = {
+    status,
+    startedAt: props.agent.startedAt ? DateTime.formatIso(props.agent.startedAt) : null,
+    completedAt: props.agent.completedAt ? DateTime.formatIso(props.agent.completedAt) : null,
+  };
+  const showElapsed = !failed && deriveSubagentElapsedMs(timing, 0) !== null;
   const title = relationshipThreadTitle({
     title: props.agent.title ?? gt("Subagent"),
     isSubagent: true,
@@ -350,7 +357,14 @@ function RemoteSubagentRow(props: {
                 on <Var>{remoteChild.label}</Var>
               </T>
             </span>
-            <span className="shrink-0">· {threadRelationshipStatusLabel(status, m)}</span>
+            <span className="shrink-0 tabular-nums">
+              ·{" "}
+              {showElapsed ? (
+                <AgentElapsed agent={timing} compact />
+              ) : (
+                threadRelationshipStatusLabel(status, m)
+              )}
+            </span>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -1017,37 +1031,36 @@ export function ThreadRelationshipsPanel(props: {
               <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
             </Tooltip>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="sm"
-                    variant="ghost"
-                    part="secondary"
-                    aria-label={
-                      parentTitle
-                        ? gt("Merge back to {parentTitle}", { parentTitle })
-                        : gt("Merge back to source conversation")
-                    }
-                    aria-disabled={!canMerge || busyAction !== null || undefined}
-                    onClick={() => void merge()}
-                  >
-                    {busyAction === "merge" ? (
-                      <Spinner size="xs" />
-                    ) : (
-                      <PullRequestGlyph.merged className="size-3" />
-                    )}
-                  </ThreadDetailsControl>
-                }
-              />
-              <TooltipPopup side="left">
-                {latestMergeBackRun === null
+            <SharedTooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  size="sm"
+                  variant="ghost"
+                  part="secondary"
+                  aria-label={
+                    parentTitle
+                      ? gt("Merge back to {parentTitle}", { parentTitle })
+                      : gt("Merge back to source conversation")
+                  }
+                  aria-disabled={!canMerge || busyAction !== null || undefined}
+                  onClick={() => void merge()}
+                >
+                  {busyAction === "merge" ? (
+                    <Spinner size="xs" />
+                  ) : (
+                    <PullRequestGlyph.merged className="size-3" />
+                  )}
+                </ThreadDetailsControl>
+              }
+              label={
+                latestMergeBackRun === null
                   ? gt("Complete a run in this fork before merging it back")
                   : parentTitle
                     ? gt("Merge this conversation back into {parentTitle}", { parentTitle })
-                    : gt("Merge this conversation back into its source")}
-              </TooltipPopup>
-            </Tooltip>
+                    : gt("Merge this conversation back into its source")
+              }
+              side="left"
+            />
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
               {threadRelationshipStatusLabel(rowStatus, m)}
             </span>
@@ -1057,30 +1070,31 @@ export function ThreadRelationshipsPanel(props: {
         )}
         {canStop && agent ? (
           <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="icon-xs"
-                    variant="ghost"
-                    part="icon"
-                    tone="destructive"
-                    aria-label={gt("Stop subagent {threadTitle}", { threadTitle })}
-                    disabled={stoppingId !== null}
-                    onClick={() => void stopSubagent(threadId, agent)}
-                  />
-                }
-              >
-                {stoppingId === threadId ? (
-                  <Spinner aria-hidden size="xs" />
-                ) : (
-                  <SquareIcon aria-hidden className="size-3 fill-current" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                <T>Stop subagent</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  size="icon-xs"
+                  variant="ghost"
+                  part="icon"
+                  tone="destructive"
+                  aria-label={gt("Stop subagent {threadTitle}", { threadTitle })}
+                  disabled={stoppingId !== null}
+                  onClick={() => void stopSubagent(threadId, agent)}
+                />
+              }
+              label={
+                <>
+                  <T>Stop subagent</T>
+                </>
+              }
+              side="left"
+            >
+              {stoppingId === threadId ? (
+                <Spinner aria-hidden size="xs" />
+              ) : (
+                <SquareIcon aria-hidden className="size-3 fill-current" />
+              )}
+            </SharedTooltipTrigger>
           </div>
         ) : null}
       </li>
@@ -1095,7 +1109,7 @@ export function ThreadRelationshipsPanel(props: {
   );
 
   return (
-    <>
+    <TooltipProvider>
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
@@ -1193,6 +1207,6 @@ export function ThreadRelationshipsPanel(props: {
           </ThreadLineageGroup>
         </ThreadDetailsSection>
       ) : null}
-    </>
+    </TooltipProvider>
   );
 }

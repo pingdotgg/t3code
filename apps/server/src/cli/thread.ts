@@ -1,4 +1,5 @@
 import {
+  NonNegativeInt,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -34,6 +35,7 @@ import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts
 import { expandHomePath } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
+import { unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -85,6 +87,17 @@ export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedEr
   }
 }
 
+/** The server answered that it has no such tool: it predates the tool, or hides it from this session. */
+class ThreadToolMissingError extends Schema.TaggedError<ThreadToolMissingError>()(
+  "ThreadToolMissingError",
+  { tool: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return `This T3 Code server has no ${this.tool} tool. Update T3 Code, then retry.`;
+  }
+}
+
 export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
   detail: Schema.String,
 }) {
@@ -132,6 +145,7 @@ const ThreadCliError = Schema.Union([
   ThreadServerNotRunningError,
   ThreadServerUnreachableError,
   ThreadToolFailedError,
+  ThreadToolMissingError,
   ThreadUsageError,
   ThreadProjectNotFoundError,
   ThreadNeedsInputError,
@@ -143,7 +157,7 @@ const isThreadCliError = Schema.is(ThreadCliError);
  * These errors are expected outcomes for a script, so they print as one line
  * on stderr instead of the runtime's logged stack trace.
  */
-const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+export const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapError((error) =>
       isThreadCliError(error) ? Console.error(error.message) : Effect.void,
@@ -152,7 +166,7 @@ const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const printJson = (value: unknown) => Console.log(encodeJson(value));
+export const printJson = (value: unknown) => Console.log(encodeJson(value));
 
 const ToolResult = Schema.Struct({
   isError: Schema.optional(Schema.Boolean),
@@ -185,6 +199,15 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
+/** JSON-RPC's invalid params: the arguments failed the tool's schema. */
+const INVALID_PARAMS = -32602;
+const rpcErrorDetail = (error: { readonly code: number; readonly message: string }) => {
+  const message = error.message.replaceAll(/\s*\n\s*/g, " ");
+  return error.code === INVALID_PARAMS
+    ? `The server refused the arguments: ${message}`
+    : `The server refused the request: ${message}`;
+};
+
 const makeThreadTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
     new ThreadToolFailedError({
@@ -196,10 +219,21 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
       tool: string,
       args: Readonly<Record<string, unknown>>,
       schema: S,
-    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
-      const raw = yield* session
-        .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+    ): Effect.fn.Return<
+      S["Type"],
+      ThreadServerUnreachableError | ThreadToolFailedError | ThreadToolMissingError
+    > {
+      const raw = yield* session.call(tool, args).pipe(
+        Effect.mapError((cause) =>
+          cause.rpcError === undefined
+            ? new ThreadServerUnreachableError({ origin, cause })
+            : // Effect's MCP server words an unknown or hidden tool exactly this way.
+              cause.rpcError.code === -32602 &&
+                cause.rpcError.message === `Tool '${tool}' not found`
+              ? new ThreadToolMissingError({ tool })
+              : new ThreadToolFailedError({ tool, detail: rpcErrorDetail(cause.rpcError) }),
+        ),
+      );
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -216,8 +250,12 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * Signs in as a short-lived MCP client of the running server, the same way an
  * outside agent does, and revokes that session when the command ends.
  */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
+export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
+  flags: {
+    readonly baseDir: Option.Option<string>;
+    readonly json: boolean;
+    readonly clientLabel?: string;
+  },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -232,7 +270,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* Effect.acquireRelease(
       environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
+        label: flags.clientLabel ?? "t3 thread cli",
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
@@ -291,9 +329,15 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
 /** The checkouts of the git repository at `directory`, or none outside a repository. */
 const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (directory: string) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const env = unsetInheritedRepositoryEnv(process.env, yield* HostProcess.Platform);
   const list = (args: ReadonlyArray<string>) =>
     processRunner
-      .run({ command: "git", args: ["worktree", "list", "--porcelain", ...args], cwd: directory })
+      .run({
+        command: "git",
+        args: ["worktree", "list", "--porcelain", ...args],
+        cwd: directory,
+        env,
+      })
       .pipe(
         Effect.option,
         Effect.map((result) =>
@@ -304,7 +348,8 @@ const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (dir
   const stdout = (yield* list(["-z"])) ?? (yield* list([]))?.replaceAll("\n", "\0") ?? "";
   return stdout.split("\0\0").flatMap((record) => {
     const [first = "", ...attributes] = record.split("\0");
-    return first.startsWith("worktree ") && !attributes.includes("bare")
+    const prunable = attributes.some((attribute) => attribute.startsWith("prunable"));
+    return first.startsWith("worktree ") && !attributes.includes("bare") && !prunable
       ? [first.slice("worktree ".length)]
       : [];
   });
@@ -329,11 +374,23 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  const requestedPath = path.resolve(
+    yield* HostProcess.WorkingDirectory,
+    yield* expandHomePath(identifier),
   );
+  const resolveExisting = (value: string) =>
+    fileSystem.realPath(value).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+      Effect.orElseSucceed(() => value),
+    );
+  const resolvedTarget = yield* resolveExisting(requestedPath);
+  const target = resolvedTarget ?? requestedPath;
   const roots = yield* Effect.forEach(projects, (project) =>
-    Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
+    Effect.map(resolveExisting(project.workspaceRoot), (resolved) => ({
+      project,
+      root: resolved ?? project.workspaceRoot,
+      absent: resolved === undefined,
+    })),
   );
   const contains = (root: string, candidate: string) => {
     const relative = path.relative(root, candidate);
@@ -342,36 +399,84 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
-  const deepestContaining = (candidate: string) =>
-    roots
+  const containingRoots = (candidate: string, originalPath?: string) => {
+    // Projects can register the same directory through separate symlinks.
+    const matchingPathLength = (root: string) =>
+      originalPath !== undefined && contains(root, originalPath) ? root.length : 0;
+    return roots
       .filter(({ root }) => contains(root, candidate))
-      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+      .toSorted(
+        (left, right) =>
+          right.root.length - left.root.length ||
+          matchingPathLength(right.project.workspaceRoot) -
+            matchingPathLength(left.project.workspaceRoot),
+      );
+  };
 
-  const containing = deepestContaining(target);
-  if (containing !== undefined) return containing;
-  const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
-  const gitDirectory =
-    Option.isSome(targetInfo) && targetInfo.value.type === "File" ? path.dirname(target) : target;
+  const containingMatch = containingRoots(target, requestedPath)[0];
+  if (resolvedTarget !== undefined && containingMatch !== undefined) return containingMatch.project;
+  const projectNotFound = () => new ThreadProjectNotFoundError({ identifier });
+  const statIfExists = (value: string) =>
+    fileSystem.stat(value).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+      Effect.mapError(projectNotFound),
+    );
+  // Git needs an existing cwd, so a path that doesn't exist yet resolves
+  // through its nearest existing ancestor.
+  let existing = target;
+  let info = yield* statIfExists(existing);
+  while (info === undefined) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return yield* projectNotFound();
+    existing = parent;
+    info = yield* statIfExists(existing);
+  }
+  let gitDirectory = info.type === "File" ? path.dirname(target) : target;
+  let checkoutTarget = target;
+  if (resolvedTarget === undefined || existing !== target) {
+    if (existing !== target && info.type !== "Directory") return yield* projectNotFound();
+    gitDirectory = yield* realPath(existing);
+    checkoutTarget = path.join(gitDirectory, path.relative(existing, target));
+    if (info.type === "File") gitDirectory = path.dirname(gitDirectory);
+    const canonical = containingRoots(checkoutTarget, requestedPath)[0];
+    if (canonical !== undefined) {
+      // A registration whose own root is absent only matches by spelling; keep it unless the
+      // canonical match is closer.
+      const depth = (root: string, candidate: string) => {
+        const relative = path.relative(root, candidate);
+        return relative === "" ? 0 : relative.split(path.sep).length;
+      };
+      return containingMatch?.absent &&
+        depth(containingMatch.root, target) <= depth(canonical.root, checkoutTarget)
+        ? containingMatch.project
+        : canonical.project;
+    }
+  }
+  if (containingMatch?.absent) return containingMatch.project;
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
     Effect.provide(ProcessRunner.layer),
   );
   const ownCheckout = listed
-    .filter((checkout) => contains(checkout, target))
+    .filter((checkout) => contains(checkout, checkoutTarget))
     .toSorted((left, right) => right.length - left.length)[0];
   if (ownCheckout === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
+    return yield* projectNotFound();
   }
-  const relative = path.relative(ownCheckout, target);
+  const relative = path.relative(ownCheckout, checkoutTarget);
   const matches = new Map<ProjectId, (typeof projects)[number]>();
   for (const checkout of listed) {
     if (checkout === ownCheckout) continue;
-    const project = deepestContaining(path.join(checkout, relative));
-    if (project !== undefined) matches.set(project.id, project);
+    const checkoutMatches = containingRoots(path.join(checkout, relative));
+    const deepestLength = checkoutMatches[0]?.root.length;
+    for (const { project, root } of checkoutMatches) {
+      if (root.length !== deepestLength) break;
+      matches.set(project.id, project);
+    }
   }
   const [match, ...others] = matches.values();
   if (match === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
+    return yield* projectNotFound();
   }
   if (others.length > 0) {
     const names = [match, ...others].map((project) => `${project.title} (${project.id})`);
@@ -389,7 +494,7 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   view: "messages" | "activity",
 ) {
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
-  let afterPosition: number | undefined;
+  let afterPosition: number | null = -1;
   let page: OrchestratorMcpThreadReadResult;
   do {
     page = yield* tools.call(
@@ -400,13 +505,13 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
         limit: READ_PAGE_LIMIT,
         maxCharsPerItem: READ_ITEM_MAX_CHARS,
         runLimit: 1,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        afterPosition,
       },
       OrchestratorMcpThreadReadResult,
     );
     items.push(...page.items);
-    afterPosition = page.nextPosition ?? undefined;
-  } while (page.hasMore && afterPosition !== undefined);
+    afterPosition = page.nextPosition;
+  } while (page.hasMore && afterPosition !== null);
   return { thread: page.thread, items };
 });
 
@@ -446,7 +551,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
           limit: READ_PAGE_LIMIT,
           maxCharsPerItem: READ_ITEM_MAX_CHARS,
           runLimit: 1,
-          ...(afterPosition < 0 ? {} : { afterPosition }),
+          afterPosition,
         },
         OrchestratorMcpThreadReadResult,
       );
@@ -724,7 +829,11 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
 });
 
 export const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
+  const firstLine =
+    message
+      .trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim() ?? "";
   if (firstLine.length <= TITLE_MAX_CHARS) return firstLine;
   let end = TITLE_MAX_CHARS - 1;
   const previous = firstLine.charCodeAt(end - 1);
@@ -791,7 +900,7 @@ export const launchModelSelection = Effect.fn("cli.thread.launchModelSelection")
   };
 });
 
-const jsonFlag = Flag.Boolean("json").pipe(
+export const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
 );
@@ -810,14 +919,16 @@ const outputSchemaFlag = Flag.String("output-schema").pipe(
 const decodeOutputSchema = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
 );
-const readOutputSchema = Effect.fn("cli.thread.readOutputSchema")(function* (
+export const readOutputSchema = Effect.fn("cli.thread.readOutputSchema")(function* (
   path: Option.Option<string>,
 ) {
   if (Option.isNone(path)) return {};
   const fileSystem = yield* FileSystem.FileSystem;
   const usage = () =>
     new ThreadUsageError({ detail: `${path.value} does not hold a JSON Schema object.` });
-  const text = yield* fileSystem.readFileString(path.value).pipe(Effect.mapError(usage));
+  const text = yield* fileSystem
+    .readFileString(yield* expandHomePath(path.value))
+    .pipe(Effect.mapError(usage));
   return { outputSchema: yield* decodeOutputSchema(text).pipe(Effect.mapError(usage)) };
 });
 const messageArgument = Argument.String("message").pipe(
@@ -896,7 +1007,7 @@ const threadStartCommand = Command.make("start", {
   ),
   option: Flag.String("option").pipe(
     Flag.withDescription(
-      "Model option as id=value, such as effort=high. Repeat for more. Needs --provider and --model.",
+      "Model option as id=value (Codex: reasoningEffort=high; Claude: effort=high). Ids depend on the model. Repeat for more. Needs --provider and --model.",
     ),
     Flag.atLeast(0),
   ),
@@ -1004,6 +1115,7 @@ const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
   messages: Flag.Int("messages").pipe(
+    Flag.withSchema(NonNegativeInt),
     Flag.withDescription("How many of the latest messages to print."),
     Flag.withDefault(10),
   ),
@@ -1024,7 +1136,12 @@ const threadShowCommand = Command.make("show", {
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({
-                role: item.type === "user_message" ? "user" : "assistant",
+                role:
+                  item.type === "assistant_message"
+                    ? "assistant"
+                    : item.createdBy === "system"
+                      ? "system"
+                      : "user",
                 runId: item.runId,
                 text,
               })),

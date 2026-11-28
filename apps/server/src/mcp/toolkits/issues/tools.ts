@@ -1,5 +1,6 @@
 import {
   IssueCapabilities,
+  IssueCommentAudience,
   IssueListState,
   IssueOperationError,
   IssueState,
@@ -185,6 +186,8 @@ export const ReadIssueResult = Schema.Struct({
       author: Schema.NullOr(Schema.String),
       body: Schema.String,
       createdAt: Schema.String,
+      /** Hidden from the customer. */
+      internal: Schema.optional(Schema.Boolean),
     }),
   ),
   /** Older comments exist beyond the page returned. */
@@ -305,10 +308,17 @@ const CreateIssueTool = Tool.make("create_issue", {
   .annotate(Tool.OpenWorld, true);
 
 const CommentOnIssueTool = Tool.make("comment_on_issue", {
-  description: "Post a comment on an issue.",
+  description:
+    "Post a comment on an issue. On a Jira Service Management issue it is an internal note the customer never sees unless audience is public. Never resend a refused internal note as public.",
   parameters: Schema.Struct({
     ...IssueTargetInput.fields,
     body: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+    audience: Schema.optional(
+      IssueCommentAudience.annotate({
+        description:
+          "Defaults to internal. public replies to the customer; set it only when the user asked to reply to them.",
+      }),
+    ),
   }),
   success: IssueWriteResult,
   failure: IssueToolError,
