@@ -152,6 +152,8 @@ describe("commandProgramName", () => {
     ["cd /tmp <<EOF && pnpm test\nnot-a-command\nEOF\nbun test", "pnpm"],
     ["cd . <<''\npretend\n\nprintf ok", "printf"],
     ['cd . <<""\npretend\n\nprintf ok', "printf"],
+    [": <<< hi\nprintf '%s' visible", "printf"],
+    [": <<<-hi && printf '%s' visible", "printf"],
   ])("skips heredoc bodies before finding the next command: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
