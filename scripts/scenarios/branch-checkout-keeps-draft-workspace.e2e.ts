@@ -97,9 +97,15 @@ test(
       await browser.locator("html[data-scenario-branch-reply=ready]").waitFor();
 
       for (const project of projects) await moveDraft(project);
-      await workspace.tap();
-      await screen.getByRole("option", "New worktree", { exact: true }).tap();
-      await expect(workspace).toContainText("New worktree");
+      if (projects.length) {
+        await expect(workspace).toContainText("Current checkout");
+        // Keep the real Git HEAD distinct from the branch in the held reply.
+        await runPromise(run("git", ["switch", "main"], { cwd: project }));
+      } else {
+        await workspace.tap();
+        await screen.getByRole("option", "New worktree", { exact: true }).tap();
+        await expect(workspace).toContainText("New worktree");
+      }
       if ((await browser.evaluate(() => location.pathname)) !== draftPath) {
         throw new Error("The project picker opened a different draft.");
       }
@@ -109,11 +115,14 @@ test(
         return null;
       });
       await expect(branchPicker).toBeEnabled();
-      await expect(workspace).toContainText("New worktree");
-
-      if (branch === "return") {
+      if (projects.length) {
+        await workspace.tap();
+        await screen.getByRole("option", "New worktree", { exact: true }).tap();
+        await expect(branchPicker).toHaveAttribute("aria-label", /^Branch: (From )?main\b/);
         await workspace.tap();
         await screen.getByRole("option", "Current checkout", { exact: true }).tap();
+      } else {
+        await expect(workspace).toContainText("New worktree");
       }
     }
   },
