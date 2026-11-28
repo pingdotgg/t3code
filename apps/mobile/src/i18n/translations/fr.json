@@ -3122,6 +3122,7 @@
   "1d44f8d46fa8508e": "Marquez ce brouillon comme prêt pour la revue avant de le fusionner.",
   "6ffcf2825c96d94b": "Résolvez les conflits de la branche avant de fusionner.",
   "ceac7373aef06b11": "Ce dépôt n’a aucune méthode de fusion disponible.",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "Ouvrir sur {provider}",
   "dd7e258483f58a8f": "Fil archivé",
   "754d11d1f210a398": "Démarrer un nouveau fil",

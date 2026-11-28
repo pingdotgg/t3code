@@ -6875,6 +6875,7 @@
   "ff49cda2006d155a": "Zugehörigkeit zum Stack konnte nicht geprüft werden",
   "be49947d8fca9505": "Zugehörigkeit zum Stack wird geprüft…",
   "a2e58d83bc5daf36": "Auto-Merge",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "{term, select, mr {Merge-Request-Bereich einklappen} cr {Änderungsanfrage-Bereich einklappen} other {Pull-Request-Bereich einklappen}}",
   "9f07c0e2e791c6b0": "{count, plural, one {{formatted} geänderte Datei} other {{formatted} geänderte Dateien}}",
   "1f7445dfeeb0502d": "Checkout-Befehl kopieren",

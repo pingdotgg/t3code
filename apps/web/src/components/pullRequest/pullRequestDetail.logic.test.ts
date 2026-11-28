@@ -212,6 +212,12 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
+
+  it("offers auto-merge for a merge the host's branch rules block", () => {
+    expect(resolvePullRequestPrimaryControl({ ...open, mergeBlocked: true })).toBe(
+      "enable-auto-merge",
+    );
+  });
 });
 
 describe("stacked pull request classification", () => {
@@ -1904,6 +1910,11 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("failure"), check("pending")] }),
       ),
     ).toBe("fix");
+  });
+
+  it("does not offer a merge the host's branch rules block", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(resolveThreadPanelPullRequestAction(openDetail({ mergeBlocked: true }))).toBeNull();
   });
 
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {

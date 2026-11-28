@@ -71,6 +71,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         isDraft: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
+        viewerCanMergeAsAdmin: false,
+        isMergeQueueEnabled: false,
         reviewDecision: null,
         additions: 0,
         deletions: 0,
@@ -3172,13 +3174,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
           checks: [],
           headSha: sha,
           workflowApprovalsRequired: known?.runs.length ?? 0,
+          mergeBlocked: !runsChanged,
         };
       });
-      yield* revalidate(pullRequestInput, read);
-      yield* revalidate(pullRequestInput, read);
+      const first = yield* revalidate(pullRequestInput, read);
+      expect(first).toEqual({
+        state: "open",
+        checks: [],
+        workflowApprovalsRequired: 0,
+        mergeBlocked: true,
+      });
+      expect(yield* revalidate(pullRequestInput, read)).toEqual(first);
       expect(reads).toBe(1);
       runsChanged = true;
-      yield* revalidate(pullRequestInput, read);
+      expect(yield* revalidate(pullRequestInput, read)).toEqual({
+        state: "open",
+        checks: [],
+        workflowApprovalsRequired: 1,
+        mergeBlocked: false,
+      });
       expect(reads).toBe(2);
     }).pipe(
       Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {

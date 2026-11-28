@@ -66,6 +66,13 @@ describe("mobile pull request actions", () => {
     expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("conflicts");
   });
 
+  it("blocks a merge the host's branch rules hold back, keeping auto-merge", () => {
+    const pr = detail({ mergeBlocked: true });
+    expect(canPerformPullRequestAction(pr, "merge")).toBe(false);
+    expect(canPerformPullRequestAction(pr, "enable-auto-merge")).toBe(true);
+    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("rules");
+  });
+
   it("picks the chosen, project default, then last used merge method the repository allows", () => {
     const pr = detail();
     expect(resolveMergeMethod(pr, null, "merge", "squash")).toBe("merge");

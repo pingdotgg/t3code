@@ -6848,6 +6848,7 @@
   "ff49cda2006d155a": "스택 포함 여부를 확인할 수 없습니다",
   "be49947d8fca9505": "스택 포함 여부 확인 중…",
   "a2e58d83bc5daf36": "자동 병합",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 패널 접기",
   "9f07c0e2e791c6b0": "{count, plural, other {변경된 파일 {formatted}개}}",
   "1f7445dfeeb0502d": "체크아웃 명령 복사",

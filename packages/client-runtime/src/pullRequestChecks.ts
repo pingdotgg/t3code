@@ -18,11 +18,13 @@ export function resolvePullRequestDetailChecks(
     !checks.checks.some((check) => check.status === "action-required")
       ? 0
       : detail.workflowApprovalsRequired);
+  const { mergeBlocked: _staleBlock, ...rest } = detail;
   return {
-    ...detail,
+    ...rest,
     state: detail.state === "merged" ? "merged" : checks.state,
     checks: checks.checks,
     ...(workflowApprovalsRequired === undefined ? {} : { workflowApprovalsRequired }),
+    ...(checks.mergeBlocked === undefined ? {} : { mergeBlocked: checks.mergeBlocked }),
   };
 }
 
