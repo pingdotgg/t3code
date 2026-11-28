@@ -50,7 +50,19 @@ const MARKDOWN_LINK_PATTERN = /^\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
 // Stops at the next `<`, so matching stays linear in the length of the line.
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+
+function videoTagSource(html: string): string | undefined {
+  for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
+    for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+      if (attribute[1]!.toLowerCase() !== "src") continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
@@ -371,7 +383,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
+      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
       : undefined;
     if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();
