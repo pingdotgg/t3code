@@ -1917,7 +1917,12 @@ function FilePreviewPanelContent({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
-                workspaceMutationId={workspaceMutationId}
+                // A refresh re-mints embedded images too; their cached URLs keep the old bytes.
+                workspaceMutationId={
+                  fileRefreshRevision > 0
+                    ? `${workspaceMutationId ?? ""}:refresh:${fileRefreshRevision}`
+                    : workspaceMutationId
+                }
                 readOnly={
                   file.data.truncated || file.data.readOnly === true || isHostFile || !canWriteFiles
                 }
