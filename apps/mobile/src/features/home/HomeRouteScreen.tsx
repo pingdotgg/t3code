@@ -118,6 +118,7 @@ export function HomeRouteScreen() {
     options: listOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
+    setExcludedProjectKey,
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const projectScopes = useMemo(
@@ -173,13 +174,15 @@ export function HomeRouteScreen() {
             accessibilityLabel: gt("Search threads"),
           }}
           filter={{
-            customized: selectedEnvironmentId !== null || selectedProjectKey !== null,
+            customized: selectedEnvironmentId !== null || selectedProjectKey !== null || !!listOptions.excludedProjectKey,
             items: buildHomeListFilterMenuItems(
               {
                 environments,
                 projects: projectFilterOptions,
                 selectedEnvironmentId,
                 selectedProjectKey,
+                excludedProjectKey: listOptions.excludedProjectKey,
+                onExcludeProject: setExcludedProjectKey,
                 onEnvironmentChange: setSelectedEnvironmentId,
                 onProjectChange: setSelectedProjectKey,
               },
@@ -206,6 +209,8 @@ export function HomeRouteScreen() {
           onRegenerateThreadTitle={regenerateThreadTitle}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onExcludeProject={setExcludedProjectKey}
+          excludedProjectKey={listOptions.excludedProjectKey}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}

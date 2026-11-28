@@ -12,6 +12,7 @@ import type { HomeProjectSortOrder } from "./homeThreadList";
 export interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly excludedProjectKey?: string | undefined;
   readonly projectSortOrder: HomeProjectSortOrder;
 }
 
@@ -23,6 +24,7 @@ function defaultHomeListOptions(filters?: ThreadListFilters): HomeListOptions {
   return {
     selectedEnvironmentId: filters?.environmentId ?? null,
     selectedProjectKey: filters?.projectKey ?? null,
+    excludedProjectKey: filters?.excludedProjectKey,
     projectSortOrder:
       DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
         ? "updated_at"
@@ -58,12 +60,14 @@ export function HomeListOptionsProvider({
     registry.set(optionsAtom, next);
     if (
       next.selectedEnvironmentId !== current.selectedEnvironmentId ||
-      next.selectedProjectKey !== current.selectedProjectKey
+      next.selectedProjectKey !== current.selectedProjectKey ||
+      next.excludedProjectKey !== current.excludedProjectKey
     ) {
       void savePreferences({
         threadListFilters: {
           environmentId: next.selectedEnvironmentId,
           projectKey: next.selectedProjectKey,
+          ...(next.excludedProjectKey ? { excludedProjectKey: next.excludedProjectKey } : {}),
         },
       });
     }
@@ -97,7 +101,10 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     updateOptions({ selectedEnvironmentId: value });
   };
   const setSelectedProjectKey = (value: string | null) => {
-    updateOptions({ selectedProjectKey: value });
+    updateOptions({ selectedProjectKey: value, excludedProjectKey: undefined });
+  };
+  const setExcludedProjectKey = (value: string) => {
+    updateOptions({ selectedProjectKey: null, excludedProjectKey: value });
   };
   const setProjectSortOrder = (value: HomeProjectSortOrder) => {
     updateOptions({ projectSortOrder: value });
@@ -106,6 +113,7 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     options: resolvedOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
+    setExcludedProjectKey,
     setProjectSortOrder,
   } as const;
 }

@@ -53,6 +53,7 @@ import {
 import {
   buildHomeProjectScopes,
   resolveHomeProjectFilterScope,
+  homeProjectFilterRefs,
   sortHomeProjectScopes,
 } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
@@ -162,7 +163,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const availableEnvironmentIds = new Set(
     environments.map((environment) => environment.environmentId),
   );
-  const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
+  const { options, setSelectedEnvironmentId, setSelectedProjectKey, setExcludedProjectKey } =
     useHomeListOptions(availableEnvironmentIds);
   const searchEnvironmentIds =
     options.selectedEnvironmentId === null
@@ -215,12 +216,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     [projectScopes],
   );
   const selectedProjectScope = resolveHomeProjectFilterScope(projectScopes, projects, options);
+  const projectFilterRefs = homeProjectFilterRefs(projectScopes, selectedProjectScope, options.excludedProjectKey);
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
-    selectedProjectScope === null
+    projectFilterRefs === null
       ? {}
-      : { projectIds: selectedProjectScope.projectRefs.map((ref) => ref.projectId) },
+      : { projectIds: projectFilterRefs.map((ref) => ref.projectId) },
   );
   // This map reaches LegendList's extraData, which re-renders every row whenever it changes
   // identity; the hook keeps it stable.
@@ -237,7 +239,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${options.excludedProjectKey ?? ""}:${props.searchQuery.trim()}`;
   const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
   if (lastSettledResetKey !== settledResetKey) {
     setLastSettledResetKey(settledResetKey);
@@ -280,7 +282,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     threads: launchingThreads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
-    projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
+    projectRefs: projectFilterRefs,
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
@@ -546,13 +548,15 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         accessibilityLabel: gt("Search threads"),
       }}
       filter={{
-        customized: options.selectedEnvironmentId !== null || selectedProjectKey !== null,
+        customized: options.selectedEnvironmentId !== null || selectedProjectKey !== null || !!options.excludedProjectKey,
         items: buildHomeListFilterMenuItems(
           {
             environments,
             projects: projectFilterOptions,
             selectedEnvironmentId: options.selectedEnvironmentId,
             selectedProjectKey,
+            excludedProjectKey: options.excludedProjectKey,
+            onExcludeProject: setExcludedProjectKey,
             onEnvironmentChange: setSelectedEnvironmentId,
             onProjectChange: setSelectedProjectKey,
           },
@@ -589,7 +593,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 : threadSearch.failed
                   ? gt("Couldn't search thread messages")
                   : gt("No matching threads")
-              : selectedProjectScope !== null
+              : options.excludedProjectKey
+                ? gt("No threads match this filter.")
+                : selectedProjectScope !== null
                 ? gt("No threads in {project}", { project: selectedProjectScope.title })
                 : gt("No threads yet")}
       </Text>

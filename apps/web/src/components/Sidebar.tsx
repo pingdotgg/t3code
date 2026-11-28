@@ -75,6 +75,7 @@ import {
   FolderPlusIcon,
   PlusIcon,
   SettingsIcon,
+  EyeOffIcon,
 } from "lucide-react";
 import {
   useEffect,
@@ -1049,6 +1050,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
+  const persistedExcludedProjectKey = useUiStateStore((store) => store.sidebarExcludedProjectScopeKey);
+  const setExcludedProjectKey = useUiStateStore((store) => store.setSidebarExcludedProjectScopeKey);
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -1136,11 +1139,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
   }).filter((key) => !archivedProjectKeys.has(key));
+  const excludedProjectKeys = resolveSidebarProjectScopeKeys({
+      groups: projectGroups,
+      keys: persistedExcludedProjectKey ? [persistedExcludedProjectKey] : [],
+      settings: projectGroupingSettings,
+      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    });
+  const excludedProject = scopeGroups.find((project) => excludedProjectKeys.includes(project.projectKey));
   const chosenProjectGroups = scopeGroups.filter((project) =>
-    chosenProjectScopeKeys.includes(project.projectKey),
+    excludedProject
+      ? project.projectKey !== excludedProject.projectKey
+      : chosenProjectScopeKeys.includes(project.projectKey),
   );
   const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
+    chosenProjectGroups.length === 0 && !excludedProject
       ? null
       : new Set(
           chosenProjectGroups.flatMap((project) =>
@@ -1181,8 +1193,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
-  const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
+  const projectScopeKeys = revealWidensScope ? [] : excludedProject
+    ? chosenProjectGroups.map((project) => project.projectKey)
+    : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
+  const excludeProject = (key: string) => {
+    clearSelection();
+    if (excludedProject?.projectKey === key) setProjectScopeKeys([]);
+    else setExcludedProjectKey(key);
+    scrollSidebarToTop(sidebarContentRef.current);
+    dispatchProjectScopeMenu({ type: "open-changed", open: false });
+  };
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
       projectScopeKeys.includes(key)
@@ -1402,7 +1423,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeRowThreadKey,
     departingThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
+      ? scopedProjectGroups.length === 0 && (!excludedProject || revealWidensScope)
         ? // An archived project keeps a folder for its active threads, below the rest.
           [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
         : scopedProjectGroups
@@ -3176,7 +3197,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     render={
                       <SidebarHeaderIconButton
                         label={
-                          scopedProjectGroups.length > 0
+                          excludedProject && !revealWidensScope
+                            ? gt("All except {project}", { project: excludedProject.displayName })
+                            : scopedProjectGroups.length > 0
                             ? gt("Projects: {projects}", {
                                 projects: scopedProjectGroups
                                   .map((project) => project.displayName)
@@ -3187,7 +3210,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       />
                     }
                   >
-                    {scopedProjectGroups.length > 1 ? (
+                    {excludedProject && !revealWidensScope ? (
+                      <EyeOffIcon className="size-4" />
+                    ) : scopedProjectGroups.length > 1 ? (
                       <span className="flex shrink-0">
                         {scopedProjectGroups.slice(0, 2).map((project, index) => (
                           <span
@@ -3254,6 +3279,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           toggleProjectGroupPin(project);
                           return;
                         }
+                        if (project && event.altKey && !event.ctrlKey && !event.metaKey && event.key === "Enter") {
+                          event.preventDefault();
+                          excludeProject(project.projectKey);
+                          return;
+                        }
                         if (event.ctrlKey || event.altKey || event.metaKey) return;
                         if (event.shiftKey && event.key === "Enter") {
                           if (!project) return;
@@ -3294,7 +3324,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         const isSelected = project
                           ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0;
+                          : projectScopeKeys.length === 0 && (!excludedProject || revealWidensScope);
                         return (
                           <ComboboxItem
                             key={item.value}
@@ -3308,7 +3338,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }}
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>
-                              {project ? (
+                              {project && excludedProject?.projectKey === project.projectKey ? (
+                                <EyeOffIcon className="size-4 shrink-0" />
+                              ) : project ? (
                                 <ProjectFavicon
                                   project={project}
                                   fallbackProjects={groupIconFallbacks(
@@ -3345,6 +3377,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   ) : null
                                 }
                                 settings={
+                                  <>
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost-muted"
+                                    tabIndex={-1}
+                                    aria-label={excludedProject?.projectKey === project.projectKey ? gt("Show all projects") : gt("Exclude {project}", { project: project.displayName })}
+                                    title={excludedProject?.projectKey === project.projectKey ? gt("Show all projects") : gt("Exclude {project}", { project: project.displayName })}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      excludeProject(project.projectKey);
+                                    }}
+                                  >
+                                    <EyeOffIcon className="size-3.5" />
+                                  </Button>
                                   <Button
                                     size="icon-xs"
                                     variant="ghost-muted"
@@ -3360,6 +3408,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   >
                                     <SettingsIcon className="size-3.5" />
                                   </Button>
+                                  </>
                                 }
                               />
                             ) : (
@@ -3485,7 +3534,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             workingThreads.length +
             snoozedThreads.length ===
             0 &&
-          (settledCount === 0 || scopedProjectGroups.length > 0) ? (
+          (settledCount === 0 || scopedProjectGroups.length > 0 || excludedProject) ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
@@ -3501,10 +3550,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     <T>Add project</T>
                   </button>
                 </>
-              ) : scopedProjectGroups.length > 0 ? (
+              ) : scopedProjectGroups.length > 0 || excludedProject ? (
                 <>
                   <span>
-                    {settledCount > 0
+                    {excludedProject ? gt("No threads match this filter.") : settledCount > 0
                       ? scopedProjectGroups.length > 1
                         ? gt("No active threads in these projects")
                         : gt("No active threads in {project}", {

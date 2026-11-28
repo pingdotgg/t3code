@@ -37,11 +37,14 @@ export function buildHomeListFilterMenuItems(
     readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
     readonly selectedEnvironmentId: EnvironmentId | null;
     readonly selectedProjectKey: string | null;
+    readonly excludedProjectKey?: string | undefined;
+    readonly onExcludeProject?: (projectKey: string) => void;
     readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
     readonly onProjectChange: (projectKey: string | null) => void;
   },
   resolve: MessageResolver = m,
 ): AppBarMenuItem[] {
+  const excludedProject = props.projects.find((project) => project.key === props.excludedProjectKey);
   const items: AppBarMenuItem[] = [
     {
       id: "environment",
@@ -67,13 +70,15 @@ export function buildHomeListFilterMenuItems(
   if (props.projects.length > 0) {
     items.push({
       id: "project",
-      title: resolve(msg("Project", { $context: "filter menu heading" })),
+      title: excludedProject
+        ? resolve(msg("All except {project}", { project: excludedProject.label }))
+        : resolve(msg("Project", { $context: "filter menu heading" })),
       items: [
         {
           id: "project:all",
           title: resolve(msg("All projects")),
           subtitle: resolve(msg("Show threads from every project")),
-          selected: props.selectedProjectKey === null,
+          selected: props.selectedProjectKey === null && !props.excludedProjectKey,
           onPress: () => props.onProjectChange(null),
         },
         ...props.projects.map((project) => ({
@@ -82,6 +87,16 @@ export function buildHomeListFilterMenuItems(
           selected: props.selectedProjectKey === project.key,
           onPress: () => props.onProjectChange(project.key),
         })),
+        ...(props.onExcludeProject ? [{
+          id: "project:exclude",
+          title: resolve(msg("Exclude project")),
+          items: props.projects.map((project) => ({
+            id: `exclude:${project.key}`,
+            title: project.label,
+            selected: props.excludedProjectKey === project.key,
+            onPress: () => props.onExcludeProject?.(project.key),
+          })),
+        }] : []),
       ],
     });
   }

@@ -117,6 +117,17 @@ export function findHomeProjectScope(
   );
 }
 
+export function homeProjectFilterRefs(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  selected: HomeProjectScope | null,
+  excludedProjectKey?: string,
+) {
+  const excluded = findHomeProjectScope(pickableProjectGroups(scopes), excludedProjectKey ?? null);
+  return excluded
+    ? scopes.filter((scope) => scope.key !== excluded.key).flatMap((scope) => scope.projectRefs)
+    : selected?.projectRefs ?? null;
+}
+
 export function sortHomeProjectScopes(input: {
   readonly scopes: ReadonlyArray<HomeProjectScope>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;

@@ -20,6 +20,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKeys: [],
+    sidebarExcludedProjectScopeKey: null,
     threadLastVisitedAtById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
@@ -118,6 +119,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
+      sidebarExcludedProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
     });
   });
@@ -204,6 +206,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
+      sidebarExcludedProjectScopeKey: null,
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
     });
@@ -221,6 +224,9 @@ describe("uiStateStore persistence", () => {
     ) as PersistedUiState;
 
     expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
+    persistState(makeUiState({ sidebarExcludedProjectScopeKey: keys[0]! }));
+    const excluded = JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState;
+    expect(parsePersistedState(excluded).sidebarExcludedProjectScopeKey).toBe(keys[0]);
   });
 
   it("keeps a single-project scope readable by older clients", () => {
