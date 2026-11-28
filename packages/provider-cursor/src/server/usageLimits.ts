@@ -27,10 +27,19 @@ const CursorUsageResponse = Schema.Struct({
   ),
 });
 
+const CursorPlanInfoResponse = Schema.Struct({
+  planInfo: Schema.optional(
+    Schema.Struct({
+      planName: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
 /** Cursor's dashboard percentages include bonus usage; spend / limit does not. */
 export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
   checkedAt: string,
+  plan?: string,
 ) {
   const reset = DateTime.make(Number(response.billingCycleEnd));
   const resetsAt =
@@ -57,10 +66,35 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
+  const named = plan?.trim();
   return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
+    ? makeUsageLimits({ checkedAt, windows, ...(named ? { plan: named } : {}) })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
+
+function dashboardRequest(endpoint: string, token: string, method: string) {
+  return HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/${method}`).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeaders({
+      "connect-protocol-version": "1",
+      "x-cursor-client-type": "cli",
+    }),
+    HttpClientRequest.bodyJsonUnsafe({}),
+  );
+}
+
+// Shorter than the usage timeout, so a slow plan lookup never costs the usage reading.
+const readCursorPlanName = Effect.fn("readCursorPlanName")(
+  function* (client: HttpClient.HttpClient, endpoint: string, token: string) {
+    const response = yield* client.execute(dashboardRequest(endpoint, token, "GetPlanInfo"));
+    const body = yield* HttpClientResponse.schemaBodyJson(CursorPlanInfoResponse)(
+      yield* HttpClientResponse.filterStatusOk(response),
+    );
+    return body.planInfo?.planName;
+  },
+  Effect.timeout("5 seconds"),
+  Effect.orElseSucceed(() => undefined),
+);
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
@@ -87,20 +121,19 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
+    const [body, plan] = yield* Effect.all(
+      [
+        client
+          .execute(dashboardRequest(endpoint, token, "GetCurrentPeriodUsage"))
+          .pipe(
+            Effect.flatMap(HttpClientResponse.filterStatusOk),
+            Effect.flatMap(HttpClientResponse.schemaBodyJson(CursorUsageResponse)),
+          ),
+        readCursorPlanName(client, endpoint, token),
+      ],
+      { concurrency: "unbounded" },
     );
-    const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
-    return cursorUsageResponseToLimits(body, checkedAt);
+    return cursorUsageResponseToLimits(body, checkedAt, plan);
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() =>

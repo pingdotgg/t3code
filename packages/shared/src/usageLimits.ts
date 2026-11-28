@@ -410,7 +410,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
         email: provider.auth.email,
-        plan: provider.auth.label,
+        plan: provider.usageLimits.plan ?? provider.auth.label,
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
         sourceLabel: null,
@@ -603,6 +603,22 @@ const CODEX_PLAN_CAPACITY: Record<string, number> = {
 };
 // Claude's published plan multipliers describe the session allowance only.
 const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
+// Included usage relative to Plus, from Cursor's published plans.
+const CURSOR_PLAN_CAPACITY: Record<string, number> = {
+  plus: 1,
+  premium: 4,
+  super: 15,
+  ultra: 50,
+};
+
+function cursorPlanKey(plan: string): string {
+  return plan
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:cursor|the x)\s+/, "")
+    .replace(/\s+plan$/, "")
+    .replace(/\s+/g, " ");
+}
 
 function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
   if (!account.plan) return undefined;
@@ -611,6 +627,9 @@ function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["ki
   }
   if (account.driver === "claudeAgent" && kind === "session") {
     return CLAUDE_SESSION_CAPACITY[account.plan];
+  }
+  if (account.driver === "cursor" && kind === "monthly") {
+    return CURSOR_PLAN_CAPACITY[cursorPlanKey(account.plan)];
   }
   return undefined;
 }

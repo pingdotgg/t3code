@@ -1017,6 +1017,86 @@ describe("pools", () => {
     ).toContainEqual(["pro@example.com", 95]);
   });
 
+  it("weights pooled Cursor quota by each subscription's published allowance", () => {
+    const monthly = {
+      id: "totalPercentUsed",
+      kind: "monthly" as const,
+      label: "Overall",
+      usedPercent: 0,
+    };
+    const cursorAccounts = (
+      entries: ReadonlyArray<readonly [string, string, number]>,
+    ): LimitAccount[] =>
+      entries.map(([id, plan, usedPercent]) => ({
+        key: id,
+        driver: ProviderDriverKind.make("cursor"),
+        displayName: id,
+        email: `${id}@example.com`,
+        plan,
+        accentColor: undefined,
+        environments: [],
+        sourceLabel: null,
+        redeem: null,
+        limits: { checkedAt, windows: [{ ...monthly, usedPercent }] },
+      }));
+
+    // Super is 15x Plus and Ultra is 50x Plus, so Ultra holds 50 of 65 parts.
+    const [weighted] = collectLimitPools(
+      cursorAccounts([
+        ["super", "Super", 0],
+        ["ultra", "Ultra Plan", 100],
+      ]),
+      now,
+    );
+    expect(weighted?.windows[0]?.usedPercent).toBe(77);
+    expect(weighted?.windows[0]?.remainingPercent).toBe(23);
+
+    // An unknown Cursor plan makes the pool incomparable, so every account counts once.
+    const [fallback] = collectLimitPools(
+      cursorAccounts([
+        ["super", "Super", 0],
+        ["legacy", "Pro", 100],
+      ]),
+      now,
+    );
+    expect(fallback?.windows[0]?.remainingPercent).toBe(50);
+  });
+
+  it("uses a Cursor account's reported plan, not the auth method label, when weighting", () => {
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                provider({
+                  instanceId: ProviderInstanceId.make("cursor-1"),
+                  driver: ProviderDriverKind.make("cursor"),
+                  auth: { status: "authenticated", label: "Cursor API key" },
+                  usageLimits: {
+                    checkedAt,
+                    plan: "Ultra",
+                    windows: [
+                      {
+                        id: "totalPercentUsed",
+                        kind: "monthly",
+                        label: "Overall",
+                        usedPercent: 40,
+                      },
+                    ],
+                  },
+                }),
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts.map((account) => account.plan)).toEqual(["Ultra"]);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
@@ -184,6 +186,10 @@ describe("Cursor usage limits", () => {
           "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
           "Bearer api-key-access-token",
         ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          "Bearer api-key-access-token",
+        ],
       ]);
       expect(limits.windows[0]?.usedPercent).toBe(37);
     }),
@@ -206,6 +212,61 @@ describe("Cursor usage limits", () => {
         expect(limits.unavailable?.reason).toBe("unsupported");
         expect(limits.unavailable?.message).toContain("default Cursor endpoint");
       }
+    }),
+  );
+
+  it.effect("reads the plan name, and still returns usage when the plan lookup hangs", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const limits = yield* readCursorUsageLimits(
+        { apiEndpoint: "" },
+        { CURSOR_AUTH_TOKEN: "token" },
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(request.url);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/GetPlanInfo")
+                  ? Response.json({ planInfo: { planName: "Super" } })
+                  : Response.json({ planUsage: { totalPercentUsed: 12 } }),
+              ),
+            );
+          }),
+        ),
+      );
+      expect(requests).toEqual([
+        "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+      ]);
+      expect(limits.windows[0]?.usedPercent).toBe(12);
+      expect(limits.plan).toBe("Super");
+
+      const degraded = yield* readCursorUsageLimits(
+        { apiEndpoint: "" },
+        { CURSOR_AUTH_TOKEN: "token" },
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            request.url.endsWith("/GetPlanInfo")
+              ? Effect.never
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ planUsage: { totalPercentUsed: 12 } }),
+                  ),
+                ),
+          ),
+        ),
+        Effect.forkChild,
+        Effect.tap(() => TestClock.adjust("5 seconds")),
+        Effect.flatMap(Fiber.join),
+      );
+      expect(degraded.windows[0]?.usedPercent).toBe(12);
+      expect(degraded.plan).toBeUndefined();
     }),
   );
 });
