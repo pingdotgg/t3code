@@ -9,7 +9,7 @@ import {
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
-import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
+import { NO_COMPACT_BEFORE_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -1478,7 +1478,7 @@ export function planComposerTurn(input: {
     !input.freshContext &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
-    !COMPACT_COMMAND_PATTERN.test(input.messageText);
+    !NO_COMPACT_BEFORE_COMMAND_PATTERN.test(input.messageText);
   const dispatchMode =
     input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
       ? "queue"
