@@ -609,7 +609,11 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
-  discardTerminalPlacement: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  discardTerminalPlacement: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    previousActiveTerminalId?: string,
+  ) => void;
   reconcileTerminalIds: (
     threadRef: ScopedThreadRef,
     serverIds: string[],
@@ -773,8 +777,13 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
-        discardTerminalPlacement: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => closeThreadTerminal(state, terminalId)),
+        discardTerminalPlacement: (threadRef, terminalId, previousActiveTerminalId) =>
+          updateTerminal(threadRef, (state) => {
+            const next = closeThreadTerminal(state, terminalId);
+            return state.activeTerminalId === terminalId && previousActiveTerminalId !== undefined
+              ? setThreadActiveTerminal(next, previousActiveTerminalId)
+              : next;
+          }),
         reconcileTerminalIds: (threadRef, serverIds, snapshotId) => {
           if (threadRef.threadId.length === 0) return;
           const threadKey = terminalThreadKey(threadRef);

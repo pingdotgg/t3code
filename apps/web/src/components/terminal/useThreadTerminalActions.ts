@@ -107,6 +107,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     if (!location) return null;
     const panelRef = rightPanelHostRef(threadRef);
     const terminalId = input.terminalId ?? allocateTerminalId(panelRef);
+    const previousActiveTerminalId = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    ).activeTerminalId;
     const onOpened = input.place(terminalId);
     const result = openTerminalCommand({
       environmentId: threadRef.environmentId,
@@ -129,7 +133,9 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       } else if (!isAtomCommandInterrupted(outcome)) {
         // A supplied ID refers to a reusable session. A rejected reopen does not delete it.
         if (input.terminalId === undefined) {
-          useTerminalUiStateStore.getState().discardTerminalPlacement(threadRef, terminalId);
+          useTerminalUiStateStore
+            .getState()
+            .discardTerminalPlacement(threadRef, terminalId, previousActiveTerminalId);
           const panel = useRightPanelStore.getState();
           const surface = selectThreadRightPanelState(panel.byThreadKey, panelRef).surfaces.find(
             (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),

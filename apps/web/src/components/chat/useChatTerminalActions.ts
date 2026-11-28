@@ -175,7 +175,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
-    if (!activeThreadRef || hasReachedSplitLimit) return;
+    if (!activeThreadRef) return;
+    if (hasReachedSplitLimit) {
+      if (!terminalUiState.terminalOpen) setTerminalOpen(true);
+      return;
+    }
     const launched = terminalActions.launchSplitTerminal({ direction });
     if (launched) focusTerminal(activeThreadRef, launched.terminalId);
   };

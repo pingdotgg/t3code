@@ -43,6 +43,26 @@ describe("terminalUiStateStore actions", () => {
     expect(layout().terminalIds).toContain("pending");
   });
 
+  it.each([
+    { change: "no selection change", select: "", close: "", expected: "first" },
+    { change: "a newer selection", select: "second", close: "", expected: "second" },
+    { change: "the previous tab closing", select: "", close: "first", expected: "third" },
+  ])(
+    "selects the right tab after a rejected launch with $change",
+    ({ select, close, expected }) => {
+      const store = useTerminalUiStateStore.getState();
+      for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
+      store.setActiveTerminal(THREAD_REF, "first");
+      store.newTerminal(THREAD_REF, "pending");
+      if (select) store.setActiveTerminal(THREAD_REF, select);
+      if (close) store.closeTerminal(THREAD_REF, close);
+
+      store.discardTerminalPlacement(THREAD_REF, "pending", "first");
+
+      expect(layout().activeTerminalId).toBe(expected);
+    },
+  );
+
   it("caps splits at four terminals per group", () => {
     const store = useTerminalUiStateStore.getState();
     store.splitTerminal(THREAD_REF, "terminal-2");
