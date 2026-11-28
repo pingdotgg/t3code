@@ -1,5 +1,5 @@
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
-import { useState } from "react";
+import { use, useState } from "react";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { Platform, View } from "react-native";
 import { useGT } from "gt-react-native";
@@ -13,6 +13,7 @@ import {
 } from "../../native/native-layout-metrics";
 import { workspaceSearchBottomClearance } from "../layout/workspace/workspace-tabs-state";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
+import { FabTopContext } from "./FabScrollContext";
 import {
   dismissThreadUndoNotice,
   readThreadUndoNotice,
@@ -29,6 +30,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
   const workspace = useWorkspaceTabs();
   const deviceType = useDeviceType();
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
+  const fabTop = use(FabTopContext);
   const horizontalInsets =
     Platform.OS === "ios"
       ? deviceType === "phone"
@@ -74,7 +76,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
             ) + 8
       : floatingTabsEnabled && keyboardHeight === 0
         ? Math.max(insets.bottom + 12, workspace?.bottomClearance ?? 0)
-        : insets.bottom + 12;
+        : Math.max(insets.bottom, fabTop ?? 0) + 12;
   return (
     <View
       key={instance.key}

@@ -100,7 +100,7 @@ const EXTENSIONLESS_FILE_NAME_PATTERN = [...EXTENSIONLESS_FILE_NAMES]
 
 // Folder and file names take the shared parser's routing punctuation (`(group)/[id]/+page.svelte`).
 export const ENRICHED_INLINE_FILE_LINK_REGEX = new RegExp(
-  String.raw`^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s\x60]+|(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+[\\/])+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+\.[A-Za-z0-9_-]+|(?:${EXTENSIONLESS_FILE_NAME_PATTERN}))(?::\d+(?::\d+|-\d+)?)?|[\p{L}\p{M}\p{N}._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$`,
+  String.raw`^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s\x60]+|(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+[\\/])+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+\.[A-Za-z0-9_-]+|(?:${EXTENSIONLESS_FILE_NAME_PATTERN}))(?::\d+(?::\d+|-\d+)?)?|[\p{L}\p{M}\p{N}._$+()[\]-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$`,
   "u",
 );
 

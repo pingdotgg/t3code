@@ -10,6 +10,7 @@ import {
   isBareGitConfig,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  parseGitRemoteRepository,
   parseOriginUrlFromGitConfig,
   resolveAutoFeatureBranchName,
   sanitizeFeatureBranchName,
@@ -84,10 +85,28 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
+    expect(normalizeGitRemoteUrl("alice+ci@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("alice@corp.com@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+  });
+
+  it("keys an SCP-like remote with spaces in its path like its URL spelling", () => {
+    expect(normalizeGitRemoteUrl("git@forge.example:team/My Repo.git")).toBe(
+      normalizeGitRemoteUrl("ssh://git@forge.example/team/My Repo.git"),
+    );
+    expect(normalizeGitRemoteUrl("forge.example:team/My Repo.git")).toBe(
+      "forge.example/team/my%20repo",
+    );
   });
 
   it("keys a one-segment URL remote by what names the repository", () => {
     expect(normalizeGitRemoteUrl("https://deploy:s3cr3ttok@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://alice@corp.com:s3cr3ttok@git.example.com/repo.git")).toBe(
       "https://git.example.com/repo",
     );
     expect(normalizeGitRemoteUrl("https://0123abcd@git.example.com/repo.git?key=0123abcd#x")).toBe(
@@ -99,13 +118,38 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git:s3cr3ttok@git.example.com:2222/repo.git")).toBe(
       "ssh://git@git.example.com:2222/repo",
     );
+    expect(normalizeGitRemoteUrl("ssh://alice@corp.com:s3cr3ttok@git.example.com/repo.git")).toBe(
+      "ssh://alice@corp.com@git.example.com/repo",
+    );
     expect(normalizeGitRemoteUrl("ssh://git@git.example.com/repo.git")).toBe(
       "ssh://git@git.example.com/repo",
     );
     expect(normalizeGitRemoteUrl("https://git.example.com/repo.git")).toBe(
       "https://git.example.com/repo",
     );
+    expect(normalizeGitRemoteUrl("https://git.example.com/repo@v2.git")).toBe(
+      "https://git.example.com/repo@v2",
+    );
     expect(normalizeGitRemoteUrl("/srv/git/Repo.git")).toBe("/srv/git/repo");
+  });
+});
+
+describe("parseGitRemoteRepository", () => {
+  it("drops an encoded .git suffix like a literal one", () => {
+    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/repo%2Egit")).toEqual({
+      host: "gitlab.com",
+      path: "team/repo",
+    });
+    // A non-bare repository's `.git` directory names the checkout it sits in.
+    for (const remote of [
+      "ssh://me@myserver/home/me/project/.git",
+      "ssh://me@myserver/home/me/project/%2Egit/",
+    ]) {
+      expect(parseGitRemoteRepository(remote)).toEqual({
+        host: "myserver",
+        path: "home/me/project",
+      });
+    }
   });
 });
 
@@ -222,6 +266,26 @@ describe("parseOriginUrlFromGitConfig", () => {
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
     ).toBe("https://github.com/acme/\t\trepo.git");
+  });
+
+  it.each(["\u2028", "\u2029"])(
+    "preserves Unicode line separators in remote urls: %j",
+    (separator) => {
+      const url = `ssh://git@forge.example/org/first${separator}last.git${separator}`;
+      for (const gap of ["\n", "\r\n", " "]) {
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = ${url}\n`)).toBe(url);
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = "${url}"\n`)).toBe(url);
+      }
+    },
+  );
+
+  // A quadratic trim blocks for tens of seconds here, well past the test timeout.
+  it("trims long whitespace runs in linear time", () => {
+    const url = "ssh://git@forge.example/org/repo.git";
+    const padding = " ".repeat(200_000);
+    expect(
+      parseOriginUrlFromGitConfig(`[remote "origin"]\nurl = ${padding}${url}${padding}\n`),
+    ).toBe(url);
   });
 
   it("reads settings on the remote header line", () => {

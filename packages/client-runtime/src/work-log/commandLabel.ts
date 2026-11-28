@@ -257,7 +257,7 @@ const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<str
 };
 
 const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
+  env: new Set(["-", "-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
   sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
@@ -660,7 +660,11 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     }
     if (substitutionDepth > 0 || parameterExpansionDepth > 0) continue;
 
-    if (character === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+    if (character === "<" && command[index + 1] === "<") {
+      if (command[index + 2] === "<") {
+        index += 2;
+        continue;
+      }
       const stripTabs = command[index + 2] === "-";
       const delimiter = readHeredocDelimiter(command, index + (stripTabs ? 3 : 2), stripTabs);
       if (delimiter === null) {
@@ -1128,6 +1132,7 @@ function wrappedShellCommandProgramName(
   start: number,
   depth: number,
   remainingCommand: string | null,
+  separator: string | null,
   segmentsRemaining: number,
 ): string | null {
   let index = start;
@@ -1192,6 +1197,7 @@ function wrappedShellCommandProgramName(
     target === target.toLowerCase() &&
     NON_DESCRIPTIVE_SHELL_PROGRAMS.has(target) &&
     !TERMINAL_SHELL_PROGRAMS.has(target) &&
+    !(target === "true" && separator === "||") &&
     remainingCommand
   ) {
     return commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1);
@@ -1293,11 +1299,16 @@ function parseCommandProgramName(
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
-      return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
+      const canSkipBracketProbe =
+        (executionContext === "shell" && token.startsWith("[")) ||
+        (wrapper === "sudo" &&
+          SKIPPABLE_SUDO_PROBES.has(token) &&
+          (token !== "[[" || tokens.slice(index + 1).includes("]]")));
+      return canSkipBracketProbe && commandSplit.remainingCommand
         ? commandProgramNameInternal(
             commandSplit.remainingCommand,
             depth,
-            executionContext,
+            "shell",
             segmentsRemaining - 1,
           )
         : null;
@@ -1351,6 +1362,28 @@ function parseCommandProgramName(
         let consumesNextToken = false;
         for (const [optionIndex, option] of token.slice(1).split("").entries()) {
           const shortOption = `-${option}`;
+          if (wrapper === "env" && shortOption === "-S") {
+            if (optionIndex === token.length - 2) {
+              const splitCommand = tokens[index + 1];
+              return splitCommand
+                ? commandProgramNameInternal(
+                    splitCommand,
+                    depth + 1,
+                    executionContext,
+                    segmentsRemaining,
+                  )
+                : null;
+            }
+            // An attached payload such as -S"FOO=1" can be followed by the program itself.
+            const payloadProgram = commandProgramNameInternal(
+              token.slice(optionIndex + 2),
+              depth + 1,
+              executionContext,
+              segmentsRemaining,
+            );
+            if (payloadProgram !== null) return payloadProgram;
+            break;
+          }
           if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
             consumesNextToken = optionIndex === token.length - 2;
             break;
@@ -1420,6 +1453,7 @@ function parseCommandProgramName(
         index + 1,
         depth,
         commandSplit.remainingCommand,
+        commandSplit.separator,
         segmentsRemaining,
       );
     }
@@ -1431,6 +1465,11 @@ function parseCommandProgramName(
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
       (!TERMINAL_SHELL_PROGRAMS.has(tokenProgram) ||
         (tokenProgram === "false" && commandSplit.separator !== "&&")) &&
+      !(
+        executionContext === "shell" &&
+        tokenProgram === "true" &&
+        commandSplit.separator === "||"
+      ) &&
       commandSplit.remainingCommand
     ) {
       return commandProgramNameInternal(

@@ -1058,6 +1058,15 @@ describe("question answer paths", () => {
           expected: ["[Extracted text truncated at document extraction limits.]"],
           absent: ["Lost"],
         })),
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Sheet"><table:table-row table:number-rows-repeated="+2"><table:table-cell table:number-columns-repeated=" +02 "><text:p>Quarter<text:s text:c="+2"/>one</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>',
+          },
+          exact: "## Sheet: Sheet\nQuarter one\tQuarter one\nQuarter one\tQuarter one",
+          expected: [],
+        },
         ...["ods", "odt", "odp", "docx"].flatMap((ext) =>
           [false, true].map((rows) => ({
             ext,
@@ -1447,6 +1456,24 @@ describe("question answer paths", () => {
             "Current route\t\tStatus\n\t\tOpen\n\t\tConfirmed\nNext route\nOrphan route\n\t\tAfter blank rows\nWidth changes",
         },
         {
+          ext: "pptx",
+          parts: {
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            "ppt/_rels/presentation.xml.rels":
+              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
+            "ppt/slides/a.xml":
+              '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+              "<p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol/><a:gridCol/><a:gridCol/></a:tblGrid>" +
+              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc rowSpan="2"><a:txBody><a:p><a:r><a:t>North</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Open</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc vMerge="1"><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              "</a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>",
+          },
+          expected: ["## Slide 1", "Route\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed"],
+          absent: ["Old spare", "Old north"],
+        },
+        {
           ext: "docx",
           bounded: true,
           parts: {
@@ -1813,7 +1840,7 @@ describe("question answer paths", () => {
           ext: "xlsx",
           parts: {
             "xl/workbook.xml":
-              '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
+              '<workbook><sheets><sheet name="Inventory _x005F_x0041_" r:id="a"/><sheet name="Budget_x0020_2026" r:id="b"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../Formatting/Cells.xml"/></Relationships>',
             "catalog/items.xml": "<sst><si><t>Lantern</t></si></sst>",
@@ -1825,9 +1852,9 @@ describe("question answer paths", () => {
               '<worksheet><sheetData><row><c t="inlineStr"><is><t>Ferry</t></is></c><c><v>628</v></c><c s="1"><v>45292</v></c><c s="2"><v>0.25</v></c><c s="3"><v>45293</v></c></row></sheetData></worksheet>',
           },
           expected: [
-            "## Sheet: Inventory",
+            "## Sheet: Inventory _x0041_",
             "Lantern\t\t37",
-            "## Sheet: Budget",
+            "## Sheet: Budget 2026",
             "Ferry\t628",
             "45292 [Excel numFmtId=14; date system 1900]",
             "0.25 [Excel numFmtId=9; date system 1900]",

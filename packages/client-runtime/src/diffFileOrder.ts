@@ -9,11 +9,23 @@ const GENERATED_FILE_NAMES = new Set([
   "pnpm-lock.yaml",
   "yarn.lock",
   "package-lock.json",
+  "npm-shrinkwrap.json",
+  "bun.lock",
   "bun.lockb",
+  "deno.lock",
   "Cargo.lock",
   "go.sum",
+  "gradle.lockfile",
   "composer.lock",
   "Gemfile.lock",
+  "packages.lock.json",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "flake.lock",
+  "Podfile.lock",
+  "pubspec.lock",
+  "mix.lock",
 ]);
 const GENERATED_DIRECTORIES = new Set([
   "__snapshots__",
@@ -95,13 +107,14 @@ function importedPaths(
     while (match !== null) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
-      const resolvedPath = specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier;
+      const isRelative = specifier.startsWith(".");
+      const resolvedPath = isRelative ? resolveRelative(path, specifier) : specifier;
       const resolved = stripModuleExtension(resolvedPath);
       const target =
         (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
-        byModuleName.get(moduleName(resolved));
+        (isRelative ? undefined : byModuleName.get(moduleName(resolved)));
       if (target !== undefined && target !== path) imported.add(target);
       match = IMPORT_SPECIFIER.exec(line);
     }

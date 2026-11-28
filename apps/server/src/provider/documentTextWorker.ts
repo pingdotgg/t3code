@@ -694,22 +694,23 @@ function* text(node: XmlNode): Generator<TextPart, void> {
       else yield* text(child);
     }
 }
-// SpreadsheetML `t` and `v` values are ST_Xstring: `_xHHHH_` is one UTF-16 code unit, and an
+// SpreadsheetML sheet names and cell strings are ST_Xstring: `_xHHHH_` is one UTF-16 code unit, and an
 // escaped lead underscore (`_x005F_xHHHH_`) keeps the literal `_xHHHH_`. Decoded in one pass.
+function decodeXstring(value: string): string {
+  return value.replaceAll(
+    /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
+    (_, literal?: string, hex?: string) =>
+      literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
+  );
+}
+
 function* xstringText(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.name !== "t" && node.name !== "v") {
     for (const child of children(node)) yield* xstringText(child);
     return;
   }
-  yield node.children
-    .filter((child) => typeof child === "string")
-    .join("")
-    .replaceAll(
-      /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
-      (_, literal?: string, hex?: string) =>
-        literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
-    );
+  yield decodeXstring(node.children.filter((child) => typeof child === "string").join(""));
 }
 
 function hasXstringText(node: XmlNode): boolean {
@@ -906,8 +907,10 @@ function* inCell(parts: Iterable<TextPart>): Generator<TextPart, void> {
 }
 function repeatCount(value: string | undefined): number {
   if (value === undefined) return 1;
-  if (!/^[0-9]+$/.test(value) || Number(value) < 1) throw new Error("Invalid repeat count");
-  return Number(value);
+  const count = Number(value);
+  if (!/^[ \t\r\n]*\+?[0-9]+[ \t\r\n]*$/.test(value) || count < 1)
+    throw new Error("Invalid repeat count");
+  return count;
 }
 function odfValue(cell: XmlNode): string {
   const type = cell.attrs["office:value-type"] ?? cell.attrs["value-type"];
@@ -963,7 +966,12 @@ function markWordMergeContinuations(table: XmlNode) {
   }
 }
 
-const covered = (cell: XmlNode) => cell.name === "covered-table-cell" || cell.wordMergeCovered;
+// PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
+const drawingMergeCovered = (cell: XmlNode) =>
+  cell.name === "tc" &&
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+const covered = (cell: XmlNode) =>
+  cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
   if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
@@ -1747,10 +1755,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
       const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
-        yield `\n## Sheet: ${sheet.attrs.name}\n`;
+        const sheetName = sheet.attrs.name && decodeXstring(sheet.attrs.name);
+        yield `\n## Sheet: ${sheetName}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
         if (!target) {
-          skip(`sheet relationship ${sheet.attrs.name}`);
+          skip(`sheet relationship ${sheetName}`);
           continue;
         }
         const name = resolveWorkbookPart(target);
