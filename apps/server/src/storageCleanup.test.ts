@@ -826,6 +826,27 @@ describe("checkpoint ref cleanup", () => {
     ),
   );
 
+  it.live("removes a deleted thread's expired provider event log and keeps a live one", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, config, addThread, enableFiles } = yield* checkpointCleanupFixture();
+        yield* addThread("deleted", { deleted: true });
+        yield* addThread("active");
+        enableFiles();
+        yield* fs.makeDirectory(config.providerLogsDir, { recursive: true });
+        const deletedLog = `${config.providerLogsDir}/events.deleted.log`;
+        const activeLog = `${config.providerLogsDir}/events.active.log`;
+        for (const file of [deletedLog, activeLog]) {
+          yield* fs.writeFileString(file, "[2026-01-01T00:00:00.000Z] NTIVE: {}\n");
+          yield* fs.utimes(file, 1, 1);
+        }
+        yield* service.runNow;
+        expect(yield* fs.exists(deletedLog)).toBe(false);
+        expect(yield* fs.exists(activeLog)).toBe(true);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
   it.live("waits for a deleted thread's pending checkpoint effects", () =>
     runCleanupTest(
       Effect.gen(function* () {

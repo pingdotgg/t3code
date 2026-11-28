@@ -877,6 +877,23 @@ describe("copying a table as CSV", () => {
     );
   });
 
+  it("keeps values under their headers across colspans and rowspans", () => {
+    const cell = (tag: string, text: string, attributes: Record<string, string> = {}) =>
+      new FakeElement(tag, [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(row(cell("TH", "A"), cell("TH", "B"), cell("TH", "C"))),
+      new FakeElement("TBODY").append(
+        row(cell("TD", "wide", { colspan: "2" }), cell("TD", "c1")),
+        row(cell("TD", "tall", { rowspan: "2" }), cell("TD", "b2"), cell("TD", "c2")),
+        row(cell("TD", "b3"), cell("TD", "c3")),
+      ),
+    );
+
+    expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
+      "A,B,C\nwide,,c1\ntall,b2,c2\n,b3,c3",
+    );
+  });
+
   it("aligns columns with spaces inside a code fence for chat apps", () => {
     const table = new FakeElement("TABLE").append(
       new FakeElement("THEAD").append(
