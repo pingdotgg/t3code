@@ -14,6 +14,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  isSidebarThreadWoke,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -335,6 +336,19 @@ describe("resolveSidebarThreadStatus", () => {
       expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
     }
   });
+
+  it.each([
+    [null, undefined, null, false],
+    ["2026-03-09T10:00:00.000Z", undefined, null, true],
+    ["2026-03-09T10:00:00.000Z", "2026-03-09T09:00:00.000Z", null, true],
+    ["2026-03-09T10:00:00.000Z", "2026-03-09T11:00:00.000Z", null, false],
+    ["2026-03-09T10:00:00.000Z", undefined, "settled", false],
+  ] as const)(
+    "woke at %s, visited at %s, override %s is woke: %s",
+    (wokeAt, lastVisitedAt, settledOverride, expected) => {
+      expect(isSidebarThreadWoke({ wokeAt, lastVisitedAt, settledOverride })).toBe(expected);
+    },
+  );
 });
 
 describe("resolveSidebarRowStatus", () => {
