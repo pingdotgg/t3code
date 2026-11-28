@@ -218,7 +218,8 @@ async function install(name, version, entry) {
       const log = fs.openSync(logFile, 'a', 0o600);
       fs.fchmodSync(log, 0o600);
       const logStart = fs.fstatSync(log).size;
-      const announcedToken = () => /\btoken=([\w.~-]+)/.exec(fs.readFileSync(logFile, 'utf8').slice(logStart))?.[1];
+      // logStart is a byte offset, so cut the log before decoding any multibyte text in it.
+      const announcedToken = () => /\btoken=([\w.~-]+)/.exec(fs.readFileSync(logFile).subarray(logStart).toString('utf8'))?.[1];
       const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--require-token', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_STATE_DIR: state, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
