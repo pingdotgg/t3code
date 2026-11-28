@@ -171,4 +171,26 @@ describe("withLocalTracing", () => {
       expect(localSpans).toEqual(["sql.execute", "ServerSecretStore.get"]);
     }),
   );
+
+  it.effect("preserves the local tracer across nested withRelayClientTracing calls", () =>
+    Effect.gen(function* () {
+      const localSpans: Array<string> = [];
+      const productSpans: Array<string> = [];
+      const localTracer = collectingTracer(localSpans);
+      const productTracer = collectingTracer(productSpans);
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("sql.execute"),
+        withLocalTracing,
+        withRelayClientTracing,
+        Effect.withSpan("relay.outer"),
+        withRelayClientTracing,
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+        Effect.withTracer(localTracer),
+      );
+
+      expect(localSpans).toEqual(["sql.execute"]);
+      expect(productSpans).toEqual(["relay.outer"]);
+    }),
+  );
 });

@@ -47,11 +47,13 @@ export const withRelayClientTracing = <A, E, R>(
         onNone: () => effect,
         onSome: (tracer) =>
           Tracer.Tracer.pipe(
-            Effect.flatMap((local) =>
-              effect.pipe(
-                Effect.provideService(Tracer.Tracer, tracer),
-                Effect.provideService(LocalTracer, Option.some(local)),
-              ),
+            Effect.flatMap((current) =>
+              current === tracer
+                ? effect
+                : effect.pipe(
+                    Effect.provideService(Tracer.Tracer, tracer),
+                    Effect.provideService(LocalTracer, Option.some(current)),
+                  ),
             ),
           ),
       }),
