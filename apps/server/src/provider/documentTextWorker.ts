@@ -1745,7 +1745,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
         return resolveWorkbookPart(target || `${part}.xml`);
       };
-      const dateSystem = ["1", "true"].includes(
+      const dateSystem = /^[ \t\r\n]*(?:1|true)[ \t\r\n]*$/.test(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
       )
         ? "1904"
