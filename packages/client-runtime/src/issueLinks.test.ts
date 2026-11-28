@@ -50,6 +50,38 @@ describe("resolveIssueLinkTarget", () => {
     expect(target?.ref).toMatchObject({ projectId: "fork", scope: "me/web", key: "3" });
   });
 
+  it("routes a mounted Forgejo issue through its SSH-cloned repository", () => {
+    const forgejo = (id: string, name: string) => ({
+      id: ProjectId.make(id),
+      environmentId: EnvironmentId.make("env"),
+      repositoryIdentity: {
+        canonicalKey: `git.example.com/acme/${name}`,
+        provider: SourceControlProviderKind.make("forgejo"),
+        displayName: `acme/${name}`,
+        owner: "acme",
+        name,
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: `ssh://git@git.example.com:2222/acme/${name}.git`,
+        },
+        webUrl: `http://git.example.com:3000/code/acme/${name}`,
+      },
+    });
+    const target = resolveIssueLinkTarget({
+      url: "http://git.example.com:3000/code/acme/repo/issues/7",
+      projects: [forgejo("first", "other"), forgejo("exact", "repo")],
+      preferredProjectId: "first",
+    });
+    expect(target?.ref).toEqual({
+      projectId: "exact",
+      tracker: "forgejo",
+      host: "git.example.com:3000",
+      scope: "code/acme/repo",
+      key: "7",
+    });
+  });
+
   it("uses the current repository identity after a project changes repositories", () => {
     const url = "https://github.com/acme/api/issues/7";
     const original = project("p1", "acme/api");
