@@ -641,7 +641,7 @@ export function UsagePriceOverrides({
           ) : null}
         </DialogPanel>
         <DialogFooter variant="bare" className="items-center sm:justify-between">
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground sm:flex-1">
             {hasChanges
               ? gt("Changes apply to {destination}", { destination: destinationLabel })
               : ""}

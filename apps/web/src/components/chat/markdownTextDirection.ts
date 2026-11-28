@@ -62,10 +62,12 @@ export function rehypeTextDirection() {
   };
 }
 
-/** Each top-level block's direction, from its prose; an RTL letter decides as textDirection does. */
+/** Each top-level block's direction: an authored ltr or rtl dir, else what its prose says. */
 function blockTextDirections(tree: HastNode) {
   for (const block of tree.children ?? []) {
     if (block.type !== "element" || block.tagName === "pre") continue;
+    const authored = block.properties?.dir;
+    if (typeof authored === "string" && /^(?:ltr|rtl)$/i.test(authored)) continue;
     const dir = scriptOf(block) === "rtl" ? textDirection(proseText(block)) : scriptOf(block);
     if (dir) block.properties = { ...block.properties, dir };
   }

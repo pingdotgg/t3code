@@ -41,9 +41,19 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
+// `git -C <cwd> -c <config> log ...` reads as `log`.
+const gitSubcommand = (args: ReadonlyArray<string>) => {
+  let index = 0;
+  while (args[index] === "-C" || args[index] === "-c") index += 2;
+  return args[index] ?? "";
+};
+
 const layerProjectionStoreTest = Layer.mergeAll(
   ThreadCommandExecutor.layer,
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  ),
   SqlitePersistence.layerMemory,
 );
 
@@ -298,7 +308,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                         Layer.mock(CheckpointStore.CheckpointStore)({
                           listAuthoredPaths: () => Effect.succeed(null),
                           isGitRepository: () => Effect.succeed(true),
-                          captureCheckpoint: () => Effect.void,
+                          captureCheckpoint: () => Effect.succeed(null),
                           hasCheckpointRef: () =>
                             Effect.fail(
                               new VcsProcessTimeoutError({
@@ -914,7 +924,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     Layer.mock(CheckpointStore.CheckpointStore)({
                       isGitRepository: () => Effect.succeed(true),
                       hasCheckpointRef: () => Effect.succeed(true),
-                      captureCheckpoint: () => Effect.void,
+                      captureCheckpoint: () => Effect.succeed(null),
                       diffCheckpoints: () => Effect.succeed(""),
                       listAuthoredPaths: () => Effect.succeed(null),
                     }),
@@ -1448,6 +1458,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       readonly threadId: ThreadId;
       readonly ids: IdAllocator.IdAllocatorV2["Service"];
       readonly diffs: CheckpointDiffQuery.CheckpointDiffQuery["Service"];
+      /** The git commands run since the last call, each as its subcommand and arguments. */
+      readonly takeGitCommands: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
     }) => Effect.Effect<A, E, R>,
   ) =>
     Effect.gen(function* () {
@@ -1461,7 +1473,19 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const labels = new Map<string, string>([[repositoryRootScopeId, "root"]]);
       const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const layerNode = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
-      const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(layerNode));
+      let gitCommands: Array<ReadonlyArray<string>> = [];
+      const layerVcsProcess = Layer.effect(
+        VcsProcess.VcsProcess,
+        Effect.map(VcsProcess.VcsProcess, (inner) =>
+          VcsProcess.VcsProcess.of({
+            run: (input) =>
+              Effect.suspend(() => {
+                gitCommands.push(input.args);
+                return inner.run(input);
+              }),
+          }),
+        ),
+      ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(layerNode));
       const layerCheckpointStore = CheckpointStore.layer.pipe(
         Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcess))),
         Layer.provide(layerNode),
@@ -1728,9 +1752,82 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           threadId: repositoryThreadId,
           ids: yield* IdAllocator.IdAllocatorV2,
           diffs: yield* CheckpointDiffQuery.CheckpointDiffQuery,
+          takeGitCommands: Effect.sync(() => {
+            const taken = gitCommands;
+            gitCommands = [];
+            return taken;
+          }),
         });
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
+
+  it.effect("captures a turn without re-reading the previous checkpoint", () =>
+    withTrackedRepositories("capture-git-commands", (thread) =>
+      Effect.gen(function* () {
+        const { root } = thread;
+        yield* thread.initRepository(root);
+        yield* thread.turn(1, thread.write(`${root}/README.md`, "# one\n"));
+        // Counted from after the turn's edits, so only the capture itself.
+        const capture = (ordinal: number, edits: Effect.Effect<void>) =>
+          Effect.gen(function* () {
+            const recorded = yield* thread.turn(
+              ordinal,
+              edits.pipe(Effect.andThen(thread.takeGitCommands)),
+            );
+            return {
+              files: recorded.flatMap((entry) => entry.files ?? []),
+              commands: (yield* thread.takeGitCommands).map(gitSubcommand),
+            };
+          });
+        // Turn 1 kept the scope's index, so no read-tree or ls-files rebuilds it. diff-tree
+        // lists where it differs from HEAD, cat-file checks its blobs survived gc, and the
+        // second diff-tree checks no .gitattributes changed under it.
+        const snapshot = [
+          "rev-parse",
+          "log",
+          "config",
+          "diff-tree",
+          "cat-file",
+          "add",
+          "write-tree",
+          "diff-tree",
+          "log",
+          "commit-tree",
+          "update-ref",
+        ];
+
+        assert.deepEqual(yield* capture(2, thread.write(`${root}/README.md`, "# two\n")), {
+          files: ["README.md"],
+          commands: [...snapshot, "diff"],
+        });
+        // Nothing changed, so there is nothing to diff.
+        assert.deepEqual(yield* capture(3, Effect.void), { files: [], commands: snapshot });
+        // A commit moves HEAD; its paths are read without resolving the range again.
+        const committed = yield* capture(
+          4,
+          thread
+            .write(`${root}/README.md`, "# four\n")
+            .pipe(Effect.andThen(thread.git(root, "commit", "-am", "four")), Effect.asVoid),
+        );
+        assert.deepEqual(committed.files, ["README.md"]);
+        // The summary's reads run side by side, so only which commands ran is fixed.
+        assert.deepEqual(
+          committed.commands.toSorted(),
+          [
+            ...snapshot,
+            "diff",
+            "version",
+            "rev-list",
+            "diff",
+            "diff",
+            "log",
+            "log",
+            "log",
+          ].toSorted(),
+        );
+      }),
+    ),
+  );
 
   it.effect("checkpoints the repositories a folder that is not a repository holds", () =>
     withTrackedRepositories("capture-wrapper", (thread) =>

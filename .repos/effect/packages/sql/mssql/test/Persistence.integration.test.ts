@@ -27,7 +27,7 @@ PersistedQueueTest.suiteWith(
   "sql-mssql",
   PersistedQueue.layerStoreSql().pipe(Layer.provide(MssqlContainer.layerClient)),
   it,
-  { hookTimeout: "90 seconds" }
+  { hookTimeout: "90 seconds", nonDeliveryWait: "250 millis" }
 )
 
 // Records deadlock graphs in a dedicated session, since system_health can
@@ -181,7 +181,9 @@ const makeXactAbortClient = Effect.fnUntraced(function*(
 })
 
 it.layer(MssqlContainer.layerClient, { timeout: "90 seconds" })((it) => {
-  PersistedQueueSqlTest.suiteWith(it)
+  // Keep claim tests serial on SQL Server: concurrent table creation deadlocks
+  // on the system catalog and competes with the deadlock test below.
+  PersistedQueueSqlTest.suiteWith(it, { concurrentClaims: false })
 
   it.effect("PersistedQueue offers, claims and settlements do not deadlock", () =>
     Effect.gen(function*() {

@@ -451,6 +451,29 @@ describe("toEquivalence", () => {
     strictEqual(derivations, 1)
   })
 
+  it("compiles a shared nested schema once", () => {
+    let derivations = 0
+    const leaf = Schema.Number.pipe(
+      Schema.overrideToEquivalence(() => {
+        derivations++
+        return Equivalence.strictEqual<number>()
+      })
+    )
+    const pair = Schema.Struct({ a: leaf, b: leaf })
+    const schema = Schema.Struct({
+      left: pair,
+      right: pair,
+      tuple: Schema.TupleWithRest(Schema.Tuple([leaf]), [leaf, leaf]),
+      record: Schema.Record(Schema.String, leaf),
+      union: Schema.Union([leaf, Schema.String]),
+      option: Schema.Option(leaf),
+      redacted: Schema.Redacted(leaf)
+    })
+
+    Schema.toEquivalence(schema)
+    strictEqual(derivations, 1)
+  })
+
   it("selects transformed Union members on the Type side", () => {
     const Target = Schema.Struct({ value: Schema.String }).pipe(
       Schema.overrideToEquivalence(() => Equivalence.make((a, b) => a.value === b.value))
