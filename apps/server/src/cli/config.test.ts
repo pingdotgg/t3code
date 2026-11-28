@@ -195,6 +195,29 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       Effect.result,
     );
 
+  it.effect("keeps leading spaces only in a relative startup directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-cwd-spaces-" });
+      const resolveCwd = (cwd: string) =>
+        resolveServerConfig({ ...minimalWebFlags(baseDir), cwd: Option.some(cwd) }, Option.none(), {
+          prepareDirectories: false,
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+          Effect.map((config) => config.cwd),
+        );
+      expect(yield* resolveCwd(" project ")).toBe(path.resolve(" project"));
+      const absolute = path.join(baseDir, "project");
+      expect(yield* resolveCwd(`  ${absolute}  `)).toBe(absolute);
+    }),
+  );
+
   it.effect("refuses a manual web launch while a lock-aware server owns the T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

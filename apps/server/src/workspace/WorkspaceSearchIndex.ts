@@ -33,6 +33,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
@@ -878,7 +879,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         break;
       }
       const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-      const lineContent = line.slice(0, CONTENT_LINE_MAX_LENGTH);
+      const lineContent = line.slice(
+        0,
+        splitsSurrogatePair(line, CONTENT_LINE_MAX_LENGTH)
+          ? CONTENT_LINE_MAX_LENGTH - 1
+          : CONTENT_LINE_MAX_LENGTH,
+      );
       const ranges = (
         literal
           ? Array.from((input.wholeWord ? line : lineContent).matchAll(literal), (match) => ({

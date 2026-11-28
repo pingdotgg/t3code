@@ -32,6 +32,7 @@ import {
   type ThreadTokenUsageSnapshot,
   type ThreadId,
   isRuntimeModeAbove,
+  parseGoalCommand,
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
@@ -453,7 +454,8 @@ export interface AcpAdapterV2Flavor {
   /**
    * Runs before `session/prompt`. The check reports a failure hidden by a clean stop, or
    * by silence when the inactivity watchdog retires the prompt (`retired`). A failure
-   * restarts the runtime; a `broken` thread's next turn starts a fresh session.
+   * restarts the runtime; a `broken` thread's next turn starts a fresh session. A retired
+   * prompt the agent had already finished reports `completed`.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
@@ -461,7 +463,7 @@ export interface AcpAdapterV2Flavor {
     (
       result: EffectAcpSchema.PromptResponse,
       options?: { readonly retired?: boolean },
-    ) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
+    ) => Effect.Effect<AcpPromptOutcomeFailure | "completed" | undefined>
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
@@ -9688,16 +9690,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.executedModel === undefined
               ? undefined
               : yield* flavor.executedModel(context.nativeThreadId);
-          const turn: OrchestrationV2ProviderTurn = {
-            ...providerTurnPayload(context, settledStatus, now),
-            ...(executedModel === undefined ? {} : { model: executedModel }),
-          };
+          const settledTurn = providerTurnPayload(context, settledStatus, now);
+          const turn: OrchestrationV2ProviderTurn =
+            executedModel === undefined
+              ? settledTurn
+              : {
+                  ...settledTurn,
+                  model: executedModel,
+                  ...(settledTurn.turnTokenUsage === undefined
+                    ? {}
+                    : {
+                        turnTokenUsage: { ...settledTurn.turnTokenUsage, models: [executedModel] },
+                      }),
+                };
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver,
             threadId: context.input.threadId,
             providerTurn: turn,
           });
+          // A native /goal ends with the prompt that set it.
+          const goalEnded =
+            context.input.providerThread.goal != null ||
+            (yield* Ref.get(providerThreadByNativeSessionId)).get(context.nativeThreadId)?.goal !=
+              null;
           const updatedProviderThread: OrchestrationV2ProviderThread = {
             ...context.input.providerThread,
             providerSessionId: input.providerSessionId,
@@ -9707,6 +9723,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.input.providerThread.firstRunOrdinal ?? context.input.runOrdinal,
             contextUsage: context.contextUsage,
             nativeMetadata: context.nativeMetadata,
+            ...(goalEnded ? { goal: null } : {}),
             updatedAt: now,
           };
           yield* Ref.update(providerThreadByNativeSessionId, (current) =>
@@ -9918,6 +9935,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }).pipe(Effect.as(undefined)),
                       ),
                     );
+              if (recorded === "completed") {
+                yield* finalizeTurn(context, "completed");
+                return "retired" as const;
+              }
               const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
               yield* finalizeTurn(
                 context,
@@ -10296,13 +10317,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   if (context.finalized || followsAgentWorkState || superseded()) return;
                   // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
-                  const hiddenFailure =
+                  const outcome =
                     settle.checkPromptOutcome === undefined ||
                     context.interrupted ||
                     result.stopReason === "error" ||
                     result.stopReason === "cancelled"
                       ? undefined
                       : yield* settle.checkPromptOutcome(result);
+                  const hiddenFailure = outcome === "completed" ? undefined : outcome;
                   const resumeWith = hiddenFailure?.resumeWith;
                   if (
                     hiddenFailure !== undefined &&
@@ -10697,12 +10719,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               threadId: turnInput.threadId,
               providerTurn: runningTurn,
             });
+            // ACP reports no goal state: a native /goal runs for as long as the prompt that set it.
+            const goalCommand =
+              (yield* readCapabilities).turns.supportsNativeGoals === true
+                ? parseGoalCommand(turnInput.message)
+                : null;
             const activeProviderThread: OrchestrationV2ProviderThread = {
               ...turnInput.providerThread,
               providerSessionId: input.providerSessionId,
               status: "active",
               contextUsage: context.contextUsage,
               nativeMetadata: context.nativeMetadata,
+              ...(goalCommand?.type === "set"
+                ? { goal: { objective: goalCommand.objective, status: "active" as const } }
+                : turnInput.providerThread.goal == null
+                  ? {}
+                  : { goal: null }),
               updatedAt: startedAt,
             };
             yield* Ref.update(providerThreadByNativeSessionId, (current) =>

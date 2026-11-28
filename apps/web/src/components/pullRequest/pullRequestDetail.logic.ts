@@ -205,9 +205,9 @@ export function pullRequestPanelContext(
   },
 ): "page" | "thread" {
   if (thread.projectId !== surface.projectId) return "page";
+  const repository = surface.repository.toLowerCase();
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
-    const repository = surface.repository.toLowerCase();
     const target =
       surface.host === undefined
         ? null
@@ -222,7 +222,7 @@ export function pullRequestPanelContext(
   }
   const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
   return legacy !== null &&
-    legacy.repository === surface.repository &&
+    legacy.repository.toLowerCase() === repository &&
     legacy.number === surface.number
     ? "thread"
     : "page";
@@ -736,6 +736,12 @@ function markdownExcerpt(body: string): string | null {
   const visit = (node: Nodes) => {
     if (node.type === "text") words.push(node.value);
     if (node.type === "element" && node.tagName === "pre") return;
+    // Footnote markers and the footnote list are not part of the comment's prose.
+    if (
+      node.type === "element" &&
+      (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+    )
+      return;
     if (node.type === "element" && node.tagName === "blockquote") {
       const paragraph = node.children.find((child) => child.type === "element");
       const first = paragraph?.tagName === "p" ? paragraph.children[0] : undefined;

@@ -73,6 +73,8 @@ vi.mock(import("./office/WordDocument"), async () => {
 });
 
 import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
+import { refreshTheme, setAppearanceMode } from "~/hooks/useTheme";
+import { THEME_APPEARANCE_MODE_STORAGE_KEY } from "~/themePalette";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -87,6 +89,7 @@ import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewErrorText } from "./previewFailureMessages";
+import { PreviewPositionKey } from "./previewPosition";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -239,14 +242,14 @@ describe("bounded binary previews", () => {
   });
 
   it("names archive folders whose paths have leading slashes, repeated slashes or ./", async () => {
-    const bytes = new Uint8Array(3072);
+    const bytes = new Uint8Array(3584);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    const member = (offset: number, name: string, content: string) => {
+    const member = (offset: number, name: string, content: string, type = "0") => {
       write(offset, name);
       write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, offset + 148, offset + 156);
-      write(offset + 156, "0");
+      write(offset + 156, type);
       write(
         offset + 148,
         bytes
@@ -261,6 +264,8 @@ describe("bounded binary previews", () => {
     member(1024, "a/hello.txt", "plain hello");
     // `tar cf x.tar .` names every member from "./".
     member(2048, "./a/dot.txt", "dot hello");
+    // ...and starts with a directory member for the root itself, named ".".
+    member(3072, ".", "", "5");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
@@ -1489,13 +1494,19 @@ describe("document output sanitization", () => {
   });
 
   it("preserves table content and raster data while removing scripts and network resources", () => {
+    const wrapped = "data:image/png;base64,iVBORw0K\nGgo=\n";
     const html = sanitizeDocumentHtml(
-      '<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/png;base64,iVBORw0KGgo="><table><tr><td>Research</td></tr></table><a href="https://example.com">Results</a>',
+      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5" type="i"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.querySelector("td")?.textContent).toBe("Research");
-    expect(doc.images).toHaveLength(1);
-    expect(doc.images[0]!.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(doc.querySelector("ol")?.outerHTML).toBe(
+      '<ol start="5" type="i"><li value="4">Step</li></ol>',
+    );
+    expect([...doc.images].map((image) => image.getAttribute("src"))).toEqual([
+      "data:image/png;base64,iVBORw0KGgo=",
+      wrapped.trim(),
+    ]);
     expect(doc.querySelector("script,style,iframe,a,[onerror]")).toBeNull();
     expect(html).not.toContain("https://");
   });
@@ -1725,6 +1736,18 @@ it.each(["archive", "sqlite"] as const)(
 );
 
 it("loads a font attachment through the lazy preview", async () => {
+  const previousAppearanceMode = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+  using _theme = {
+    [Symbol.dispose]() {
+      if (previousAppearanceMode === null) {
+        window.localStorage.removeItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceMode);
+      }
+      refreshTheme();
+    },
+  };
+  setAppearanceMode("light");
   const { loadBundledFontBytes, resolveBundledFamilyFace } = await import("@betteroffice/fonts");
   const bytes = await loadBundledFontBytes(resolveBundledFamilyFace("Carlito", false, false)!);
   const file = new Blob([bytes], { type: "font/ttf" });
@@ -1746,6 +1769,18 @@ it("loads a font attachment through the lazy preview", async () => {
     },
     { timeout: 10_000 },
   );
+  const rootBackground = () =>
+    getComputedStyle(document.documentElement).getPropertyValue("--background");
+  const frameBackground = () =>
+    screen.container.querySelector("iframe")?.srcdoc.match(/background:([^;}]+)/)?.[1];
+  const lightBackground = rootBackground();
+  expect(frameBackground()).toBe(lightBackground);
+  await act(() => {
+    setAppearanceMode("dark");
+  });
+  const darkBackground = rootBackground();
+  expect(darkBackground).not.toBe(lightBackground);
+  await vi.waitFor(() => expect(frameBackground()).toBe(darkBackground));
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -2305,6 +2340,55 @@ it.each(["rtf", "epub", "ods"] as const)(
   },
 );
 
+it("opens each spreadsheet sheet at its own reading position", async () => {
+  const table = (name: string) =>
+    `<table:table table:name="${name}">${Array.from(
+      { length: 500 },
+      (_, row) =>
+        `<table:table-row><table:table-cell><text:p>${name} ${row}</text:p></table:table-cell></table:table-row>`,
+    ).join("")}</table:table>`;
+  const file = await new JSZip()
+    .file("content.xml", `<office:document>${table("A")}${table("B")}</office:document>`)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <PreviewPositionKey value="book.ods">
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <AttachmentFilePreview
+          name="book.ods"
+          mimeType="application/octet-stream"
+          sizeBytes={file.size}
+          file={file}
+        />
+      </div>
+    </PreviewPositionKey>,
+  );
+  const scroller = () =>
+    screen.container
+      .querySelector<HTMLElement>("[data-preview-row]")
+      ?.closest<HTMLElement>(".overflow-auto") ?? expect.unreachable();
+  const firstVisibleRow = () => {
+    const top = scroller().getBoundingClientRect().top;
+    const row = Array.from(scroller().querySelectorAll<HTMLElement>("[data-preview-row]")).find(
+      (node) => node.getBoundingClientRect().bottom > top + 1,
+    );
+    return Number(row?.dataset.previewRow);
+  };
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("A 0"), {
+    timeout: 10_000,
+  });
+  scroller().scrollTop = 300 * 29;
+  scroller().dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(250));
+  const saved = firstVisibleRow();
+
+  await screen.getByRole("button", { name: "Next sheet" }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("B 0"));
+  expect(firstVisibleRow(), "an unopened sheet starts at the top").toBe(0);
+
+  await screen.getByRole("button", { name: "Previous sheet" }).click();
+  await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
+});
+
 it("renders EPUB publisher styles and follows an anchored link to a fixed-layout section", async () => {
   const archive = new JSZip()
     .file("META-INF/container.xml", '<container><rootfile full-path="OPS/book.opf"/></container>')
@@ -2583,16 +2667,26 @@ it("highlights EPUB narration cues during playback and pauses on chapter change"
   await vi.waitFor(() => expect(player.paused).toBe(true));
 });
 
-it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
+it.each(["epub", "odt", "ipynb", "html", "encoded-html", "wrapped-jpeg-html", "unquoted"] as const)(
   "bounds %s image pixels before returning browser markup",
   async (kind) => {
+    const isJpeg = kind === "wrapped-jpeg-html";
+    const bare = kind === "unquoted";
+    const isHtml = kind.endsWith("html") || bare;
     const canvas = new OffscreenCanvas(2, 3);
     canvas.getContext("2d");
-    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const blob = await canvas.convertToBlob({ type: isJpeg ? "image/jpeg" : "image/png" });
     for (const width of [2, 12000]) {
       const image = await blob.arrayBuffer();
-      new DataView(image).setUint32(16, width);
-      new DataView(image).setUint32(20, width === 2 ? 3 : 12000);
+      const view = new DataView(image);
+      if (isJpeg) {
+        let i = 2;
+        while (view.getUint8(i + 1) !== 0xc0) i += 2 + view.getUint16(i + 2);
+        view.setUint32(i + 5, ((width === 2 ? 3 : 12000) << 16) | width);
+      } else {
+        view.setUint32(16, width);
+        view.setUint32(20, width === 2 ? 3 : 12000);
+      }
       const archive = new JSZip();
       archive.file("cover.png", image);
       if (kind === "epub") {
@@ -2613,9 +2707,10 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
           "content.xml",
           '<office:document><office:text><text:p>retained caption</text:p><draw:image xlink:href="cover.png"/></office:text></office:document>',
         );
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(image)));
+      let base64 = btoa(String.fromCharCode(...new Uint8Array(image, 0, bare ? 24 : undefined)));
+      if (isJpeg) base64 = `${base64.replace(/.{76}/g, "$&\n")}\n`;
       const bytes =
-        kind === "ipynb" || kind === "html" || kind === "encoded-html"
+        kind === "ipynb" || isHtml
           ? new TextEncoder().encode(
               JSON.stringify({
                 nbformat: 4,
@@ -2626,9 +2721,9 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
                     outputs: [
                       {
                         data: {
-                          ...(kind === "html" || kind === "encoded-html"
+                          ...(isHtml
                             ? {
-                                "text/html": `<table><tr><td>retained caption</td></tr></table><img src="${kind === "encoded-html" ? "&#100ata" : "data"}:image/png;base64,${base64}">`,
+                                "text/html": `<table><tr><td>retained caption</td></tr></table>${bare ? `<p>"data:image/png;base64,${base64} chart</p>` : ""}<img src=${bare ? "" : '"'}${kind === "encoded-html" ? "&#100ata" : "data"}:image/${isJpeg ? "jpeg" : "png"};base64,${base64}${bare ? ` width=300 srcset="data:image/png;base64,${base64} 1.5x"` : '"'}>`,
                               }
                             : { "image/png": base64 }),
                           "text/plain": "retained caption",
@@ -2648,16 +2743,14 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
           worker,
           {
             type: "open",
-            kind: kind === "html" || kind === "encoded-html" ? "ipynb" : kind,
+            kind: kind === "epub" || kind === "odt" ? kind : "ipynb",
             bytes,
           },
           [bytes],
         );
         if (result.type === "notebook") {
           const output = result.cells[0]!.outputs[0]!;
-          expect(output.kind).toBe(
-            width === 2 ? (kind === "html" || kind === "encoded-html" ? "html" : "image") : "text",
-          );
+          expect(output.kind).toBe(width === 2 ? (isHtml ? "html" : "image") : "text");
           if (output.kind === "html") {
             const rendered = new DOMParser().parseFromString(
               sanitizeDocumentHtml(output.text),

@@ -39,11 +39,15 @@ it.layer(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
         yield* git(source, "add", "README.md");
         yield* git(source, "commit", "-m", "init");
 
-        const makeContainer = Effect.fn(function* (name: string, coreBare: boolean) {
+        const makeContainer = Effect.fn(function* (
+          name: string,
+          coreBare: boolean,
+          metadata = ".bare",
+        ) {
           const root = path.join(fixture, name);
           yield* fileSystem.makeDirectory(root);
-          yield* git(fixture, "clone", "--bare", source, path.join(root, ".bare"));
-          yield* fileSystem.writeFileString(path.join(root, ".git"), "gitdir: ./.bare\n");
+          yield* git(fixture, "clone", "--bare", source, path.join(root, metadata));
+          yield* fileSystem.writeFileString(path.join(root, ".git"), `gitdir: ./${metadata}\n`);
           yield* git(root, "worktree", "add", "develop", "develop");
           yield* git(root, "config", "core.bare", String(coreBare));
           return root;
@@ -55,8 +59,11 @@ it.layer(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
           return root;
         });
 
-        const container = yield* makeContainer("container", false);
-        assert.isTrue(yield* isWorktreeContainer(container), "container");
+        const container = yield* makeContainer("container", false, ".bare\u00a0");
+        assert.isTrue(
+          yield* isWorktreeContainer(container),
+          "container with whitespace in metadata path",
+        );
         assert.isFalse(yield* isWorktreeContainer(path.join(container, "develop")), "its worktree");
 
         const linked = path.join(fixture, "link");
