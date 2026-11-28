@@ -114,6 +114,116 @@ describe("GitHubGraphQlAuth", () => {
   });
 
   it.effect(
+    "keeps the app's partly withheld answer when the user's own credential is rate limited",
+    () => {
+      const reset = Math.floor(NOW / 1000) + 600;
+      const { layer, requests } = harness(
+        (request) =>
+          request.headers["authorization"] === "Bearer app-token"
+            ? json({
+                data: { _0_repository: { pullRequest: stats }, _1_repository: null },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["_1_repository"],
+                    message: "Could not resolve to a Repository",
+                  },
+                ],
+              })
+            : json(
+                {
+                  data: null,
+                  errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+                },
+                { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
+              ),
+        { appToken: "app-token" },
+      );
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const client = yield* GraphQLClient.make(
+          PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        const resolver = GraphQLResolver.aliased(client.PullRequestStats, {
+          batchKey: GitHubGraphQlClient.batchKey,
+        });
+        const lookup = (owner: string) =>
+          GraphQLResolver.request({ owner, name: "web", number: 7 }, resolver).pipe(
+            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+              host: "github.com",
+              operation: "listPullRequests",
+            }),
+            Effect.result,
+          );
+        const readBoth = Effect.all([lookup("acme"), lookup("private")], {
+          concurrency: "unbounded",
+        });
+        // The first read meets the personal limit; the second finds the host paused for it.
+        for (const _ of [1, 2]) {
+          const [readable] = yield* readBoth;
+          expect(readable).toMatchObject({
+            _tag: "Success",
+            success: { repository: { pullRequest: stats } },
+          });
+        }
+        expect(requests.map((request) => request.headers["authorization"])).toEqual([
+          "Bearer app-token",
+          "Bearer secret",
+          "Bearer app-token",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "keeps the user's rate limit when a strict call gets a partly withheld app answer",
+    () => {
+      const { layer, requests } = harness(
+        (request) =>
+          request.headers["authorization"] === "Bearer app-token"
+            ? json({
+                data: { repository: { pullRequest: stats } },
+                errors: [
+                  {
+                    type: "FORBIDDEN",
+                    path: ["repository", "pullRequest", "author"],
+                    message: "Resource not accessible by integration",
+                  },
+                ],
+              })
+            : json(
+                {
+                  data: null,
+                  errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+                },
+                { headers: { "x-ratelimit-remaining": "0" } },
+              ),
+        { appToken: "app-token" },
+      );
+      return Effect.gen(function* () {
+        const client = yield* GraphQLClient.make(
+          PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        // A strict call fails on any `errors`, so the app's answer is no use to it.
+        const error = yield* client
+          .PullRequestStats({ owner: "acme", name: "web", number: 7 })
+          .pipe(
+            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+              host: "github.com",
+              operation: "listPullRequests",
+            }),
+            Effect.flip,
+          );
+        expect(error._tag).toBe("GitHubApiRateLimitError");
+        expect(requests.map((request) => request.headers["authorization"])).toEqual([
+          "Bearer app-token",
+          "Bearer secret",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
     "sends each host's lookups to its own endpoint with its token, never in one batch",
     () => {
       const { layer, requests } = harness(() =>

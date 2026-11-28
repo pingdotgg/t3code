@@ -22,6 +22,7 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** Added to the answer, never sent: names the credential an errored answer was given to. */
 const CREDENTIAL_SOURCE_HEADER = "x-t3code-credential-source";
 const isCredentialSource = Schema.is(GitHubCredentials.GitHubCredentialSource);
+const ALIAS = /^_\d+_/;
 
 /** One client serves all hosts; each call must supply its target. */
 export class GitHubGraphQlTarget extends Context.Service<
@@ -33,6 +34,8 @@ export class GitHubGraphQlTarget extends Context.Service<
     readonly allowReserve?: boolean | undefined;
     /** A longer answer fails as a `GitHubApiResponseError`. Defaults to 8 MB. */
     readonly maxResponseBytes?: number | undefined;
+    /** The caller recovers with `keepReadableRows`, so a list missing some rows still stands. */
+    readonly keepsReadableRows?: boolean | undefined;
   }
 >()("@t3tools/source-control-github/server/gitHubGraphQlClient/GitHubGraphQlTarget") {}
 
@@ -63,6 +66,44 @@ export const isNotFoundOnly = (error: unknown): boolean =>
           path[0] === "repository" &&
           (path[1] === "pullRequest" || path[1] === "issueOrPullRequest"))),
   );
+
+/** Every error hides one list row or a field inside one; the other rows stand. */
+const rowsWithheldOnly = (
+  errors: ReadonlyArray<{
+    readonly [field: string]: unknown;
+    readonly path?: ReadonlyArray<string | number> | undefined;
+  }>,
+): boolean =>
+  errors.length > 0 &&
+  errors.every(
+    ({ type, path }) =>
+      (type === "NOT_FOUND" || type === "FORBIDDEN") &&
+      path !== undefined &&
+      path.some((segment) => typeof segment === "number"),
+  );
+
+const isRowsWithheld = <E>(
+  error: E,
+): error is E &
+  GraphQLClientError.GraphQLClientError & {
+    readonly reason: GraphQLClientError.ResponseError;
+  } =>
+  GraphQLClientError.isGraphQLClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.data != null &&
+  rowsWithheldOnly(error.reason.errors);
+
+/** Reads the rows GitHub did return when it withheld only some rows or their fields. */
+export const keepReadableRows =
+  <S extends Schema.Decoder<unknown>>(result: S) =>
+  <E, R>(
+    effect: Effect.Effect<S["Type"], E, R>,
+  ): Effect.Effect<S["Type"], E, R | S["DecodingServices"]> =>
+    effect.pipe(
+      Effect.catchIf(isRowsWithheld, (error) =>
+        Schema.decodeEffect(result)(error.reason.data).pipe(Effect.mapError(() => error)),
+      ),
+    );
 
 /** GitHub's message for each error in an answer, with the field it names. */
 export const describeErrors = (error: GraphQLClientError.GraphQLClientError) =>
@@ -106,9 +147,23 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
-                  const withheld = (answer.errors ?? []).some(
+                  const errors = answer.errors ?? [];
+                  const withheld = errors.some(
                     (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
                   );
+                  // `GraphQLResolver.aliased` fails only the lookups whose `_<n>_` alias errored.
+                  const errored = new Set(errors.map((error) => error.path?.[0]));
+                  const separable =
+                    (errors.every(
+                      (error) => typeof error.path?.[0] === "string" && ALIAS.test(error.path[0]),
+                    ) &&
+                      Object.keys(answer.data ?? {}).some(
+                        (field) => ALIAS.test(field) && !errored.has(field),
+                      )) ||
+                    (target.keepsReadableRows === true &&
+                      answer.data !== undefined &&
+                      answer.data !== null &&
+                      rowsWithheldOnly(errors));
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
                     : {
@@ -122,6 +177,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                               : Headers.set(responseHeaders, CREDENTIAL_SOURCE_HEADER, source),
                         },
                         withheld,
+                        separable,
                         status,
                         headers: responseHeaders,
                       };

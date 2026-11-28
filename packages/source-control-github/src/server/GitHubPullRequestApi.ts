@@ -1202,6 +1202,7 @@ export const make = Effect.gen(function* () {
       readonly host: string;
       readonly operation: string;
       readonly allowReserve?: boolean | undefined;
+      readonly keepsReadableRows?: boolean | undefined;
     }) =>
     <A, E, R>(
       effect: Effect.Effect<A, E, R>,
@@ -1218,6 +1219,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           operation: input.operation,
           ...(input.allowReserve === true ? { allowReserve: true } : {}),
+          ...(input.keepsReadableRows === true ? { keepsReadableRows: true } : {}),
         }),
         Effect.mapError((error) =>
           isGraphQlClientError(error)
@@ -2022,7 +2024,10 @@ export const make = Effect.gen(function* () {
                   stacks: false,
                   stats: true,
                 })
-                .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
+                .pipe(
+                  GitHubGraphQlClient.keepReadableRows(LenientPullRequestSearch.result),
+                  Effect.map((result) => toPage(toPullRequestRows(result.search))),
+                )
             : client
                 .PullRequestList({
                   owner,
@@ -2034,11 +2039,12 @@ export const make = Effect.gen(function* () {
                   stats: true,
                 })
                 .pipe(
+                  GitHubGraphQlClient.keepReadableRows(LenientPullRequestList.result),
                   Effect.map((result) =>
                     toPage(toPullRequestRows(result.repository?.pullRequests)),
                   ),
                 )
-          ).pipe(graphql(target)),
+          ).pipe(graphql({ ...target, keepsReadableRows: true })),
         ).pipe(
           Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
             const items = continues
@@ -2158,7 +2164,8 @@ export const make = Effect.gen(function* () {
           client
             .PullRequestSearch({ q: query, first: pageRows(rows), after, stacks, stats: false })
             .pipe(
-              graphql({ ...input, operation: "searchPullRequests" }),
+              GitHubGraphQlClient.keepReadableRows(LenientPullRequestSearch.result),
+              graphql({ ...input, operation: "searchPullRequests", keepsReadableRows: true }),
               Effect.map(({ search }) => {
                 const page = toPullRequestRows(search);
                 // A short page that says it has more is where this read stops, not a gap to read past.
