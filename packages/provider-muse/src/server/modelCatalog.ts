@@ -3,6 +3,7 @@ import type { SendUserTurnOptions } from "@muse-code/sdk";
 import { ModelCapabilities, ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { createModelCapabilities, getProviderOptionDescriptors } from "@t3tools/shared/model";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -12,8 +13,25 @@ import {
   type MuseSdkHost,
 } from "./sdk.ts";
 
-export const resolveMuseStartupTimeoutMs = (environment?: NodeJS.ProcessEnv) =>
-  resolveProviderProbeTimeoutMs("muse", 8_000, environment);
+// The Windows launcher (muse.cmd -> PowerShell -> muse-bin) takes 5-8 s to start inside the
+// server's job object.
+const WINDOWS_LAUNCHER_ALLOWANCE_MS = 12_000;
+
+export const resolveMuseProbeTimeoutMs = (
+  defaultTimeoutMs: number,
+  platform: NodeJS.Platform,
+  environment?: NodeJS.ProcessEnv,
+) =>
+  resolveProviderProbeTimeoutMs(
+    "muse",
+    platform === "win32" ? defaultTimeoutMs + WINDOWS_LAUNCHER_ALLOWANCE_MS : defaultTimeoutMs,
+    environment,
+  );
+
+export const resolveMuseStartupTimeoutMs = (
+  platform: NodeJS.Platform,
+  environment?: NodeJS.ProcessEnv,
+) => resolveMuseProbeTimeoutMs(8_000, platform, environment);
 
 type MuseReasoningEffort = NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>;
 
@@ -108,6 +126,7 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
   cwd?: string,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
+  const platform = yield* HostProcess.Platform;
   const host = yield* Effect.acquireRelease(
     createMuseSdkHostEffect(
       {
@@ -115,7 +134,7 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
         ...(environment ? { environment } : {}),
         ...(cwd ? { cwd } : {}),
         readOnly: true,
-        startupTimeoutMs: resolveMuseStartupTimeoutMs(environment),
+        startupTimeoutMs: resolveMuseStartupTimeoutMs(platform, environment),
       },
       createHost,
     ),
