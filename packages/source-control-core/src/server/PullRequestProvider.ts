@@ -205,6 +205,11 @@ export interface ProviderBatchedChangeRequestPage {
    * omission rather than an empty answer, so the caller reads each on its own.
    */
   readonly unresolved?: ReadonlyArray<string>;
+  /**
+   * Unresolved repositories the host's search does cover. The page holds none of their rows, so
+   * none is newer than its oldest: a caller may reuse a recent read of one over reading it again.
+   */
+  readonly quiet?: ReadonlyArray<string>;
 }
 
 /** A check as the change request's checks name it; the host finds its log or run from the URL. */
