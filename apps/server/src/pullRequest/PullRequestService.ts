@@ -916,6 +916,21 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((resolved) => new Map(resolved)));
   });
 
+  /** Which host kind serves `host`, as a remote on it would be refined; null when none claims it. */
+  const refineHostKind = (cwd: string, host: string, repository: string) => {
+    const remoteUrl = `https://${host}/${repository}`;
+    const recognized = sourceControlDefinitions.recognizeRemote(remoteUrl);
+    if (recognized === null) return Effect.succeed(null);
+    return sourceControlProviders
+      .resolveHandle({ cwd, context: { provider: recognized, remoteName: "origin", remoteUrl } })
+      .pipe(
+        Effect.map(({ context }) =>
+          context === null || context.provider.kind === "unknown" ? null : context.provider.kind,
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+  };
+
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
@@ -1119,25 +1134,44 @@ export const make = Effect.gen(function* () {
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
               return Effect.gen(function* () {
-                const publicHost = sourceControlDefinitions.findByPublicHost(host);
-                const api = publicHost === undefined ? null : registry.get(publicHost.kind);
-                if (publicHost !== undefined && api?.readsPublicHostWithoutCheckout) {
-                  const selected = yield* projects.getShell(ref.projectId).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new PullRequestOperationError({
-                          operation: "resolveRepository",
-                          detail: "The selected project could not be read.",
-                          cause,
-                        }),
-                    ),
-                  );
+                const readSelected = projects.getShell(ref.projectId).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new PullRequestOperationError({
+                        operation: "resolveRepository",
+                        detail: "The selected project could not be read.",
+                        cause,
+                      }),
+                  ),
+                );
+                const definitionOwner =
+                  sourceControlDefinitions.findByPublicHost(host) ??
+                  sourceControlDefinitions.findByRepositoryKey(referenceKey);
+                let selected: Option.Option<OrchestrationProjectShell> | undefined;
+                let refinedKind: SourceControlProviderKind | null = null;
+                if (definitionOwner === undefined) {
+                  // A self-hosted host no definition names is identified the way project remotes
+                  // are: by the hosting CLIs and saved credentials, from the selected project.
+                  selected = yield* readSelected;
+                  if (Option.isSome(selected)) {
+                    refinedKind = yield* refineHostKind(
+                      selected.value.workspaceRoot,
+                      host,
+                      repository,
+                    );
+                  }
+                }
+                const publicKind =
+                  refinedKind ?? sourceControlDefinitions.findByPublicHost(host)?.kind;
+                const api = publicKind === undefined ? null : registry.get(publicKind);
+                if (publicKind !== undefined && api?.readsPublicHostWithoutCheckout) {
+                  selected ??= yield* readSelected;
                   if (Option.isSome(selected)) {
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
                       api: withRateLimitBackoff(api, host, rateLimits),
-                      kind: publicHost.kind,
+                      kind: publicKind,
                       repository,
                       host,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
@@ -1147,9 +1181,15 @@ export const make = Effect.gen(function* () {
                     };
                   }
                 }
-                const owner =
-                  publicHost ?? sourceControlDefinitions.findByRepositoryKey(referenceKey);
-                const readable = owner === undefined ? null : registry.get(owner.kind);
+                const ownerKind = refinedKind ?? definitionOwner?.kind;
+                if (ownerKind === undefined) {
+                  // Nothing named the host; a project on it is what lets its remote be identified.
+                  return yield* new PullRequestUnavailableError({
+                    reason: "repository-without-project",
+                    host,
+                  });
+                }
+                const readable = registry.get(ownerKind);
                 if (
                   readable !== null &&
                   !readable.readsPublicHostWithoutCheckout &&

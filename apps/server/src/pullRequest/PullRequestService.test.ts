@@ -2417,6 +2417,8 @@ it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
         }),
       ],
       providers: [fakePullRequestProvider(SourceControlProviderKind.make("forgejo"))],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({ context: context ?? null, provider: undefined as never }),
     });
     const failure = yield* service
       .summary(
@@ -2749,6 +2751,50 @@ it.effect("names the host when no project has a checkout on it for a host-routed
     assert.strictEqual(error._tag, "PullRequestUnavailableError");
     expect(error.message).not.toContain("acme/web is not a project");
     expect(error.message).toContain("gitlab.com");
+  }),
+);
+
+// regression: #42790 a self-hosted host with no project fell through to "provider-unsupported"
+it.effect("does not call a self-hosted host with no project unsupported", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "public",
+          title: "Public",
+          workspaceRoot: "/public",
+          repository: "acme/web",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+        }),
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: {
+            ...context!,
+            provider: { ...context!.provider, kind: SourceControlProviderKind.make("github") },
+          },
+          provider: undefined as never,
+        }),
+    });
+    const result = yield* Effect.result(
+      service.summary(
+        {
+          projectId: "public" as ProjectId,
+          host: "ghes.example",
+          repository: "owner/repo",
+          number: 1,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    if (result._tag === "Failure") {
+      expect(result.failure).not.toMatchObject({ reason: "provider-unsupported" });
+      expect(result.failure.message).toContain("ghes.example");
+    }
   }),
 );
 
