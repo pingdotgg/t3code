@@ -611,7 +611,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
-  const nestedTablePropertiesHeader = /[\r\n]*\\\*[\r\n]*\\nesttableprops(?![a-z])/y;
+  const nestedTablePropertiesHeader = /[\r\n]*\\\*[\r\n]*\\nesttableprops(?![A-Za-z])/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
