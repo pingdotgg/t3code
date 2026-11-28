@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
 import type { SpeechStreamText } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createSpeechAudio } from "./audio.ts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
@@ -258,10 +259,21 @@ function speechWorkerArgs(mode: "discover" | "model", moduleUrl?: string) {
   ];
 }
 
+// Linux desktop launchers can restrict Vulkan to the default GPU's driver.
+// Speech workers pick their device through the Hardware setting instead.
+function speechWorkerEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...extra };
+  // With VK_LOADER_DRIVERS_DISABLE set, SELECT is what re-enables drivers.
+  if (HostProcess.Platform.defaultValue() === "linux" && !env.VK_LOADER_DRIVERS_DISABLE) {
+    delete env.VK_LOADER_DRIVERS_SELECT;
+  }
+  return env;
+}
+
 export async function listNativeSpeechGpuDevices(moduleUrl?: string) {
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("discover", moduleUrl), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: speechWorkerEnv(),
   });
   return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -323,12 +335,8 @@ async function loadNativeSpeechModelOnce(
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("model"), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: "advanced",
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      // Backend registration can initialize drivers even when model placement is CPU.
-      ...(acceleration === "cpu" ? { TRANSCRIBE_BACKENDS: "cpu" } : {}),
-    },
+    // Backend registration can initialize drivers even when model placement is CPU.
+    env: speechWorkerEnv(acceleration === "cpu" ? { TRANSCRIBE_BACKENDS: "cpu" } : {}),
   });
   let stopped = false;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;

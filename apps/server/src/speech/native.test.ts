@@ -3,9 +3,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, it } from "vite-plus/test";
 
-import { loadNativeSpeechModel } from "./native.ts";
+import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs}, languages: ["en-US", "de-DE"] }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
@@ -372,4 +373,95 @@ it("preserves withheld audio on VAD failure while keeping ASR failures distinct"
   } finally {
     await model.dispose();
   }
+});
+
+const withEnv = async (vars: Record<string, string | undefined>, run: () => Promise<void>) => {
+  const previous = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]));
+  const apply = (values: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  apply(vars);
+  try {
+    await run();
+  } finally {
+    apply(previous);
+  }
+};
+
+const gpuEnvKeys = [
+  "VK_LOADER_DRIVERS_SELECT",
+  "VK_LOADER_DRIVERS_DISABLE",
+  "DRI_PRIME",
+  "TRANSCRIBE_BACKENDS",
+];
+const gpuEnvJson = `JSON.stringify(Object.fromEntries(${JSON.stringify(gpuEnvKeys)}.map((key) => [key, process.env[key] ?? null])))`;
+
+const discoveryEnv = async () => {
+  const [device] = await listNativeSpeechGpuDevices(
+    `data:text/javascript,${encodeURIComponent(`
+      export const getAvailableBackends = () => [{ kind: "vulkan", deviceType: "gpu", name: ${gpuEnvJson} }];
+    `)}`,
+  );
+  return JSON.parse(device!.name);
+};
+
+const modelEnv = async (acceleration: string) => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    fixture(`async () => ({ text: ${gpuEnvJson} })`),
+    acceleration,
+  );
+  try {
+    const result = await model.transcribe(new Float32Array([0.25]), { timestamps: "none" }, false);
+    return JSON.parse(result.text);
+  } finally {
+    await model.dispose();
+  }
+};
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "drops a Linux launcher's Vulkan driver filter for discovery and model workers",
+  async () => {
+    await withEnv(
+      {
+        VK_LOADER_DRIVERS_SELECT: "*intel*",
+        VK_LOADER_DRIVERS_DISABLE: undefined,
+        DRI_PRIME: "pci-0000_00_02_0",
+        TRANSCRIBE_BACKENDS: undefined,
+      },
+      async () => {
+        const launcher = {
+          VK_LOADER_DRIVERS_SELECT: null,
+          VK_LOADER_DRIVERS_DISABLE: null,
+          DRI_PRIME: "pci-0000_00_02_0",
+        };
+        expect(await discoveryEnv()).toEqual({ ...launcher, TRANSCRIBE_BACKENDS: null });
+        expect(await modelEnv("auto")).toEqual({ ...launcher, TRANSCRIBE_BACKENDS: null });
+        expect(await modelEnv("cpu")).toEqual({ ...launcher, TRANSCRIBE_BACKENDS: "cpu" });
+      },
+    );
+  },
+);
+
+it("keeps the Vulkan driver filter when it re-enables drivers after a disable filter", async () => {
+  await withEnv(
+    {
+      VK_LOADER_DRIVERS_SELECT: "*nvidia*",
+      VK_LOADER_DRIVERS_DISABLE: "*",
+      DRI_PRIME: undefined,
+      TRANSCRIBE_BACKENDS: undefined,
+    },
+    async () => {
+      expect(await discoveryEnv()).toEqual({
+        VK_LOADER_DRIVERS_SELECT: "*nvidia*",
+        VK_LOADER_DRIVERS_DISABLE: "*",
+        DRI_PRIME: null,
+        TRANSCRIBE_BACKENDS: null,
+      });
+    },
+  );
 });
