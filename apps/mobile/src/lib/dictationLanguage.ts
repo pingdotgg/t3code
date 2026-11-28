@@ -1,3 +1,4 @@
+// oxlint-disable t3code/no-untranslated-copy -- each language is named in itself, as language pickers do.
 /** Locales Apple's on-device SpeechTranscriber offers. Unset follows the device language. */
 export const DICTATION_LANGUAGES = [
   { locale: "en-US", label: "English (US)" },
