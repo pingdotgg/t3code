@@ -56,6 +56,7 @@ export const mapDpopReplayStoreError = (
 /** Checks a proof without recording it; `consume` records its jti so it cannot be replayed. */
 export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(function* (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
+  readonly publicBaseUrl?: URL | undefined;
   /** Overrides the `DPoP` header for requests that cannot carry one, such as a WebSocket upgrade. */
   readonly proof?: string;
   readonly expectedThumbprint?: string;
@@ -67,6 +68,10 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
     return yield* new ServerAuthInvalidCredentialError({
       diagnostic: "Invalid DPoP request URL.",
     });
+  }
+  // The trusted public origin identifies the proxy that strips this path.
+  if (input.publicBaseUrl?.origin === url.value.origin) {
+    url.value.pathname = input.publicBaseUrl.pathname.replace(/\/+$/, "") + url.value.pathname;
   }
   const now = yield* DateTime.now;
   const result = verifyDpopProof({

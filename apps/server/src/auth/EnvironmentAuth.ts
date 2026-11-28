@@ -912,6 +912,7 @@ export const make = Effect.gen(function* () {
           }
           return verifyRequestDpopProof({
             request,
+            publicBaseUrl: config.dpopPublicBaseUrl,
             expectedThumbprint: session.proofKeyThumbprint,
             expectedAccessToken: dpopToken,
           }).pipe(
@@ -1611,6 +1612,7 @@ export const make = Effect.gen(function* () {
             }
             yield* verifyRequestDpopProof({
               request,
+              publicBaseUrl: config.dpopPublicBaseUrl,
               proof,
               expectedThumbprint: session.proofKeyThumbprint,
               expectedAccessToken: websocketTicket,

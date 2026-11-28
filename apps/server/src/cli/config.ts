@@ -141,6 +141,21 @@ const EnvServerConfig = Config.all({
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  dpopPublicBaseUrl: Config.schema(
+    Schema.URLFromString.check(
+      Schema.makeFilter((url) =>
+        url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash &&
+        url.pathname !== "/"
+          ? undefined
+          : "Expected an HTTPS URL with a path prefix and no credentials, query, or fragment.",
+      ),
+    ),
+    "T3CODE_DPOP_PUBLIC_BASE_URL",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
     Config.map((value) =>
@@ -535,6 +550,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     host,
     ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
     staticDir,
+    dpopPublicBaseUrl: env.dpopPublicBaseUrl,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
     devAllowedOrigins: env.devAllowedOrigins,

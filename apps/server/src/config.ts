@@ -93,6 +93,7 @@ export class ServerConfig extends Context.Service<
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;
+    readonly dpopPublicBaseUrl?: URL | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
     readonly devAllowedOrigins: ReadonlyArray<string>;

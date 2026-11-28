@@ -2,6 +2,33 @@
 
 Drive T3 Code from your phone, browser (`app.t3.codes`), or another desktop app while your agents run on a host computer or server. The host must stay awake and running while you work.
 
+## Serve the web client under a reverse-proxy path
+
+From a T3 Code repository checkout, build the web package with a Vite base:
+
+```sh
+pnpm --filter @t3tools/web build --base=/t3/team/
+```
+
+Run `node apps/server/src/bin.ts serve` from the checkout to serve `apps/web/dist`.
+An installed CLI uses its bundled `client/`; package the CLI with the prefixed
+web build to deploy it that way.
+
+Configure the proxy to redirect `/t3/team` to
+`/t3/team/` and forward requests under `/t3/team/` to T3 with the prefix
+removed. Forward WebSocket upgrades on the same path. Open
+`https://code.example.com/t3/team/pair` in the browser to enter a pairing code.
+CLI-generated links still use the server's advertised address. If clients send
+DPoP proofs to the public URL, set
+`T3CODE_DPOP_PUBLIC_BASE_URL=https://code.example.com/t3/team/` on the server
+and configure the proxy to preserve the public `Host` header and send
+`X-Forwarded-Proto: https`. T3 uses these headers to match the request origin to
+the configured public origin before applying the path prefix.
+
+If you publish multiple instances on one origin, scope each server's session
+cookies to its proxy path. Browser storage is shared by an origin, so use
+separate browser profiles for separate T3 accounts on that origin.
+
 ## T3 Connect (recommended)
 
 T3 Connect links your host to your other devices without router port-forwarding.

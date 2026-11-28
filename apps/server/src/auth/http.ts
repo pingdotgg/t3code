@@ -41,6 +41,7 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { checkRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
+import { ServerConfig } from "../config.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -289,6 +290,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const config = yield* ServerConfig;
 
     return handlers
       .handle(
@@ -392,7 +394,10 @@ export const layer = HttpApiBuilder.group(
             }
             // Bootstrap exchanges leave the proof unrecorded because its key is not always trusted.
             const proof = args.headers.dpop
-              ? yield* checkRequestDpopProof({ request }).pipe(
+              ? yield* checkRequestDpopProof({
+                  request,
+                  publicBaseUrl: config.dpopPublicBaseUrl,
+                }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                     appendDpopChallengeHeader.pipe(
                       Effect.andThen(

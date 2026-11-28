@@ -32,39 +32,43 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
-const layerConfig = Layer.effect(
-  ServerConfig.ServerConfig,
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    return {
-      ...config,
-      mode: "web",
-      devUrl: new URL("http://127.0.0.1:5173"),
-      devAuthToken: Redacted.make(DEV_TOKEN),
-    } satisfies ServerConfig.ServerConfig["Service"];
-  }),
-).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
+const makeLayerRoutes = (dpopPublicBaseUrl?: URL) => {
+  const layerConfig = Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      return {
+        ...config,
+        mode: "web",
+        devUrl: new URL("http://127.0.0.1:5173"),
+        devAuthToken: Redacted.make(DEV_TOKEN),
+        dpopPublicBaseUrl,
+      } satisfies ServerConfig.ServerConfig["Service"];
+    }),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
 
-const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
-  Layer.provide(ManagedPolicy.layerTest()),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.layerIdentity),
-  Layer.provide(layerConfig),
-);
-const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
-  Layer.provide(AuthHttp.layer),
-  Layer.provide(AuthHttp.layerAuthenticatedAuth),
-  Layer.provideMerge(layerEnvironmentAuth),
-  Layer.provide(layerConfig),
-  Layer.provideMerge(
-    HttpPlatform.layer.pipe(
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.provideMerge(Etag.layerWeak),
+  const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ServerEnvironment.layerIdentity),
+    Layer.provide(layerConfig),
+  );
+  return HttpApiBuilder.layer(AuthTestApi).pipe(
+    Layer.provide(AuthHttp.layer),
+    Layer.provide(AuthHttp.layerAuthenticatedAuth),
+    Layer.provideMerge(layerEnvironmentAuth),
+    Layer.provide(layerConfig),
+    Layer.provideMerge(
+      HttpPlatform.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        Layer.provideMerge(Etag.layerWeak),
+      ),
     ),
-  ),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-);
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+};
+const layerRoutes = makeLayerRoutes();
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const postJson = (path: string, body: unknown, headers?: Readonly<Record<string, string>>) =>
@@ -207,7 +211,13 @@ it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (s
 );
 
 // The web handler runs on its own runtime, so proofs need wall-clock time.
-it.live("checks token-endpoint DPoP proofs without writing replay state", () =>
+it.live.each([
+  { mount: "at the origin root", publicBaseUrl: undefined },
+  {
+    mount: "behind a proxy that strips the prefix",
+    publicBaseUrl: new URL("https://code.example.test/t3/team/"),
+  },
+])("checks token-endpoint DPoP proofs $mount without writing replay state", ({ publicBaseUrl }) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
     const written: Array<string> = [];
@@ -221,13 +231,15 @@ it.live("checks token-endpoint DPoP proofs without writing replay state", () =>
     const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
       Context.add(ServerSecretStore.ServerSecretStore, recordingSecretStore),
     );
-    const url = "http://127.0.0.1/oauth/token";
+    const origin = publicBaseUrl?.origin ?? "http://127.0.0.1";
+    const upstreamUrl = new URL("/oauth/token", origin).href;
+    const url = publicBaseUrl ? new URL("oauth/token", publicBaseUrl).href : upstreamUrl;
     const key = makeDpopKey();
     const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
     const tokenRequest = (subjectToken: string, proof: string) =>
-      new Request(url, {
+      new Request(upstreamUrl, {
         method: "POST",
-        headers: { host: "127.0.0.1", dpop: proof },
+        headers: { host: new URL(origin).host, dpop: proof, "x-forwarded-prefix": "/untrusted" },
         body: new URLSearchParams({
           grant_type: AuthTokenExchangeGrantType,
           subject_token: subjectToken,
@@ -236,7 +248,9 @@ it.live("checks token-endpoint DPoP proofs without writing replay state", () =>
         }),
       });
     return yield* Effect.acquireUseRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(makeLayerRoutes(publicBaseUrl), { disableLogger: true }),
+      ),
       (environment) =>
         Effect.promise(async () => {
           const unknownToken = await environment.handler(
@@ -252,6 +266,17 @@ it.live("checks token-endpoint DPoP proofs without writing replay state", () =>
           );
           expect(accepted.status).toBe(200);
           expect(await accepted.json()).toMatchObject({ token_type: "DPoP" });
+
+          if (publicBaseUrl) {
+            const strippedProof = await environment.handler(
+              tokenRequest(
+                DEV_TOKEN,
+                key.sign({ method: "POST", url: upstreamUrl, token: "", iat }),
+              ),
+              requestContext,
+            );
+            expect(strippedProof.status).toBe(401);
+          }
 
           const badProof = await environment.handler(
             tokenRequest(DEV_TOKEN, "not-a-proof"),

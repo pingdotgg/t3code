@@ -59,6 +59,11 @@ function parseAssetCollectionKey(
 
 export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): string | null {
   try {
+    if (/^\/api\/(?:assets|attachments\/upload)\//.test(relativeUrl)) {
+      const base = new URL(httpBaseUrl);
+      base.pathname = base.pathname.replace(/\/+$/, "") + "/";
+      return new URL(`.${relativeUrl}`, base).toString();
+    }
     return new URL(relativeUrl, httpBaseUrl).toString();
   } catch {
     return null;
