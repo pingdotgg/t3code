@@ -1,6 +1,6 @@
 {
   "name": "@effect/sql-d1",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "type": "module",
   "license": "MIT",
   "description": "A Cloudflare D1 integration for Effect",
@@ -72,6 +72,6 @@
     "effect": "workspace:^"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^5.20261114.1"
+    "@cloudflare/workers-types": "^5.20261121.1"
   }
 }

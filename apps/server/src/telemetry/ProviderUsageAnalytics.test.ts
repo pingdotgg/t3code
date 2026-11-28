@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
-import { catalogModelLabel } from "./ProviderDimensions.ts";
+import { modelLabel } from "./ProviderDimensions.ts";
 import {
   ProviderTurnAnalytics,
   RequestUsageLedger,
@@ -26,10 +26,9 @@ import {
 } from "./ProviderUsageAnalytics.ts";
 
 const providers = [
-  // Codex lists whatever its configured model provider serves, including private deployments.
-  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
+  { driver: "codex", models: [{ slug: "gpt-6-sol" }] },
+  { driver: "pi", models: [{ slug: "/Users/jane/models/llama.gguf", aliases: ["pi-local"] }] },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
-  { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
   // Antigravity ships models before the bundled manifest lists them.
   {
     driver: "antigravity",
@@ -43,10 +42,11 @@ const providers = [
     ({
       instanceId: ProviderInstanceId.make(driver),
       driver,
+      auth: { status: "authenticated" },
       models: models.map((model) => ({ ...model, isCustom: false })),
     }) as unknown as ServerProvider,
 );
-const label = (model: string) => catalogModelLabel(providers, model);
+const label = (driver: string, model: string) => modelLabel(providers, driver, model);
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
 const complete = (input: number, output: number, extra: Partial<TurnTokenUsage> = {}) =>
@@ -113,7 +113,10 @@ describe("provider usage reporting", () => {
           Layer.mergeAll(
             Layer.mock(AnalyticsService.AnalyticsService)({
               record: (event, properties) =>
-                Effect.sync(() => void recorded.push([event, properties])),
+                Effect.sync(() => {
+                  recorded.push([event, properties]);
+                  return true;
+                }),
             }),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed(providers),
@@ -302,7 +305,7 @@ describe("provider usage reporting", () => {
     });
   });
 
-  it("reports routed catalog models and closed efforts only", () => {
+  it("reports catalog models by slug, custom models by driver, and closed efforts only", () => {
     const routed = (model: string, variant: string) =>
       providerTurnProperties(
         {
@@ -323,20 +326,20 @@ describe("provider usage reporting", () => {
       observedModel: "claude-opus-5-5",
       effort: "high",
     });
-    for (const local of [
-      routed("ollama/acme-internal", "secret-variant"),
-      routed("acme-azure-deployment", "high"),
-    ]) {
-      expect(local).not.toHaveProperty("model");
-      expect(local).not.toHaveProperty("observedModel");
-    }
-    expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
+    const local = routed("ollama/acme-internal", "secret-variant");
+    expect(local).toMatchObject({
+      model: "custom:opencode",
+      observedModel: "custom:opencode",
+    });
+    expect(local).not.toHaveProperty("effort");
   });
 
-  it("reports Antigravity catalog models the bundled manifest does not list", () => {
-    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
-    expect(label("antigravity-default")).toBe("gemini-4-neon");
-    expect(label("gemini-4-unlisted")).toBeUndefined();
+  it("maps vendor catalog aliases to their slug and user-configured models to their driver", () => {
+    expect(label("antigravity", "gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity", "antigravity-default")).toBe("gemini-4-neon");
+    expect(label("antigravity", "gemini-4-neon-low")).toBe("gemini-4-neon");
+    expect(label("pi", "pi-local")).toBe("custom:pi");
+    expect(label("pi", "/Users/jane/models/qwen-coder.gguf")).toBe("custom:pi");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

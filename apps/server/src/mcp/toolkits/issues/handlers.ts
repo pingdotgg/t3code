@@ -220,6 +220,7 @@ const make = Effect.gen(function* () {
             author: comment.author?.login ?? null,
             body: comment.body,
             createdAt: comment.createdAt,
+            ...(comment.internal === true ? { internal: true } : {}),
           })),
           commentsTruncated: detail.commentsCursor !== null,
           linkedPullRequests: detail.linkedPullRequests.map((pullRequest) => ({
@@ -252,7 +253,7 @@ const make = Effect.gen(function* () {
     comment_on_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        yield* issues.comment({ ...refOf(target), body: input.body });
+        yield* issues.comment({ ...refOf(target), body: input.body, audience: input.audience });
         return identityOf(target);
       }),
     ),

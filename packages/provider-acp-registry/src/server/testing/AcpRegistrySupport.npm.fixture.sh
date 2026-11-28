@@ -1,6 +1,19 @@
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_NPM_LOG"
 prefix="${npm_config_prefix:-$FAKE_NPM_PREFIX}"
+# Some npm shims (Bun-backed ones) honor only a literal --prefix argument.
+if [ -n "$FAKE_NPM_IGNORE_PREFIX_ENV" ]; then
+  prefix="$FAKE_NPM_PREFIX"
+  previous=
+  for arg in "$@"; do
+    case "$arg" in
+      --prefix=*) prefix=${arg#--prefix=} ;;
+    esac
+    [ "$previous" = "--prefix" ] && prefix=$arg
+    previous=$arg
+  done
+fi
+[ -n "$FAKE_NPM_IGNORE_PREFIX" ] && prefix="$FAKE_NPM_PREFIX"
 if [ "$1" = "root" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix/lib/node_modules"
   exit 0
