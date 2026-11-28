@@ -2319,9 +2319,10 @@ code {
 
 /* Diagnostics-style tables: row separators only, and a scroll-fade container
    for horizontal overflow. Cells wrap and the table fits its lane. The root
-   chat-markdown wrapping rules (overflow-wrap: anywhere) would let columns
-   shrink to single characters, so restore word-boundary wrapping: the min
-   column width is the longest word, and only wider content scrolls. */
+   chat-markdown wrapping rules (overflow-wrap: anywhere) would let ordinary
+   columns shrink to single characters, so restore word-boundary wrapping: the
+   min column width is the longest word, except for tokens the Markdown pass
+   marks as breakable because they are paths or long identifiers. */
 .chat-markdown table {
   width: 100%;
   border-collapse: collapse;
@@ -2359,10 +2360,14 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
 .chat-markdown :is(th, td) {
-  max-width: 24rem;
   overflow-wrap: break-word;
+}
+
+/* A path or identifier longer than a word can break at any character, so it no longer holds its
+   column's min-content width. Short code and links keep their own, wider wrapping rules. */
+.chat-markdown [data-markdown-wrap-anywhere] {
+  overflow-wrap: anywhere;
 }
 
 .chat-markdown [data-markdown-math] {
@@ -2372,11 +2377,6 @@ code {
 
 .chat-markdown [data-markdown-math] > svg {
   font-size: 1.21em;
-}
-
-/* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown :is(th, td):has([data-markdown-math]) {
-  max-width: none;
 }
 
 /* Keep overflow discoverable when the edge fade falls between columns. */

@@ -258,6 +258,29 @@ describe("wordsHast", () => {
     );
   });
 
+  it("wraps long table tokens so they cannot hold a column open", () => {
+    const table = (value: string, label = "name") =>
+      `| label | value |\n| --- | --- |\n| ${label} | ${value} |`;
+
+    expect(wordsHtml(table("`contract_number_sequences`"))).toContain(
+      '<code data-inline-code="" dir="ltr"><span data-markdown-wrap-anywhere="">contract_number_sequences</span></code>',
+    );
+    expect(wordsHtml(table("src/components/chat/markdownTableTokens.ts"))).toContain(
+      '<span data-markdown-wrap-anywhere="">src/components/chat/markdownTableTokens.ts</span>',
+    );
+
+    // Short code, ordinary long prose and links keep their usual wrapping.
+    const short = wordsHtml(table("`fix/table`"));
+    expect(short).toContain('<code data-inline-code="" dir="ltr">fix/table</code>');
+    expect(short).not.toContain("data-markdown-wrap-anywhere");
+    const cjk = wordsHtml(table("x", "可以看了这个表格的内容已经重启了但是没有变化"));
+    expect(cjk).not.toContain("data-markdown-wrap-anywhere");
+    const url = "https://example.com/a/very/long/path/that/keeps/going";
+    const linked = wordsHtml(table(`[${url}](${url})`));
+    expect(linked).toContain(`href="${url}"`);
+    expect(linked).not.toContain("data-markdown-wrap-anywhere");
+  });
+
   it("gives elements the source positions components read", () => {
     // A wide item's text is parsed again on its own, so its link has no place in the message.
     const markdown = "é [a](u)\n\n- [ ] task\n\n```sh\nls\n```\n\n-      [b](./b.ts)";
