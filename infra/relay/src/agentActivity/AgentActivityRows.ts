@@ -204,6 +204,7 @@ const make = Effect.gen(function* () {
     }),
 
     listForUser: Effect.fn("relay.agent_activity_rows.list_for_user")(function* (input) {
+      // Tiebreakers keep tied rows in one order, so a queued card recheck never sees a shown row displaced.
       return yield* db
         .select({ stateJson: relayAgentActivityRows.stateJson })
         .from(relayAgentActivityRows)
@@ -224,7 +225,11 @@ const make = Effect.gen(function* () {
             eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
           ),
         )
-        .orderBy(desc(relayAgentActivityRows.updatedAt))
+        .orderBy(
+          desc(relayAgentActivityRows.updatedAt),
+          relayAgentActivityRows.environmentId,
+          relayAgentActivityRows.threadId,
+        )
         .pipe(
           Effect.map((rows) =>
             rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityState(row.stateJson))),

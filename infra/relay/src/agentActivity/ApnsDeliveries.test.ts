@@ -8,6 +8,7 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -155,6 +156,7 @@ function layerFor(input: {
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
+  readonly listForUserTakesMs?: number;
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly activityRecheckFails?: boolean;
   readonly execute?: (
@@ -173,9 +175,10 @@ function layerFor(input: {
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           listForUser: () =>
-            input.activityStates !== undefined
-              ? Effect.succeed([...input.activityStates])
-              : Effect.succeed([state]),
+            (input.listForUserTakesMs === undefined
+              ? Effect.void
+              : TestClock.adjust(input.listForUserTakesMs)
+            ).pipe(Effect.as([...(input.activityStates ?? [state])])),
           getForUserThread: ({ userId, environmentId, threadId }) =>
             input.activityRecheckFails
               ? Effect.fail(
@@ -953,77 +956,343 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect.each([true, false])(
-    "skips a queued Done update that is no longer visible (thread resumed: %s)",
-    (resumed) => {
-      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-      let executeCount = 0;
-      const completedAt = "1970-01-01T00:00:01.000Z";
-      const completedAggregate: RelayAgentActivityAggregateState = {
+  it.effect.each([
+    {
+      name: "thread resumed",
+      states: [{ ...state, phase: "running", updatedAt: "1970-01-01T00:00:02.000Z" }],
+    },
+    { name: "thread removed", states: [] },
+    {
+      name: "another thread now running",
+      states: [
+        { ...state, phase: "completed", updatedAt: "1970-01-01T00:00:01.000Z" },
+        { ...state, threadId: "thread-b", updatedAt: "1970-01-01T00:00:02.000Z" },
+      ],
+    },
+  ] as const)("skips a queued Done update that is no longer current ($name)", (testCase) => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    let executeCount = 0;
+    const completedAt = "1970-01-01T00:00:01.000Z";
+    const completedAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 0,
+      updatedAt: completedAt,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "completed",
+          status: "Done",
+          updatedAt: completedAt,
+        },
+      ],
+    };
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "live_activity_update",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: target.activity_push_token ?? "activity-token",
+      aggregate: completedAggregate,
+      alert: { title: "Thread", body: "Done: Project" },
+      createdAt: completedAt,
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-update-superseded-by-running",
+    });
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload,
+    });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        executeCount += 1;
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(yield* signed);
+
+      expect(result).toMatchObject({
+        kind: "live_activity_update",
+        ok: true,
+        apnsStatus: null,
+        apnsReason: "Stale APNs delivery job skipped.",
+      });
+      expect(executeCount).toBe(0);
+      expect(attempts).toMatchObject([
+        {
+          sourceJobId: "job-update-superseded-by-running",
+          apnsReason: "Stale agent activity state skipped.",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          activityStates: testCase.states as ReadonlyArray<RelayAgentActivityState>,
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  const running = (threadId: string, updatedAt = state.updatedAt): RelayAgentActivityState => ({
+    ...state,
+    threadId: threadId as RelayAgentActivityState["threadId"],
+    updatedAt,
+  });
+  const rowFor = (current: RelayAgentActivityState) => ({
+    ...aggregate.activities[0]!,
+    threadId: current.threadId,
+    phase: current.phase,
+    updatedAt: current.updatedAt,
+  });
+  const sixRunning = Array.from({ length: 6 }, (_, index) => running(`thread-${index}`));
+  const fiveOfSix: RelayAgentActivityAggregateState = {
+    ...aggregate,
+    activeCount: 6,
+    activities: sixRunning.slice(0, 5).map(rowFor),
+  };
+  const finished = (threadId: string, updatedAt: string): RelayAgentActivityState => ({
+    ...running(threadId, updatedAt),
+    phase: "completed",
+  });
+  const doneJob = (current: RelayAgentActivityState): RelayAgentActivityAggregateState => ({
+    ...aggregate,
+    subtitle: "Agent work completed",
+    activeCount: 0,
+    updatedAt: current.updatedAt,
+    activities: [rowFor(current)],
+  });
+  const approvalAtStart = { ...running("thread-approval"), phase: "waiting_for_approval" as const };
+  // `shows` lists the threads on the sent card; null means the job was skipped as stale.
+  it.effect.each([
+    {
+      name: "a hidden running thread ties the last shown row",
+      job: fiveOfSix,
+      states: sixRunning,
+      shows: sixRunning.slice(0, 5).map((thread) => thread.threadId),
+    },
+    {
+      name: "a hidden thread now needs approval",
+      job: fiveOfSix,
+      states: [...sixRunning.slice(0, 5), { ...sixRunning[5]!, phase: "waiting_for_approval" }],
+      shows: null,
+    },
+    {
+      name: "a hidden thread ran again more recently",
+      job: fiveOfSix,
+      // Rows list newest first, as AgentActivityRows.listForUser returns them.
+      states: [running("thread-5", "1970-01-01T00:00:01.000Z"), ...sixRunning.slice(0, 5)],
+      shows: null,
+    },
+    {
+      name: "a new thread failed into an open slot",
+      job: { ...aggregate, activities: [rowFor(state)] },
+      states: [state, { ...running("thread-new", "1970-01-01T00:00:01.000Z"), phase: "failed" }],
+      shows: null,
+    },
+    {
+      name: "a thread that failed earlier fills an open slot",
+      job: {
         ...aggregate,
-        activeCount: 0,
-        updatedAt: completedAt,
-        activities: [
-          {
-            ...aggregate.activities[0]!,
-            phase: "completed",
-            status: "Done",
-            updatedAt: completedAt,
-          },
-        ],
-      };
-      const payload = makeApnsDeliveryJobPayload({
+        updatedAt: "1970-01-01T00:05:00.000Z",
+        activities: [rowFor(running("thread", "1970-01-01T00:05:00.000Z"))],
+      },
+      states: [
+        running("thread", "1970-01-01T00:05:00.000Z"),
+        { ...running("thread-new", "1970-01-01T00:04:00.000Z"), phase: "failed" },
+      ],
+      shows: null,
+    },
+    {
+      name: "a Done shows only its own thread beside an earlier finish",
+      job: doneJob(finished("thread", "1970-01-01T00:05:00.000Z")),
+      states: [
+        finished("thread", "1970-01-01T00:05:00.000Z"),
+        finished("thread-earlier", "1970-01-01T00:01:00.000Z"),
+      ],
+      shows: ["thread"],
+    },
+    {
+      name: "a late Done beside a finish that preceded its publish",
+      at: "1970-01-01T00:20:00.000Z",
+      job: doneJob(finished("thread", "1970-01-01T00:04:00.000Z")),
+      states: [
+        finished("thread-earlier", "1970-01-01T00:15:00.000Z"),
+        finished("thread", "1970-01-01T00:04:00.000Z"),
+      ],
+      shows: ["thread"],
+    },
+    {
+      name: "a late Done beside a finish after its publish",
+      at: "1970-01-01T00:20:00.000Z",
+      job: doneJob(finished("thread", "1970-01-01T00:04:00.000Z")),
+      // The job is created 30 seconds before `at`.
+      states: [
+        finished("thread-later", "1970-01-01T00:19:45.000Z"),
+        finished("thread", "1970-01-01T00:04:00.000Z"),
+      ],
+      shows: null,
+    },
+    {
+      name: "a shown thread lost its slot to a hidden thread updated before the job",
+      job: {
+        ...aggregate,
+        activeCount: 6,
+        updatedAt: "1970-01-01T00:00:10.000Z",
+        activities: [10, 9, 8, 7, 6].map((second, index) =>
+          rowFor(
+            running(`thread-${index}`, `1970-01-01T00:00:${String(second).padStart(2, "0")}.000Z`),
+          ),
+        ),
+      },
+      states: [
+        running("thread-0", "1970-01-01T00:00:10.000Z"),
+        running("thread-5", "1970-01-01T00:00:09.500Z"),
+        running("thread-1", "1970-01-01T00:00:09.000Z"),
+        running("thread-2", "1970-01-01T00:00:08.000Z"),
+        running("thread-3", "1970-01-01T00:00:07.000Z"),
+        running("thread-4", "1970-01-01T00:00:06.000Z"),
+      ],
+      shows: null,
+    },
+    {
+      name: "a Done whose only active neighbor expires while rows load",
+      at: "1970-01-01T01:59:59.000Z",
+      listForUserTakesMs: 2_000,
+      job: doneJob(finished("thread", "1970-01-01T01:59:58.000Z")),
+      states: [finished("thread", "1970-01-01T01:59:58.000Z"), running("thread-expiring")],
+      shows: ["thread"],
+    },
+    {
+      name: "an expired row does not hide a waiting approval",
+      at: "1970-01-01T03:00:00.000Z",
+      job: { ...aggregate, activities: [rowFor(approvalAtStart)] },
+      states: [running("thread-dead", "1970-01-01T00:30:00.000Z"), approvalAtStart],
+      shows: ["thread-approval"],
+    },
+  ] as const)("rechecks a queued update against current rows: $name", (testCase) => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const sentThreadIds: Array<Array<string>> = [];
+    const nowMs = Date.parse("at" in testCase ? testCase.at : "1970-01-01T00:06:00.000Z");
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
         kind: "live_activity_update",
         userId: target.user_id,
         deviceId: target.device_id,
         token: target.activity_push_token ?? "activity-token",
-        aggregate: completedAggregate,
-        alert: { title: "Thread", body: "Done: Project" },
-        createdAt: completedAt,
-        expiresAt: "1970-01-01T00:10:00.000Z",
-        jobId: "job-update-superseded-by-running",
+        aggregate: testCase.job as RelayAgentActivityAggregateState,
+        alert: null,
+        createdAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 30_000)),
+        expiresAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + 60_000)),
+        jobId: "job-recheck",
+      }),
+    });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array") {
+          const { aps } = JSON.parse(new TextDecoder().decode(request.body.body));
+          const shown: RelayAgentActivityAggregateState = JSON.parse(aps["content-state"].props);
+          sentThreadIds.push(shown.activities.map((row) => row.threadId));
+        }
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
       });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(nowMs);
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(yield* signed);
+
+      expect(sentThreadIds).toEqual(testCase.shows === null ? [] : [testCase.shows]);
+      if (testCase.shows === null) {
+        expect(attempts).toMatchObject([{ apnsReason: "Stale agent activity state skipped." }]);
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          activityStates: testCase.states as ReadonlyArray<RelayAgentActivityState>,
+          ...("listForUserTakesMs" in testCase
+            ? { listForUserTakesMs: testCase.listForUserTakesMs }
+            : {}),
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { phase: "waiting_for_approval", activeCount: 1 },
+    { phase: "completed", activeCount: 0 },
+  ] as const)(
+    "keeps a $phase alert when an unrelated thread expires before sending",
+    (testCase) => {
+      const sentBodies: Array<{ aps: Record<string, unknown> }> = [];
+      const kept: RelayAgentActivityState = {
+        ...running("thread-kept", "1970-01-01T01:59:59.000Z"),
+        phase: testCase.phase,
+      };
+      const expiring = running("thread-expiring");
+      const delivered: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        activeCount: 2,
+        activities: [rowFor({ ...kept, phase: "running" }), rowFor(expiring)],
+      };
+      const queued: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        activeCount: testCase.activeCount + 1,
+        updatedAt: kept.updatedAt,
+        activities:
+          testCase.activeCount === 1
+            ? [rowFor(kept), rowFor(expiring)]
+            : [rowFor(expiring), rowFor(kept)],
+      };
+      const device = { ...target, last_aggregate_json: JSON.stringify(delivered) };
       const signed = signApnsDeliveryJob({
         secret: config.apnsDeliveryJobSigningSecret,
-        payload,
+        payload: makeApnsDeliveryJobPayload({
+          kind: "live_activity_update",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: target.activity_push_token ?? "activity-token",
+          aggregate: queued,
+          alert: { title: "Thread", body: "Update: Project" },
+          createdAt: kept.updatedAt,
+          expiresAt: "1970-01-01T02:09:00.000Z",
+          jobId: "job-alert-beside-expiring",
+        }),
       });
       const execute = (request: HttpClientRequest.HttpClientRequest) =>
         Effect.sync(() => {
-          executeCount += 1;
+          if (request.body._tag === "Uint8Array") {
+            sentBodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+          }
           return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
         });
 
       return Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("1970-01-01T02:00:01.000Z"));
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        const result = yield* deliveries.processSignedJob(yield* signed);
+        yield* deliveries.processSignedJob(yield* signed);
 
-        expect(result).toMatchObject({
-          kind: "live_activity_update",
-          ok: true,
-          apnsStatus: null,
-          apnsReason: "Stale APNs delivery job skipped.",
+        expect(sentBodies).toHaveLength(1);
+        const { aps } = sentBodies[0]!;
+        expect(aps.alert).toBeDefined();
+        const shown = JSON.parse((aps["content-state"] as { props: string }).props);
+        expect(shown).toMatchObject({
+          activeCount: testCase.activeCount,
+          activities: [{ threadId: "thread-kept", phase: testCase.phase }],
         });
-        expect(executeCount).toBe(0);
-        expect(attempts).toMatchObject([
-          {
-            sourceJobId: "job-update-superseded-by-running",
-            apnsReason: "Stale agent activity state skipped.",
-          },
-        ]);
+        expect(shown.activities).toHaveLength(1);
       }).pipe(
         Effect.provide(
           layerFor({
-            attempts,
-            activityStates: resumed
-              ? [
-                  {
-                    ...state,
-                    phase: "running",
-                    headline: "Running",
-                    updatedAt: "1970-01-01T00:00:02.000Z",
-                  },
-                ]
-              : [],
+            attempts: [],
+            activityStates: [kept, expiring],
+            currentTargets: [device],
             config: signingConfig,
             execute,
           }),

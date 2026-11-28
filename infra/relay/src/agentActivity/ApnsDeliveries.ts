@@ -23,11 +23,17 @@ import * as Stream from "effect/Stream";
 
 import {
   isExpiredAgentActivityState,
+  isTerminalPhase,
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
-import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
+import {
+  activityPhasePriority,
+  isRecentTerminalState,
+  makeAggregateState,
+  statusForPhase,
+} from "./agentActivityAggregate.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -203,6 +209,80 @@ function notificationForState(input: {
   const preferences = parsePreferences(input.target.preferences_json);
   if (!shouldAlertForActivity({ ...state, preferences, nowMs: input.nowMs })) return null;
   return notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+}
+
+const rowKey = (row: { readonly environmentId: string; readonly threadId: string }) =>
+  `${row.environmentId}\u0000${row.threadId}`;
+
+const isActiveRow = (row: RelayAgentActivityAggregateState["activities"][number]) =>
+  row.phase !== "completed" && row.phase !== "failed";
+
+// A queued job delivers itself while current, a rebuild when its rows only expired or aged out,
+// or null when newer work superseded it (that publish queued its own job and alert).
+function currentAggregateForJob(input: {
+  readonly job: RelayAgentActivityAggregateState;
+  readonly createdAt: string;
+  readonly currentStates: ReadonlyArray<RelayAgentActivityState>;
+  readonly nowMs: number;
+}): RelayAgentActivityAggregateState | null {
+  const { job, nowMs } = input;
+  const currentByThread = new Map(input.currentStates.map((state) => [rowKey(state), state]));
+  const rowsMatch = job.activities.every((row) => {
+    const current = currentByThread.get(rowKey(row));
+    return (
+      current !== undefined && current.phase === row.phase && current.updatedAt === row.updatedAt
+    );
+  });
+  if (!rowsMatch) return null;
+  const liveStates = input.currentStates.filter((state) =>
+    isTerminalPhase(state)
+      ? isRecentTerminalState(state, nowMs)
+      : !isExpiredAgentActivityState(state, nowMs),
+  );
+  const shownKeys = new Set(job.activities.map(rowKey));
+  const newerUnshown = (since: string) =>
+    liveStates.some(
+      (state) => !shownKeys.has(rowKey(state)) && state.updatedAt.localeCompare(since) > 0,
+    );
+  // A Done names only its own thread and may arrive late; active work or a later finish supersedes it.
+  if (job.activeCount === 0) {
+    const since =
+      input.createdAt.localeCompare(job.updatedAt) > 0 ? input.createdAt : job.updatedAt;
+    return liveStates.some((state) => !isTerminalPhase(state)) || newerUnshown(since) ? null : job;
+  }
+  const current = makeAggregateState({
+    activeStates: input.currentStates,
+    terminalState: null,
+    nowMs,
+  });
+  if (current === null || current.activeCount > job.activeCount) {
+    return null;
+  }
+  const lowestShownPriority = Math.max(
+    ...job.activities.filter(isActiveRow).map((row) => activityPhasePriority(row.phase)),
+  );
+  // Priority catches promotions even when environment clocks disagree on updatedAt.
+  const outranked = current.activities.some(
+    (row) =>
+      !shownKeys.has(rowKey(row)) &&
+      isActiveRow(row) &&
+      activityPhasePriority(row.phase) < lowestShownPriority,
+  );
+  if (outranked || newerUnshown(job.updatedAt)) return null;
+  const currentKeys = new Set(current.activities.map(rowKey));
+  if (
+    current.activeCount === job.activeCount &&
+    job.activities.every((row) => currentKeys.has(rowKey(row)))
+  ) {
+    // Nothing the job showed expired, so any extra row is newer work, whatever its timestamp.
+    return current.activities.length === job.activities.length ? job : null;
+  }
+  const liveKeys = new Set(liveStates.map(rowKey));
+  // A shown row that is still live but lost its slot was displaced by newer work, not expiry.
+  if (job.activities.some((row) => !currentKeys.has(rowKey(row)) && liveKeys.has(rowKey(row)))) {
+    return null;
+  }
+  return current;
 }
 
 // Suppressed Live Activity updates must not fall back to alert pushes or unchanged replays would ring.
@@ -426,6 +506,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly createdAt: string;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -566,32 +647,27 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const aggregateRowsAreCurrent = Effect.fnUntraced(function* (input: {
+  const resolveCurrentAggregate = Effect.fnUntraced(function* (input: {
     readonly userId: string;
     readonly aggregate: RelayAgentActivityAggregateState;
+    readonly createdAt: string;
   }) {
+    // Sample the clock after the read so rows that expired while it ran count as expired.
     return yield* activityRows.listForUser({ userId: input.userId }).pipe(
-      Effect.map((currentStates) => {
-        const currentByThread = new Map(
-          currentStates.map((current) => [
-            `${current.environmentId}\u0000${current.threadId}`,
-            current,
-          ]),
-        );
-        return input.aggregate.activities.every((row) => {
-          const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
-          return (
-            current !== undefined &&
-            current.phase === row.phase &&
-            current.updatedAt === row.updatedAt
-          );
-        });
-      }),
+      Effect.zip(DateTime.now),
+      Effect.map(([currentStates, now]) =>
+        currentAggregateForJob({
+          job: input.aggregate,
+          createdAt: input.createdAt,
+          currentStates,
+          nowMs: now.epochMilliseconds,
+        }),
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("agent-activity aggregate recheck failed; skipping queued delivery", {
           cause,
           userId: input.userId,
-        }).pipe(Effect.as(false)),
+        }).pipe(Effect.as(null)),
       ),
     );
   });
@@ -648,7 +724,7 @@ const make = Effect.gen(function* () {
     });
     let deliveryTarget = input.target;
     const now = yield* DateTime.now;
-    const aggregate =
+    let aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -688,6 +764,20 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    if (aggregate !== null) {
+      aggregate = yield* resolveCurrentAggregate({
+        userId: input.target.user_id,
+        aggregate,
+        createdAt: input.createdAt,
+      });
+      if (aggregate === null) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale agent activity state skipped.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+    }
     if (alert) {
       const preferences = parsePreferences(currentTarget.preferences_json);
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
@@ -706,19 +796,6 @@ const make = Effect.gen(function* () {
               nowMs: now.epochMilliseconds,
               includeUnobserved: true,
             }));
-    }
-    if (
-      aggregate !== null &&
-      !(yield* aggregateRowsAreCurrent({
-        userId: input.target.user_id,
-        aggregate,
-      }))
-    ) {
-      yield* attempts.completeSourceJob({
-        sourceJobId: input.sourceJobId,
-        apnsReason: "Stale agent activity state skipped.",
-      });
-      return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     // A contentless end must not retire a card that newer work now owns. An
     // end for a device that turned Live Activities off still goes out.
@@ -968,6 +1045,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            createdAt: payload.createdAt,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
@@ -982,6 +1060,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            createdAt: payload.createdAt,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
