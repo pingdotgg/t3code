@@ -13070,5 +13070,21 @@
   "b45f0b467e9406d0": "Responder ao cliente",
   "d454bfdeea6f1129": "Abrir pré-visualização",
   "8363b914aade0bdc": "Maximizar painel ({shortcut})",
-  "6f9f7ac334779864": "Restaurar tamanho do painel ({shortcut})"
+  "6f9f7ac334779864": "Restaurar tamanho do painel ({shortcut})",
+  "2d4b888d587a5b70": "Desenhar em {name}",
+  "cfa1fc62923d3d32": "Ferramenta de desenho",
+  "3b7a720d84d54cd5": "Desenhar à mão livre (D)",
+  "2f5782fab3b69ec0": "Desenhar",
+  "d921a0a1ba87a665": "Apagar um traço (E)",
+  "449a265c477785b0": "Apagar",
+  "a8ed2dbdd7333ead": "Cor do traço",
+  "650afcc1cdb79840": "Cor do tema",
+  "42102b61a3c388ad": "Não foi possível salvar o desenho. Tente novamente ou cancele.",
+  "e1abc4e22afc6c41": "Desenhar na imagem",
+  "677fbda9e901b45e": "Vermelho",
+  "c23be241b9d249c9": "Laranja",
+  "c63d942911808821": "Verde",
+  "75f923f6e3e41def": "Branco",
+  "04cabf0f2aa08368": "Preto",
+  "a992afd4cdaa1317": "Cancelar desenho"
 }
