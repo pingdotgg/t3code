@@ -422,6 +422,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
           session: { notices: {}, compaction: {} },
+          auth: { terminal: true },
         };
         expect(
           (yield* h.readRequests)
@@ -436,6 +437,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             fs: { readTextFile: true, writeTextFile: false },
             terminal: false,
             session: { notices: {}, compaction: {} },
+            auth: { terminal: true },
             elicitation: { form: {} },
           },
         ]);
@@ -889,6 +891,102 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(levelOf(yield* h.instance.snapshot.getSnapshot, "gemini-test-low")).toBe("high");
         yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "uses terminal-login without fake SSH on 1.5.17+ sessions while keeping SSH on --login",
+    () =>
+      Effect.gen(function* () {
+        const { SSH_CONNECTION: _ambientSsh, ...localEnv } = yield* HostProcess.Environment;
+        yield* Effect.gen(function* () {
+          const h = yield* makeHarness({
+            environment: [
+              { name: "T3_ACP_ANTIGRAVITY_TERMINAL_LOGIN", value: "1" },
+              { name: "DISPLAY", value: ":0" },
+              { name: "WAYLAND_DISPLAY", value: "wayland-0" },
+            ],
+          });
+          const loginUrl =
+            "https://accounts.google.com/o/oauth2/auth?access_type=offline&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=driver-login-state";
+          const base = yield* h.makeExecutable("1.5.18", { agentVersion: "1.5.18" });
+          const script = yield* h.fs.readFileString(base.executablePath);
+          const loginAware = script.replace(
+            "#!/bin/sh\n",
+            [
+              "#!/bin/sh",
+              'for arg in "$@"; do',
+              '  if [ "$arg" = "--login" ]; then',
+              `    printf '%s\\n' ${shellQuote(loginUrl)}`,
+              "    read -r _code",
+              "    exit 0",
+              "  fi",
+              "done",
+              "",
+            ].join("\n"),
+          );
+          yield* h.fs.writeFileString(base.executablePath, loginAware);
+          h.controls.selected = base;
+
+          yield* h.refresh();
+          const refreshLaunch = h.launches.findLast(
+            (launch) => launch.command === base.executablePath && !launch.args.includes("--login"),
+          );
+          expect(refreshLaunch?.environment.SSH_CONNECTION).toBeUndefined();
+          expect(refreshLaunch?.environment.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+          expect(
+            (yield* h.readRequests)
+              .filter((request) => request.method === "auth/login")
+              .map((request) => request.params?.methodId),
+          ).toEqual(["terminal-login"]);
+
+          const auth = h.instance.auth;
+          if (!auth) return yield* Effect.die("Antigravity does not expose auth.");
+          const started = yield* auth.start("owner-1");
+          const waiting = yield* auth.subscribe("owner-1").pipe(
+            Stream.filter((state) => state.phase === "waiting"),
+            Stream.runHead,
+          );
+          expect(waiting._tag).toBe("Some");
+          if (waiting._tag !== "Some") return;
+          const loginLaunch = h.launches.findLast(
+            (launch) => launch.command === base.executablePath && launch.args.includes("--login"),
+          );
+          expect(loginLaunch?.environment.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0");
+          expect(loginLaunch?.environment.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+          expect(loginLaunch?.environment.DISPLAY).toBeUndefined();
+          expect(loginLaunch?.environment.WAYLAND_DISPLAY).toBeUndefined();
+
+          if (!auth.respond) return yield* Effect.die("Antigravity auth does not expose respond.");
+          yield* auth.respond("owner-1", {
+            instanceId: h.instance.instanceId,
+            flowId: started.flowId!,
+            interactionId: started.flowId!,
+            response: { type: "credentials", values: { code: "4/0A-valid-code" } },
+          });
+          const completed = yield* auth.subscribe("owner-1").pipe(
+            Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+            Stream.runHead,
+          );
+          expect(completed._tag).toBe("Some");
+          if (completed._tag === "Some") {
+            expect(completed.value.phase).toBe("succeeded");
+          }
+
+          // When terminal-login reports -32000, the driver marks the provider unauthenticated.
+          const signedOut1518 = yield* h.makeExecutable("1.5.18-signed-out", {
+            agentVersion: "1.5.18",
+          });
+          const signedOutScript = (yield* h.fs.readFileString(
+            signedOut1518.executablePath,
+          )).replace("#!/bin/sh\n", "#!/bin/sh\nexport T3_ACP_REQUIRE_AUTH=1\n");
+          yield* h.fs.writeFileString(signedOut1518.executablePath, signedOutScript);
+          h.controls.selected = { ...signedOut1518, version: "1.5.18" };
+          const error = yield* h.refresh().pipe(Effect.flip);
+          expect(error.detail).toContain("Sign in to Antigravity");
+          expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
+          yield* h.assertClosed;
+        }).pipe(Effect.provideService(HostProcess.Environment, localEnv));
       }),
   );
 });

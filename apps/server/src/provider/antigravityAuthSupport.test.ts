@@ -72,6 +72,8 @@ describe("Antigravity process environment", () => {
       GEMINI_HOME: "/shared-gemini-home",
       gemini_home: "/alias-shared-home",
       AGY_ACP_FORCE_FILE_STORAGE: "0",
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "0",
+      agy_cli_force_file_token_storage: "0",
       agy_cli_disable_auto_update: "0",
       BROWSER: "open-real-browser",
       browser: "another-real-browser",
@@ -99,6 +101,7 @@ describe("Antigravity process environment", () => {
         HOME: "/home/developer",
         PATH: "/usr/bin",
         CUSTOM_SETTING: "keep-this",
+        AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
         SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
@@ -112,7 +115,11 @@ describe("Antigravity process environment", () => {
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
-    const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
+    const baseEnv = {
+      PATH: "/usr/bin",
+      GOOGLE_API_KEY: "ambient-key",
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
+    };
     const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
         installation: { executablePath: "/usr/bin/agy" },
@@ -150,12 +157,47 @@ describe("Antigravity process environment", () => {
     expect(business.GEMINI_API_KEY).toBeUndefined();
     expect(business.GOOGLE_API_KEY).toBeUndefined();
 
-    // Only the Google account method has the `--login` sign-in that works without the keyring.
-    for (const env of [geminiKey, vertexKey, business]) expect(env.SSH_CONNECTION).toBeUndefined();
-    expect(
-      spawnFor({ authMethod: "oauth-personal", apiKey: "", gcpProject: "", gcpLocation: "" })
-        .SSH_CONNECTION,
-    ).toBe("127.0.0.1 0 127.0.0.1 0");
+    // Only the Google account method uses profile file storage and `--login`.
+    for (const env of [geminiKey, vertexKey, business]) {
+      expect(env.SSH_CONNECTION).toBeUndefined();
+      expect(env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBeUndefined();
+    }
+    const personalUnknown = spawnFor({
+      authMethod: "oauth-personal",
+      apiKey: "",
+      gcpProject: "",
+      gcpLocation: "",
+    });
+    expect(personalUnknown.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+    expect(personalUnknown.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0");
+  });
+
+  it("omits fake SSH_CONNECTION on 1.5.17+ personal sessions while keeping real SSH and older fallbacks", () => {
+    const spawnEnv = (version: string | null | undefined, baseEnv: NodeJS.ProcessEnv = {}) =>
+      buildAntigravityAcpSpawnInput({
+        installation: {
+          executablePath: "/usr/bin/agy",
+          ...(version !== undefined ? { version } : {}),
+        },
+        profile,
+        cwd: "/project",
+        baseEnv: { PATH: "/usr/bin", ...baseEnv },
+      }).env ?? {};
+
+    for (const version of ["1.5.17", "1.6.0"]) {
+      const local = spawnEnv(version);
+      expect(local.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+      expect(local.SSH_CONNECTION).toBeUndefined();
+
+      const realSsh = spawnEnv(version, { SSH_CONNECTION: "10.0.0.1 12345 10.0.0.2 22" });
+      expect(realSsh.SSH_CONNECTION).toBe("10.0.0.1 12345 10.0.0.2 22");
+    }
+
+    for (const version of ["1.5.16", null]) {
+      const legacy = spawnEnv(version);
+      expect(legacy.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+      expect(legacy.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0");
+    }
   });
 
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
