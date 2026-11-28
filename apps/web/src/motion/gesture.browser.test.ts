@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { createLayoutState } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import {
   listenLayoutWheel,
   scrollLeftByWheel,
@@ -7,6 +9,7 @@ import {
   wheelChaseStep,
   wheelScrollTarget,
 } from "./gesture";
+import { attachWorkspaceSwitch } from "./workspaceSwitch";
 
 function mountStrip(stripOverflow: string) {
   const strip = document.createElement("div");
@@ -291,5 +294,63 @@ describe("scrollLeftByWheel", () => {
     scrollLeftByWheel(row, notched, 100);
     expect(row.scrollLeft).toBe(7);
     await vi.waitFor(() => expect(row.scrollLeft).toBe(107));
+  });
+});
+
+describe("workspaceSwitch", () => {
+  it("settles back onto the focused workspace if the swipe target disappears before release", async () => {
+    const previousLayout = useLayoutStore.getState().layout;
+    const root = document.createElement("div");
+    const scroller = document.createElement("div");
+    const stage = document.createElement("div");
+    scroller.style.cssText = "width: 400px; height: 200px; overflow: hidden";
+    root.append(scroller, stage);
+    document.body.append(root);
+
+    useLayoutStore.setState({ layout: createLayoutState() });
+    useLayoutStore.getState().openTab({ kind: "settings" }, { placement: "new-column" });
+    const focusedBefore = useLayoutStore.getState().layout.focusedWorkspaceId;
+    expect(useLayoutStore.getState().layout.workspaces).toHaveLength(2);
+
+    const detach = attachWorkspaceSwitch({
+      root,
+      scroller,
+      stage,
+      gap: () => 0,
+      blocked: () => false,
+      stripShown: () => true,
+    });
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        detach();
+        root.remove();
+        useLayoutStore.setState({ layout: previousLayout });
+        window.dispatchEvent(new Event("blur"));
+      },
+    };
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Alt", ...CHORD }));
+    const sendWheel = (deltaY: number) =>
+      root.dispatchEvent(
+        new WheelEvent("wheel", {
+          cancelable: true,
+          deltaMode: 0,
+          deltaY,
+          ...CHORD,
+        }),
+      );
+    sendWheel(70);
+    sendWheel(70);
+    expect(stage.style.transform).not.toBe("");
+
+    // Close the only tab in workspace A while swiping toward trailing blank workspace B:
+    // layout normalization keeps A focused and drops B.
+    const tabId = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs[0]!.id;
+    useLayoutStore.getState().closeTab(tabId);
+    expect(useLayoutStore.getState().layout.workspaces).toHaveLength(1);
+    expect(useLayoutStore.getState().layout.focusedWorkspaceId).toBe(focusedBefore);
+
+    await vi.waitFor(() => expect(stage.style.transform).toBe(""), { timeout: 2_000 });
+    expect(useLayoutStore.getState().layout.focusedWorkspaceId).toBe(focusedBefore);
   });
 });

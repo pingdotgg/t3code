@@ -351,20 +351,34 @@ function endGesture(time: number): void {
     (active.tracker.velocity() / active.pitch) *
     rubberBandClampDerivative(WORKSPACE_RUBBER_BAND, active.min, active.max, raw);
   const direction = target > active.center.offset ? 1 : -1;
-  const id =
+  const candidateId =
     target === active.center.offset ? active.center.id : direction === 1 ? active.down : active.up;
-  if (id === null) return springTo(active.center.offset, velocity);
-  const row =
-    target === active.center.offset ? active.center : placeRow(id, active.center, direction);
-  if (id !== focusedId()) {
+  const currentWorkspaces = useLayoutStore.getState().layout.workspaces;
+  const targetExists =
+    candidateId !== null && currentWorkspaces.some((workspace) => workspace.id === candidateId);
+  if (targetExists && candidateId !== focusedId()) {
     committing = true;
     try {
-      useLayoutStore.getState().focusWorkspace(id);
+      useLayoutStore.getState().focusWorkspace(candidateId);
     } finally {
       committing = false;
     }
   }
-  springTo(row.offset, velocity);
+  const landedId = focusedId();
+  if (targetExists && landedId === candidateId) {
+    const row =
+      target === active.center.offset
+        ? active.center
+        : placeRow(candidateId, active.center, direction);
+    springTo(row.offset, velocity);
+    return;
+  }
+  const focusedRow = rowOf(landedId);
+  if (focusedRow) {
+    springTo(focusedRow.offset, velocity);
+    return;
+  }
+  endStack();
 }
 
 /** A wheel notch: one workspace, behind niri's cooldown. Never opens a new workspace. */
