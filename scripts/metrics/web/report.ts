@@ -357,7 +357,7 @@ export function summaryTable(metrics: ClientMetrics) {
     ...steps.map((entry) => ({ key: `${entry.case}: ${entry.step}`, ...entry })),
     ...metrics.runs.flatMap((run) =>
       run.idle.map((entry) => ({
-        key: `${Math.round(entry.seconds)} s ${entry.label}, a thread streaming`,
+        key: `streaming: ${entry.label}`,
         renders: entry.renders,
       })),
     ),

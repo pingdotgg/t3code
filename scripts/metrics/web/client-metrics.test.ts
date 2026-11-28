@@ -310,7 +310,7 @@ describe("report math", () => {
       runs: [{ switches: [], memory: [], idle: [idle] }],
     });
     expect(summaryTable(quiet)).toContain(
-      "| 10 s on an idle thread, a thread streaming | 1 | 3 | 12 | 12 | TimelineRow 12 |",
+      "| streaming: on an idle thread | 1 | 3 | 12 | 12 | TimelineRow 12 |",
     );
   });
 });
