@@ -27,6 +27,7 @@ import {
   antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  readAntigravityProfileMcpServers,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
@@ -160,11 +161,27 @@ export function makeAntigravityAcpAdapterFlavor(
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      const sessionServerNames = new Set(input.mcpServers.map((server) => server.name));
+      const profileServers = (
+        profileDirectory === undefined
+          ? []
+          : yield* readAntigravityProfileMcpServers(profileDirectory).pipe(
+              Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+              Effect.provideService(Path.Path, options.path),
+            )
+      ).filter((server) => !sessionServerNames.has(server.name));
+      const withProfileServers = (
+        activation: AcpSessionRuntime.AcpSessionActivationOptions | undefined,
+      ) =>
+        activation?.mcpServers === undefined
+          ? activation
+          : { ...activation, mcpServers: [...activation.mcpServers, ...profileServers] };
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
+            mcpServers: [...input.mcpServers, ...profileServers],
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
@@ -199,6 +216,12 @@ export function makeAntigravityAcpAdapterFlavor(
               }),
             ),
           ),
+        loadSession: (sessionId, activation) =>
+          runtime.loadSession(sessionId, withProfileServers(activation)),
+        resumeSession: (sessionId, activation) =>
+          runtime.resumeSession(sessionId, withProfileServers(activation)),
+        forkSession: (sessionId, activation, meta) =>
+          runtime.forkSession(sessionId, withProfileServers(activation), meta),
         prompt: (payload, promptOptions) =>
           Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
         handleSessionUpdate: (handler) => {

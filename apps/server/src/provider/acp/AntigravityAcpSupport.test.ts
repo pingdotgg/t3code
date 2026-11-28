@@ -20,6 +20,7 @@ import {
   antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
+  readAntigravityProfileMcpServers,
 } from "./AntigravityAcpSupport.ts";
 
 const modelConfig = {
@@ -790,6 +791,47 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
         code: -32602,
         errorMessage: "Could not read attachment 'screen.png'.",
       });
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("readAntigravityProfileMcpServers", (it) => {
+  it.effect("names the profile's enabled servers so agy preloads them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-mcp-" });
+      const read = readAntigravityProfileMcpServers(profile);
+      expect(yield* read).toEqual([]);
+
+      yield* fs.makeDirectory(path.join(profile, "config"));
+      yield* fs.writeFileString(path.join(profile, "config", "mcp_config.json"), "");
+      expect(yield* read).toEqual([]);
+
+      yield* fs.writeFileString(
+        path.join(profile, "config", "mcp_config.json"),
+        JSON.stringify({
+          mcpServers: {
+            zebra: { command: "zebra-mcp", args: ["--fast"], env: { TOKEN: "${TOKEN}" } },
+            plain: { command: "plain-mcp" },
+            off: { command: "off-mcp", disabled: true },
+            remote: { url: "https://mcp.example.com/mcp", headers: { Authorization: "secret" } },
+            legacy: { serverUrl: "https://legacy.example.com/mcp" },
+            neither: { args: ["--orphan"] },
+          },
+        }),
+      );
+      expect(yield* read).toEqual([
+        {
+          name: "zebra",
+          command: "zebra-mcp",
+          args: ["--fast"],
+          env: [{ name: "TOKEN", value: "${TOKEN}" }],
+        },
+        { name: "plain", command: "plain-mcp", args: [], env: [] },
+        { type: "http", name: "remote", url: "https://mcp.example.com/mcp", headers: [] },
+        { type: "http", name: "legacy", url: "https://legacy.example.com/mcp", headers: [] },
+      ]);
     }),
   );
 });
