@@ -164,6 +164,11 @@ interface ActiveHeadWatcher {
   readonly subscriberCount: number;
 }
 
+interface InitialRefs {
+  /** Emptied by the poll that reads it, so the long-lived loop does not keep the snapshot. */
+  refs: string | null;
+}
+
 interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
@@ -499,7 +504,7 @@ export const make = Effect.gen(function* () {
     );
 
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
-    function* (cwd: string) {
+    function* (cwd: string, initialRefs?: InitialRefs) {
       const watch = yield* readyHeadWatch(cwd);
       const generation = headGenerations.get(cwd);
       const confirm = <A>(value: A) => {
@@ -520,12 +525,18 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateLocalStatus(cwd);
         return confirm(yield* loadLocalStatus(cwd, { publish: true }));
       }
+      if (initialRefs === undefined) return confirm(yield* loadLocalStatus(cwd));
+      // Only a fresh git read follows the snapshot; the workflow's short cache may predate it.
+      yield* workflow.invalidateLocalStatus(cwd);
+      // The poller compares this against its own stamp, so it must be a poll stamp, taken before the read.
+      const branch = yield* workflow.currentBranch(cwd);
+      initialRefs.refs = (yield* workflow.readStatusPoll(cwd, branch, false))?.inputStamp ?? null;
       return confirm(yield* loadLocalStatus(cwd));
     },
   );
 
-  const getOrLoadLocalStatus = (cwd: string) =>
-    localRefreshLocks.withLock(cwd, getOrLoadLocalStatusUnlocked(cwd));
+  const getOrLoadLocalStatus = (cwd: string, initialRefs?: InitialRefs) =>
+    localRefreshLocks.withLock(cwd, getOrLoadLocalStatusUnlocked(cwd, initialRefs));
 
   const getStatusParts = Effect.fn("VcsStatusBroadcaster.getStatusParts")(function* (cwd: string) {
     const cached = yield* getCachedStatus(cwd);
@@ -560,10 +571,16 @@ export const make = Effect.gen(function* () {
     );
   }, Effect.scoped);
 
+  const requestLocalRefresh = (cwd: string) => {
+    const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
+    localRefreshRequests.set(cwd, requestedAt);
+    return requestedAt;
+  };
+
+  // `earlierRequest` lets a caller that learned of a change earlier share any read started since.
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string) {
-      const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
-      localRefreshRequests.set(cwd, requestedAt);
+    function* (cwd: string, earlierRequest?: number) {
+      const requestedAt = earlierRequest ?? requestLocalRefresh(cwd);
       return yield* localRefreshLocks.withLock(
         cwd,
         Effect.gen(function* () {
@@ -732,6 +749,7 @@ export const make = Effect.gen(function* () {
       readonly policyCwds?: ReadonlyArray<string>;
       /** Git inputs seen before this poller's last full local read. */
       readonly inputsAtLocalRead?: Ref.Ref<string | null>;
+      readonly localRequestedAt?: number;
     },
   ) {
     return yield* withRemoteWriteLock(
@@ -753,10 +771,10 @@ export const make = Effect.gen(function* () {
         }
         // Base refs and merge bases can move without changing divergence counts.
         if (inputsAtLocalRead === undefined) {
-          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd);
+          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd, options?.localRequestedAt);
         } else if (inputStamp === null || inputStamp !== (yield* Ref.get(inputsAtLocalRead))) {
           yield* Ref.set(inputsAtLocalRead, null);
-          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd);
+          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd, options?.localRequestedAt);
           yield* Ref.set(inputsAtLocalRead, inputStamp);
         }
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
@@ -831,9 +849,10 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const localDone = yield* Deferred.make<void>();
     // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
-    yield* refreshLocalStatusCore(cwd).pipe(
+    yield* workflow.readStatusRefreshRefs(cwd).pipe(
+      Effect.tap(() => refreshLocalStatusCore(cwd)),
       Effect.ensuring(Deferred.succeed(localDone, undefined)),
-      Effect.andThen(refreshRemoteAndLocalTotals(cwd, rawCwd, null)),
+      Effect.flatMap((refs) => refreshRemoteAndLocalTotals(cwd, rawCwd, refs)),
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(broadcasterScope),
     );
@@ -866,6 +885,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
     refreshImmediately: boolean,
+    initialRefs: InitialRefs,
   ) {
     const consecutiveFailuresRef = yield* Ref.make(0);
     const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
@@ -896,6 +916,11 @@ export const make = Effect.gen(function* () {
         return activeInterval;
       }
 
+      // The read made with this subscription vouches for the first attempt only; a failed
+      // attempt drops it, so the retry reads again.
+      const subscriptionRefs = initialRefs.refs;
+      initialRefs.refs = null;
+      if (subscriptionRefs !== null) yield* Ref.set(inputsAtLocalReadRef, subscriptionRefs);
       const exit = yield* refreshRemoteStatus(cwd, {
         refreshUpstream: !Duration.isZero(configuredInterval),
         policyCwds: [...demandCwds.keys()],
@@ -906,6 +931,7 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(consecutiveFailuresRef, 0);
         return activeInterval;
       }
+      if (subscriptionRefs !== null) yield* Ref.set(inputsAtLocalReadRef, null);
 
       const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
       if (interruptionReasons.length > 0) {
@@ -949,6 +975,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     demandCwd: string,
     refreshImmediately: boolean,
+    initialRefs: InitialRefs,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
@@ -971,7 +998,7 @@ export const make = Effect.gen(function* () {
 
       return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
         Effect.flatMap((demandCwds) =>
-          makeRemoteRefreshLoop(cwd, demandCwds, refreshImmediately).pipe(
+          makeRemoteRefreshLoop(cwd, demandCwds, refreshImmediately, initialRefs).pipe(
             Effect.forkIn(broadcasterScope),
             Effect.map((fiber) => {
               const nextPollers = new Map(activePollers);
@@ -1132,12 +1159,12 @@ export const make = Effect.gen(function* () {
   });
 
   const reconcileCheckedOutRef = Effect.fn("VcsStatusBroadcaster.reconcileCheckedOutRef")(
-    function* (cwd: string) {
+    function* (cwd: string, localRequestedAt: number) {
       if (!detailedSubscribers.has(cwd)) return;
       if ((yield* getCachedStatus(cwd))?.remote) {
-        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false, localRequestedAt });
       } else {
-        yield* refreshLocalStatusCore(cwd);
+        yield* refreshLocalStatusCore(cwd, localRequestedAt);
       }
     },
   );
@@ -1185,12 +1212,16 @@ export const make = Effect.gen(function* () {
             headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
           }),
         ),
+        // Requested on arrival, so a checkout's own refresh that starts later also serves this move.
+        Stream.map(() => requestLocalRefresh(cwd)),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
+        Stream.tap(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
         // Detailed status waits behind its own reads; the branch keeps up on the stage above.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
+        Stream.runForEach((requestedAt) =>
+          retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd, requestedAt)),
+        ),
       );
   });
 
@@ -1273,14 +1304,25 @@ export const make = Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changesPubSub);
         // Watch before reading so a checkout in between still publishes.
         yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
-        const initialLocal = yield* getOrLoadLocalStatus(cwd);
+        // A cached remote means no immediate poll, so nothing would use the refs. Otherwise a fresh
+        // load records them for that poll.
+        const initialRefs: InitialRefs = { refs: null };
+        const initialLocal = yield* getOrLoadLocalStatus(
+          cwd,
+          input.includeRemote !== false && (yield* getCachedStatus(cwd))?.remote == null
+            ? initialRefs
+            : undefined,
+        );
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
         if (input.includeRemote !== false) {
+          const refreshImmediately =
+            cachedStatus?.remote === null || cachedStatus?.remote === undefined;
           yield* retainRemotePoller(
             cwd,
             input.cwd,
-            cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+            refreshImmediately,
+            refreshImmediately ? initialRefs : { refs: null },
           );
         }
         const release =
