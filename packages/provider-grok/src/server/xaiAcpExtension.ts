@@ -309,6 +309,8 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
 }> {
   const rawInput = unknownRecord(toolCall.data.rawInput);
   if (!isXAiGetSubagentOutputTool(toolCall, rawInput)) return [];
+  const multiResults = multiResultCompletionsFromGetOutputTool(toolCall);
+  if (multiResults !== undefined) return multiResults;
   const text = xAiToolOutputText(toolCall);
   const status = statusFromGetOutputTool(toolCall, text);
   const appendOutput = resultFromGetOutputTool(toolCall, text) ?? "";
@@ -834,6 +836,35 @@ function statusFromGetOutputTool(
   }
   // A completed poll RPC does not end its task without task-level status or exit code.
   return "running";
+}
+
+function multiResultCompletionsFromGetOutputTool(toolCall: AcpToolCallState):
+  | ReadonlyArray<{
+      readonly taskId: string;
+      readonly status: "running" | "completed" | "failed";
+      readonly appendOutput: string;
+    }>
+  | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const multi = unknownRecord(rawOutput?.MultiResult) ?? unknownRecord(rawOutput?.multiResult);
+  if (multi === undefined || !Array.isArray(multi.results)) return undefined;
+  return multi.results.flatMap((entry) => {
+    const result = unknownRecord(entry);
+    const taskId = nonEmptyString(result?.task_id) ?? nonEmptyString(result?.taskId);
+    if (result === undefined || taskId === undefined) return [];
+    const row: AcpToolCallState = {
+      ...toolCall,
+      status: "completed",
+      data: { ...toolCall.data, rawOutput: { type: "TaskOutput", Result: result } },
+    };
+    return [
+      {
+        taskId,
+        status: statusFromGetOutputTool(row, undefined),
+        appendOutput: resultFromGetOutputTool(row, undefined) ?? "",
+      },
+    ];
+  });
 }
 
 /** Spawn ACKs return immediately; keep subagents running until a child or hydration terminal. */
