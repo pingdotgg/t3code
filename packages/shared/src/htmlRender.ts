@@ -442,11 +442,20 @@ function bootstrapMarkup(markup: string): string {
   ].join("");
 }
 
+const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
+// Browsers keep `<` and quotes inside unquoted attribute values on raw-text openers.
+const RAW_TEXT_TAG_END = String.raw`(?:[\s/]+|[^\s/>=]+|=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*))*(?:>|$)`;
+const HTML_NON_MARKUP = new RegExp(
+  String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${RAW_TEXT_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${RAW_TEXT_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|(<[a-z!/]${HTML_TAG_END})`,
+  "gi",
+);
+
 // Blank inert content without shifting offsets so it cannot receive the bootstrap.
 const blankNonMarkup = (html: string) => {
-  const scan = html.replace(
-    /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)\b[\s\S]*?(?:<\/\1\s*>|$)|<plaintext\b[\s\S]*$/gi,
-    (match) => " ".repeat(match.length),
+  const scan = html.replace(HTML_NON_MARKUP, (match, _rawTag, tag: string | undefined) =>
+    tag
+      ? tag.replace(/"[^"]*(?:"|$)|'[^']*(?:'|$)/g, (attr) => attr.replace(/[<>]/g, " "))
+      : " ".repeat(match.length),
   );
   const parts: string[] = [];
   let depth = 0;

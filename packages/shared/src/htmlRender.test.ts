@@ -49,7 +49,7 @@ describe("injectHtmlRenderBootstrap", () => {
 
   it("wraps fragments without a head and keeps existing meta tags", () => {
     const fragment =
-      '<meta charset="utf-8"><meta data-if="a<b" name="viewport" content="width=device-width"><p>hi</p>';
+      '<meta charset="utf-8"><script data-x=1<2\'3></script><meta data-if="a<b" name="viewport" content="width=device-width"><p>hi</p>';
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
     expect(injected.match(/charset/g)).toHaveLength(1);
@@ -57,23 +57,27 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
   });
 
-  it.each(["textarea", "iframe", "plaintext"])("keeps the bootstrap outside %s content", (tag) => {
-    const fragment = `<${tag}><head><meta name="viewport"></head></${tag}>`;
-    const injected = injectHtmlRenderBootstrap(fragment);
-    expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf(`<${tag}>`));
-    expect(injected).toContain('<meta name="viewport" content="width=device-width');
-    expect(injected.endsWith(fragment)).toBe(true);
-  });
+  it.each(["textarea", "iframe", "plaintext", "script data-x=1<2", "script data-x=1<2'3"])(
+    "keeps the bootstrap outside %s content",
+    (tag) => {
+      const fragment = `<${tag}><head><meta name="viewport"></head></${tag.split(" ")[0]}>`;
+      const injected = injectHtmlRenderBootstrap(fragment);
+      expect(injected.startsWith("<!doctype html><head>")).toBe(true);
+      expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf(`<${tag}>`));
+      expect(injected).toContain('<meta name="viewport" content="width=device-width');
+      expect(injected.endsWith(fragment)).toBe(true);
+    },
+  );
 
   it.each([
     '<template><head><meta name="viewport"></head></template>',
     '<template><template>inner</template><head><meta name="viewport"></head></template>',
     '<template data-if="a<b"><head><meta name="viewport"></head></template>',
-  ])("keeps the bootstrap outside inert template content: %s", (fragment) => {
+    '<button data-code="<head>">Copy</button><p>Hello</p>',
+    '<div data-code=\'<meta name="viewport">\' data-tpl="<template>">hi</div>',
+  ])("keeps the bootstrap outside inert template content and attribute values: %s", (fragment) => {
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf("<template"));
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
     expect(injected.endsWith(fragment)).toBe(true);
   });
@@ -103,6 +107,18 @@ describe("injectHtmlRenderBootstrap", () => {
       injected.indexOf("<html><head>"),
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
+  });
+
+  it.each([
+    '<!doctype html><html data-hint="<!--"><head><title>x</title></head><body>y</body></html>',
+    "<!--><html><head><title>x</title></head><body>y</body></html>",
+    "<!-- note --!><html><head><title>x</title></head><body>y</body></html>",
+    "<title-bar>x</title-bar><html><head><title>x</title></head><body>y</body></html>",
+  ])("injects after the document head past markup that ends early: %s", (html) => {
+    const at = html.indexOf("<head><title>") + "<head>".length;
+    const injected = injectHtmlRenderBootstrap(html);
+    expect(injected.startsWith(`${html.slice(0, at)}<meta charset="utf-8">`)).toBe(true);
+    expect(injected.endsWith(html.slice(at))).toBe(true);
   });
 });
 
