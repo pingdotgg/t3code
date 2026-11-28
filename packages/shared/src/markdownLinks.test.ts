@@ -27,6 +27,9 @@ describe("isMarkdownFileLinkLabel", () => {
     ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
     ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
     ["src/main.ts#L10", "./src/main.ts%23L10", true],
+    ["draft.md ", "/tmp/draft.md%20", true],
+    [" draft.md  ", "./%20draft.md%20%20", true],
+    [" draft.md ", "/tmp/draft.md", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -229,6 +232,31 @@ describe("extractInlineCodeSpans", () => {
     ["`a\\` and `./b/shared.ts`", ["a\\", "./b/shared.ts"]],
     ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
   ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
+  });
+
+  it.each([
+    [
+      "Use `` ``` `` to open a fence, then edit `./a/shared.ts` and `./b/shared.ts`",
+      ["```", "./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["```x``` then `./a/shared.ts`", ["x", "./a/shared.ts"]],
+    ["~~~\n`./a/shared.ts`\n~~~\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["````md\n```ts\n`./a/shared.ts`\n```\n````\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["```\n    ```\n`./a/shared.ts`\n```\n`./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "```diff\n- ```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["> ```\n> `./a/shared.ts`\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "- ~~~\n  example\n\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["Step\n2. ~~~\n   `./a/shared.ts`", ["./a/shared.ts"]],
+    ["1. Step\n    ```\r\n    `./a/shared.ts`\r\n    ```\r\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["    ```\n    `./a/shared.ts`\n    ```\n\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("skips only fenced code in %j", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
 });

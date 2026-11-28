@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "../features/files/FilePasswordPrompt";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
@@ -49,6 +50,10 @@ const preparedPdfAtom = Atom.family((uri: string) =>
 );
 
 export function PdfPreview(props: { readonly uri: string }) {
+  return <PdfPreviewSession key={props.uri} uri={props.uri} />;
+}
+
+function PdfPreviewSession(props: { readonly uri: string }) {
   const gt = useGT();
   const atom = preparedPdfAtom(props.uri);
   const prepared = useAtomValue(atom);
@@ -56,9 +61,13 @@ export function PdfPreview(props: { readonly uri: string }) {
   // A render failure belongs to the downloaded copy that failed; Retry replaces it.
   const [unrenderable, setUnrenderable] = useState<unknown>(null);
   const file = prepared._tag === "Success" && !prepared.waiting ? prepared.value : null;
+  const [challenge, setChallenge] = useState<{ file: typeof file; incorrect: boolean } | null>(
+    null,
+  );
+  const [attempt, setAttempt] = useState<{ file: typeof file; password: string } | null>(null);
   const error =
     file !== null && unrenderable === file
-      ? gt("The PDF could not be rendered. It may be damaged or password protected.")
+      ? gt("The PDF could not be rendered. It may be damaged.")
       : prepared._tag === "Failure" && !prepared.waiting
         ? Option.getOrElse(AsyncResult.error(prepared), () => gt("The PDF could not be loaded."))
         : null;
@@ -78,19 +87,36 @@ export function PdfPreview(props: { readonly uri: string }) {
     return <FilePreviewLoading message={gt("Loading PDF...")} background="card" />;
 
   return (
-    <Pdf
-      source={{ uri: localUri }}
-      initialPage={pdfInitialPage(props.uri) - 1}
-      enableAnnotationRendering
-      enableDoubleTapZoom
-      onLinkPress={({ url: href }) => {
-        const url = pdfLinkUrl(href, props.uri);
-        if (url !== null) void tryOpenExternalUrl(url, "file-preview");
-      }}
-      onError={() => {
-        setUnrenderable(file);
-      }}
-      style={{ flex: 1, width: "100%" }}
-    />
+    <View className="flex-1 bg-card">
+      {challenge !== null && challenge.file === file ? (
+        <FilePasswordPrompt
+          incorrect={challenge.incorrect}
+          onSubmit={(password) => {
+            setAttempt({ file, password });
+            setChallenge(null);
+          }}
+        />
+      ) : (
+        <Pdf
+          password={attempt?.file === file ? attempt?.password : undefined}
+          onPasswordRequired={({ incorrect }) => {
+            setAttempt(null);
+            setChallenge({ file, incorrect });
+          }}
+          source={{ uri: localUri }}
+          initialPage={pdfInitialPage(props.uri) - 1}
+          enableAnnotationRendering
+          enableDoubleTapZoom
+          onLinkPress={({ url: href }) => {
+            const url = pdfLinkUrl(href, props.uri);
+            if (url !== null) void tryOpenExternalUrl(url, "file-preview");
+          }}
+          onError={() => {
+            setUnrenderable(file);
+          }}
+          style={{ flex: 1, width: "100%" }}
+        />
+      )}
+    </View>
   );
 }
