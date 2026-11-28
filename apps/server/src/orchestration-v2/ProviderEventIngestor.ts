@@ -5,6 +5,7 @@ import {
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type ModelSelection,
@@ -390,6 +391,24 @@ export const layer: Layer.Layer<
         );
       },
     );
+
+    /**
+     * A settled thread can run a background wake. A question or approval it raises after the
+     * settle needs the user, so it reopens the thread.
+     */
+    const settledThreadAskedBy = (threadId: ThreadId, request: OrchestrationV2RuntimeRequest) =>
+      request.status !== "pending" || request.kind === "dynamic_tool_call"
+        ? Effect.succeed(null)
+        : projections.getThread(threadId).pipe(
+            Effect.map((thread) =>
+              thread.settledOverride === "settled" &&
+              (thread.settledAt === null ||
+                DateTime.isGreaterThan(request.createdAt, thread.settledAt))
+                ? thread
+                : null,
+            ),
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+          );
 
     /** Retire rewound runs like CheckpointRollbackService; retain the reporting run and its lastRunOrdinal. */
     const rollBackRewoundRuns = Effect.fn("ProviderEventIngestor.rollBackRewoundRuns")(function* (
@@ -788,36 +807,70 @@ export const layer: Layer.Layer<
                 eventCount: events.length,
                 cause,
               });
-            if (input.writeIfProviderThreadOwner !== undefined) {
-              const ownerResult = yield* eventSink
-                .writeIfProviderThreadOwner({
+            const write = Effect.fnUntraced(function* (
+              batch: ReadonlyArray<OrchestrationV2DomainEvent>,
+            ) {
+              if (input.writeIfProviderThreadOwner !== undefined) {
+                const ownerResult = yield* eventSink
+                  .writeIfProviderThreadOwner({
+                    guardPendingUserInputCancellations: true,
+                    ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                    ...input.writeIfProviderThreadOwner,
+                    events: batch,
+                  })
+                  .pipe(retryLockTimeout);
+                return ownerResult.storedEvents;
+              }
+              if (input.writeIfRunCurrent === undefined) {
+                return yield* eventSink
+                  .write({
+                    guardPendingUserInputCancellations: true,
+                    ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                    events: batch,
+                  })
+                  .pipe(retryLockTimeout);
+              }
+              const result = yield* eventSink
+                .writeIfRunCurrent({
                   guardPendingUserInputCancellations: true,
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                  ...input.writeIfProviderThreadOwner,
-                  events,
+                  threadId: input.threadId,
+                  ...input.writeIfRunCurrent,
+                  events: batch,
                 })
-                .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
-              return ownerResult.storedEvents;
-            }
-            if (input.writeIfRunCurrent === undefined) {
-              return yield* eventSink
-                .write({
-                  guardPendingUserInputCancellations: true,
-                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                  events,
-                })
-                .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
-            }
-            const result = yield* eventSink
-              .writeIfRunCurrent({
-                guardPendingUserInputCancellations: true,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                threadId: input.threadId,
-                ...input.writeIfRunCurrent,
-                events,
-              })
-              .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
-            return result.storedEvents;
+                .pipe(retryLockTimeout);
+              return result.storedEvents;
+            }, Effect.mapError(mapWriteError));
+            if (input.event.type !== "runtime_request.updated") return yield* write(events);
+            const requestThreadId = input.event.threadId ?? input.threadId;
+            const settledThread = settledThreadAskedBy(
+              requestThreadId,
+              input.event.runtimeRequest,
+            ).pipe(Effect.mapError(mapWriteError));
+            if ((yield* settledThread) === null) return yield* write(events);
+            // The reopen rides in the request's own guarded write, under the lock of a full-row
+            // write: a stale request reopens nothing, and neither is stored without the other.
+            return yield* threadCommands.withLock(
+              requestThreadId,
+              Effect.gen(function* () {
+                const thread = yield* settledThread;
+                if (thread === null) return yield* write(events);
+                const now = yield* DateTime.now;
+                const reopen = yield* makeDomainEvent(input, {
+                  type: "thread.unsettled",
+                  threadId: thread.id,
+                  payload: {
+                    ...thread,
+                    settledOverride: null,
+                    settledAt: null,
+                    unsettledAt: now,
+                    updatedAt: now,
+                  },
+                  occurredAt: now,
+                }).pipe(Effect.mapError(mapWriteError));
+                return yield* write([reopen, ...events]);
+              }),
+            );
           },
           (effect, input) =>
             effect.pipe(

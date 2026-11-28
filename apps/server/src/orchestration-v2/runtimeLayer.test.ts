@@ -12969,6 +12969,66 @@ it.layer(layerTest)("snooze queued runs", (it) => {
         }
       }),
   );
+
+  it.effect.each([
+    { kind: "background", reopens: false },
+    { kind: "delegated-question", reopens: true },
+    { kind: "user", reopens: true },
+  ] as const)("a $kind message on a settled thread reopens it: $reopens", ({ kind, reopens }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`settled-wake:${kind}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("settled-wake-project"),
+        title: "Settled thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/settled-wake",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle:${threadId}`),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`wake:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`wake:${threadId}`),
+        text: "Continue",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: kind === "user" ? "user" : "agent",
+        creationSource: kind === "user" ? "web" : "server",
+        ...(kind === "user"
+          ? {}
+          : {
+              notification: {
+                source:
+                  kind === "background"
+                    ? { kind: "background_task" as const }
+                    : {
+                        kind: "delegated_task" as const,
+                        taskIds: [],
+                        childThreadId: ThreadId.make(`settled-wake-child:${kind}`),
+                      },
+                outcome: "updated" as const,
+                summary: "Background activity updated",
+              },
+            }),
+      });
+      const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.equal(thread.settledOverride, reopens ? null : "settled");
+    }),
+  );
 });
 
 const SCRATCH_ROOT = "/tmp/runtime-layer-promotion-scratch";

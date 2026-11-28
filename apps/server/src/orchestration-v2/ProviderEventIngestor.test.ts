@@ -602,6 +602,71 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect.each([
+    { asked: "after", kind: "command", reopens: true },
+    { asked: "after", kind: "dynamic_tool_call", reopens: false },
+    { asked: "before", kind: "command", reopens: false },
+  ] as const)(
+    "a $kind request raised $asked the settle reopens the settled thread: $reopens",
+    ({ asked, kind, reopens }) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const threadId = threadEvent.threadId;
+        const created = threadEvent.payload as OrchestrationV2AppThread;
+        const settledAt = DateTime.subtract(now, { minutes: 1 });
+        yield* eventSink.write({
+          events: [
+            threadEvent,
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "thread.settled",
+              threadId,
+              occurredAt: settledAt,
+              payload: { ...created, settledOverride: "settled", settledAt },
+            },
+          ],
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make(`settled-request-${asked}-${kind}`),
+          nodeId: NodeId.make(`settled-request-node-${asked}-${kind}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: asked === "after" ? now : DateTime.subtract(settledAt, { minutes: 1 }),
+          resolvedAt: null,
+        };
+
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: { type: "runtime_request.updated", driver: CODEX_DRIVER, runtimeRequest: request },
+        });
+
+        const thread = yield* projectionStore.getThread(threadId);
+        assert.equal(thread.settledOverride, reopens ? null : "settled");
+        // The reopen commits first: a crash before the request then leaves nothing hidden.
+        const types = Array.from(
+          yield* (yield* EventStore.EventStoreV2).read({ threadId }).pipe(Stream.runCollect),
+        ).map((stored) => stored.event.type);
+        assert.deepEqual(
+          types.slice(2),
+          reopens ? ["thread.unsettled", "runtime-request.updated"] : ["runtime-request.updated"],
+        );
+      }),
+  );
+
   it.effect("skips a node update only when it matches the stored node", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

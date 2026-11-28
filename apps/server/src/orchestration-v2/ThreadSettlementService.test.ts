@@ -597,6 +597,7 @@ interface HarnessOptions {
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly hasActiveSubprocess?: (input: { readonly threadId: string }) => Effect.Effect<boolean>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
+  readonly currentRuns?: ReadonlyArray<OrchestrationV2Run>;
   readonly projections?: ProjectionStore.ProjectionStoreV2Shape;
 }
 
@@ -713,6 +714,19 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               .map((thread) => ({ ...thread, pullRequests: thread.pullRequests ?? [] })),
           ),
         ),
+      getThreadRecords: ((
+        threadId: string,
+        _fields: unknown,
+        filter?: { readonly runStatuses?: ReadonlyArray<OrchestrationV2Run["status"]> },
+      ) =>
+        Effect.succeed({
+          runs:
+            options.currentRuns?.filter(
+              (run) =>
+                run.threadId === threadId &&
+                (filter?.runStatuses === undefined || filter.runStatuses.includes(run.status)),
+            ) ?? [],
+        })) as unknown as ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"],
       ...options.projections,
       getSettlementCandidates: (threadId) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
@@ -2544,6 +2558,54 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
       }).pipe(Effect.provide(fixture.layer));
     }),
+  );
+
+  it.effect.each([
+    { when: "after", skips: true },
+    { when: "before", skips: false },
+  ] as const)(
+    "a wake requested $when the settle skips its settle script: $skips",
+    ({ when, skips }) =>
+      Effect.gen(function* () {
+        const settled = appThread("woken-thread", "settled", "/worktrees/woken");
+        const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+        const requestedAt = DateTime.add(DateTime.makeUnsafe(NOW), {
+          minutes: when === "after" ? 1 : -1,
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled, marker],
+          currentRuns: [
+            {
+              id: RunId.make("run:woken-thread"),
+              threadId: settled.id,
+              ordinal: 2,
+              providerInstanceId: settled.providerInstanceId,
+              modelSelection: settled.modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("message:woken-thread"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "queued",
+              requestedAt,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          ],
+          existingWorktreePaths: ["/worktrees/woken", "/worktrees/marker"],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* fixture.publishEvent(settledEvent(marker));
+          const first = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(first.threadId, skips ? marker.id : settled.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
   );
 
   it.effect("skips the settle script for a subagent in its parent's worktree", () =>
