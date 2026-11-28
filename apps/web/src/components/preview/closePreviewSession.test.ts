@@ -19,7 +19,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
-import { followPreviewSessions } from "./agentOpenedPreviews";
+import { followPreviewSessions, startAgentOpenedPreviews } from "./agentOpenedPreviews";
 import { closePreviewSession } from "./closePreviewSession";
 
 vi.mock("~/env", async (importOriginal) => ({
@@ -156,5 +156,53 @@ describe("closePreviewSession", () => {
 
     finishClose?.();
     await closing;
+  });
+
+  it("keeps every desktop tab of a bulk close out of the panel while their closes are in flight", async () => {
+    setPrimaryEnvironment(threadRef.environmentId);
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const stopFollowing = startAgentOpenedPreviews();
+    const tabs = ["tab-1", "tab-2", "tab-3"].map((tabId) => ({
+      ...snapshot,
+      tabId,
+      runtime: "server" as const,
+    }));
+    for (const tab of tabs) applyPreviewServerSnapshot(threadRef, tab);
+    const browserTabs = () =>
+      useRightPanelStore
+        .getState()
+        .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.filter(
+          (surface) => surface.kind === "preview",
+        )
+        .map((surface) => surface.id);
+    expect(browserTabs()).toEqual(["browser:tab-1", "browser:tab-2", "browser:tab-3"]);
+
+    // Close all: the panel drops every surface, then releases each session in turn.
+    const [first, second, third] = tabs;
+    useRightPanelStore.getState().closeSurfaces(threadRef, ["browser:tab-1", "browser:tab-2"]);
+    const finishers: Array<() => void> = [];
+    const closes = [first!, second!].map((tab) =>
+      closePreviewSession({
+        closePreview: () =>
+          new Promise<ReturnType<typeof AsyncResult.success<void>>>((resolve) => {
+            finishers.push(() => resolve(AsyncResult.success(undefined)));
+          }),
+        snapshot: tab,
+        tabId: tab.tabId,
+        threadRef,
+      }),
+    );
+    expect(browserTabs()).toEqual(["browser:tab-3"]);
+
+    applyPreviewServerSnapshot(threadRef, { ...third!, updatedAt: "2026-06-18T19:00:01.000Z" });
+    expect(browserTabs()).toEqual(["browser:tab-3"]);
+
+    finishers[0]?.();
+    await closes[0];
+    expect(browserTabs()).toEqual(["browser:tab-3"]);
+    finishers[1]?.();
+    await closes[1];
+    expect(browserTabs()).toEqual(["browser:tab-3"]);
+    stopFollowing();
   });
 });

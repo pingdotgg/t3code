@@ -116,11 +116,9 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     }
-    if (
-      before.sessions !== next.sessions ||
-      before.listLoaded !== next.listLoaded ||
-      before.closingTabIds !== next.closingTabIds
-    ) {
+    // A closing mark only keeps a tab from being added, so it needs no reconcile: running one there
+    // would add back the rest of a bulk close before their own marks land.
+    if (before.sessions !== next.sessions || before.listLoaded !== next.listLoaded) {
       followPreviewSessions(threadRef, next);
     }
   });
