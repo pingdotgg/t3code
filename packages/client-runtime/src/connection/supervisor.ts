@@ -1226,6 +1226,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       pendingRetry = Option.none();
     };
     let replacing = false;
+    // A resume keeps its offline bypass until an attempt it allowed connects or fails.
+    let resuming = false;
 
     for (;;) {
       const retryRequested = yield* Ref.getAndSet(resetRetryState, false);
@@ -1239,6 +1241,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
         resetRetryLadder();
+        resuming = false;
         latestFailure = null;
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
@@ -1256,8 +1259,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       // The platform's offline report can stay wrong after the network is back,
       // so an explicit retry or a resume still tries instead of waiting for it to change.
-      const resumed = yield* Ref.getAndSet(resumeRequested, false);
-      const ignoreOffline = replacing || retryRequested || resumed;
+      if (yield* Ref.getAndSet(resumeRequested, false)) resuming = true;
+      const ignoreOffline = replacing || retryRequested || resuming;
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
@@ -1287,6 +1290,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           ),
       );
       replacing = false;
+      if (outcome.established || outcome._tag !== "Interrupted") resuming = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
       if (outcome.established) {
         // A session came up, so no earlier failure describes the connection.
