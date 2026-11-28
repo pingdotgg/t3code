@@ -40,6 +40,28 @@ describe("Client", { concurrent: false, timeout: 30_000 }, () => {
       Effect.provide(Reactivity.layer)
     ))
 
+  it.effect("fails with SqlError when prepare throws on raw and unprepared queries", () =>
+    Effect.gen(function*() {
+      const cause = new Error("prepare failed")
+      const failingDb = {
+        prepare: () => {
+          throw cause
+        }
+      } as any
+
+      const client = yield* D1Client.make({ db: failingDb })
+
+      for (const query of [client`SELECT 1`.raw, client`SELECT 1`.unprepared]) {
+        const error = yield* Effect.flip(query)
+        assert.strictEqual(error.reason._tag, "UnknownError")
+        assert.strictEqual(error.reason.operation, "prepare")
+        assert.strictEqual(error.reason.cause, cause)
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Reactivity.layer)
+    ))
+
   it.effect("should handle queries without transactions", () =>
     Effect.gen(function*() {
       const sql = yield* D1Client.D1Client

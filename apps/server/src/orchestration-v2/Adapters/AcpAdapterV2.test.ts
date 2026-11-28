@@ -2326,6 +2326,7 @@ describe("AcpAdapterV2", () => {
         { label: "Blue", description: "Blue", value: "blue" },
       ],
       allowCustomAnswer: true,
+      required: false,
     },
   ];
 
@@ -2338,6 +2339,8 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      // regression: #43335 a choice the schema leaves optional could not be skipped
+      { scenario: "OMP skipped optional choice", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2366,6 +2369,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2455,6 +2459,22 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skipped optional choice",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: {},
+      result: { action: "accept", content: {} },
+    },
+    {
+      scenario: "OpenCode required choice left unanswered is cancelled",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: ["q0"] },
+      questions: openCodeQuestions.map(({ required: _, ...question }) => question),
+      answers: {},
+      result: { action: "cancel" },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",
@@ -5157,12 +5177,20 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
       );
-      const items = Array.from(
+      const events = Array.from(
         yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         ),
-      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const terminal = events.at(-1);
+      assert.isTrue(
+        terminal?.type === "turn.terminal" && terminal.status === "completed",
+        "an error notice does not fail the turn",
+      );
 
       const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
         (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
@@ -5179,8 +5207,16 @@ describe("AcpAdapterV2", () => {
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
-        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
-        [title],
+        items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        ),
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "ACP notice severities map to system notice levels",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
@@ -7551,6 +7587,402 @@ describe("AcpAdapterV2", () => {
       yield* Fiber.join(turnFiber);
       assert.deepEqual(outcome, { outcome: "selected", optionId });
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  const startAutoAcceptEditsTurn = Effect.fn(function* (
+    name: string,
+    agentEnvironment?: (folders: {
+      readonly workspace: string;
+      readonly elsewhere: string;
+    }) => Readonly<Record<string, string>>,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-cwd-" });
+    const elsewhere = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-out-" });
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+    const makeRuntime = makeMockRuntime({
+      childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+      mockAgentPath: yield* bundledMockAgentPath,
+      environment: {
+        T3_ACP_HANG_PROMPT_FOREVER: "1",
+        ...agentEnvironment?.({ workspace, elsewhere }),
+      },
+      wrapRuntime: (runtime) => ({
+        ...runtime,
+        handleRequestPermission: (handler) =>
+          Effect.sync(() => {
+            requestPermission = handler;
+          }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+        handleSessionUpdate: (handler) =>
+          Effect.sync(() => {
+            sessionUpdate = handler;
+          }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+      }),
+    });
+    const instanceId = ProviderInstanceId.make(`acp-test-${name}`);
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        interruptPromptOnCancel: true,
+        makeRuntime: (input) =>
+          Effect.sync(() => {
+            runtimeInput = input;
+          }).pipe(Effect.andThen(makeRuntime(input))),
+      },
+      selfInvocation: yield* resolveSelfInvocation(),
+      clientTerminals: {},
+    });
+    const threadId = ThreadId.make(`thread-acp-${name}`);
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "auto-accept-edits",
+      interactionMode: "default",
+      cwd: workspace,
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-acp-${name}`),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const turnFiber = yield* runtime
+      .startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      )
+      .pipe(Effect.forkScoped);
+    const acknowledge = runtimeInput?.onOutgoingResponse;
+    if (
+      requestPermission === undefined ||
+      sessionUpdate === undefined ||
+      acknowledge === undefined
+    ) {
+      return yield* Effect.die("ACP runtime must register its handlers");
+    }
+    const handleRequestPermission = requestPermission;
+    const options = [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ] as const;
+    /** Sends an edit permission request and returns the fiber waiting on its answer. */
+    const requestEdit = (
+      toolCallId: string,
+      request: { readonly sessionId?: string; readonly target?: string } = {},
+    ) =>
+      handleRequestPermission(
+        {
+          sessionId: request.sessionId ?? "mock-session-1",
+          toolCall: {
+            toolCallId,
+            title: "Edit file",
+            kind: "edit",
+            ...(request.target === undefined ? {} : { locations: [{ path: request.target }] }),
+          },
+          options,
+        },
+        { requestId: `${toolCallId}-request`, method: "session/request_permission" },
+      ).pipe(Effect.forkScoped);
+    /** Declines the approval the adapter raised and ends the turn. */
+    const declinePendingAndStop = Effect.fn(function* (
+      requestId: string,
+      fiber: Effect.Success<ReturnType<typeof requestEdit>>,
+    ) {
+      const pending = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected an ACP approval request");
+      }
+      const responseFiber = yield* runtime
+        .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "decline" })
+        .pipe(Effect.forkScoped);
+      const response = yield* Fiber.join(fiber);
+      yield* acknowledge(requestId);
+      yield* Fiber.join(responseFiber);
+      assert.deepEqual(response.outcome, { outcome: "selected", optionId: "reject-once" });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
+      yield* Fiber.join(turnFiber);
+    });
+    return {
+      path,
+      workspace,
+      elsewhere,
+      sessionUpdate,
+      acknowledge,
+      requestEdit,
+      declinePendingAndStop,
+      runtime,
+      providerThread,
+      turnFiber,
+    };
+  });
+
+  it.effect("auto-accepts an edit inside the thread's folder and asks about one outside it", () =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn("edit-folder");
+      const inside = yield* turn
+        .requestEdit("edit-inside", { target: turn.path.join(turn.workspace, "src", "a.ts") })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-inside-request");
+      assert.deepEqual(inside.outcome, { outcome: "selected", optionId: "allow-once" });
+
+      const outsideFiber = yield* turn.requestEdit("edit-outside", {
+        target: turn.path.join(turn.elsewhere, "b.ts"),
+      });
+      yield* turn.declinePendingAndStop("edit-outside-request", outsideFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "asks about an edit without a path from a session that did not start its tool call",
+    () =>
+      Effect.gen(function* () {
+        const turn = yield* startAutoAcceptEditsTurn("edit-other-session");
+        // The first request waits for the turn, so the tool call below lands in it.
+        const first = yield* turn
+          .requestEdit("edit-first", { target: turn.path.join(turn.workspace, "src", "a.ts") })
+          .pipe(Effect.flatMap(Fiber.join));
+        yield* turn.acknowledge("edit-first-request");
+        assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+        yield* turn.sessionUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "edit-shared",
+            title: "Edit file",
+            kind: "edit",
+            status: "pending",
+            locations: [{ path: turn.path.join(turn.workspace, "src", "b.ts") }],
+          },
+        });
+
+        // The session that started the tool call may name it by id alone.
+        const own = yield* turn.requestEdit("edit-shared").pipe(Effect.flatMap(Fiber.join));
+        yield* turn.acknowledge("edit-shared-request");
+        assert.deepEqual(own.outcome, { outcome: "selected", optionId: "allow-once" });
+
+        const otherFiber = yield* turn.requestEdit("edit-shared", { sessionId: "mock-session-2" });
+        yield* turn.declinePendingAndStop("edit-shared-request", otherFiber);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  const editNamedByIdAsks = (
+    name: string,
+    updates: (turn: {
+      readonly inside: string;
+      readonly outside: string;
+    }) => ReadonlyArray<Record<string, unknown>>,
+  ) =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn(name);
+      const inside = turn.path.join(turn.workspace, "src", "a.ts");
+      // The first request waits for the turn, so the tool call below lands in it.
+      const first = yield* turn
+        .requestEdit("edit-first", { target: inside })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-first-request");
+      assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+      for (const update of updates({ inside, outside: turn.path.join(turn.elsewhere, "b.ts") })) {
+        yield* turn.sessionUpdate({
+          sessionId: "mock-session-1",
+          update: { toolCallId: "edit-tracked", ...update },
+        } as EffectAcpSchema.SessionNotification);
+      }
+      const fiber = yield* turn.requestEdit("edit-tracked");
+      yield* turn.declinePendingAndStop("edit-tracked-request", fiber);
+    }).pipe(Effect.provide(layerTest));
+
+  it.effect(
+    "asks about an edit named by id whose tool call named another folder before an update",
+    () =>
+      editNamedByIdAsks("edit-replaced-path", ({ inside, outside }) => [
+        {
+          sessionUpdate: "tool_call",
+          title: "Edit file",
+          kind: "edit",
+          status: "pending",
+          locations: [{ path: outside }],
+        },
+        { sessionUpdate: "tool_call_update", locations: [{ path: inside }] },
+      ]),
+  );
+
+  it.effect("asks about an edit named by id whose tool call left one location blank", () =>
+    editNamedByIdAsks("edit-blank-path", ({ inside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }, { path: " " }],
+      },
+    ]),
+  );
+
+  it.effect("asks about an edit named by id whose content chunk changes another folder", () =>
+    editNamedByIdAsks("edit-chunk-path", ({ inside, outside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }],
+      },
+      {
+        sessionUpdate: "tool_call_content_chunk",
+        content: { type: "diff", changes: [{ operation: "modify", path: outside }] },
+      },
+    ]),
+  );
+
+  it.effect("auto-accepts an edit named by id whose updates from the agent were all read", () =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn("edit-read-updates", ({ workspace }) => ({
+        T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            title: "Edit file",
+            kind: "edit",
+            status: "pending",
+            locations: [{ path: `${workspace}/src/a.ts` }],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            locations: [{ path: `${workspace}/src/a.ts`, line: 3 }],
+          },
+        ]),
+      }));
+      const answerOrRequest = Option.getOrThrow(
+        yield* turn.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              (event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending") ||
+              (event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        answerOrRequest.type !== "turn_item.updated" ||
+        answerOrRequest.turnItem.providerTurnId === null
+      ) {
+        return assert.fail("The edit became an approval request");
+      }
+      assert.include(answerOrRequest.turnItem.nativeItemRef?.nativeId, "edit-answered:allow");
+      yield* turn.runtime.interruptTurn({
+        providerThread: turn.providerThread,
+        providerTurnId: answerOrRequest.turnItem.providerTurnId,
+      });
+      yield* Fiber.join(turn.turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      update: "one location is not a path",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside }, { path: 7 }],
+      }),
+    },
+    {
+      update: "a line number is not a whole number",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside, line: -1 }],
+      }),
+    },
+    {
+      update: "tool call id cannot be read",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: 7,
+        locations: [{ path: inside }],
+      }),
+    },
+  ])(
+    "asks about an edit named by id after an update the agent sent could not be read: $update",
+    ({ later }) =>
+      Effect.gen(function* () {
+        // The agent process writes these to its output, so they pass through protocol decoding.
+        const turn = yield* startAutoAcceptEditsTurn("edit-unread-update", ({ workspace }) => {
+          const inside = `${workspace}/src/a.ts`;
+          return {
+            T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "edit-tracked",
+                title: "Edit file",
+                kind: "edit",
+                status: "pending",
+                locations: [{ path: inside }],
+              },
+              later(inside),
+            ]),
+          };
+        });
+        const answerOrRequest = Option.getOrThrow(
+          yield* turn.runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                (event.type === "runtime_request.updated" &&
+                  event.runtimeRequest.status === "pending") ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+            ),
+            Stream.runHead,
+          ),
+        );
+        if (
+          answerOrRequest.type !== "runtime_request.updated" ||
+          answerOrRequest.runtimeRequest.providerTurnId === null
+        ) {
+          return assert.fail("The edit was answered without an approval request");
+        }
+        yield* turn.runtime.respondToRuntimeRequest({
+          requestId: answerOrRequest.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* turn.runtime.interruptTurn({
+          providerThread: turn.providerThread,
+          providerTurnId: answerOrRequest.runtimeRequest.providerTurnId,
+        });
+        yield* Fiber.join(turn.turnFiber);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
@@ -13071,6 +13503,7 @@ describe("AcpAdapterV2", () => {
         const sessionId = providerThread.nativeThreadRef?.nativeId;
         if (sessionId == null) return assert.fail("expected native session id");
         let ordinal = 0;
+        const noteSetAt = "2026-11-23T14:02:17.000Z";
         const runTurn = (input: {
           readonly text: string;
           readonly note: string;
@@ -13091,7 +13524,7 @@ describe("AcpAdapterV2", () => {
                 ordinal,
                 messageText: input.text,
               }),
-              appContext: [{ key: "mcp_app_item-1", text: input.note }],
+              appContext: [{ key: "mcp_app_item-1", text: input.note, updatedAt: noteSetAt }],
             });
             const events = Array.from(
               yield* runtime.events.pipe(
@@ -13106,7 +13539,9 @@ describe("AcpAdapterV2", () => {
             };
           });
 
-        const tag = (note: string) => `<external_mcp_app_item-1>${note}</external_mcp_app_item-1>`;
+        // Every send, a resend included, says when the app set the note.
+        const tag = (note: string) =>
+          `<external_mcp_app_item-1 updated_at="${noteSetAt}">${note}</external_mcp_app_item-1>`;
 
         // An unsuccessful stop reason must not mark appContext delivered.
         const refusedTurn = yield* runTurn({
@@ -13137,7 +13572,9 @@ describe("AcpAdapterV2", () => {
             ordinal: interruptedOrdinal,
             messageText: "Interrupted attempt",
           }),
-          appContext: [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }],
+          appContext: [
+            { key: "mcp_app_item-1", text: "Created Jira issue PROJ-42", updatedAt: noteSetAt },
+          ],
         });
         yield* Deferred.await(interruptedStarted);
         assert.include(prompts.at(-1) ?? "", tag("Created Jira issue PROJ-42"));
@@ -13237,7 +13674,9 @@ describe("AcpAdapterV2", () => {
             ordinal: restartOrdinal,
             messageText: "Trigger restart",
           }),
-          appContext: [{ key: "mcp_app_item-1", text: "Updated Jira issue PROJ-43" }],
+          appContext: [
+            { key: "mcp_app_item-1", text: "Updated Jira issue PROJ-43", updatedAt: noteSetAt },
+          ],
         });
         yield* Deferred.await(restartStarted);
         const restartInterruptFiber = yield* runtime

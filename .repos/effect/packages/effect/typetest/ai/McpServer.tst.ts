@@ -1,5 +1,5 @@
 import { hole } from "effect"
-import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai"
+import { McpProtocol, McpSchema, McpServer, type Skill, Tool, Toolkit } from "effect/ai"
 import type * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -483,6 +483,21 @@ describe("McpServer", () => {
         HttpRouter.HttpRouter | HttpRouter.Request<"Requires", CurrentUser>
       >()
       expect<Layer.Services<typeof authenticated>>().type.toBe<McpServer.McpServer>()
+    })
+  })
+
+  describe("skills", () => {
+    it("should accept a Skill value in registerSkill and skill", () => {
+      const skill = hole<Skill.Skill>()
+      expect(McpServer.registerSkill(skill, { uri: "skill://billing/refunds/SKILL.md" })).type.toBe<
+        Effect.Effect<void, Cause.IllegalArgumentError, McpServer.McpServer>
+      >()
+      expect(McpServer.skill(skill, { uri: "skill://billing/refunds/SKILL.md", annotations: Context.empty() })).type
+        .toBe<
+          Layer.Layer<never, Cause.IllegalArgumentError, McpServer.McpServer>
+        >()
+      expect<Parameters<typeof McpServer.registerSkill>>().type.toBe<[options: McpServer.SkillOptions]>()
+      expect<Parameters<typeof McpServer.skill>>().type.toBe<[options: McpServer.SkillOptions]>()
     })
   })
 })

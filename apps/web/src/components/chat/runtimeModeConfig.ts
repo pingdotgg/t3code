@@ -1,5 +1,12 @@
-import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  managedRuntimeModeDenial,
+  providerRuntimeModeLimitMessage,
+} from "@t3tools/client-runtime/contract-labels";
+import type {
+  ManagedPolicySummary,
+  ProviderRuntimeModeLimit,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
@@ -76,6 +83,21 @@ export function draftSupportedRuntimeModes(
   return runtimeModeOptions.filter((mode) => supported.some((modes) => modes.includes(mode)));
 }
 
+/**
+ * The provider whose folder limits a draft's send is under: the one every thread it starts will
+ * use. Selected models on different providers share none, so no one provider's limits apply.
+ */
+export function draftRuntimeModeLimitsInstance<InstanceId extends string>(
+  activeInstanceId: InstanceId | undefined,
+  multipleModelSelections: ReadonlyArray<{ readonly instanceId: InstanceId }> | null,
+): InstanceId | undefined {
+  const first = multipleModelSelections?.[0];
+  if (multipleModelSelections === null || first === undefined) return activeInstanceId;
+  return multipleModelSelections.every((selection) => selection.instanceId === first.instanceId)
+    ? first.instanceId
+    : undefined;
+}
+
 export function resolveRuntimeModeOption(
   mode: RuntimeMode,
   resolve: MessageResolver = m,
@@ -113,14 +135,21 @@ export function runtimeModeDenial(
   );
 }
 
+/**
+ * `limits` are modes the provider cannot run in the current folder. They stay listed, disabled
+ * with the reason; a thread already in one keeps it and shows that reason as its description.
+ */
 export function resolveRuntimeModeOptions(
   modes: ReadonlyArray<RuntimeMode>,
   managedPolicy: ManagedPolicySummary | undefined,
   resolve: MessageResolver = m,
+  limits?: ReadonlyArray<ProviderRuntimeModeLimit>,
 ) {
   return modes.map((mode) => {
     const option = resolveRuntimeModeOption(mode, resolve);
-    const disabledReason = runtimeModeDenial(managedPolicy, mode, resolve);
+    const disabledReason =
+      runtimeModeDenial(managedPolicy, mode, resolve) ??
+      providerRuntimeModeLimitMessage(limits, mode, resolve);
     return disabledReason === undefined ? option : { ...option, disabledReason };
   });
 }
