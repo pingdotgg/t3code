@@ -23,7 +23,11 @@ export type PullRequestWatchChange =
       readonly failing: ReadonlyArray<PullRequestCheck>;
     }
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
-  | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
+  | {
+      readonly kind: "remarks";
+      readonly remarks: ReadonlyArray<PullRequestComment>;
+      readonly edited?: true;
+    }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" }
   | { readonly kind: "needs-rebase" }
@@ -228,15 +232,34 @@ export function evaluatePullRequestWatch(
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
   // Hosts can stamp remarks to the second, so remarks at the boundary time are told apart by ID.
-  const fresh = (remarks ?? []).filter((remark) => {
-    const at = Date.parse(activeAt(remark));
-    return (
-      (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
-    );
-  });
-  const actionable = fresh.filter((remark) => !isReviewAcknowledgement(remark));
-  if (actionable.length > 0) changes.push({ kind: "remarks", remarks: actionable });
+  const isNew = (at: string, id: string) =>
+    Date.parse(at) > through || (Date.parse(at) === through && !watch.remarkIds.includes(id));
+  const byOthers = (remarks ?? []).filter((remark) => remark.author?.login.toLowerCase() !== own);
+  const fresh = byOthers.filter((remark) => isNew(activeAt(remark), remark.id));
+  // Bots rewrite one status comment many times, so an edit of a remark the agent already saw
+  // waits until a read finds it unchanged and then wakes once with its final text.
+  const held = new Map((watch.pendingEdits ?? []).map((edit) => [edit.id, edit.editedAt]));
+  const added: Array<PullRequestComment> = [];
+  const edits: Array<PullRequestComment> = [];
+  const heldNow: Array<{ id: string; editedAt: string }> = [];
+  for (const remark of byOthers) {
+    if (isReviewAcknowledgement(remark)) continue;
+    if (remark.editedAt != null && held.get(remark.id) === remark.editedAt) {
+      edits.push(remark);
+    } else if (!fresh.includes(remark)) {
+      // A rewatch moves the watermark past an edit made while the watch was stopped.
+      if (remark.editedAt != null && held.has(remark.id)) {
+        heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+      }
+    } else if (remark.editedAt == null || isNew(remark.createdAt, remark.id)) {
+      added.push(remark);
+    } else {
+      heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+    }
+  }
+  const pendingEdits = remarks === null ? (watch.pendingEdits ?? []) : heldNow;
+  if (added.length > 0) changes.push({ kind: "remarks", remarks: added });
+  if (edits.length > 0) changes.push({ kind: "remarks", remarks: edits, edited: true });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
@@ -292,6 +315,7 @@ export function evaluatePullRequestWatch(
       approvalAnnounced,
       remarksThrough,
       remarkIds,
+      ...(pendingEdits.length > 0 ? { pendingEdits } : {}),
       conflicting,
       rebaseRequired,
       mergeQueueRemovalId,
@@ -429,7 +453,7 @@ function changeLines(
       ];
     case "remarks":
       return [
-        `- ${change.remarks.length} new ${change.remarks.length === 1 ? "comment" : "comments"}:`,
+        `- ${change.remarks.length} ${change.edited ? "edited" : "new"} ${change.remarks.length === 1 ? "comment" : "comments"}:`,
         ...listed(change.remarks, (remark) => {
           const where = remark.path === null ? "" : ` on ${remark.path}`;
           const body = snippet(remark.body);
@@ -556,7 +580,9 @@ export function pullRequestWatchMessage(input: {
       change.kind === "needs-rebase" ||
       change.kind === "merge-queue-removed",
   );
-  const summary = changes.map((change) => SUMMARY[change.kind]);
+  const summary = changes.map((change) =>
+    change.kind === "remarks" && change.edited ? "edited comments" : SUMMARY[change.kind],
+  );
   if (exhausted) summary.push("stopped watching");
   return {
     text,
