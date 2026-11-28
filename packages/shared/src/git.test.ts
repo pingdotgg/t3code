@@ -93,6 +93,15 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
+  it("keys an SCP-like remote with spaces in its path like its URL spelling", () => {
+    expect(normalizeGitRemoteUrl("git@forge.example:team/My Repo.git")).toBe(
+      normalizeGitRemoteUrl("ssh://git@forge.example/team/My Repo.git"),
+    );
+    expect(normalizeGitRemoteUrl("forge.example:team/My Repo.git")).toBe(
+      "forge.example/team/my%20repo",
+    );
+  });
+
   it("keys a one-segment URL remote by what names the repository", () => {
     expect(normalizeGitRemoteUrl("https://deploy:s3cr3ttok@git.example.com/Repo.git")).toBe(
       "https://git.example.com/repo",

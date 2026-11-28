@@ -181,7 +181,7 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?((?:[^/\s]| )+(?:\/(?:[^/\s]| )+)+)$/i.exec(
         normalized,
       );
   const scpHost = scpStyleHostAndPath?.[1];
