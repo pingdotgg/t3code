@@ -16,7 +16,7 @@ const card = (open: boolean, order = ["environment", "openIn", "scripts"]) => (
   />
 );
 
-it("skips a block that empties mid-drag and keeps a section mounted after a move", async () => {
+it("skips a block that empties mid-drag, and drops without a jump or a section remount", async () => {
   await using screen = await render(card(true));
   const top = (name: string) => page.getByText(name).element().getBoundingClientRect().top;
   const environmentTop = top("Environment");
@@ -33,6 +33,19 @@ it("skips a block that empties mid-drag and keeps a section mounted after a move
   await userEvent.keyboard(" ");
   await userEvent.keyboard("{ArrowLeft}");
   await expect.poll(() => top("Scripts")).toBeCloseTo(scriptsTop, 0);
+  await userEvent.keyboard("{ArrowUp}");
+  const moved: string[] = [];
+  const observer = new MutationObserver((records) =>
+    moved.push(...records.map((record) => (record.target as HTMLElement).style.transform)),
+  );
+  observer.observe(screen.container, {
+    attributes: true,
+    subtree: true,
+    attributeFilter: ["style"],
+  });
+  await userEvent.keyboard(" ");
   await screen.rerender(card(false, ["scripts", "environment", "openIn"]));
+  observer.disconnect();
+  expect(moved.filter((transform) => /[1-9][\d.]*px/.test(transform))).toEqual([]);
   expect(scripts.isConnected).toBe(true);
 });

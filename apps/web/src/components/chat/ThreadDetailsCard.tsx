@@ -135,6 +135,17 @@ export function ThreadDetailsCard({
       handle={handle}
       open={mode === "popover" && popoverOpen}
       onOpenChange={(open, details) => {
+        // Escape during a block drag cancels the drag, which listens on the document.
+        if (
+          !open &&
+          details.reason === "escape-key" &&
+          details.event.target instanceof Element &&
+          details.event.target.closest("[aria-roledescription='sortable'][aria-pressed='true']")
+        ) {
+          details.cancel();
+          details.allowPropagation();
+          return;
+        }
         const target =
           details.reason === "focus-out"
             ? (details.event as FocusEvent).relatedTarget

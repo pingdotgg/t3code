@@ -162,6 +162,8 @@ function SortableBlock(props: {
   } = useSortable({
     id: props.block.id,
     disabled: { draggable: props.disabled, droppable: props.disabled },
+    // Hidden blocks leave the list mid-drag, so a drop shifts indices; animating that misplaces blocks.
+    animateLayoutChanges: () => false,
   });
   return (
     <div
