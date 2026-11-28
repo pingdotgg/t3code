@@ -59,7 +59,7 @@ type QueuedRunMessage = NonNullable<
   NonNullable<ReturnType<typeof useThreadQueueWorkflow>>["queuedRuns"][number]["message"]
 >;
 
-/** Who sent a queued message, as its sent form shows it in the thread. */
+/** Who sent a queued message, as the first line of its bubble, like its sent form's header. */
 function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
@@ -81,36 +81,36 @@ function QueuedRunSender(props: {
     attribution === "automation"
       ? {
           icon: "calendar.badge.clock" as const,
-          label:
-            tasks.data?.tasks.find((task) => task.id === scheduledTaskId)?.title ??
-            gt("Automation"),
+          kind: gt("Automation"),
+          title: tasks.data?.tasks.find((task) => task.id === scheduledTaskId)?.title,
         }
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || linkedSender?.title.trim() || gt("Agent"),
+            kind: gt("Agent"),
+            title: senderShell?.title.trim() || linkedSender?.title.trim(),
           }
         : attribution === "t3code"
-          ? { icon: null, label: gt("Sent by T3 Code") }
+          ? { icon: null, kind: gt("Sent by T3 Code"), title: undefined }
           : null;
   if (sender === null) return null;
   return (
-    <View className="mb-1 flex-row items-center gap-1 pr-1">
+    <View className="flex-row items-center gap-1.5">
       {sender.icon ? (
         <SymbolView
           name={sender.icon}
-          size={11}
+          size={13}
           weight="medium"
           tintColorClassName="accent-foreground-muted"
           type="monochrome"
         />
       ) : null}
-      <Text
-        numberOfLines={1}
-        className="min-w-0 shrink font-t3-medium text-2xs text-foreground-muted"
-      >
-        {sender.label}
-      </Text>
+      <Text className="font-t3-medium text-sm text-foreground-muted">{sender.kind}</Text>
+      {sender.title ? (
+        <Text numberOfLines={1} className="min-w-0 shrink text-sm text-foreground">
+          {sender.title}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -265,13 +265,13 @@ export function ThreadQueuedRuns(props: {
         const canOfferSend = workflow?.canPromoteToSteer || workflow?.canSendNow;
         return (
           <View key={run.id} className="items-end">
-            {message ? (
-              <QueuedRunSender environmentId={target.environmentId} message={message} />
-            ) : null}
             <View
               className="min-w-0 gap-2 rounded-[20px] border border-dashed border-border bg-transparent px-3.5 py-2.5"
               style={{ maxWidth: props.bubbleMaxWidth }}
             >
+              {message ? (
+                <QueuedRunSender environmentId={target.environmentId} message={message} />
+              ) : null}
               {controls.displayText ? (
                 <Text
                   selectable
@@ -297,31 +297,12 @@ export function ThreadQueuedRuns(props: {
               />
             </View>
             <View className="mt-1 flex-row items-center gap-1 pl-2">
-              <SymbolView
-                name="tray.and.arrow.up"
-                size={11}
-                tintColorClassName="accent-foreground-muted"
-                type="monochrome"
-              />
-              <Text className="mr-1 text-2xs text-foreground-muted">
-                {controls.isEditing
-                  ? gt("Editing in the composer")
-                  : gt("Queued", { $context: "status of a message waiting for the current turn" })}
-              </Text>
-              <QueueAction
-                label={gt("Remove", { $context: "verb, menu action" })}
-                accessibilityLabel={gt("Remove queued message {number}", { number: index + 1 })}
-                disabled={!controls.canDismiss}
-                onPress={() => void act(run.id, "remove")}
-              />
-              <QueueAction
-                label={gt("Edit", { $context: "verb, menu action" })}
-                accessibilityLabel={gt("Edit queued message {number}", { number: index + 1 })}
-                accessibilityHint={editBlockedReason ?? undefined}
-                disabled={!controls.canEdit}
-                onPress={() => void act(run.id, "edit")}
-              />
-              {canOfferSend ? (
+              {controls.isEditing ? (
+                <Text className="mr-1 text-2xs text-foreground-muted">
+                  {gt("Editing in the composer")}
+                </Text>
+              ) : null}
+              {canOfferSend && !controls.isEditing ? (
                 <QueueAction
                   icon="arrow.up"
                   label={gt("Send now")}
@@ -332,6 +313,19 @@ export function ThreadQueuedRuns(props: {
                   onPress={() => void act(run.id, "steer")}
                 />
               ) : null}
+              <QueueAction
+                icon="pencil"
+                accessibilityLabel={gt("Edit queued message {number}", { number: index + 1 })}
+                accessibilityHint={editBlockedReason ?? undefined}
+                disabled={!controls.canEdit}
+                onPress={() => void act(run.id, "edit")}
+              />
+              <QueueAction
+                icon="xmark"
+                accessibilityLabel={gt("Remove queued message {number}", { number: index + 1 })}
+                disabled={!controls.canDismiss}
+                onPress={() => void act(run.id, "remove")}
+              />
             </View>
           </View>
         );
@@ -343,11 +337,11 @@ export function ThreadQueuedRuns(props: {
 
 /** A small action under a queued bubble, sized like the sent message's own footer actions. */
 function QueueAction(props: {
-  readonly label: string;
+  readonly label?: string;
+  readonly icon?: "arrow.up" | "pencil" | "xmark";
   readonly accessibilityLabel: string;
   readonly accessibilityHint?: string;
   readonly disabled: boolean;
-  readonly icon?: "arrow.up";
   readonly onPress: () => void;
 }) {
   return (
@@ -359,12 +353,18 @@ function QueueAction(props: {
       disabled={props.disabled}
       hitSlop={8}
       onPress={props.onPress}
-      className="h-7 flex-row items-center gap-0.5 rounded-full px-2 active:opacity-70 disabled:opacity-40"
+      className={`h-7 flex-row items-center justify-center gap-0.5 rounded-full active:opacity-70 disabled:opacity-40 ${props.label ? "px-2" : "w-7"}`}
     >
       {props.icon ? (
-        <SymbolView name={props.icon} size={10} tintColorClassName="accent-foreground-muted" />
+        <SymbolView
+          name={props.icon}
+          size={props.label ? 10 : 12}
+          tintColorClassName="accent-foreground-muted"
+        />
       ) : null}
-      <Text className="font-t3-medium text-xs text-foreground-muted">{props.label}</Text>
+      {props.label ? (
+        <Text className="font-t3-medium text-xs text-foreground-muted">{props.label}</Text>
+      ) : null}
     </Pressable>
   );
 }
