@@ -61,6 +61,8 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   if (!parsed) return null;
   if (parsed.protocol === protocol) return url.trim();
   if (parsed.customPort || (parsed.scp && parsed.path.startsWith("/"))) return null;
+  // SCP treats a raw URL query or fragment as part of the host or repository path.
+  if (parsed.protocol === "https" && /[?#]/.test(url)) return null;
   // Azure's transports use different hosts and put the repository marker in
   // different positions; changing only the scheme produces an invalid clone URL.
   if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
