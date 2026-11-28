@@ -25,6 +25,10 @@ const WORDPROCESSINGML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
   "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ]);
+const WORD_DRAWING_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+  "http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing",
+]);
 const WORD_STYLE_ELEMENTS = new Set([
   "styles",
   "docDefaults",
@@ -108,6 +112,8 @@ interface XmlNode {
   children: Array<XmlNode | string>;
   imageDescription?: string;
   pptxHidden?: boolean;
+  docxHidden?: boolean;
+  docxHiddenContent?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   wordMergeCovered?: boolean;
@@ -321,7 +327,7 @@ function xml(
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
           return (extension === ".epub" &&
             (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
-            ((odf || wordStyles !== undefined) && local === "xmlns")
+            ((odf || extension === ".docx") && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -458,6 +464,15 @@ function xml(
         drawing.pptxHidden = true;
       }
     }
+    if (
+      extension === ".docx" &&
+      node.name === "docPr" &&
+      (parent.name === "anchor" || parent.name === "inline") &&
+      ["true", "1"].includes(tag.attributes.hidden?.trim() ?? "") &&
+      WORD_DRAWING_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      parent.docxHidden = true;
+    }
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
       const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
@@ -490,9 +505,12 @@ function xml(
       parent.name === "AlternateContent" &&
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
+    // Keep compatibility fallbacks suppressed when a hidden drawing is omitted from a branch.
+    if (node.docxHidden) parent.docxHiddenContent = true;
     // Hidden spans may contain a nested style that explicitly makes its text visible.
     if (
       node.pptxHidden ||
+      node.docxHidden ||
       (node.odfSpanHidden && node.children.length === 0) ||
       (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
@@ -580,8 +598,10 @@ function xml(
       node.imageDescription = alt;
       node.hasText = true;
     }
-    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
-    parent.hasText = true;
+    const hasContent = node.hasText || node.name === "noBreakHyphen";
+    if (HIDDEN.has(node.name) || (!hasContent && !node.docxHiddenContent)) return;
+    if (hasContent) parent.hasText = true;
+    if (node.docxHiddenContent) parent.docxHiddenContent = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
     if (isCompatibilityChoice) {
       parent.hasSelectedChoice = true;
