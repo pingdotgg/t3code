@@ -1,6 +1,15 @@
 import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { shouldRedirectInputToComposer } from "../components/chat/composerFocusRedirect";
+
+function isFrozenComposerTarget(target: Element, form: HTMLFormElement | null) {
+  return (
+    !!form?.contains(target) &&
+    !!target.closest('[data-testid="composer-editor"]') &&
+    !target.closest("textarea, input, button")
+  );
+}
 
 /** Keep submission shortcuts reachable when the frozen composer loses focus to the page. */
 export function useDictationSubmissionShortcut(input: {
@@ -20,11 +29,14 @@ export function useDictationSubmissionShortcut(input: {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target !== document.body && target !== document.documentElement) {
-        if (!latest.current.formRef.current?.contains(target)) return;
-        if (!target.closest('[data-testid="composer-editor"]')) return;
-        if (target.closest("textarea, input, button")) return;
-      }
+      if (
+        target !== document.body &&
+        target !== document.documentElement &&
+        !isFrozenComposerTarget(target, latest.current.formRef.current) &&
+        // Focus parked on the chat itself, such as the timeline, belongs to the composer.
+        !shouldRedirectInputToComposer(event)
+      )
+        return;
       latest.current.onKeyDown(event);
     };
     window.addEventListener("keydown", onKeyDown, true);

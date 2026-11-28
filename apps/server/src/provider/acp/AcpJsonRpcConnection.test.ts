@@ -29,7 +29,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = "node";
+const mockAgentCommand = process.execPath;
 const mockAgentArgs = [mockAgentPath];
 const mockRuntimeOptions = {
   spawn: { command: mockAgentCommand, args: mockAgentArgs },
@@ -563,27 +563,34 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("does not restore ambient variables to a sanitized child environment", () =>
-    Effect.gen(function* () {
-      yield* Effect.acquireRelease(
-        Effect.sync(() => setProcessEnv("T3_ACP_RUNTIME_AMBIENT", "sentinel")),
-        (restore) => Effect.sync(restore),
-      );
-      const runtime = yield* AcpSessionRuntime.make({
-        ...mockRuntimeOptions,
-        spawn: {
-          command: process.execPath,
-          args: mockAgentArgs,
-          extendEnv: false,
-          env: { T3_ACP_RUNTIME_EXPLICIT: "kept" },
-        },
-      });
-      yield* runtime.initialize();
-      expect(yield* runtime.request("_test/environment", {})).toEqual({
-        inherited: false,
-        explicit: true,
-      });
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  // A provided env is the complete child environment, as in OpenCodeRuntime; the AppImage
+  // scrub deletes mount-only variables, which inheritance would put back.
+  it.effect.each([
+    { label: "with extendEnv false", extendEnv: false as const },
+    { label: "when extendEnv is unset", extendEnv: undefined },
+  ])(
+    "does not restore ambient variables to a sanitized child environment $label",
+    ({ extendEnv }) =>
+      Effect.gen(function* () {
+        yield* Effect.acquireRelease(
+          Effect.sync(() => setProcessEnv("T3_ACP_RUNTIME_AMBIENT", "sentinel")),
+          (restore) => Effect.sync(restore),
+        );
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            command: process.execPath,
+            args: mockAgentArgs,
+            ...(extendEnv === undefined ? {} : { extendEnv }),
+            env: { T3_ACP_RUNTIME_EXPLICIT: "kept" },
+          },
+        });
+        yield* runtime.initialize();
+        expect(yield* runtime.request("_test/environment", {})).toEqual({
+          inherited: false,
+          explicit: true,
+        });
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("selects explicit or agent-managed authentication without choosing terminal auth", () => {
@@ -1619,6 +1626,26 @@ describe("AcpSessionRuntime", () => {
           Exit.succeed({ stopReason: "cancelled", _meta: { nativeCancel: true } }),
         );
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("fails startup when the agent never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializeSent = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        // A live child that reads stdin and never replies, like one stuck in disk sleep.
+        spawn: { command: "node", args: ["-e", "process.stdin.resume()"] },
+        requestLogger: (event) =>
+          event.method === "initialize" && event.status === "started"
+            ? Deferred.succeed(initializeSent, undefined)
+            : Effect.void,
+      });
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(initializeSent);
+      yield* TestClock.adjust("30 minutes");
+      const exit = yield* Fiber.await(startup);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("sends a cancel after the cancel timeout when its prompt never goes out", () =>

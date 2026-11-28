@@ -21,6 +21,7 @@ import * as GitHubAppAccess from "../src/server/GitHubAppAccess.ts";
 import * as GitHubPullRequestApi from "../src/server/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/server/GitHubPullRequestProvider.ts";
 import * as GitHubRest from "../src/server/GitHubRest.ts";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 
 const repeatsFlag = process.argv.find((arg) => arg.startsWith("--repeats="));
 const repeats = repeatsFlag === undefined ? 1 : Number(repeatsFlag.slice("--repeats=".length));
@@ -119,6 +120,7 @@ const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(SourceControlRateLimit.layer),
   Layer.provideMerge(measuredHttp),
   Layer.provideMerge(sourceControlHost),
+  Layer.provideMerge(FeatureFlags.layer),
 );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
