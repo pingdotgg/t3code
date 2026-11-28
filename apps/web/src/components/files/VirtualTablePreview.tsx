@@ -6,15 +6,18 @@ import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
 
-const savedFirstRows = createPositionMemory<{ row: number; revealKey: string | null }>();
+const savedRowPositions = createPositionMemory<{
+  position: number | "end";
+  revealKey: string | null;
+}>();
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
   readonly count: number;
-  readonly indexing?: boolean;
   readonly columns: number;
   readonly getRows: (page: number) => readonly (readonly string[])[] | undefined;
   readonly loadPage?: (page: number) => void;
+  readonly indexing?: boolean;
   readonly header?: readonly string[] | undefined;
   readonly source?: boolean;
   readonly wrap?: boolean;
@@ -264,6 +267,43 @@ function RowPage(
   );
 }
 
+interface ScrollModel {
+  scale: number;
+  maxFirst: number;
+  heights: number[];
+}
+
+function logicalScrollTop(scrollTop: number, model: ScrollModel): number {
+  const trackEnd = model.maxFirst * 29;
+  let logicalTop = Math.min(trackEnd, scrollTop / model.scale);
+  let remaining = Math.max(0, scrollTop - trackEnd * model.scale);
+  for (const height of model.heights) {
+    if (!remaining) break;
+    logicalTop += Math.min(1, remaining / height) * 29;
+    remaining = Math.max(0, remaining - height);
+  }
+  return logicalTop;
+}
+
+function pendingEndAt(node: HTMLElement, expectedTop: number | null): number | null {
+  if (expectedTop === null) return null;
+  // Layout can clamp the scroll offset while the bottom stays pinned.
+  if (node.scrollHeight - node.clientHeight - node.scrollTop <= 1) return node.scrollTop;
+  return Math.abs(node.scrollTop - expectedTop) > 1 ? null : expectedTop;
+}
+
+interface PendingReveal {
+  row: number;
+  attempts: number;
+  expectedTop?: number | undefined;
+}
+
+function pendingRevealAt(node: HTMLElement, pending: PendingReveal | null): PendingReveal | null {
+  if (pending?.expectedTop === undefined) return pending;
+  const clampedTop = Math.min(pending.expectedTop, node.scrollHeight - node.clientHeight);
+  return Math.abs(node.scrollTop - clampedTop) > 1 ? null : pending;
+}
+
 function ScaledRows(
   props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
     hasHorizontalOverflow: boolean;
@@ -286,12 +326,12 @@ function ScaledRows(
   );
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [top, setTop] = useState(0);
-  const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
-  const pendingEnd = useRef(false);
+  const pendingReveal = useRef<PendingReveal | null>(null);
+  const pendingEnd = useRef<number | null>(null);
   const positionKey = useContext(PreviewPositionKey);
-  const savedPosition = savedFirstRows.get(positionKey);
+  const savedPosition = savedRowPositions.get(positionKey);
   const handledReveal = useRef<string | null>(savedPosition?.revealKey ?? null);
-  const pendingRestore = useRef(savedPosition?.row);
+  const pendingRestore = useRef(savedPosition?.position);
   const position = { top, height: props.viewportHeight };
   const scrollHeight = Math.min(8_000_000, props.count * 29);
   // Chromium caps a scroll surface at 33 million pixels. Scale the track for
@@ -302,7 +342,7 @@ function ScaledRows(
   const first = Math.min(maxFirst, Math.floor(position.top / scale / 29)) + headerRows;
   // The final mounted rows keep their measured height and scroll natively.
   const nativeTail = first - headerRows === maxFirst;
-  const scrollModel = useRef({ scale, maxFirst, heights: [] as number[] });
+  const scrollModel = useRef<ScrollModel>({ scale, maxFirst, heights: [] });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure native tail rows and preserve the DOM scroll position when the virtual track scale changes.
   useLayoutEffect(() => {
     const previous = scrollModel.current;
@@ -314,23 +354,21 @@ function ScaledRows(
     scrollModel.current = { scale, maxFirst, heights };
     const node = ref.current;
     if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
-    const previousEnd = previous.maxFirst * 29 * previous.scale;
-    let logicalTop = Math.min(previous.maxFirst * 29, node.scrollTop / previous.scale);
-    let remaining = Math.max(0, node.scrollTop - previousEnd);
+    pendingReveal.current = pendingRevealAt(node, pendingReveal.current);
+    pendingEnd.current = pendingEndAt(node, pendingEnd.current);
     // Native-tail pixels cross rows of different heights before returning to the scaled track.
-    for (const height of previous.heights) {
-      logicalTop += Math.min(1, remaining / height) * 29;
-      remaining = Math.max(0, remaining - height);
-      if (!remaining) break;
-    }
+    const logicalTop = logicalScrollTop(node.scrollTop, previous);
     let nativeOffset = 0;
-    remaining = Math.max(0, logicalTop / 29 - maxFirst);
+    let remaining = Math.max(0, logicalTop / 29 - maxFirst);
     for (const height of heights) {
       nativeOffset += Math.min(1, remaining) * height;
       remaining = Math.max(0, remaining - 1);
       if (!remaining) break;
     }
     node.scrollTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
+    if (pendingEnd.current !== null) pendingEnd.current = node.scrollTop;
+    const reveal = pendingReveal.current;
+    if (reveal?.expectedTop !== undefined) reveal.expectedTop = node.scrollTop;
     setTop(node.scrollTop);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll the DOM viewport to a requested line after its virtual track has committed.
@@ -347,21 +385,28 @@ function ScaledRows(
     const row = Math.min(props.count, Math.max(1, props.revealLine)) - 1;
     node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
     setTop(node.scrollTop);
-    pendingEnd.current = false;
+    pendingEnd.current = null;
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
   }, [props.indexing, props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
   useLayoutEffect(() => {
-    const row = pendingRestore.current;
+    const saved = pendingRestore.current;
     const node = ref.current;
-    if (row === undefined || !node || row >= props.count) return;
+    if (saved === undefined || !node) return;
+    if (saved === "end" ? props.indexing : saved >= props.count) return;
     pendingRestore.current = undefined;
-    // Rounding down can leave the previous row at the top of the virtual track.
-    node.scrollTop = Math.ceil(Math.max(0, (row - headerRows) * 29) * scale);
+    node.scrollTop =
+      saved === "end" ? node.scrollHeight : Math.max(0, (saved - headerRows) * 29) * scale;
     setTop(node.scrollTop);
-    pendingReveal.current = { row, attempts: 0 };
-  }, [props.count, headerRows, scale]);
+    if (saved === "end") pendingEnd.current = node.scrollTop;
+    else
+      pendingReveal.current = {
+        row: saved,
+        attempts: 0,
+        expectedTop: saved > maxFirst + headerRows ? node.scrollTop : undefined,
+      };
+  }, [props.count, props.indexing, headerRows, maxFirst, scale]);
   const atStart = position.top === 0;
   const rowHeight = () =>
     contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${first}"]`)?.offsetHeight ||
@@ -373,7 +418,8 @@ function ScaledRows(
       event.deltaY * (event.deltaMode === 1 ? 29 : event.deltaMode === 2 ? node.clientHeight : 1);
     if (!delta) return;
     event.preventDefault();
-    pendingEnd.current = false;
+    pendingEnd.current = null;
+    if (pendingReveal.current?.expectedTop !== undefined) pendingReveal.current = null;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Install a non-passive native wheel listener so virtual scrolling can prevent the browser's default scroll.
@@ -469,6 +515,18 @@ function ScaledRows(
     props.hasHorizontalOverflow && rowHeights.key.startsWith(`${sizesKey}|`)
       ? rowHeights.heights
       : undefined;
+  function tailRowsReady(last: number) {
+    for (let index = first; index <= last; index++) {
+      if (!props.getRows(Math.floor(index / PREVIEW_PAGE_ROWS))?.[index % PREVIEW_PAGE_ROWS])
+        return false;
+      if (props.hasHorizontalOverflow) {
+        const measured = rowHeightCacheRef.current.entries.get(index);
+        if (!measured || (activeRowHeights?.get(index) ?? BASE_ROW_HEIGHT) !== measured.height)
+          return false;
+      }
+    }
+    return true;
+  }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
@@ -490,18 +548,21 @@ function ScaledRows(
   }, [first, atStart]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Correct the DOM scroll position once a requested worker row has loaded and its actual bounds are measurable.
   useLayoutEffect(() => {
-    const pending = pendingReveal.current;
     const node = ref.current;
-    const row =
-      pending &&
-      contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${pending.row}"]`);
+    if (!node) return;
+    const pending = pendingRevealAt(node, pendingReveal.current);
+    pendingReveal.current = pending;
+    if (!pending) return;
+    const alignStart = pending.expectedTop !== undefined;
+    const row = contentRef.current?.querySelector<HTMLElement>(
+      `[data-preview-row="${pending.row}"]`,
+    );
     if (
-      !pending ||
-      !node ||
       !row ||
       !props.getRows(Math.floor(pending.row / PREVIEW_PAGE_ROWS))?.[pending.row % PREVIEW_PAGE_ROWS]
     )
       return;
+    if (alignStart && !tailRowsReady(pending.row)) return;
     const content = contentRef.current!;
     const firstRow = content.querySelector<HTMLElement>(`[data-preview-row="${first}"]`);
     if (
@@ -516,7 +577,7 @@ function ScaledRows(
     const bounds = row.getBoundingClientRect();
     const viewport = node.getBoundingClientRect();
     const delta =
-      bounds.top < viewport.top
+      alignStart || bounds.top < viewport.top
         ? bounds.top - viewport.top
         : Math.min(bounds.bottom, bounds.top + viewport.height) > viewport.bottom
           ? Math.min(bounds.bottom, bounds.top + viewport.height) - viewport.bottom
@@ -525,14 +586,19 @@ function ScaledRows(
       pendingReveal.current = null;
       return;
     }
+    const before = node.scrollTop;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / Math.max(29, bounds.height));
+    if (Math.abs(node.scrollTop - before) < 1) pendingReveal.current = null;
+    else if (alignStart) pending.expectedTop = node.scrollTop;
     setTop(node.scrollTop);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete End-key scrolling after the final worker row has loaded and its DOM layout has settled.
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
-    if (!pendingEnd.current || !nativeTail || !node || !content || !props.count) return;
+    if (!node) return;
+    pendingEnd.current = pendingEndAt(node, pendingEnd.current);
+    if (pendingEnd.current === null || !nativeTail || !content || !props.count) return;
     const last = props.count - 1;
     if (!props.getRows(Math.floor(last / PREVIEW_PAGE_ROWS))?.[last % PREVIEW_PAGE_ROWS]) return;
     const row = content.querySelector<HTMLElement>(`[data-preview-row="${last}"]`);
@@ -549,8 +615,11 @@ function ScaledRows(
       return;
     node.scrollTop = node.scrollHeight;
     setTop(node.scrollTop);
-    if (Math.abs(row.getBoundingClientRect().bottom - node.getBoundingClientRect().bottom) < 1)
-      pendingEnd.current = false;
+    pendingEnd.current =
+      Math.abs(row.getBoundingClientRect().bottom - node.getBoundingClientRect().bottom) < 1 &&
+      tailRowsReady(last)
+        ? null
+        : node.scrollTop;
   });
   return (
     <div
@@ -570,23 +639,35 @@ function ScaledRows(
                   ? -node.clientHeight
                   : null;
         if (delta !== null) {
-          pendingEnd.current = false;
+          pendingEnd.current = null;
+          if (pendingReveal.current?.expectedTop !== undefined) pendingReveal.current = null;
           event.preventDefault();
           node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
         } else if (event.key === "Home" || event.key === "End") {
           event.preventDefault();
-          pendingEnd.current = event.key === "End";
           pendingReveal.current = null;
           node.scrollTop = event.key === "Home" ? 0 : node.scrollHeight;
+          pendingEnd.current = event.key === "End" ? node.scrollTop : null;
           setTop(node.scrollTop);
         }
       }}
       onScroll={(event) => {
-        const scrolled = event.currentTarget.scrollTop;
+        const node = event.currentTarget;
+        const scrolled = node.scrollTop;
         setTop(scrolled);
         pendingRestore.current = undefined;
-        savedFirstRows.set(positionKey, {
-          row: Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
+        const atEnd = scrolled > 0 && node.scrollHeight - node.clientHeight - scrolled <= 1;
+        // Native scrolling can move away from the last offset written by the End effects.
+        pendingEnd.current = pendingEndAt(node, pendingEnd.current);
+        pendingReveal.current = pendingRevealAt(node, pendingReveal.current);
+        savedRowPositions.set(positionKey, {
+          position:
+            atEnd && !props.indexing
+              ? "end"
+              : Math.min(
+                  props.count - 1,
+                  Math.floor(logicalScrollTop(scrolled, scrollModel.current) / 29) + headerRows,
+                ),
           revealKey: handledReveal.current,
         });
       }}
