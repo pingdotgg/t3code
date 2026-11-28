@@ -1,4 +1,14 @@
 import { useGT, useMessages } from "gt-react-native";
+import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
+
+import * as Dialog from "../../components/ui/Dialog";
+import { serverEnvironment } from "../../state/server";
+import { shellEnvironment } from "../../state/shell";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
@@ -21,6 +31,7 @@ export function ThreadHeader(props: {
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
   readonly hasThreadCwd: boolean;
+  readonly cwd: string | null;
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
 }) {
@@ -31,6 +42,10 @@ export function ThreadHeader(props: {
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
+  const environmentId = EnvironmentId.make(String(props.gitControls.environmentId));
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -44,6 +59,29 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  if (props.cwd && serverConfig?.availableEditors.includes("devin")) {
+    actions.push({
+      accessibilityLabel: gt("Open in {editor}", { editor: "Devin" }),
+      icon: "desktopcomputer",
+      subtitle: serverConfig.environment.label,
+      overflowOnly: true,
+      disabled: !canOperate,
+      onPress: async () => {
+        if (!props.cwd || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+          return;
+        const result = await openInEditor({
+          environmentId,
+          input: { cwd: props.cwd, editor: "devin" },
+        });
+        if (AsyncResult.isFailure(result)) {
+          Dialog.alert(
+            gt("Open in {editor}", { editor: "Devin" }),
+            String(Cause.squash(result.cause)),
+          );
+        }
+      },
+    });
+  }
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

@@ -110,3 +110,26 @@ it.each([
     });
   },
 );
+
+it("keeps an existing editor as the default when Devin is installed", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["devin", "webstorm", "file-manager"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "webstorm" });
+});
+
+it("keeps the file manager default until Devin is selected", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["devin", "file-manager"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "file-manager" });
+});
+
+it("opens a saved Devin preference", async () => {
+  state.allowed.add(secondary);
+  state.getPreference.mockReturnValue("devin");
+  const open = useOpenInPreferredEditor(secondary, ["devin", "vscode", "file-manager"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "devin" });
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: secondary,
+    input: { cwd: "/work", editor: "devin" },
+  });
+});
