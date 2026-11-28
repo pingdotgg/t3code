@@ -2132,12 +2132,9 @@ export function WorkspaceLargeTextPreview(props: {
       description: thrownErrorMessage(cause, m) ?? gt("Try again."),
     });
   };
-  // Each workspace mutation or manual refresh re-mints the URL, so an edited file loads its new bytes.
-  const assetUrl = useAssetUrlState(
-    props.environmentId,
-    resource,
-    withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0),
-  );
+  // Each workspace mutation or manual refresh re-mints the file's URL and its embedded images' URLs.
+  const assetRevision = withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0);
+  const assetUrl = useAssetUrlState(props.environmentId, resource, assetRevision);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([
     props.environmentId,
@@ -2177,7 +2174,7 @@ export function WorkspaceLargeTextPreview(props: {
       delimiter={props.delimiter}
       markdownCwd={props.markdownCwd}
       threadRef={props.threadRef}
-      workspaceMutationId={props.workspaceMutationId}
+      workspaceMutationId={assetRevision}
       copyContents={props.copyContents}
       onRetry={retry}
       onPostRender={props.onPostRender}
