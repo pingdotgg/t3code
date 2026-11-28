@@ -12,8 +12,10 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunStatus,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
@@ -34,6 +36,7 @@ import {
   deriveThreadActivityRun,
   pendingProviderStartup,
   deriveThreadRuntime,
+  deriveUsageLimitNoticeRows,
   formatModelSelectionEffort,
   formatProviderSubagentStatus,
   formatSubagentEffort,
@@ -43,6 +46,7 @@ import {
   presentRunStop,
   readSelectedEffortValue,
   threadRuntimeHasInterruptibleRun,
+  withoutUsageLimitNoticeRows,
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
@@ -1049,5 +1053,197 @@ describe("presentPendingBackgroundWork", () => {
       },
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
+  });
+});
+
+describe("deriveUsageLimitNoticeRows", () => {
+  function usageLimitTurn(idSuffix: string, ordinal: number) {
+    const failedRun = {
+      ...run(`limited-${idSuffix}`, ordinal, "failed"),
+      rootNodeId: NodeId.make(`root-${idSuffix}`),
+    };
+    const providerTurnId = ProviderTurnId.make(`pturn-${idSuffix}`);
+    const base = {
+      threadId: v2Projection.thread.id,
+      runId: failedRun.id,
+      nodeId: failedRun.rootNodeId,
+      providerThreadId: null,
+      providerTurnId,
+      parentItemId: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    const reply: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`reply-${idSuffix}`),
+      nativeItemRef: null,
+      ordinal: 1,
+      type: "assistant_message",
+      status: "completed",
+      title: null,
+      messageId: MessageId.make(`reply-msg-${idSuffix}`),
+      text: "Here is my progress so far.",
+      streaming: false,
+    };
+    const unrelatedNotice: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`other-notice-${idSuffix}`),
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: `other:${providerTurnId}:1`,
+        strength: "weak",
+      },
+      ordinal: 2,
+      type: "system_notice",
+      status: "completed",
+      title: "Context compacted",
+      message: "Compacted earlier messages.",
+    };
+    const claudeNotice: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`claude-notice-${idSuffix}`),
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: `usage-limit:${providerTurnId}:five_hour:1785240000`,
+        strength: "weak",
+      },
+      ordinal: 3,
+      type: "system_notice",
+      status: "completed",
+      title: "Claude usage limit reached",
+      message: "This turn is paused until the 5-hour limit resets.",
+    };
+    const claudeEcho: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`claude-echo-${idSuffix}`),
+      nativeItemRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: `assistant:${providerTurnId}:echo`,
+        strength: "weak",
+      },
+      ordinal: 4,
+      type: "assistant_message",
+      status: "completed",
+      title: null,
+      messageId: MessageId.make(`echo-msg-${idSuffix}`),
+      text: "You've hit your 5-hour limit · resets 7:10am (America/Los_Angeles)",
+      streaming: false,
+    };
+    const trailingReply: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`trailing-reply-${idSuffix}`),
+      nativeItemRef: null,
+      ordinal: 5,
+      type: "assistant_message",
+      status: "completed",
+      title: null,
+      messageId: MessageId.make(`trailing-msg-${idSuffix}`),
+      text: "Partial summary before stopping.",
+      streaming: false,
+    };
+    const failure: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make(`limit-error-${idSuffix}`),
+      nativeItemRef: null,
+      ordinal: 6,
+      type: "error",
+      status: "failed",
+      title: "Usage limit reached",
+      failure: {
+        class: "usage_limit",
+        message: "Usage limit reached. Retry after 7:10am.",
+        code: "usageLimitExceeded",
+        retryable: null,
+      },
+    };
+    const childFailure: OrchestrationV2TurnItem = {
+      ...failure,
+      id: TurnItemId.make(`child-error-${idSuffix}`),
+      nodeId: NodeId.make(`child-${idSuffix}`),
+      ordinal: 7,
+    };
+    const items: ReadonlyArray<OrchestrationV2TurnItem> = [
+      reply,
+      unrelatedNotice,
+      claudeNotice,
+      claudeEcho,
+      trailingReply,
+      failure,
+      childFailure,
+    ];
+    return { failedRun, items };
+  }
+
+  function toVisibleRows(
+    items: ReadonlyArray<OrchestrationV2TurnItem>,
+  ): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+    return items.map((item, position) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: v2Projection.thread.id,
+      sourceItemId: item.id,
+      item,
+    }));
+  }
+
+  it("hides all three rows while the banner is active, then keeps only one structured failure after the next turn", () => {
+    const first = usageLimitTurn("1", 1);
+    const activeProjection = {
+      ...v2Projection,
+      runs: [first.failedRun],
+      turnItems: first.items,
+    };
+
+    const activeVisible = withoutUsageLimitNoticeRows(
+      toVisibleRows(first.items),
+      deriveUsageLimitNoticeRows(activeProjection),
+    ).map((row) => row.item.id);
+    expect(activeVisible).toEqual([
+      "reply-1",
+      "other-notice-1",
+      "trailing-reply-1",
+      "child-error-1",
+    ]);
+
+    const nextRun = run("next-2", 2, "completed");
+    const historicalProjection = {
+      ...activeProjection,
+      runs: [first.failedRun, nextRun],
+    };
+    const historicalVisible = withoutUsageLimitNoticeRows(
+      toVisibleRows(first.items),
+      deriveUsageLimitNoticeRows(historicalProjection),
+    ).map((row) => row.item.id);
+    expect(historicalVisible).toEqual([
+      "reply-1",
+      "other-notice-1",
+      "trailing-reply-1",
+      "limit-error-1",
+      "child-error-1",
+    ]);
+
+    const second = usageLimitTurn("2", 3);
+    const repeatItems = [...first.items, ...second.items];
+    const repeatProjection = {
+      ...v2Projection,
+      runs: [first.failedRun, nextRun, second.failedRun],
+      turnItems: repeatItems,
+    };
+    const repeatVisible = withoutUsageLimitNoticeRows(
+      toVisibleRows(repeatItems),
+      deriveUsageLimitNoticeRows(repeatProjection),
+    ).map((row) => row.item.id);
+    expect(repeatVisible).toEqual([
+      "reply-1",
+      "other-notice-1",
+      "trailing-reply-1",
+      "limit-error-1",
+      "child-error-1",
+      "reply-2",
+      "other-notice-2",
+      "trailing-reply-2",
+      "child-error-2",
+    ]);
   });
 });

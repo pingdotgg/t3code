@@ -589,7 +589,7 @@ function threadErrorSource(
 export interface UsageLimitNoticeRows {
   readonly itemIds: ReadonlySet<ThreadStructureTurnItem["id"]>;
   /** Hidden only when its text reads as the provider's limit message; see PROVIDER_LIMIT_NOTICE. */
-  readonly providerNoticeItemId: ThreadStructureTurnItem["id"] | null;
+  readonly providerNoticeItemIds: ReadonlySet<ThreadStructureTurnItem["id"]>;
 }
 
 // Claude Code's own limit messages, such as "You've hit your 5-hour limit · resets 7:10am".
@@ -597,56 +597,70 @@ const PROVIDER_LIMIT_NOTICE =
   /^(?:You[’']ve hit your (?:(?:5-hour|session|weekly|usage) )?limit|You[’']re out of extra usage|Claude AI usage limit reached)(?: · resets (?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm)(?: \([A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)*\))?)?\.?$/i;
 
 /**
- * The timeline rows that repeat a usage-limit pause while its recovery notice shows: the run's
- * limit failure, Claude's pause notices, and the provider's own limit message. They return to
- * history once another run executes.
+ * Timeline rows that repeat a usage-limit pause. While the failed run owns the recovery banner,
+ * its structured failure, Claude's pause notice, and the provider's own limit message stay hidden.
+ * Once another run executes, one structured failure per event remains in history while Claude's
+ * pause notice and provider echo stay hidden.
  */
 export function deriveUsageLimitNoticeRows(
   projection: ThreadStructure,
 ): UsageLimitNoticeRows | null {
-  const runtime = deriveThreadStructureRuntime(projection);
-  const run = presentedLatestRun(projection);
-  if (runtime?.status !== "failed" || runtime.lastErrorClass !== "usage_limit" || run === null) {
-    return null;
-  }
-  const failure = latestRootProviderFailure(run, projection.turnItems);
-  const itemIds = new Set<ThreadStructureTurnItem["id"]>();
-  let failedProviderTurnId: ThreadStructureTurnItem["providerTurnId"] = null;
+  const rootNodeByRunId = new Map(projection.runs.map((run) => [run.id, run.rootNodeId]));
+  const failures: Array<ThreadStructureTurnItem> = [];
   for (const item of projection.turnItems) {
-    if (item.runId !== run.id) continue;
     if (
       item.type === "error" &&
       item.status === "failed" &&
-      item.nodeId === run.rootNodeId &&
-      item.failure.class === "usage_limit"
+      item.failure.class === "usage_limit" &&
+      item.runId !== null &&
+      item.nodeId === rootNodeByRunId.get(item.runId)
     ) {
-      itemIds.add(item.id);
-      if (item.failure === failure) failedProviderTurnId = item.providerTurnId;
+      failures.push(item);
     }
   }
-  let providerNotice: ThreadStructureTurnItem | null = null;
-  if (failedProviderTurnId !== null) {
+  if (failures.length === 0) return null;
+
+  const runtime = deriveThreadStructureRuntime(projection);
+  const latestRun = presentedLatestRun(projection);
+  const bannerRunId =
+    runtime?.status === "failed" && runtime.lastErrorClass === "usage_limit"
+      ? (latestRun?.id ?? null)
+      : null;
+
+  const itemIds = new Set<ThreadStructureTurnItem["id"]>();
+  const failedTurns = new Set<string>();
+  for (const failure of failures) {
+    if (failure.runId === bannerRunId) itemIds.add(failure.id);
+    if (failure.providerTurnId !== null) {
+      failedTurns.add(`${failure.runId}\0${failure.providerTurnId}`);
+    }
+  }
+
+  const providerNoticeItemIds = new Set<ThreadStructureTurnItem["id"]>();
+  if (failedTurns.size > 0) {
     for (const item of projection.turnItems) {
-      if (item.runId !== run.id || item.providerTurnId !== failedProviderTurnId) continue;
+      if (
+        item.runId === null ||
+        item.providerTurnId === null ||
+        item.parentItemId !== null ||
+        item.nodeId !== rootNodeByRunId.get(item.runId) ||
+        !failedTurns.has(`${item.runId}\0${item.providerTurnId}`)
+      ) {
+        continue;
+      }
       if (
         item.type === "system_notice" &&
-        item.nodeId === run.rootNodeId &&
-        item.parentItemId === null &&
         item.nativeItemRef?.driver === "claudeAgent" &&
-        item.nativeItemRef.nativeId?.startsWith(`usage-limit:${failedProviderTurnId}:`) === true
+        item.nativeItemRef.nativeId?.startsWith(`usage-limit:${item.providerTurnId}:`) === true
       ) {
         itemIds.add(item.id);
       }
-      if (
-        item.type === "assistant_message" &&
-        item.parentItemId === null &&
-        (providerNotice === null || item.ordinal > providerNotice.ordinal)
-      ) {
-        providerNotice = item;
-      }
+      if (item.type === "assistant_message") providerNoticeItemIds.add(item.id);
     }
   }
-  return { itemIds, providerNoticeItemId: providerNotice?.id ?? null };
+
+  if (itemIds.size === 0 && providerNoticeItemIds.size === 0) return null;
+  return { itemIds, providerNoticeItemIds };
 }
 
 export function withoutUsageLimitNoticeRows<
@@ -655,7 +669,7 @@ export function withoutUsageLimitNoticeRows<
   if (notice === null) return rows;
   const hidden = ({ item }: Row) =>
     notice.itemIds.has(item.id) ||
-    (item.id === notice.providerNoticeItemId &&
+    (notice.providerNoticeItemIds.has(item.id) &&
       item.type === "assistant_message" &&
       PROVIDER_LIMIT_NOTICE.test(item.text.trim()));
   return rows.some(hidden) ? rows.filter((row) => !hidden(row)) : rows;
