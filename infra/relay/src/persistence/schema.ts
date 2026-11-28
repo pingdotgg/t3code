@@ -203,10 +203,11 @@ export const relayDpopProofs = pgTable(
 );
 
 // Each Connect account's primary email, kept from Clerk's `user.created` and `user.updated`
-// webhooks because `user.deleted` carries no address. A deletion moves it to `notify_email`.
+// webhooks because `user.deleted` carries no address. Sealed with ACCOUNT_EMAIL_KEY (see
+// accounts/SealedEmail.ts). A deletion moves it to `encrypted_notify_email`.
 export const relayAccountEmails = pgTable("relay_account_emails", {
   userId: varchar("user_id", { length: 255 }).primaryKey(),
-  email: varchar("email", { length: 320 }).notNull(),
+  encryptedEmail: text("encrypted_email").notNull(),
 });
 
 // Clerk account deletions: pending until a pass succeeds after every relay token issued before
@@ -219,8 +220,9 @@ export const relayAccountDeletions = pgTable(
     requestedAt: varchar("requested_at", { length: 64 }).notNull(),
     attempts: integer("attempts").notNull().default(0),
     completedAt: varchar("completed_at", { length: 64 }),
-    // Where to send the deletion notice. Cleared once it is sent, or given up on.
-    notifyEmail: varchar("notify_email", { length: 320 }),
+    // Where to send the deletion notice, sealed like `relay_account_emails`. Cleared once the
+    // notice is sent, or given up on.
+    encryptedNotifyEmail: text("encrypted_notify_email"),
   },
   (table) => [
     index("idx_relay_account_deletions_pending")

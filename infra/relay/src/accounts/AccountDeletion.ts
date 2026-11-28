@@ -4,7 +4,9 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Aead from "effect/crypto/Aead";
 import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -19,6 +21,7 @@ import * as RelayConfiguration from "../Config.ts";
 import { RELAY_DPOP_ACCESS_TOKEN_TTL } from "../auth/RelayTokens.ts";
 import * as RelayDb from "../db.ts";
 import * as AccountEmails from "./AccountEmails.ts";
+import * as SealedEmail from "./SealedEmail.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
@@ -83,7 +86,10 @@ const identityKey = (identity: {
 export class AccountDeletion extends Context.Service<
   AccountDeletion,
   {
-    /** Keeps the address the deletion notice goes to; ignored once the account is deleted. */
+    /**
+     * Keeps the address the deletion notice goes to, sealed. Ignored once the account is deleted,
+     * or when no ACCOUNT_EMAIL_KEY is configured.
+     */
     readonly recordEmail: (input: {
       readonly userId: string;
       readonly email: string;
@@ -110,6 +116,7 @@ const make = Effect.gen(function* () {
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
   const inbox = yield* HookInbox.HookInbox;
   const emails = yield* AccountEmails.AccountEmails;
+  const cryptoContext = yield* Effect.context<Aead.Aead | SecureRandom.SecureRandom>();
   // unlinkEnvironmentRecord reads these from context; capture them once for the service.
   const unlinkContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof unlinkEnvironmentRecord>>>();
@@ -268,6 +275,14 @@ const make = Effect.gen(function* () {
   }) {
     const { userId, email } = input;
     yield* Effect.annotateCurrentSpan({ "relay.user_id": userId });
+    const key = config.accountEmailKey;
+    if (key === undefined) return;
+    const encryptedEmail = yield* SealedEmail.seal(key, { userId, email }).pipe(
+      Effect.provideContext(cryptoContext),
+      Effect.mapError(
+        (cause) => new AccountDeletionFailed({ userId, stage: "record-email", cause }),
+      ),
+    );
     yield* transactions
       .withTransaction(
         Effect.gen(function* () {
@@ -279,8 +294,8 @@ const make = Effect.gen(function* () {
           if (deleted.length > 0) return;
           yield* db
             .insert(relayAccountEmails)
-            .values({ userId, email })
-            .onConflictDoUpdate({ target: relayAccountEmails.userId, set: { email } });
+            .values({ userId, encryptedEmail })
+            .onConflictDoUpdate({ target: relayAccountEmails.userId, set: { encryptedEmail } });
         }),
       )
       .pipe(
@@ -300,13 +315,17 @@ const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           const [known] = yield* db
-            .select({ email: relayAccountEmails.email })
+            .select({ encryptedEmail: relayAccountEmails.encryptedEmail })
             .from(relayAccountEmails)
             .where(eq(relayAccountEmails.userId, userId))
             .limit(1);
           yield* db
             .insert(relayAccountDeletions)
-            .values({ userId, requestedAt: now, notifyEmail: known?.email ?? null })
+            .values({
+              userId,
+              requestedAt: now,
+              encryptedNotifyEmail: known?.encryptedEmail ?? null,
+            })
             .onConflictDoNothing();
           yield* db.delete(relayAccountEmails).where(eq(relayAccountEmails.userId, userId));
         }),
@@ -365,22 +384,31 @@ const make = Effect.gen(function* () {
       .select({
         userId: relayAccountDeletions.userId,
         completedAt: relayAccountDeletions.completedAt,
-        notifyEmail: relayAccountDeletions.notifyEmail,
+        encryptedNotifyEmail: relayAccountDeletions.encryptedNotifyEmail,
       })
       .from(relayAccountDeletions)
       .where(
         and(
           isNotNull(relayAccountDeletions.completedAt),
-          isNotNull(relayAccountDeletions.notifyEmail),
+          isNotNull(relayAccountDeletions.encryptedNotifyEmail),
         ),
       )
       .limit(PENDING_BATCH_SIZE)
       .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
     let noticesSent = 0;
     for (const notice of notices) {
-      if (notice.notifyEmail === null || notice.completedAt === null) continue;
-      if (notice.completedAt > giveUpBefore) {
-        const sent = yield* Effect.exit(emails.sendDeletionNotice({ to: notice.notifyEmail }));
+      const { userId, encryptedNotifyEmail, completedAt } = notice;
+      if (encryptedNotifyEmail === null || completedAt === null) continue;
+      if (completedAt > giveUpBefore) {
+        const sent = yield* Effect.exit(
+          Effect.fromNullishOr(config.accountEmailKey).pipe(
+            Effect.flatMap((key) =>
+              SealedEmail.open(key, { userId, sealed: encryptedNotifyEmail }),
+            ),
+            Effect.provideContext(cryptoContext),
+            Effect.flatMap((to) => emails.sendDeletionNotice({ to })),
+          ),
+        );
         if (sent._tag === "Failure") {
           yield* Effect.logWarning("Account deletion notice failed; retrying next sweep", {
             "relay.user_id": notice.userId,
@@ -396,7 +424,7 @@ const make = Effect.gen(function* () {
       }
       yield* db
         .update(relayAccountDeletions)
-        .set({ notifyEmail: null })
+        .set({ encryptedNotifyEmail: null })
         .where(eq(relayAccountDeletions.userId, notice.userId))
         .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
     }

@@ -5,6 +5,7 @@ import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Aead from "effect/crypto/Aead";
 import * as Digest from "effect/crypto/Digest";
 import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -84,6 +85,7 @@ import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 
 const layerWebcrypto = Layer.mergeAll(
+  Aead.layerWebCrypto,
   Digest.layerWebCrypto,
   Mac.layerWebCrypto,
   Signature.layerWebCrypto,
@@ -178,6 +180,12 @@ export const layer = Api.make(
         (value) => Redacted.value(value).trim().length > 0,
       ),
     );
+    const accountEmailKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("ACCOUNT_EMAIL_KEY")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -266,6 +274,7 @@ export const layer = Api.make(
         clerkPublishableKey,
         clerkJwtAudience,
         ...(clerkWebhookSigningSecret ? { clerkWebhookSigningSecret } : {}),
+        ...(accountEmailKey ? { accountEmailKey } : {}),
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,

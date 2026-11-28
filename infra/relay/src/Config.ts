@@ -65,6 +65,8 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkJwtAudience: string;
     /** Verifies Clerk `user.deleted` webhooks; unset leaves the webhook route disabled. */
     readonly clerkWebhookSigningSecret?: Redacted.Redacted<string>;
+    /** Seals stored account emails (32 bytes, base64); unset stores none, so no deletion notices. */
+    readonly accountEmailKey?: Redacted.Redacted<string>;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
