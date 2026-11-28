@@ -255,17 +255,16 @@ export function useQueuedRunEdit(input: {
       : attachmentContextIdsForRecord(editing.context, attachment).filter((contextId) =>
           originalReferencedContextIds!.has(contextId),
         );
-  // A stash entry holds only the draft. Thread, machine and reply records were copied into it
-  // when the edit began; the message's attachments and any other record it mentions were not.
+  // A stash entry holds only the draft, so it must hold everything a save would keep: thread and
+  // machine records and the referenced reply live in the draft; any other kept record does not.
   const canMoveEditToStash =
     editing !== null &&
     editing.existingAttachments.length === 0 &&
     (editing.context?.records ?? []).every(
       (record) =>
-        !originalReferencedContextIds!.has(record.contextId) ||
-        record.kind === "thread" ||
-        record.kind === "environment" ||
-        record.kind === "response",
+        isDraftOwnedRecord(record) ||
+        "attachmentId" in record ||
+        (record.kind === "response" && originalReferencedContextIds!.has(record.contextId)),
     );
   const editingAttachments =
     editing === null

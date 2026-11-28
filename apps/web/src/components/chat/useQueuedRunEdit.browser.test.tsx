@@ -26,7 +26,6 @@ import {
   environmentContextRecord,
   environmentContextReference,
   terminalContextRecord,
-  terminalContextReference,
   threadContextReference,
 } from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
@@ -451,7 +450,8 @@ describe("useQueuedRunEdit", () => {
     const threadOnly = MessageId.make("message-thread");
     const withTerminal = MessageId.make("message-terminal");
     const threadText = `see ${formatInlineContextReference(threadContextReference(thread))}`;
-    const terminalText = `see ${formatInlineContextReference(terminalContextReference(terminalDraft))}`;
+    // A save keeps a terminal record even after its chip left the text; the stash cannot.
+    const terminalText = "see the output";
     const messages = [
       { id: threadOnly, text: threadText, context: { version: 1, records: [thread] } },
       { id: withTerminal, text: terminalText, context: { version: 1, records: [terminal] } },
