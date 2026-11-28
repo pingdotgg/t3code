@@ -202,7 +202,7 @@ export const make = Effect.gen(function* () {
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
     fileSystem.realPath(rootPath).pipe(
       Effect.orElseSucceed(() => rootPath),
-      Effect.flatMap((cwd) => withWorkspaceLease(cwd, effect)),
+      Effect.flatMap((cwd) => withWorkspaceLease(cwd, effect, "checkout")),
     );
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
