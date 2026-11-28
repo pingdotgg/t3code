@@ -1115,7 +1115,7 @@ const ACP_MCP_SHELL_COMMAND_SEPARATOR = /[;&|()\r\n]/;
 const ACP_MCP_SHELL_WORD_SEPARATOR = /[\s<>]/;
 const ACP_MCP_ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const ACP_MCP_LAUNCHER_EXECUTABLE =
-  /(?:^|[\\/])(?:node|nodejs|electron|bun|deno|t3(?:-code)?|t3 code[^\\/]*)(?:\.exe)?$/i;
+  /(?:^|[\\/])(?:node|nodejs|electron|bun|deno|t3(?:-?code)?|t3 code[^\\/]*)(?:\.exe)?$/i;
 const ACP_MCP_LAUNCHER_ENV_REF = /(?:\$|\$\{)T3_ACP_MCP_NODE\b/;
 
 interface ShellWord {

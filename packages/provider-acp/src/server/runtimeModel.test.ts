@@ -1718,6 +1718,17 @@ describe("extractMcpToolCallIdentity", () => {
         expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
       },
       {
+        name: "literal Linux desktop launcher",
+        command:
+          'ELECTRON_RUN_AS_NODE=1 "/opt/T3 Code (Beta)/t3code" acp-mcp-call delegate_task \'{"task":"x"}\'',
+        expected: { server: "t3-code", tool: "delegate_task", input: { task: "x" } },
+      },
+      {
+        name: "literal AppImage launcher",
+        command: '/tmp/.mount_T3abc/t3code acp-mcp-call delegate_task \'{"task":"x"}\'',
+        expected: { server: "t3-code", tool: "delegate_task", input: { task: "x" } },
+      },
+      {
         name: "compound shell command",
         command:
           'cd /tmp && env ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
