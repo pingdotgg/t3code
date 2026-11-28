@@ -177,6 +177,7 @@ const make = Effect.gen(function* () {
       ),
     );
     if (existing !== null) {
+      // A derived ID alone does not verify the native session binding for a cross-project repair.
       if (owner === null && existing.projectId !== input.projectId)
         return { threadId, imported: false } as const;
       const repairing = AgentSessionImporter.isNativeHistoryPending({
