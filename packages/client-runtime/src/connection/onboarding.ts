@@ -34,7 +34,7 @@ import {
   SshConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import { mapRemoteEnvironmentError } from "./errors.ts";
+import { mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -180,7 +180,14 @@ export const preparePairingRegistration = Effect.fn(
       credential: target.credential,
       clientMetadata: presentation.metadata,
       dpopProof: dpopProof.value,
-    }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+    }).pipe(
+      // A rejected pairing code carries no DPoP reason; only a reported DPoP failure gets its hint.
+      Effect.mapError((error) =>
+        error._tag === "EnvironmentAuthInvalidError" && error.dpopFailureReason !== undefined
+          ? mapRemoteDpopEnvironmentError(error, "direct")
+          : mapRemoteEnvironmentError(error),
+      ),
+    );
     return new BearerConnectionRegistration({
       ...route,
       credential: new DpopConnectionCredential({
@@ -264,7 +271,7 @@ const updateBearerConnection = Effect.fn(
     entry: Option.fromUndefinedOr(entry),
     credential,
   });
-  yield* registry.register(registration);
+  yield* registry.register(registration, { useRegistrationLabel: true });
 });
 
 export const prepareBearerConnectionUpdate = Effect.fn(

@@ -10,6 +10,7 @@ export const LOCALES = [
   { code: "de", path: "de", name: "Deutsch" },
   { code: "ja", path: "ja", name: "日本語" },
   { code: "ko", path: "ko", name: "한국어" },
+  { code: "pl", path: "pl", name: "Polski" },
   { code: "ru", path: "ru", name: "Русский" },
 ] as const;
 
