@@ -65,6 +65,31 @@ it("keeps focus in a region with its own keys on window return", async () => {
   );
 });
 
+it("keeps focus on a trigger whose menu just opened on window return", () => {
+  const trigger = document.createElement("button");
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-expanded", "true");
+  const disclosure = document.createElement("button");
+  disclosure.setAttribute("aria-expanded", "true");
+  document.body.append(trigger, disclosure);
+  using _buttons = {
+    [Symbol.dispose]: () => {
+      trigger.remove();
+      disclosure.remove();
+    },
+  };
+
+  trigger.focus();
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, null)).toBe(false);
+  trigger.setAttribute("aria-expanded", "false");
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, null)).toBe(true);
+  disclosure.focus();
+  expect(
+    shouldRefocusComposerOnWindowFocus(document.activeElement, null),
+    "an expanded fold or folder toggle opens no popup",
+  ).toBe(true);
+});
+
 it("refocuses the composer on window return from a clicked area after a bare key press", async () => {
   const controller = createWorkspaceFocusController(document);
   const root = document.createElement("div");
