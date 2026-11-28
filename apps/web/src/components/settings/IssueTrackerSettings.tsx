@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
+import { ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
@@ -35,6 +35,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
+import { SettingsDisclosureHeader } from "./SettingsDisclosureHeader";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -184,132 +185,124 @@ function TrackerRow({
   const summary = issueTrackerSummary(tracker, bindings, messages);
 
   return (
-    <div className="first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20">
-      <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-              {Icon ? <Icon className="size-4.5 text-foreground/80" /> : null}
-              <span
-                aria-hidden
-                className={cn(
-                  "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-                  usable ? "bg-success" : "bg-muted-foreground/35",
-                )}
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={setIsExpanded}
+      render={<div className="overflow-hidden first:rounded-t-xl last:rounded-b-xl" />}
+    >
+      <SettingsDisclosureHeader
+        label={gt("Toggle {tracker} details", { tracker: tracker.displayName })}
+        expanded={isExpanded}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+            {Icon ? <Icon className="size-4.5 text-foreground/80" /> : null}
+            <span
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+                usable ? "bg-success" : "bg-muted-foreground/35",
+              )}
+            />
+          </span>
+          <span className="truncate text-sm font-medium text-foreground">
+            {tracker.displayName}
+          </span>
+          {tracker.workspace ? (
+            <span className="truncate text-xs text-muted-foreground">{tracker.workspace}</span>
+          ) : null}
+          {tracker.connected && tracker.account === null ? (
+            <Badge variant="destructive" size="sm">
+              <T>Credential rejected</T>
+            </Badge>
+          ) : null}
+        </div>
+        <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
+      </SettingsDisclosureHeader>
+      {/* Kept mounted so a pick awaiting its refresh stays locked when the panel is reopened. */}
+      <CollapsibleContent keepMounted>
+        {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
+        <fieldset disabled={!canEdit || busy} className="contents">
+          <div className="px-3 pb-4 pt-1 sm:px-4">
+            <CredentialFieldRows
+              tracker={tracker}
+              inputId={inputId}
+              values={drafts}
+              onChange={setDrafts}
+            />
+            <SettingsRow
+              title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+              description={
+                <>
+                  <T>Stored on the server.</T>
+                  {tracker.credential.helpUrl ? (
+                    <>
+                      {" "}
+                      <InlineButton
+                        render={
+                          <a
+                            href={tracker.credential.helpUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          />
+                        }
+                      >
+                        <T>Create one</T>
+                        <ExternalLinkIcon aria-hidden className="size-3" />
+                      </InlineButton>
+                    </>
+                  ) : null}
+                  {failure && !failure.adding ? (
+                    <span className="block text-destructive">{failure.text}</span>
+                  ) : null}
+                </>
+              }
+              control={
+                <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+                  <SecretInput
+                    id={inputId}
+                    size="sm"
+                    className="min-w-0 flex-1"
+                    configured={tracker.connected}
+                    value=""
+                    onCommit={(next) => {
+                      if (next.trim()) void submit(next.trim());
+                    }}
+                  />
+                  {tracker.connected ? (
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost-destructive"
+                      onClick={() => void submit(null)}
+                      aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              }
+            />
+            {usable ? (
+              <ProjectBindings
+                environmentId={environmentId}
+                tracker={tracker}
+                bindings={bindings}
+                refreshing={refreshing}
+                refreshFailed={refreshFailed}
               />
-            </span>
-            <span className="truncate text-sm font-medium text-foreground">
-              {tracker.displayName}
-            </span>
-            {tracker.workspace ? (
-              <span className="truncate text-xs text-muted-foreground">{tracker.workspace}</span>
             ) : null}
-            {tracker.connected && tracker.account === null ? (
-              <Badge variant="destructive" size="sm">
-                <T>Credential rejected</T>
-              </Badge>
+            {canAddAccount ? (
+              <AddAccountRow
+                tracker={tracker}
+                failure={failure?.adding ? failure.text : null}
+                onAdd={(token, values) => submit(token, values, true)}
+              />
             ) : null}
           </div>
-          <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
-        </div>
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          onClick={() => setIsExpanded((open) => !open)}
-          aria-expanded={isExpanded}
-          aria-label={gt("Toggle {tracker} details", { tracker: tracker.displayName })}
-        >
-          <ChevronDownIcon
-            className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-          />
-        </Button>
-      </div>
-      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        {/* Kept mounted so a pick awaiting its refresh stays locked when the panel is reopened. */}
-        <CollapsibleContent keepMounted>
-          {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
-          <fieldset disabled={!canEdit || busy} className="contents">
-            <div className="px-3 pb-4 pt-1 sm:px-4">
-              <CredentialFieldRows
-                tracker={tracker}
-                inputId={inputId}
-                values={drafts}
-                onChange={setDrafts}
-              />
-              <SettingsRow
-                title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-                description={
-                  <>
-                    <T>Stored on the server.</T>
-                    {tracker.credential.helpUrl ? (
-                      <>
-                        {" "}
-                        <InlineButton
-                          render={
-                            <a
-                              href={tracker.credential.helpUrl}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                            />
-                          }
-                        >
-                          <T>Create one</T>
-                          <ExternalLinkIcon aria-hidden className="size-3" />
-                        </InlineButton>
-                      </>
-                    ) : null}
-                    {failure && !failure.adding ? (
-                      <span className="block text-destructive">{failure.text}</span>
-                    ) : null}
-                  </>
-                }
-                control={
-                  <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-                    <SecretInput
-                      id={inputId}
-                      size="sm"
-                      className="min-w-0 flex-1"
-                      configured={tracker.connected}
-                      value=""
-                      onCommit={(next) => {
-                        if (next.trim()) void submit(next.trim());
-                      }}
-                    />
-                    {tracker.connected ? (
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost-destructive"
-                        onClick={() => void submit(null)}
-                        aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
-                      >
-                        <XIcon className="size-3.5" />
-                      </Button>
-                    ) : null}
-                  </div>
-                }
-              />
-              {usable ? (
-                <ProjectBindings
-                  environmentId={environmentId}
-                  tracker={tracker}
-                  bindings={bindings}
-                  refreshing={refreshing}
-                  refreshFailed={refreshFailed}
-                />
-              ) : null}
-              {canAddAccount ? (
-                <AddAccountRow
-                  tracker={tracker}
-                  failure={failure?.adding ? failure.text : null}
-                  onAdd={(token, values) => submit(token, values, true)}
-                />
-              ) : null}
-            </div>
-          </fieldset>
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+        </fieldset>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

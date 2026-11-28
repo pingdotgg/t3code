@@ -1,5 +1,4 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ChevronDownIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
@@ -37,6 +36,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
 import { IssueTrackerSettings } from "./IssueTrackerSettings";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
+import { SettingsDisclosureHeader } from "./SettingsDisclosureHeader";
 import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
 import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
 import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
@@ -296,85 +296,72 @@ function DiscoveryItemRow({
   if (seenSearchTargetId !== searchTargetId) setSeenSearchTargetId(searchTargetId);
 
   return (
-    <div
-      className={cn(
-        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20",
-        isVcsNotReady(item) && "opacity-80",
-      )}
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={setIsExpanded}
+      render={
+        <div
+          className={cn(
+            "overflow-hidden first:rounded-t-xl last:rounded-b-xl",
+            isVcsNotReady(item) && "opacity-80",
+          )}
+        />
+      }
     >
-      <div className="px-3 py-3 sm:px-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <SourceControlItemMark item={item} />
-              <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
-              {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
-              {isVcsNotReady(item) ? (
-                <Badge variant="warning" size="sm">
-                  <T>Coming Soon</T>
-                </Badge>
-              ) : null}
-              {authStatus?.badge ? (
-                <Badge variant={authStatus.badge} size="sm">
-                  {authStatus.label}
-                </Badge>
-              ) : null}
-            </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
-              {itemSummary({ item, auth, authAccount, resolve: messages })}
-            </p>
-          </div>
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {hasDetails ? (
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                onClick={() => setIsExpanded((open) => !open)}
-                aria-expanded={isExpanded}
-                aria-label={gt("Toggle {label} details", { label: item.label })}
-              >
-                <ChevronDownIcon
-                  className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+      <SettingsDisclosureHeader
+        label={hasDetails ? gt("Toggle {label} details", { label: item.label }) : undefined}
+        expanded={isExpanded}
+        stackOnSmallScreens
+        actions={
+          offered ? (
+            <SharedTooltipTrigger
+              render={
+                <Switch
+                  checked={offered.checked}
+                  disabled={offered.disabled}
+                  onCheckedChange={offered.onChange}
+                  aria-label={gt("Offer {label} when adding or publishing a project", {
+                    label: item.label,
+                  })}
                 />
-              </Button>
-            ) : null}
-            {offered ? (
-              <SharedTooltipTrigger
-                render={
-                  <Switch
-                    checked={offered.checked}
-                    disabled={offered.disabled}
-                    onCheckedChange={offered.onChange}
-                    aria-label={gt("Offer {label} when adding or publishing a project", {
-                      label: item.label,
-                    })}
-                  />
-                }
-                label={
-                  <>
-                    <T>Offer when adding or publishing a project</T>
-                  </>
-                }
-              />
-            ) : !isVcsNotReady(item) ? (
-              <Switch
-                checked={item.status === "available"}
-                disabled
-                aria-label={`${item.label} availability`}
-              />
-            ) : null}
-          </div>
+              }
+              label={<T>Offer when adding or publishing a project</T>}
+            />
+          ) : !isVcsNotReady(item) ? (
+            <Switch
+              checked={item.status === "available"}
+              disabled
+              aria-label={gt("{label} availability", { label: item.label })}
+            />
+          ) : null
+        }
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <SourceControlItemMark item={item} />
+          <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
+          {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
+          {isVcsNotReady(item) ? (
+            <Badge variant="warning" size="sm">
+              <T>Coming Soon</T>
+            </Badge>
+          ) : null}
+          {authStatus?.badge ? (
+            <Badge variant={authStatus.badge} size="sm">
+              {authStatus.label}
+            </Badge>
+          ) : null}
         </div>
-      </div>
+        <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
+          {itemSummary({ item, auth, authAccount, resolve: messages })}
+        </p>
+      </SettingsDisclosureHeader>
 
       {hasDetails ? (
-        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-          <CollapsibleContent>
-            <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
-          </CollapsibleContent>
-        </Collapsible>
+        <CollapsibleContent>
+          <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
+        </CollapsibleContent>
       ) : null}
-    </div>
+    </Collapsible>
   );
 }
 
