@@ -199,6 +199,15 @@ export class DeviceService extends Context.Service<
       readonly deviceId: DeviceId;
       readonly targetArgs: ReadonlyArray<string>;
     }) => Effect.Effect<Option.Option<string>, DeviceError>;
+    /**
+     * Whether another thread's launcher holds the device's agent-device claim. Sessions the host
+     * leases to every thread and Device panel sessions without a launcher hold none.
+     */
+    readonly agentClaimedByOtherThread: (input: {
+      readonly threadId: ThreadId;
+      readonly hostId: DeviceHostId;
+      readonly deviceId: DeviceId;
+    }) => Effect.Effect<boolean>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -1227,6 +1236,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
         );
       }),
+      agentClaimedByOtherThread: Effect.fn("DeviceService.agentClaimedByOtherThread")(
+        function* (input) {
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          const others = state.sessions.filter(
+            (session) =>
+              session.threadId !== input.threadId &&
+              session.hostId === input.hostId &&
+              session.deviceId === input.deviceId,
+          );
+          const names = yield* Effect.forEach(others, (session) =>
+            agentDeviceSession(session.threadId, session.hostId, session.deviceId),
+          ).pipe(Effect.provideService(Digest.Digest, digest));
+          return names.some((name) => boundLaunchers.has(name) && !hostSessionLaunchers.has(name));
+        },
+      ),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
       subscribe: PubSub.subscribe(statePubSub),
       configure,

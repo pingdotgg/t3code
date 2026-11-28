@@ -264,6 +264,17 @@ const handlers = {
       }
       const hostId = yield* resolveHostId(state.hosts, input.hostId);
       const target = yield* pickDevice(state, { ...input, hostId });
+      if (
+        yield* devices.agentClaimedByOtherThread({
+          threadId: scope.thread.threadId,
+          hostId: target.hostId,
+          deviceId: target.id,
+        })
+      ) {
+        return yield* new DeviceToolUnavailableError({
+          reason: `Device ${target.id} is in use by an agent in another thread. Pick another device, or ask the user to close it in that thread first.`,
+        });
+      }
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
         return yield* new DeviceToolUnavailableError({

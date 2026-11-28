@@ -115,6 +115,7 @@ const openSession = {
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   state: Effect.succeed(state),
   list: Effect.succeed(state),
+  agentClaimedByOtherThread: () => Effect.succeed(false),
   agentReadinessIfSupported: () => Effect.succeed(readiness),
   open: (input) =>
     Effect.succeed({
@@ -245,6 +246,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
   const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed(state),
+    agentClaimedByOtherThread: () => Effect.succeed(false),
     agentReadinessIfSupported: () =>
       Effect.fail(
         new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
@@ -406,6 +408,7 @@ describe("device targeting across hosts", () => {
     const layerDevices = Layer.mock(DeviceService.DeviceService)({
       state: Effect.succeed(multiHostState),
       list: Effect.succeed({ ...multiHostState, sessions }),
+      agentClaimedByOtherThread: () => Effect.succeed(false),
       agentReadinessIfSupported: () => Effect.succeed(readiness),
       open: (input) =>
         Effect.sync(() => {
@@ -559,6 +562,19 @@ describe("device targeting across hosts", () => {
           );
         }),
       { agentLauncher: () => Effect.succeedNone },
+    ),
+  );
+
+  it.effect("refuses a local device another thread's agent already holds", () =>
+    run(
+      [{ ...session("local", "UDID-1", "ios"), threadId: ThreadId.make("other-thread") }],
+      ({ opened, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("device_open", { deviceId: "UDID-1", hostId: "local" });
+          expect(result.isError).toBe(true);
+          expect(opened).toEqual([]);
+        }),
+      { agentClaimedByOtherThread: () => Effect.succeed(true) },
     ),
   );
 
