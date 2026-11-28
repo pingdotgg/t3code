@@ -17,8 +17,10 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -388,6 +390,7 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Digest.Digest, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const backgroundScope = yield* Effect.scope;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
@@ -468,6 +471,19 @@ export const layer: Layer.Layer<
         readonly seenAt: number;
       }
     >();
+    // Baselines a turn has queued but not finished. A post-turn capture waits for its own, or a
+    // queued one would lose the race for the workspace lock and leave the scope without a baseline.
+    const pendingBaselines = new Map<
+      CheckpointScopeId,
+      { readonly ordinal: number; readonly done: Deferred.Deferred<void> }
+    >();
+    const settleBaseline = (scopeId: CheckpointScopeId, done: Deferred.Deferred<void>) =>
+      Effect.andThen(
+        Deferred.succeed(done, undefined),
+        Effect.sync(() => {
+          if (pendingBaselines.get(scopeId)?.done === done) pendingBaselines.delete(scopeId);
+        }),
+      );
     const noteRepositoryState = Effect.fnUntraced(function* (
       scopeId: CheckpointScopeId,
       state: { readonly ordinal: number; readonly cleanHead: string | null },
@@ -1016,9 +1032,21 @@ export const layer: Layer.Layer<
         readonly ordinalWithinScope: number;
         readonly nested: NestedScopePaths;
       }) {
-        const captured = yield* Effect.forEach(
-          input.scopes,
-          (scope) =>
+        // Snapshots still running when the turn stops waiting finish on their own: interrupted,
+        // a dirty repository would end the turn with no baseline and read as changed.
+        const pending = yield* Effect.forEach(input.scopes, (scope) =>
+          Deferred.make<void>().pipe(
+            Effect.tap((done) =>
+              Effect.sync(() =>
+                pendingBaselines.set(scope.id, { ordinal: input.ordinalWithinScope, done }),
+              ),
+            ),
+            Effect.map((done) => ({ scope, done })),
+          ),
+        );
+        const baselines = yield* Effect.forEach(
+          pending,
+          ({ scope, done }) =>
             noteRepositoryBaseline({
               scope,
               ordinalWithinScope: input.ordinalWithinScope,
@@ -1030,12 +1058,23 @@ export const layer: Layer.Layer<
                   cause,
                 }),
               ),
+              Effect.ensuring(settleBaseline(scope.id, done)),
             ),
           { concurrency: REPOSITORY_SCOPE_CONCURRENCY, discard: true },
-        ).pipe(Effect.timeoutOption(BASELINE_CAPTURE_BUDGET));
+        ).pipe(
+          Effect.ensuring(
+            Effect.forEach(pending, ({ scope, done }) => settleBaseline(scope.id, done), {
+              discard: true,
+            }),
+          ),
+          Effect.forkIn(backgroundScope),
+        );
+        const captured = yield* Fiber.await(baselines).pipe(
+          Effect.timeoutOption(BASELINE_CAPTURE_BUDGET),
+        );
         if (Option.isNone(captured)) {
           yield* Effect.logWarning(
-            "orchestration V2 repository baselines ran out of time; the rest start without one",
+            "orchestration V2 repository baselines ran out of time; the rest finish after the turn starts",
             { scopeCount: input.scopes.length },
           );
         }
@@ -1047,6 +1086,8 @@ export const layer: Layer.Layer<
     )(function* (input) {
       const { cwd, id } = input.scope;
       const baselineOrdinal = input.ordinalWithinScope - 1;
+      const pendingBaseline = pendingBaselines.get(id);
+      if (pendingBaseline?.ordinal === baselineOrdinal) yield* Deferred.await(pendingBaseline.done);
       const capturesBeforeLock = capturesSoFar(cwd);
       const start = yield* withWorkspaceLock(
         cwd,
