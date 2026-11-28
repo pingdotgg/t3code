@@ -2287,15 +2287,6 @@ export const layerWithOptions = (
               ) {
                 return "skipped" as const;
               }
-              // Every native thread counts: a message after a scheduled fresh round continues the older one.
-              if (input.idleSinceMs !== undefined) {
-                const viewedRetryMs = yield* viewedRecheckMs(
-                  entry.runtime,
-                  [input.threadId],
-                  input.idleSinceMs,
-                );
-                if (viewedRetryMs !== null) return { retryAfterMs: viewedRetryMs };
-              }
               // Unloading kills background terminals; keep threads with pending work loaded.
               const hasPendingWork =
                 entry.runtime.hasPendingBackgroundWorkForThread === undefined
@@ -2311,6 +2302,16 @@ export const layerWithOptions = (
               }
               const archive = child === "ready";
               if (input.archiveOnly === true && !archive) return "skipped" as const;
+              // After the probes, so a client that opens the thread meanwhile still keeps it. Every native
+              // thread counts: a message after a scheduled fresh round continues the older one.
+              if (input.idleSinceMs !== undefined) {
+                const viewedRetryMs = yield* viewedRecheckMs(
+                  entry.runtime,
+                  [input.threadId],
+                  input.idleSinceMs,
+                );
+                if (viewedRetryMs !== null) return { retryAfterMs: viewedRetryMs };
+              }
               // null when skipped, otherwise whether this native thread is the app thread's loaded one.
               const unloadsLoadedThread = yield* Ref.modify(
                 sessions,
