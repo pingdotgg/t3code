@@ -74,14 +74,20 @@ function setup() {
     },
     touches,
     sent,
-    readLayout(usKeyboardLayout: boolean | "failed") {
+    readLayout(usKeyboardLayout: boolean | undefined | "failed") {
       const key = { environmentId: EnvironmentId.make("test"), hostId: "local", deviceId: "test" };
       const detail = { ...key, foregroundApp: null, readAt: "" };
       registry.set(
         deviceDetailAtom(key),
         usKeyboardLayout === "failed"
           ? { detail: null, error: "read failed" }
-          : { detail: { ...detail, settings: { usKeyboardLayout } }, error: null },
+          : {
+              detail: {
+                ...detail,
+                settings: usKeyboardLayout === undefined ? {} : { usKeyboardLayout },
+              },
+              error: null,
+            },
       );
     },
     async configure(inputUnavailable = false) {
@@ -267,5 +273,19 @@ it("sends keys by key place in order with touches until the layout read answers"
   type("KeyQ", "a");
   await act(async () => input.readLayout(false));
   type("KeyQ", "a");
-  expect(input.sent.slice(4)).toEqual(["down 4", "up 4", "down 14", "up 14"]);
+  // A host that reports no layout, as servers before this setting do, counts as US.
+  await act(async () => input.readLayout(undefined));
+  type("KeyQ", "a");
+  await act(async () => input.readLayout("failed"));
+  type("KeyQ", "a");
+  expect(input.sent.slice(4)).toEqual([
+    "down 4",
+    "up 4",
+    "down 14",
+    "up 14",
+    "down 4",
+    "up 4",
+    "down 4",
+    "up 4",
+  ]);
 });
