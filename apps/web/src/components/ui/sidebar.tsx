@@ -87,13 +87,26 @@ type SidebarInstanceContextProps = {
   side: "left" | "right";
 };
 
+type SidebarMobileContextProps = Pick<SidebarContextProps, "isMobile" | "setOpenMobile">;
+
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
+// Unchanged by open and close, so the thread list does not re-render every row on each toggle.
+const SidebarMobileContext = React.createContext<SidebarMobileContextProps | null>(null);
 const SidebarInstanceContext = React.createContext<SidebarInstanceContextProps | null>(null);
 
 function useSidebar() {
   const context = React.use(SidebarContext);
   if (!context) {
     throw new Error("useSidebar must be used within a SidebarProvider.");
+  }
+
+  return context;
+}
+
+function useSidebarMobile() {
+  const context = React.use(SidebarMobileContext);
+  if (!context) {
+    throw new Error("useSidebarMobile must be used within a SidebarProvider.");
   }
 
   return context;
@@ -232,30 +245,33 @@ function SidebarProvider({
     toggleSidebar: store.toggle,
     onCollapse: store.onCollapse,
   };
+  const mobileContextValue = { isMobile, setOpenMobile: store.setOpenMobile };
 
   return (
     <SidebarContext value={contextValue}>
-      <div
-        className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full",
-          SIDEBAR_TITLEBAR_CONTROL_SIZE,
-          className,
-        )}
-        data-sidebar-state={state}
-        data-slot="sidebar-wrapper"
-        style={
-          {
-            "--sidebar-width": SIDEBAR_WIDTH,
-            "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
-            "--workspace-titlebar-content-left":
-              "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
-            ...style,
-          } as React.CSSProperties
-        }
-        {...props}
-      >
-        {children}
-      </div>
+      <SidebarMobileContext value={mobileContextValue}>
+        <div
+          className={cn(
+            "group/sidebar-wrapper flex min-h-svh w-full",
+            SIDEBAR_TITLEBAR_CONTROL_SIZE,
+            className,
+          )}
+          data-sidebar-state={state}
+          data-slot="sidebar-wrapper"
+          style={
+            {
+              "--sidebar-width": SIDEBAR_WIDTH,
+              "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+              "--workspace-titlebar-content-left":
+                "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
+              ...style,
+            } as React.CSSProperties
+          }
+          {...props}
+        >
+          {children}
+        </div>
+      </SidebarMobileContext>
     </SidebarContext>
   );
 }
@@ -1025,5 +1041,6 @@ export {
   SidebarTrigger,
   useMobileSidebarSheetMounted,
   useSidebar,
+  useSidebarMobile,
   useSidebarVisibility,
 };
