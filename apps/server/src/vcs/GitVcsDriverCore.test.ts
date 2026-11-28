@@ -647,7 +647,7 @@ it.effect("marks the default branch of a primary remote that is not named origin
 );
 
 it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
-  "discovers only the common directory during worktree creation from %s",
+  "refuses worktrees from folders the repository does not track, checked from %s",
   (location) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -675,13 +675,26 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
         if (isAliased) NodeFS.symlinkSync(physicalCwd, creationCwd, "junction");
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cold");
 
-        yield* driver.createWorktree({
-          cwd: creationCwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/cold",
-        });
+        const created = yield* driver
+          .createWorktree({
+            cwd: creationCwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/cold",
+          })
+          .pipe(Effect.result);
 
+        if (isNested) {
+          assert.isTrue(Result.isFailure(created));
+          if (Result.isFailure(created)) {
+            assert.include(created.failure.message, creationCwd);
+            assert.include(created.failure.message, NodeFS.realpathSync.native(cwd));
+          }
+          assert.isFalse(yield* fs.exists(worktreePath));
+          assert.isEmpty(yield* git(cwd, ["branch", "--list", "feature/cold"]));
+          return;
+        }
+        assert.isTrue(Result.isSuccess(created));
         assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
         assert.isFalse(spawnedArgs.some((args) => args.includes("--show-toplevel")));
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
@@ -5732,7 +5745,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
 
           yield* driver.createWorktree({
-            cwd: link,
+            cwd: repo,
             path: pathService.join(yield* makeTmpDir("git-worktrees-"), "real"),
             refName: "real-only",
             newRefName: "feature/real-created",

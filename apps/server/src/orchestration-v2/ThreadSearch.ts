@@ -201,6 +201,8 @@ const MARKDOWN_LINK = /!?\[([^\]\n]*)\]\([^)\s]*\)/g;
 const SNIPPET_LEAD = 24;
 
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+// Marks, joiners, presentation selectors and skin tones draw on the character before them.
+const ATTACHED = /^[\p{Mark}\p{Emoji_Modifier}\u200d]/u;
 
 /**
  * Up to 240 characters starting a few words before the match at `matchStart`,
@@ -211,8 +213,12 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   let start = Math.max(0, matchStart - SNIPPET_LEAD);
   const wordStart = text.slice(start, matchStart).search(/\s/);
   if (start > 0 && wordStart !== -1) start += wordStart + 1;
-  // Cut between characters, not inside an emoji's surrogate pair.
-  if (isLowSurrogate(text.charCodeAt(start))) start++;
+  // Cut between characters, not inside an emoji's surrogate pair or before a detached mark.
+  while (
+    start < matchStart &&
+    (isLowSurrogate(text.charCodeAt(start)) || ATTACHED.test(text.slice(start, start + 2)))
+  )
+    start++;
   // Collapsing whitespace shortens the text, so read more of it.
   let rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
   if (isLowSurrogate(text.charCodeAt(rawEnd))) rawEnd++;
