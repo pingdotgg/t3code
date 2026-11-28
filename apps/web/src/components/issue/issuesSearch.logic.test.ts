@@ -64,25 +64,74 @@ describe("issueListTargets", () => {
 });
 
 describe("issueFilterProjects", () => {
-  it("keeps every project, scratch ones too, as its own choice", () => {
-    const environmentId = EnvironmentId.make("env");
-    const project = (id: string, isScratch = false) =>
+  it("lists one repository once across environments and checkouts, scratch stays separate", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (
+      id: string,
+      environmentId: EnvironmentId,
+      isScratch = false,
+      title = "t3code",
+      canonicalKey = "github.com/pingdotgg/t3code",
+    ) =>
+      ({
+        id: ProjectId.make(id),
+        environmentId,
+        title,
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: { canonicalKey },
+        isScratch,
+      }) as unknown as EnvironmentProject;
+    const choices = issueFilterProjects(
+      [
+        project("main", laptop),
+        project("worktree", laptop),
+        project("main", vps),
+        project("other", laptop, false, "other", "github.com/acme/other"),
+        project("scratch", laptop, true),
+      ],
+      new Map([
+        [laptop, "laptop"],
+        [vps, "vps"],
+      ]),
+    );
+    const key = (environmentId: EnvironmentId, id: string) =>
+      JSON.stringify([environmentId, ProjectId.make(id)]);
+    expect(choices.map((choice) => [choice.title, choice.memberProjectKeys])).toEqual([
+      ["other", [key(laptop, "other")]],
+      [
+        "t3code · laptop · /work/main",
+        [key(laptop, "main"), key(laptop, "worktree"), key(vps, "main")],
+      ],
+      ["t3code · laptop · /work/scratch", [key(laptop, "scratch")]],
+    ]);
+  });
+
+  it("groups case variants of one repository into a single choice", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (id: string, environmentId: EnvironmentId, canonicalKey: string) =>
       ({
         id: ProjectId.make(id),
         environmentId,
         title: "t3code",
         workspaceRoot: `/work/${id}`,
-        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
-        isScratch,
+        repositoryIdentity: { canonicalKey },
+        isScratch: false,
       }) as unknown as EnvironmentProject;
     const choices = issueFilterProjects(
-      [project("main"), project("worktree"), project("scratch", true)],
-      new Map([[environmentId, "laptop"]]),
+      [
+        project("main", laptop, "github.com/PingDotGG/T3Code"),
+        project("main", vps, "github.com/pingdotgg/t3code"),
+      ],
+      new Map([
+        [laptop, "laptop"],
+        [vps, "vps"],
+      ]),
     );
-    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["main", "t3code · laptop · /work/main"],
-      ["scratch", "t3code · laptop · /work/scratch"],
-      ["worktree", "t3code · laptop · /work/worktree"],
-    ]);
+    const key = (environmentId: EnvironmentId, id: string) =>
+      JSON.stringify([environmentId, ProjectId.make(id)]);
+    expect(choices).toHaveLength(1);
+    expect(choices[0]?.memberProjectKeys).toEqual([key(laptop, "main"), key(vps, "main")]);
   });
 });

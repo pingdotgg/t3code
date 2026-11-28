@@ -203,12 +203,10 @@ export function IssuesPage() {
     (environment) => environment.serverConfig?.environment.capabilities.issues === true,
   );
   const environmentLabels = new Map(environments.map((e) => [e.environmentId, e.label] as const));
-  const filterProjects = issueFilterProjects(
-    projects.filter((project) =>
-      capableEnvironments.some((e) => e.environmentId === project.environmentId),
-    ),
-    environmentLabels,
+  const capableProjects = projects.filter((project) =>
+    capableEnvironments.some((e) => e.environmentId === project.environmentId),
   );
+  const filterProjects = issueFilterProjects(capableProjects, environmentLabels);
   const hiddenProjects = issueProjectKeys(search.hideProjects);
 
   const debouncedQuery = useDebouncedValue(search.q ?? "", 300);
@@ -224,12 +222,14 @@ export function IssuesPage() {
   };
   const everyProjectHidden =
     filterProjects.length > 0 &&
-    filterProjects.every((project) => hiddenProjects.has(pullRequestProjectKey(project)));
+    filterProjects.every((project) =>
+      project.memberProjectKeys.every((key) => hiddenProjects.has(key)),
+    );
   const targets = everyProjectHidden
     ? []
     : issueListTargets(
         capableEnvironments.map((e) => e.environmentId),
-        filterProjects,
+        capableProjects,
         search.hideProjects,
         listInput,
       );
