@@ -1,0 +1,144 @@
+diff --git a/dist/NodeChildProcessSpawner.d.ts b/dist/NodeChildProcessSpawner.d.ts
+index ac7b044..0ad793f 100644
+--- a/dist/NodeChildProcessSpawner.d.ts
++++ b/dist/NodeChildProcessSpawner.d.ts
+@@ -35,6 +35,8 @@
+  * @stability unstable
+  * @since 4.0.0
+  */
++import type * as NodeChildProcess from "node:child_process";
++import type { Readable, Writable } from "node:stream";
+ import type * as Arr from "effect/Array";
+ import * as Context from "effect/Context";
+ import * as Duration from "effect/Duration";
+@@ -54,6 +56,19 @@ import { ChildProcessSpawner, ProcessId } from "effect/process/ChildProcessSpawn
+  * @since 4.0.0
+  */
+ export declare const layer: Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
++export interface SpawnedChildProcess extends NodeJS.EventEmitter {
++    readonly pid?: number | undefined;
++    readonly exitCode: number | null;
++    readonly signalCode: NodeJS.Signals | null;
++    readonly stdin: Writable | null;
++    readonly stdout: Readable | null;
++    readonly stderr: Readable | null;
++    readonly stdio: ReadonlyArray<Readable | Writable | null | undefined>;
++    kill(signal?: NodeJS.Signals | number): boolean;
++    ref(): void;
++    unref(): void;
++}
++export declare const layerWithSpawn: (spawnProcess: (command: string, args: ReadonlyArray<string>, options: NodeChildProcess.SpawnOptions) => SpawnedChildProcess) => Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
+ declare const ProxyProcess_base: Context.ServiceClass<ProxyProcess, "@effect/platform-node/NodeChildProcessSpawner/ProxyProcess", {
+     readonly currentPid: Effect.Effect<Option.Option<ProcessId>>;
+ }>;
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index 0257098..f166bc3 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -88,20 +88,36 @@ const isProcessAlive = (command, childProcess) => {
+     return isUnsignallableProcessGroup(error);
+   }
+ };
+-const taskkill = (childProcess, onExit = () => {}) => {
++const taskkill = (childProcess, spawnProcess, onExit = () => {}) => {
+   if (hasExited(childProcess)) {
+     onExit(null);
+     return;
+   }
+-  NodeChildProcess.execFile("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
++  if (spawnProcess === undefined) {
++    NodeChildProcess.execFile("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
++      windowsHide: true
++    }, onExit);
++    return;
++  }
++  // Starts taskkill through the injected spawner so it gets the same off-thread launch as commands.
++  let done = false;
++  const finish = error => {
++    if (done) return;
++    done = true;
++    onExit(error);
++  };
++  const killer = spawnProcess("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
++    stdio: "ignore",
+     windowsHide: true
+-  }, onExit);
++  });
++  killer.on("error", finish);
++  killer.on("exit", code => finish(code === 0 ? null : new Error(`taskkill exited with code ${code}`)));
+ };
+ const spawnDirect = (command, args, options) => NodeChildProcess.spawn(command, args, options);
+ // Returns the function that launches a command. The proxy process layer waits
+ // here, interruptibly, for a proxy process that is ready, since the launch
+ // itself cannot be interrupted.
+-const makeWith = /*#__PURE__*/Effect.fnUntraced(function* (prepareSpawn) {
++const makeWith = /*#__PURE__*/Effect.fnUntraced(function* (prepareSpawn, killSpawn) {
+   const fs = yield* FileSystem.FileSystem;
+   const path = yield* Path.Path;
+   const resolveWorkingDirectory = Effect.fnUntraced(function* (options) {
+@@ -372,7 +388,7 @@ const makeWith = /*#__PURE__*/Effect.fnUntraced(function* (prepareSpawn) {
+   const killProcessGroup = (command, childProcess, signal) => {
+     if (globalThis.process.platform === "win32") {
+       return Effect.callback(resume => {
+-        taskkill(childProcess, error => {
++        taskkill(childProcess, killSpawn, error => {
+           if (error) {
+             resume(Effect.fail(toPlatformError("kill", toError(error), command)));
+           } else {
+@@ -813,6 +829,7 @@ export class ProxyProcess extends /*#__PURE__*/Context.Service()("@effect/platfo
+  * @category layers
+  * @since 4.1.6
+  */
++export const layerWithSpawn = spawnProcess => Layer.effect(ChildProcessSpawner, makeWith(Effect.succeed(spawnProcess), spawnProcess));
+ export const layerProxyProcess = options => Layer.effectContext(Effect.gen(function* () {
+   if (globalThis.process.platform === "win32") {
+     return yield* Effect.fail(PlatformError.systemError({
+diff --git a/dist/internal/proxyProcess.js b/dist/internal/proxyProcess.js
+index edd291c..a70868f 100644
+--- a/dist/internal/proxyProcess.js
++++ b/dist/internal/proxyProcess.js
+@@ -164,6 +164,7 @@ class Proxy {
+   child;
+   // Bounds the wait for `Ready`, and for the reply to each sent request
+   timers = /*#__PURE__*/new Map();
++  heard = 0;
+   constructor(options) {
+     this.options = options;
+     try {
+@@ -295,14 +296,20 @@ class Proxy {
+   }
+   startTimer(key) {
+     const millis = this.options.responseTimeoutMillis;
+-    const timer = setTimeout(() => {
+-      this.stop(Object.assign(new Error(`The proxy process did not respond within ${millis} ms`), {
+-        code: "ETIMEDOUT"
+-      }));
+-    }, millis);
+-    // Whatever waits for the reply keeps the application running
+-    timer.unref();
+-    this.timers.set(key, timer);
++    // Effect-TS/effect#11008: a blocked event loop runs due timers before it reads waiting replies.
++    const arm = heard => {
++      const timer = setTimeout(() => setImmediate(() => {
++        if (this.timers.get(key) !== timer) return;
++        if (this.heard !== heard) return arm(this.heard);
++        this.stop(Object.assign(new Error(`The proxy process did not respond within ${millis} ms`), {
++          code: "ETIMEDOUT"
++        }));
++      }), millis);
++      // Whatever waits for the reply keeps the application running
++      timer.unref();
++      this.timers.set(key, timer);
++    };
++    arm(this.heard);
+   }
+   stopTimer(key) {
+     clearTimeout(this.timers.get(key));
+@@ -322,6 +329,7 @@ class Proxy {
+     }
+   }
+   receive(message) {
++    this.heard++;
+     if (message._tag === "Ready") return this.onReady();
+     const command = this.commands.get(message.id);
+     if (command === undefined) return;

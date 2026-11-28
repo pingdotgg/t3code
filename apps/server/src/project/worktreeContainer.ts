@@ -6,10 +6,10 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
 import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 
-const parseGitfileTarget = (contents: string): string | undefined => {
-  const firstLine = contents.split(/\r?\n/u, 1)[0] ?? "";
-  if (!firstLine.startsWith("gitdir:")) return undefined;
-  const target = firstLine.slice("gitdir:".length).trim();
+export const parseGitfileTarget = (contents: string): string | undefined => {
+  const prefix = "gitdir: ";
+  if (!contents.startsWith(prefix)) return undefined;
+  const target = contents.slice(prefix.length).replace(/[\r\n]+$/u, "");
   return target === "" ? undefined : target;
 };
 

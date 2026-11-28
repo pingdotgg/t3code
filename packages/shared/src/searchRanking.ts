@@ -27,12 +27,15 @@ export function scoreSubsequenceMatch(
   if (!query) return 0;
 
   let queryIndex = 0;
+  let queryCodePoint = query.codePointAt(0);
   let firstMatchIndex = -1;
   let previousMatchIndex = -1;
   let gapPenalty = 0;
 
-  for (let valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
-    if (value[valueIndex] !== query[queryIndex]) {
+  for (let valueIndex = 0, valueStep = 1; valueIndex < value.length; valueIndex += valueStep) {
+    const valueCodePoint = value.codePointAt(valueIndex)!;
+    valueStep = valueCodePoint > 0xffff ? 2 : 1;
+    if (valueCodePoint !== queryCodePoint) {
       continue;
     }
 
@@ -43,16 +46,17 @@ export function scoreSubsequenceMatch(
       gapPenalty += valueIndex - previousMatchIndex - 1;
     }
 
-    previousMatchIndex = valueIndex;
-    queryIndex += 1;
+    previousMatchIndex = valueIndex + valueStep - 1;
+    queryIndex += valueStep;
     if (queryIndex === query.length) {
-      const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
+      const spanPenalty = previousMatchIndex - firstMatchIndex + 1 - query.length;
       if (options?.ignorePosition) {
         return gapPenalty * 3 + spanPenalty;
       }
       const lengthPenalty = Math.min(64, value.length - query.length);
       return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
     }
+    queryCodePoint = query.codePointAt(queryIndex);
   }
 
   return null;

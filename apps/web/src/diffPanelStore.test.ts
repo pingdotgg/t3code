@@ -39,6 +39,21 @@ describe("diffPanelStore", () => {
     });
   });
 
+  it("keeps Unicode whitespace at the edges of a picked base branch", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "feat\u00a0");
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toEqual({
+      kind: "branch",
+      baseRef: "feat\u00a0",
+    });
+    store.selectBranchBaseRef(ref, " \t");
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
+  });
+
   it("refreshes a live tool-call target when its source item completes", () => {
     const target = {
       threadId: ThreadId.make("child"),

@@ -70,7 +70,8 @@ function deriveRepositoryRelativeProjectPath(
     return null;
   }
 
-  return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
+  const relativePath = normalizedProjectPath.slice(rootPrefix.length);
+  return separator === "\\" ? relativePath.replaceAll("\\", "/") : relativePath;
 }
 
 /** The project's workspace root is its repository's git top-level, not a sub-folder. */
@@ -85,6 +86,19 @@ export function selectGroupDefaultProject<
   TProject extends Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
 >(projects: ReadonlyArray<TProject>): TProject | undefined {
   return projects.find(isRepositoryRootProject) ?? projects[0];
+}
+
+/**
+ * The members a group's icon falls back to, in order, when its representative has no icon.
+ * A repository root often has none while a project nested in it does.
+ */
+export function groupIconFallbacks<
+  TProject extends Pick<EnvironmentProject, "environmentId" | "id">,
+>(members: ReadonlyArray<TProject>, representative: Pick<TProject, "environmentId" | "id">) {
+  return members.filter(
+    (member) =>
+      member.environmentId !== representative.environmentId || member.id !== representative.id,
+  );
 }
 
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
@@ -238,9 +252,23 @@ export function deriveProjectGroupLabel(input: {
   readonly groupKey: string;
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<
-    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity" | "workspaceRoot">
   >;
 }): string {
+  // A rename reaches only the checkouts that exist at that moment; one added later, on any
+  // environment, still has its folder title. A renamed subfolder doesn't name the repository.
+  const isSubfolderOfRepositoryGroup = (member: (typeof input.members)[number]) =>
+    member.repositoryIdentity != null &&
+    input.groupKey === repositoryGroupingKeyOf(member.repositoryIdentity) &&
+    Boolean(deriveRepositoryRelativeProjectPath(member));
+  const renamedTitles = uniqueNonEmptyValues(
+    input.members
+      .filter((member) => member.hasCustomTitle === true && !isSubfolderOfRepositoryGroup(member))
+      .map((member) => member.title),
+  );
+  if (renamedTitles.length === 1) {
+    return renamedTitles[0]!;
+  }
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) =>

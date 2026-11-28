@@ -350,11 +350,6 @@ export const PersistedFileSchema: PersistedFileSchema = Schema.declare(
       id: "effect/http/PersistedFile",
       payload: null
     },
-    toCode: () => ({
-      runtime: "Multipart.PersistedFileSchema",
-      Type: "Multipart.PersistedFile",
-      importDeclarations: [`import * as Multipart from "effect/http/Multipart"`]
-    }),
     expected: "PersistedFile",
     toCodecJson: () =>
       Schema.link<PersistedFile>()(

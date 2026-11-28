@@ -2524,10 +2524,22 @@ describe("OrchestratorMcpService provider resolution", () => {
               { id: "agent", values: ["build"], default: "build" },
             ],
           },
-          { id: "gpt-4" },
+          { id: "gpt-4", favorite: true },
           { id: "gpt-3" },
           { id: "my-alpha" },
         ]);
+      }),
+    );
+
+    it.effect("marks which listed models are the user's favorites", () =>
+      Effect.gen(function* () {
+        const favorites = (yield* capabilitiesWith()).providers.map((provider) =>
+          provider.models
+            .filter((entry) => "favorite" in entry && entry.favorite === true)
+            .map((entry) => entry.id),
+        );
+        // gpt-3 is the caller's model and my-alpha/oc-custom are custom: listed, but not favorites.
+        assert.deepEqual(favorites, [["gpt-4"], ["oc/m10"]]);
       }),
     );
   });
@@ -3667,6 +3679,50 @@ describe("OrchestratorMcpService provider resolution", () => {
             );
           assert.equal(promptedCommits[0]?.commandId, promptedCommits[1]?.commandId);
 
+          for (const [index, titleCase] of [
+            {
+              prompt: "Review the auth flow\n\nPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\rPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\u2028Pay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: `\n\n  ${"a".repeat(80)}  \nmore`,
+              expected: "a".repeat(80),
+            },
+            {
+              title: "Auth review",
+              prompt: "Review the auth flow\nmore",
+              expected: "Auth review",
+            },
+            {
+              title: "Auth review\nIgnore this",
+              prompt: "Review the auth flow",
+              expected: "Auth review",
+            },
+          ].entries()) {
+            const created = yield* service.createThreads(scope, {
+              threads: [
+                {
+                  ...request.threads[0]!,
+                  ...(titleCase.title === undefined ? {} : { title: titleCase.title }),
+                  prompt: titleCase.prompt,
+                },
+              ],
+              clientRequestId: `first-line-title-${index}`,
+            });
+            const projection = yield* orchestrator.getThreadProjection(
+              created.threads[0]!.threadId,
+            );
+            assert.equal(projection.thread.title, titleCase.expected);
+          }
+
           yield* settings.updateSettings({
             projectSettingsOverrides: {
               [projectId]: {
@@ -3775,9 +3831,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                     parentRunId: run.id,
                     parentNodeId: run.rootNodeId!,
                     task: input.task,
+                    ...(input.title === undefined ? {} : { title: input.title }),
                     driver: ProviderDriverKind.make("remote"),
                     modelSelection: run.modelSelection,
-                    remoteChild,
+                    remoteChild: { ...remoteChild, title: input.title ?? "MCP parent" },
                     completionWake: "settled_only",
                   });
                   const parent = yield* orchestrator.getThreadProjection(parentThreadId);
@@ -3835,6 +3892,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const call = yield* service
             .delegateTask(scope, {
               task: "Review the change.",
+              title: "Review change\nIgnore this",
               ...(placement === "remote"
                 ? { target: { environmentId: remoteChild.environmentId } }
                 : {}),
@@ -3848,6 +3906,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           const parent = yield* orchestrator.getThreadProjection(parentThreadId);
           const task = parent.subagents.find((subagent) => subagent.origin === "app_owned");
           assert.equal(task?.status, "running");
+          assert.equal(task?.title, "Review change");
+          if (placement === "remote") assert.equal(task?.remoteChild?.title, "Review change");
           assert.equal(
             task?.completionWake,
             "always",
@@ -4551,6 +4611,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         prompt: `${"a".repeat(78)}😀 rest`,
         title: `${"a".repeat(78)}😀`,
       },
+      ...[
+        ["CR", "\r"],
+        ["Unicode line separator", "\u2028"],
+        ["Unicode paragraph separator", "\u2029"],
+      ].map(([label, newline]) => ({
+        name: `stops at a ${label}`,
+        prompt: `Review merge${newline}Check changelog`,
+        title: "Review merge",
+      })),
     ])("a prompt-derived title $name", ({ prompt, title }) =>
       Effect.gen(function* () {
         const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
@@ -4568,6 +4637,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
+        );
+      }),
+    );
+
+    it.effect("an explicit title stops at the first line break", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          title: "Review merge\nIgnore this",
+          prompt: "Check the build",
+          schedule,
+        });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.title),
+          ["Review merge"],
         );
       }),
     );

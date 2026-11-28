@@ -582,6 +582,10 @@ export const layer: Layer.Layer<
         readonly item:
           | Pick<Extract<OrchestrationV2TurnItem, { type: "error" }>, "type" | "title" | "failure">
           | Pick<
+              Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
+              "type" | "title" | "driver" | "summary"
+            >
+          | Pick<
               Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
               "type" | "title" | "input" | "output" | "exitCode"
             >;
@@ -1186,6 +1190,52 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      // A compaction carries no inline history, so with a full summary still pending the native
+      // session holds none of the conversation: compacting it would summarize nothing.
+      if (
+        session.injectHistory === undefined &&
+        providerMessage.attachments.length === 0 &&
+        providerMessage.text.trim().toLowerCase() === "/compact" &&
+        handoffs.some(
+          (handoff) =>
+            handoff.strategy === "full_thread_summary" &&
+            (providerThread.nativeThreadRef === null ||
+              handoff.delivery?.nativeThreadId !== providerThread.nativeThreadRef.nativeId ||
+              handoff.delivery.status === "pending"),
+        )
+      ) {
+        const now = yield* DateTime.now;
+        yield* settleRunBeforeStart({
+          run,
+          rootNode,
+          attempt,
+          turnItems: projection.turnItems,
+          signal: "empty-compaction",
+          status: "failed",
+          now,
+          startedAt: now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "compaction",
+            title: "Nothing to compact yet",
+            driver: session.driver,
+            summary:
+              "This thread's earlier conversation reaches the agent with your next message. Send a message before compacting.",
+          },
+          providerThreadUpdate: {
+            ...providerThread,
+            status:
+              providerThread.status === "error"
+                ? "error"
+                : providerThread.nativeThreadRef === null
+                  ? "not_loaded"
+                  : "idle",
+            updatedAt: now,
+          },
+        });
+        return;
+      }
       const cutTurn = unsettledStoppedProviderTurn(
         { runs: projection.runs, providerTurns },
         run,

@@ -106,6 +106,54 @@ describe("pull request body segmentation", () => {
         media: "video",
       },
     ]);
+    for (const body of [
+      '<video src="https://example.org/right.mp4" data-src="https://example.org/wrong.mp4"></video>',
+      '<video data-src="https://example.org/wrong.mp4" src="https://example.org/right.mp4"></video>',
+    ]) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url: "https://example.org/right.mp4",
+          media: "video",
+        },
+      ]);
+    }
+    expect(split("<video src=https://example.org/demo.mp4?token=abc></video>")).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: "https://example.org/demo.mp4?token=abc",
+        media: "video",
+      },
+    ]);
+    for (const [body, url] of [
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&y=2",
+      ],
+      [
+        '<video><source src="https://example.org/a.mp4?x=1&#38;y=2&#x26;z=3"></video>',
+        "https://example.org/a.mp4?x=1&y=2&z=3",
+      ],
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&amp;y=2",
+      ],
+    ] as const) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url,
+          media: "video",
+        },
+      ]);
+    }
+    const dataSrcOnly = '<video data-src="https://example.org/wrong.mp4"></video>';
+    expect(split(dataSrcOnly)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: dataSrcOnly, sourceOffset: 0 },
+    ]);
   });
 
   it("leaves the img tag GitHub writes for a dropped image as markdown", () => {
@@ -148,6 +196,64 @@ describe("pull request body segmentation", () => {
         url: "https://example.com/demo.mp4",
         media: "video",
       },
+    ]);
+  });
+
+  it("splits a lone-CR body into lines, so a video after its fence still lifts out", () => {
+    const crLines = ["```text", "https://example.com/sample.mp4", "```"];
+    const crBody = [...crLines, "", "https://example.com/actual.mp4", "", "- [ ] Done"].join("\r");
+    expect(split(crBody)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: crLines.join("\n"), sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/actual.mp4",
+        media: "video",
+      },
+      {
+        id: "markdown:2",
+        kind: "markdown",
+        text: "- [ ] Done",
+        sourceOffset: crBody.indexOf("- [ ] Done"),
+      },
+    ]);
+  });
+
+  it("keeps a fence opened on a list marker in the list, closing it on its close or dedent", () => {
+    const actual = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.com/actual.mp4",
+      media: "video",
+    };
+    const listCode = "- ```text\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${listCode}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      actual,
+    ]);
+    const unclosed = "1. ```text\n   https://example.com/sample.mp4";
+    expect(split(`${unclosed}\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: unclosed, sourceOffset: 0 },
+      actual,
+    ]);
+    const tabbed = "- ```text\n\tcode()\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${tabbed}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: tabbed, sourceOffset: 0 },
+      actual,
+    ]);
+    const deepCloser = "- ```text\n\t\t```\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${deepCloser}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: deepCloser, sourceOffset: 0 },
+      actual,
+    ]);
+    expect(split("- ```js`x\n\n  https://example.com/actual.mp4")).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "- ```js`x", sourceOffset: 0 },
+      actual,
+    ]);
+    const shown = "```markdown\n- ```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${shown}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: shown, sourceOffset: 0 },
+      actual,
     ]);
   });
 
@@ -225,6 +331,29 @@ describe("pull request body segmentation", () => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
+  });
+
+  it("never lifts media out of an HTML comment, while lifting media after it", () => {
+    const visible = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.org/visible.mp4",
+      media: "video",
+    };
+    // A fence inside a comment is hidden too, so it must not open a code block.
+    const comment = [
+      "<!--",
+      "https://example.org/hidden.mp4",
+      '<video src="https://example.org/hidden-tag.mp4"></video>',
+      "```",
+      "-->",
+    ].join("\n");
+    for (const hidden of [comment, "<!-- template hint -->"]) {
+      expect(split(`${hidden}\n\nhttps://example.org/visible.mp4`)).toEqual([
+        { id: "markdown:0", kind: "markdown", text: hidden, sourceOffset: 0 },
+        visible,
+      ]);
+    }
   });
 
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {
@@ -393,13 +522,53 @@ describe("reference links around lifted media", () => {
 
 describe("media on custom hosts", () => {
   it.each([
-    ["https://drop.example.com/capture.PNG?token=abc#preview", "image", undefined],
-    ["[Recording](https://drop.example.com/recording.mov)", "video", "Recording"],
-    ["[Screenshot](https://drop.example.com/shot.webp)", "image", "Screenshot"],
-    ["<https://drop.example.com/shot.webp>", "image", undefined],
-  ])("recognizes %s without a request and preserves its label", (body, media, label) => {
+    [
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "image",
+      undefined,
+    ],
+    [
+      "[Recording](https://drop.example.com/recording.mov)",
+      "https://drop.example.com/recording.mov",
+      "video",
+      "Recording",
+    ],
+    ["[Demo](https://example.com/demo(1).mp4)", "https://example.com/demo(1).mp4", "video", "Demo"],
+    [
+      "[Demo [v2]](https://example.com/demo.mp4)",
+      "https://example.com/demo.mp4",
+      "video",
+      "Demo [v2]",
+    ],
+    ["[`[`](https://example.com/demo.mp4)", "https://example.com/demo.mp4", "video", "`[`"],
+    [
+      "[Demo](https://example.com/demo\\(1\\).mp4)",
+      "https://example.com/demo(1).mp4",
+      "video",
+      "Demo",
+    ],
+    [
+      "[Demo](https://example.com/demo(1).mp4?a=1\\&amp;b=2)",
+      "https://example.com/demo(1).mp4?a=1&amp;b=2",
+      "video",
+      "Demo",
+    ],
+    [
+      "[Screenshot](https://drop.example.com/shot.webp)",
+      "https://drop.example.com/shot.webp",
+      "image",
+      "Screenshot",
+    ],
+    [
+      "<https://drop.example.com/shot.webp>",
+      "https://drop.example.com/shot.webp",
+      "image",
+      undefined,
+    ],
+  ])("recognizes %s without a request and preserves its label", (body, url, media, label) => {
     const segments = split(body);
-    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", url, media })]);
     const [segment] = segments;
     expect(segment?.kind === "attachment" ? segment.label : null).toBe(label);
   });
@@ -407,7 +576,10 @@ describe("media on custom hosts", () => {
   it.each([
     "[Open report](https://example.com/report?file=demo.mp4)",
     "https://example.com/report#demo.png",
-  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    "[Demo](https://example.com/demo(1).mp4) trailing",
+    "[Demo](https://example.com/demo(1.mp4)",
+    "[Demo](https://example.com/demo(1).mp4?a=1&amp;b=2)",
+  ])("keeps %s a link when not a standalone media link", (body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);

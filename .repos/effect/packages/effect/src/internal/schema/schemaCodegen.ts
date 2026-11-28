@@ -8,6 +8,7 @@ import { errorWithPath } from "../errors.ts"
 import * as InternalAnnotations from "./annotations.ts"
 import * as CodeExpression from "./codeExpression.ts"
 import * as CodeImports from "./codeImports.ts"
+import * as BuiltIns from "./schemaCodegenBuiltIns.ts"
 
 type Path = ReadonlyArray<string | number>
 type CheckRepresentationAnnotation = SchemaRepresentation.CheckRepresentationAnnotation<
@@ -296,13 +297,13 @@ export function addSchemas(
     check: SchemaRepresentation.Check,
     path: Path
   ): Fragment {
-    const callback = check.annotations?.toCode
+    const callback = BuiltIns.resolveCheck(check, path)
     let runtime: Fragment
     if (callback !== undefined) {
       const schemas = annotationSchemas(check.representation, [...path, "representation"])
       runtime = compileCallback(
         schemas,
-        (schemas) => (callback as SchemaRepresentation.Generation.Check)({ schemas }),
+        (schemas) => callback({ schemas }),
         [...path, "annotations", "toCode"]
       ).runtime
     } else if (check._tag === "Filter") {
@@ -361,7 +362,7 @@ export function addSchemas(
   ): Code {
     switch (representation._tag) {
       case "Declaration": {
-        const callback = representation.annotations?.toCode
+        const callback = BuiltIns.resolveDeclaration(representation, path)
         if (callback === undefined) {
           throw errorWithPath("Missing toCode callback", [...path, "annotations", "toCode"])
         }
@@ -370,7 +371,7 @@ export function addSchemas(
         )
         return compileCallback(
           typeParameters,
-          (typeParameters) => (callback as SchemaRepresentation.Generation.Declaration)({ typeParameters }),
+          (typeParameters) => callback({ typeParameters }),
           [...path, "annotations", "toCode"]
         )
       }

@@ -740,33 +740,7 @@ const promptOf = (turn: OrchestrationV2ProviderTurn) => {
   return nativeId?.startsWith("msg_") === true ? nativeId : undefined;
 };
 
-const boundaryAfter = (
-  turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
-  providerThreadId: OrchestrationV2ProviderThread["id"],
-  kept: OrchestrationV2ProviderTurn | undefined,
-  prompts: ReadonlySet<string>,
-) => {
-  const later = turns
-    .filter(
-      (turn) =>
-        turn.providerThreadId === providerThreadId &&
-        (kept === undefined || turn.ordinal > kept.ordinal),
-    )
-    .toSorted((left, right) => left.ordinal - right.ordinal);
-  if (later.some((turn) => promptOf(turn) === undefined && !isWakeTurn(turn))) {
-    return Effect.fail(
-      new ProviderAdapter.ProviderAdapterProtocolError({
-        driver: OPENCODE_PROVIDER,
-        detail:
-          "This OpenCode conversation has turns from an earlier T3 Code version, so it can't be cut there.",
-      }),
-    );
-  }
-  return Effect.succeed(
-    later.map(promptOf).find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
-      null,
-  );
-};
+const COMMAND_CURSOR = "command-cursor:";
 
 const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
 
@@ -1149,6 +1123,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
         yield* emit({ type: "provider_session.updated", driver, providerSession: session });
       });
+
+    const setStartupPhase = Effect.fnUntraced(function* (phase: string | undefined) {
+      if (session.startupPhase === phase) return;
+      const updatedAt = yield* DateTime.now;
+      const { startupPhase: _reported, ...current } = session;
+      session = { ...current, ...(phase === undefined ? {} : { startupPhase: phase }), updatedAt };
+      yield* emit({ type: "provider_session.updated", driver, providerSession: session });
+    });
 
     const ordinalOf = (turn: ActiveTurn, nativeId: string) => {
       const known = turn.ordinals.get(nativeId);
@@ -4025,6 +4007,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.gen(function* () {
             streamFailure = "The OpenCode event stream was lost. Reconnecting.";
             yield* Effect.logWarning("Lost the OpenCode event stream; reconnecting.");
+            yield* setStartupPhase("connecting");
             // Failures may contain URLs or response text; annotate only the tag and keep details in cause.
             const next = yield* reconnect.pipe(
               Effect.tapCause((cause) =>
@@ -4034,6 +4017,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
               ),
               Effect.option,
+              Effect.ensuring(setStartupPhase(undefined)),
             );
             if (next._tag === "None") {
               return yield* lock.withPermit(
@@ -4354,6 +4338,47 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       );
 
+    const boundaryAfter = Effect.fnUntraced(function* (
+      sessionId: string,
+      turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+      providerThreadId: OrchestrationV2ProviderThread["id"],
+      kept: OrchestrationV2ProviderTurn | undefined,
+      operation: "fork" | "rollback",
+    ) {
+      const later = turns
+        .filter(
+          (turn) =>
+            turn.providerThreadId === providerThreadId &&
+            turn.ordinal > (kept?.ordinal ?? 0) &&
+            !turn.promptDropped &&
+            !isWakeTurn(turn),
+        )
+        .toSorted((left, right) => left.ordinal - right.ordinal);
+      let prompts = operation === "rollback" ? yield* userMessages(sessionId) : undefined;
+      for (const turn of later) {
+        const id = turn.nativeTurnRef?.nativeId;
+        if (id?.startsWith(COMMAND_CURSOR)) {
+          const cursor = id.slice(COMMAND_CURSOR.length);
+          const page = yield* client.message.list({
+            sessionID: Session.ID.make(sessionId),
+            ...(cursor ? { cursor } : { order: "asc" }),
+            limit: 1,
+          });
+          return page.data[0]?.id ?? null;
+        }
+        prompts ??= yield* userMessages(sessionId, ["user", "synthetic"]);
+        if (id && prompts.has(id)) return id;
+        if (operation === "fork" || promptOf(turn) === undefined) {
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: OPENCODE_PROVIDER,
+            detail:
+              "T3 Code could not locate the exact turn boundary in this OpenCode conversation.",
+          });
+        }
+      }
+      return null;
+    });
+
     const snapshotOf = Effect.fnUntraced(function* (
       providerThread: OrchestrationV2ProviderThread,
       sessionId: string,
@@ -4523,12 +4548,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.instructions = instructions;
       }
     });
-
-    const markBefore = (sessionId: string, before: string | null) =>
-      Effect.sync(() => {
-        const turn = threads.get(sessionId)?.active;
-        if (turn !== undefined) turn.before = before;
-      });
 
     const beginTurn = Effect.fn("OpenCode2Adapter.beginTurn")(function* (
       state: ThreadState,
@@ -4802,8 +4821,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           const before = newest.data[0]?.id ?? null;
-          yield* markBefore(sessionId, before);
           if (!sending()) return;
+          turn.before = before;
+          if (newest.cursor.previous !== undefined || before === null) {
+            turn.providerTurn = {
+              ...turn.providerTurn,
+              nativeTurnRef: ref(COMMAND_CURSOR + (newest.cursor.previous ?? ""), "weak"),
+            };
+          }
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
             // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
             yield* client.session.command({ sessionID, ...command }).pipe(
@@ -5558,10 +5583,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* ensureQuiet(sessionId, "roll back");
           }
           const boundary = yield* boundaryAfter(
+            sessionId,
             rollbackInput.providerThreadTurns,
             providerThread.id,
             target.type === "provider_turn" ? target.providerTurn : undefined,
-            yield* userMessages(sessionId),
+            "rollback",
           );
           if (boundary !== null) {
             yield* rollBackTo(sessionId, SessionMessage.ID.make(boundary));
@@ -5603,10 +5629,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             selected === undefined
               ? null
               : yield* boundaryAfter(
+                  sourceId,
                   forkInput.sourceProviderTurns ?? [],
                   source.id,
                   selected,
-                  yield* userMessages(sourceId, ["user", "synthetic"]),
+                  "fork",
                 );
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),

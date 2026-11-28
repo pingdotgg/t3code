@@ -10,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -50,9 +51,10 @@ it.effect(
       const layerDatabase = SqlitePersistence.layerConfig.pipe(
         Layer.provide(ServerConfig.layer({ ...config, dbPath: destinationPath })),
       );
-      const layerStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-        Layer.provideMerge(layerDatabase),
-      );
+      const layerStores = Layer.mergeAll(
+        EventStore.layer,
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+      ).pipe(Layer.provideMerge(layerDatabase));
       const layerSink = EventSink.layer.pipe(Layer.provide(layerStores));
       const layerImporter = LegacyV1ThreadImporter.layer.pipe(
         Layer.provideMerge(Layer.mergeAll(layerStores, layerSink)),

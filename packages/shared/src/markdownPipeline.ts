@@ -17,6 +17,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
+import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
 import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
@@ -25,7 +27,11 @@ import {
   remarkKeepLeadingWhitespace,
 } from "./markdownLeadingWhitespace.ts";
 import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
-import { absoluteFilePathMatches } from "./markdownLinks.ts";
+import {
+  absoluteFilePathMatches,
+  SCRIPT_PUNCTUATION,
+  scriptPunctuationAfterAscii,
+} from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
@@ -113,8 +119,11 @@ function rehypePreserveBareAnchorPlaceholders() {
   };
 }
 
+// CJK emphasis and strikethrough close next to CJK punctuation, as the web renderer's `cjk` option does.
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkCjkFriendly,
+  remarkCjkFriendlyGfmStrikethrough,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
@@ -131,6 +140,8 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 // Leading whitespace is kept only where each line renders as a line.
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkCjkFriendly,
+  remarkCjkFriendlyGfmStrikethrough,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkKeepLeadingWhitespace,
@@ -151,6 +162,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
 // Users also indent lines with spaces, which CommonMark drops from a paragraph.
 export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
+  [remarkCjkFriendlyGfmStrikethrough, { singleTilde: false }],
   remarkEnableLeadingWhitespace,
 ];
 
@@ -363,10 +375,6 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
-// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
-// plus the Arabic-script comma, semicolon, question mark, and full stop.
-const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
-
 /**
  * GFM runs a bare URL on until whitespace, so Chinese, Japanese, and Arabic punctuation joins it,
  * along with the rest of the sentence and any `**` that should have closed around it. A URL that is
@@ -376,8 +384,7 @@ function scriptPunctuationIndex(link: Link): number {
   const label = link.children.length === 1 ? link.children[0] : undefined;
   if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
   if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
-  const index = label.value.search(/[^!-~]/u);
-  return index > 0 && SCRIPT_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+  return scriptPunctuationAfterAscii(label.value);
 }
 
 /** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */

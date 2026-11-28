@@ -6,6 +6,7 @@ import {
   type ProjectScript,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -134,6 +135,53 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
+  it("retries a creation whose shortcut failed without duplicating the action", async () => {
+    setup();
+    commands.upsertKeybinding.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Temporary shortcut failure"))),
+    );
+    const projects = [ProjectId.make("first"), ProjectId.make("second")];
+    let settings: ProjectScriptSettings | undefined;
+    const renderTargets = (firstScripts: readonly ProjectScript[]) => (
+      <Probe
+        targets={projects.map((id, index) => ({
+          environmentId,
+          settings: DEFAULT_SERVER_SETTINGS,
+          keybindings: [],
+          project: { id, scripts: index === 0 ? firstScripts : [] },
+        }))}
+        onResult={(next) => (settings = next)}
+      />
+    );
+    await using screen = await render(renderTargets([]));
+    const draft = { ...input, keybinding: "mod+shift+k" };
+    const onActionCreated = vi.fn<(scriptId: string) => void>();
+
+    await act(async () => {
+      expect((await settings!.submit(null, draft, onActionCreated))._tag).toBe("Failure");
+    });
+    expect(onActionCreated).toHaveBeenCalledExactlyOnceWith(lint.id);
+    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
+
+    // The first project now has the action; the second was never written.
+    await screen.rerender(renderTargets([lint]));
+    await act(async () => {
+      expect((await settings!.submit(lint.id, draft, onActionCreated, true))._tag).toBe("Success");
+    });
+    for (const [index, id] of projects.entries()) {
+      expect(commands.updateSettings).toHaveBeenNthCalledWith(index + 2, {
+        environmentId,
+        input: {
+          patch: {
+            projectSettingsOverrides: {
+              [id]: { defaultProjectScripts: [expect.objectContaining({ id: lint.id })] },
+            },
+          },
+        },
+      });
+    }
+  });
+
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",
     async (scope) => {
