@@ -1223,6 +1223,79 @@ describe("ChatMarkdown copy", () => {
       [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
     ).toEqual(["Configure", "Deploy"]);
   });
+
+  it.each([
+    {
+      label: "the full table",
+      from: "Name",
+      to: "20",
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      cells: 9,
+    },
+    {
+      label: "cells in one row",
+      from: "Alice",
+      to: "Engineer",
+      text: "| Alice | Engineer |\n| --- | :---: |",
+      cells: 2,
+    },
+    {
+      label: "a row whose selection stops at the start of the next row",
+      from: "Name",
+      to: "Alice",
+      skipTo: true,
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |",
+      cells: 3,
+    },
+    {
+      label: "one cell whose selection stops at the start of the next cell, as plain text",
+      from: "Alice",
+      to: "Engineer",
+      skipTo: true,
+      text: "Alice",
+      cells: 0,
+    },
+    {
+      label: "an empty cell the selection ends in",
+      source: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      from: "Item",
+      to: "",
+      text: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      cells: 4,
+    },
+  ])(
+    "copies $label from a rendered table",
+    async ({
+      source = "| Name | Role | Score |\n| :--- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      from,
+      to,
+      skipTo,
+      text,
+      cells,
+    }) => {
+      setup();
+      await using screen = await renderText(source);
+      const cellNode = (shown: string) => {
+        const cell = [...screen.container.querySelectorAll("th, td")].find(
+          (cell) => cell.textContent === shown,
+        )!;
+        return cell.firstChild ?? cell;
+      };
+      const end = cellNode(to);
+      const range = document.createRange();
+      range.setStart(cellNode(from), 0);
+      range.setEnd(end, skipTo ? 0 : end.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+      expect(serializeRenderedMarkdownFragment(pasted.body)).toBe(text);
+      expect(pasted.querySelectorAll("table th, table td")).toHaveLength(cells);
+    },
+  );
 });
 
 describe("ChatMarkdown file chip tooltips", () => {

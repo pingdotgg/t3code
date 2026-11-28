@@ -12,7 +12,7 @@ export const THREAD_LINK_PROTOCOL = "t3-thread";
 const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
 const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
-const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
+const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+(?:\\.+[A-Za-z0-9_%-]+)*";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // Unescaped brackets end a label, so consecutive unclosed brackets cannot restart a long scan.
@@ -50,11 +50,11 @@ const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 const ESCAPED_CHARACTER = String.raw`\\[!-/:-@[-\`{-~]`;
 const LINK_PATTERNS = [
   // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
-  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
+  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>\)|(?<href>${HOSTED_LINK})\)|(?<customHref>${THREAD_HREF}))`,
   String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
   String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
   // After a URL character the hosted link is part of a longer URL, such as a redirect target.
-  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?!\.*[\w%/?#-])`,
 ].join("|");
 const THREAD_LINK = new RegExp(`${ESCAPED_CHARACTER}|${LINK_PATTERNS}`, "gm");
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -310,23 +310,19 @@ export function threadLinkRefs(
 
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
-const FENCE_LIKE_LINE =
-  /^(?:[ \t>*+\-\d.)]*(?<footnote>\[\^(?:\\[^\r\n]|[^\\\]\r\n])+\]:))*[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
+const INDENTED_CODE_LINE = /^[ \t>*+\-\d.)]*(?: {4}|\t)/m;
+const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
 function parsedSkippedRanges(markdown: string) {
-  // Parse only when a fence-looking line could be indented code in its container, when a
-  // list or footnote could end a fence that has no closing marker, or when a link reference
-  // definition may hold a bare or angle-bracketed destination.
-  if (!markdown.includes("]:")) {
-    const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
-    let candidate = candidates.exec(markdown);
-    if (!LIST_ITEM_LINE.test(markdown)) {
-      while (candidate && !candidate.groups?.footnote && !/ {4}|\t/.test(candidate[0])) {
-        candidate = candidates.exec(markdown);
-      }
-    }
-    if (!candidate) return undefined;
+  // Parse only when an indented line could be code, when a list could end an unclosed fence,
+  // or when a footnote or link reference definition may appear.
+  if (
+    !markdown.includes("]:") &&
+    !INDENTED_CODE_LINE.test(markdown) &&
+    !(LIST_ITEM_LINE.test(markdown) && FENCE_LIKE_LINE.test(markdown))
+  ) {
+    return undefined;
   }
 
   const ranges: Array<{ start: number; end: number }> = [];
@@ -344,6 +340,22 @@ function parsedSkippedRanges(markdown: string) {
     }
   }
   return ranges;
+}
+
+function readDestination(markdown: string, match: RegExpExecArray) {
+  const start = match.index + match[0].length - match.groups!.customHref!.length;
+  for (let i = start, depth = 0; i < markdown.length; i++) {
+    const ch = markdown[i]!;
+    if (ch === "\\" && /[!-/:-@[-`{-~]/.test(markdown[i + 1] ?? "")) i++;
+    else if (ch === "(") depth++;
+    else if (ch === ")" && depth-- === 0)
+      return { href: markdown.slice(start, i).replace(/\\([!-/:-@[-`{-~])/g, "$1"), end: i + 1 };
+    else if (/[\s\p{Cc}]/u.test(ch)) {
+      const skip = depth === 0 ? /^[ \t]+(?:"[^"\n]*"|'[^'\n]*')\)/.exec(markdown.slice(i)) : null;
+      return { href: undefined, end: skip ? i + skip[0].length : match.index + 1 };
+    }
+  }
+  return { href: undefined, end: match.index + 1 };
 }
 
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
@@ -382,8 +394,10 @@ export function replaceThreadLinks(
       if (spanEnd !== -1) pattern.lastIndex = spanEnd;
       continue;
     }
-    const href =
+    let href =
       match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
+    if (match.groups?.customHref)
+      ({ href, end: pattern.lastIndex } = readDestination(markdown, match));
     const link = href === undefined ? null : parseThreadLinkHref(href);
     const label = match.groups?.label;
     const rewritten =
@@ -392,7 +406,7 @@ export function replaceThreadLinks(
         : replace(link, label && markdown.slice(match.index + 1, match.index + 1 + label.length));
     if (rewritten === undefined) continue;
     result += markdown.slice(cursor, match.index) + rewritten;
-    cursor = match.index + match[0].length;
+    cursor = pattern.lastIndex;
   }
   return cursor === 0 ? markdown : result + markdown.slice(cursor);
 }

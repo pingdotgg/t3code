@@ -206,7 +206,15 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
-    Layer.provideMerge(ProviderLatestVersions.layer),
+    // A real lookup runs `npm view` with its cache in the temp base dir and can outlive that
+    // dir's removal at teardown; no test here checks version advisories.
+    Layer.provideMerge(
+      Layer.succeed(ProviderLatestVersions.ProviderLatestVersions, {
+        cached: () => Effect.succeed(null),
+        invalidate: () => Effect.void,
+        invalidateAll: Effect.void,
+      }),
+    ),
     Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),

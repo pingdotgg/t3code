@@ -1132,6 +1132,7 @@ function wrappedShellCommandProgramName(
   start: number,
   depth: number,
   remainingCommand: string | null,
+  separator: string | null,
   segmentsRemaining: number,
 ): string | null {
   let index = start;
@@ -1196,6 +1197,7 @@ function wrappedShellCommandProgramName(
     target === target.toLowerCase() &&
     NON_DESCRIPTIVE_SHELL_PROGRAMS.has(target) &&
     !TERMINAL_SHELL_PROGRAMS.has(target) &&
+    !((target === "true" || target === ":") && separator === "||") &&
     remainingCommand
   ) {
     return commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1);
@@ -1284,7 +1286,7 @@ function parseCommandProgramName(
       continue;
     }
     if (executionContext === "shell" && token === ":") {
-      return commandSplit.remainingCommand
+      return commandSplit.remainingCommand && commandSplit.separator !== "||"
         ? commandProgramNameInternal(
             commandSplit.remainingCommand,
             depth,
@@ -1297,11 +1299,16 @@ function parseCommandProgramName(
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
-      return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
+      const canSkipBracketProbe =
+        (executionContext === "shell" && token.startsWith("[")) ||
+        (wrapper === "sudo" &&
+          SKIPPABLE_SUDO_PROBES.has(token) &&
+          (token !== "[[" || tokens.slice(index + 1).includes("]]")));
+      return canSkipBracketProbe && commandSplit.remainingCommand
         ? commandProgramNameInternal(
             commandSplit.remainingCommand,
             depth,
-            executionContext,
+            "shell",
             segmentsRemaining - 1,
           )
         : null;
@@ -1446,6 +1453,7 @@ function parseCommandProgramName(
         index + 1,
         depth,
         commandSplit.remainingCommand,
+        commandSplit.separator,
         segmentsRemaining,
       );
     }
@@ -1457,6 +1465,11 @@ function parseCommandProgramName(
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
       (!TERMINAL_SHELL_PROGRAMS.has(tokenProgram) ||
         (tokenProgram === "false" && commandSplit.separator !== "&&")) &&
+      !(
+        executionContext === "shell" &&
+        tokenProgram === "true" &&
+        commandSplit.separator === "||"
+      ) &&
       commandSplit.remainingCommand
     ) {
       return commandProgramNameInternal(

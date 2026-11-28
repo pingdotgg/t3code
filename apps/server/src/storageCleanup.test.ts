@@ -1999,6 +1999,33 @@ describe("deleted thread worktrees", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
+  it.effect("removes a deleted No project thread's scratch folder", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnDelete: true,
+        worktreeKeepWhen: "tracked-changes",
+      });
+      const scratchRoot = `${fixture.config.baseDir}/scratch`;
+      const folder = `${scratchRoot}/quiet-otter`;
+      yield* fixture.fs.makeDirectory(folder, { recursive: true });
+      yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+      fixture.setProjectRoots([scratchRoot]);
+      fixture.setStoredWorktreePaths([]);
+      fixture.setThreads([]);
+      fixture.setDeletedThreads([
+        shell({ worktreePath: folder, branch: null, deletedAt: at(-DAY_MS) }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ path: folder, outcome: "removed" }),
+      ]);
+      expect(yield* fixture.fs.exists(folder)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
   it.effect("removes a deleted thread's worktree once its session stops", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
@@ -3001,6 +3028,36 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("removes an archived checkout whose branch ends in Unicode whitespace", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const branch = "feature　";
+        yield* git.execute({
+          operation: "cleanup-test",
+          cwd: fixture.worktree,
+          args: ["branch", "-m", branch],
+        });
+        fixture.setThreads([
+          shell({ branch, worktreePath: fixture.worktree, archivedAt: at(-DAY_MS) }),
+        ]);
+        yield* fixture.activate(Stream.empty);
+        const [report] = yield* fixture.service.reports.pipe(
+          Stream.filter((report) => report !== null),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        yield* fixture.service.drain;
+        expect(report).toMatchObject({
+          counts: { removed: 1, kept: 0, failed: 0 },
+          entries: [{ path: fixture.worktree, outcome: "removed" }],
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+      }),
+    ),
+  );
   it.effect("removes an idle No project thread's scratch folder past the retention", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -3768,6 +3825,26 @@ describe("storage cleanup reports and local file policies", () => {
         expect(
           (yield* command(repo, ["show-ref", "--verify", "refs/heads/feature"])).stdout,
         ).not.toBe("");
+      }),
+    ),
+  );
+  it.effect("compares against a project branch that ends in Unicode whitespace", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        yield* command(repo, ["branch", "-m", "main", "trunk　"]);
+        setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "removed",
+          reason: "No commits beyond the project branch",
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
       }),
     ),
   );

@@ -1,6 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
@@ -263,6 +264,15 @@ const findLocalImages = (html: string) =>
 const filePathFor = (reference: string) =>
   /^[a-z]:/i.test(reference) ? reference.replaceAll("\\\\", "\\") : reference;
 
+// Try the literal path first so raw filesystem strings keep working, then percent-decode URL paths.
+const filePathCandidatesFor = (reference: string) => {
+  const literal = filePathFor(reference);
+  const decoded = safeDecodeURIComponent(literal);
+  return decoded !== literal && !decoded.includes("\0") && !isNetworkPath(decoded)
+    ? [literal, decoded]
+    : [literal];
+};
+
 const dataUriPrefix = (path: string) =>
   `data:${IMAGE_MIME_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream"};base64,`;
 
@@ -328,13 +338,15 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
-      ),
+      Effect.gen(function* () {
+        for (const candidate of filePathCandidatesFor(path)) {
+          const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
+          if (Option.isSome(info) && info.value.type === "File") {
+            return { path, filePath: candidate, size: Number(info.value.size) };
+          }
+        }
+        return { path, filePath: undefined, size: undefined };
+      }),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -363,8 +375,9 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     files.filter((file) => file.size !== undefined),
     (file) =>
       Effect.gen(function* () {
+        if (file.filePath === undefined) return [];
         const read = yield* fileSystem
-          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
+          .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
           .pipe(Stream.mkUint8Array, Effect.option);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;

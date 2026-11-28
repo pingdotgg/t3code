@@ -921,6 +921,8 @@ describe("question answer paths", () => {
               '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
               "<div>Harbor directions.<main><strong>Use the north pier.</strong></main>Boats depart at noon.</div>",
               '<div>Keep<x:main xmlns:x="urn:example"> this </x:main>inline too.</div>',
+              "<div>The Harbour Book<center>A Novel</center><center>By Ada Lovelace</center>First printing.</div>",
+              '<div>Keep<x:center xmlns:x="urn:example"> this </x:center>inline as well.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -934,6 +936,7 @@ describe("question answer paths", () => {
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
             "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
             "Harbor directions.\nUse the north pier.\nBoats depart at noon.\nKeep this inline too.",
+            "The Harbour Book\nA Novel\nBy Ada Lovelace\nFirst printing.\nKeep this inline as well.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
@@ -1058,6 +1061,15 @@ describe("question answer paths", () => {
           expected: ["[Extracted text truncated at document extraction limits.]"],
           absent: ["Lost"],
         })),
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Sheet"><table:table-row table:number-rows-repeated="+2"><table:table-cell table:number-columns-repeated=" +02 "><text:p>Quarter<text:s text:c="+2"/>one</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>',
+          },
+          exact: "## Sheet: Sheet\nQuarter one\tQuarter one\nQuarter one\tQuarter one",
+          expected: [],
+        },
         ...["ods", "odt", "odp", "docx"].flatMap((ext) =>
           [false, true].map((rows) => ({
             ext,
@@ -1152,6 +1164,39 @@ describe("question answer paths", () => {
             "[Skipped document part: chapter 1 (missing or invalid XML).]",
           ],
           absent: ["Draft SVG caption", "Draft prefixed caption", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="ch" href="ch.xhtml"/><item id="fig" href="fig.svg"/></manifest><spine><itemref idref="ch"/><itemref idref="fig"/></spine></package>',
+            "ch.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>' +
+              '<svg xmlns="http://www.w3.org/2000/svg" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:example">' +
+              "<metadata><rdf:RDF><dc:format>image/svg+xml</dc:format><dc:title>Matplotlib v3.11.2</dc:title></rdf:RDF></metadata>" +
+              "<title>Revenue chart</title><desc>Quarterly totals</desc><text>Q4 Revenue</text>" +
+              "<g><metadata>Nested RDF</metadata></g><meta:metadata>Foreign metadata</meta:metadata></svg>" +
+              '<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:metadata>Prefixed SVG metadata</svg:metadata><svg:text>Prefixed label</svg:text></svg:svg>' +
+              "</body></html>",
+            "fig.svg":
+              '<svg xmlns="http://www.w3.org/2000/svg"><metadata>Standalone SVG metadata</metadata><text>Standalone chart</text></svg>',
+          },
+          expected: [
+            "Revenue chart",
+            "Quarterly totals",
+            "Q4 Revenue",
+            "Foreign metadata",
+            "Prefixed label",
+            "Standalone chart",
+          ],
+          absent: [
+            "image/svg+xml",
+            "Matplotlib v3.11.2",
+            "Nested RDF",
+            "Prefixed SVG metadata",
+            "Standalone SVG metadata",
+          ],
         },
         {
           ext: "epub",
@@ -1337,6 +1382,27 @@ describe("question answer paths", () => {
           ext: "docx",
           bounded: true,
           parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:extension"><w:body>',
+              "<w:p><w:r><w:t>Visible body</w:t></w:r></w:p>",
+              '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor><wp:docPr id="1" name="Visible" hidden="0"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Visible callout</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Visible callout</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>',
+              '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor><wp:docPr id="2" name="Hidden" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Hidden anchored</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Choice><mc:Choice Requires="w14"><w:r><w:t>Hidden sibling choice</w:t></w:r></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Hidden VML fallback</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>',
+              '<w:p><w:r><w:drawing><s:inline xmlns:s="http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing"><s:docPr id="3" name="Hidden inline" hidden="true"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Hidden strict inline</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></s:inline></w:drawing></w:r></w:p>',
+              '<w:p><w:r><w:drawing><wp:anchor><x:docPr id="4" name="Foreign" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Foreign kept</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></w:r></w:p>',
+              '<w:p><w:r><w:drawing><wp:anchor><docPr xmlns="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" x:xmlns="urn:extension" id="5" name="Shadowed" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Hidden default ns</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></w:r></w:p>',
+              '<w:p><w:r><w:t>Start</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="w16"><w:r><w:tab/></w:r></mc:Choice><mc:Choice Requires="wps"><w:drawing><wp:anchor><wp:docPr id="6" name="Hidden tab" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Hidden after tab</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:r><w:t>Tab fallback</w:t></w:r></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>End</w:t></w:r></w:p>',
+              '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="w15"><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor><wp:docPr id="7" name="Nested hidden" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Nested hidden</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:r><w:t>Inner fallback</w:t></w:r></mc:Fallback></mc:AlternateContent></mc:Choice><mc:Fallback><w:r><w:t>Outer fallback</w:t></w:r></mc:Fallback></mc:AlternateContent></w:r></w:p>',
+              '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="w15"><mc:AlternateContent><mc:Choice Requires="cx"><w:drawing><cx:chart/></w:drawing></mc:Choice><mc:Fallback><w:drawing><wp:anchor><wp:docPr id="8" name="Retained hidden" hidden="1"/><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Retained hidden</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Fallback></mc:AlternateContent></mc:Choice><mc:Fallback><w:r><w:t>Outer retained fallback</w:t></w:r></mc:Fallback></mc:AlternateContent></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Visible body\nVisible callout\n\nForeign kept\n\nStartEnd",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
             "word/document.xml":
               '<w:document xmlns:w="urn:w" xmlns:wps="urn:wps"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pPrChange><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Demoted</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Intro. </w:t></w:r><w:r><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Box title</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></w:r></w:p></w:body></w:document>',
           },
@@ -1447,6 +1513,20 @@ describe("question answer paths", () => {
             "Current route\t\tStatus\n\t\tOpen\n\t\tConfirmed\nNext route\nOrphan route\n\t\tAfter blank rows\nWidth changes",
         },
         {
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:ext="urn:example:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="ext"><w:body><w:tbl>' +
+              '<w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Route</w:t></w:r></w:p></w:tc>' +
+              '<w:tc><ext:tcPr/><w:tcPr><w:hMerge w:val="continue"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old route</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge ext:val="restart"/></w:tcPr><w:p><w:r><w:t>Old spare</w:t></w:r></w:p></w:tc>' +
+              "<w:tc><ext:tcPr><w:hMerge/></ext:tcPr><w:tcPr><ext:hMerge/></w:tcPr><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>After gap</w:t></w:r></w:p></w:tc>" +
+              '<w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>New merge</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Old merge</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>New row</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Orphan vertical</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>",
+          },
+          expected: [],
+          exact: "Route\t\t\tStatus\tAfter gap\tNew merge\nNew row\tOrphan vertical",
+        },
+        {
           ext: "pptx",
           parts: {
             "ppt/presentation.xml":
@@ -1456,13 +1536,13 @@ describe("question answer paths", () => {
             "ppt/slides/a.xml":
               '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
               "<p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol/><a:gridCol/><a:gridCol/></a:tblGrid>" +
-              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge=" true "><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               '<a:tr><a:tc rowSpan="2"><a:txBody><a:p><a:r><a:t>North</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Open</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
-              '<a:tr><a:tc vMerge="1"><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc vMerge=" 1 "><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               "</a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>",
           },
-          expected: ["## Slide 1", "Route\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed"],
-          absent: ["Old spare", "Old north"],
+          expected: [],
+          exact: "## Slide 1\nRoute\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed",
         },
         {
           ext: "docx",
@@ -1587,6 +1667,26 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              "<w:p><w:r><w:t>Retired body text</w:t></w:r></w:p>",
+              '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:t>Current instructions</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="paragraph" w:styleId="Body" w:default=" 1 "><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="Plain"/>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Current instructions",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
               '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x"><w:body>',
               '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:t>Old routing</w:t></w:r></w:p>',
               '<w:p><w:pPr><w:pStyle w:val="RetiredChild"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Emphasis"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
@@ -1630,7 +1730,7 @@ describe("question answer paths", () => {
               '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
               '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
               '<w:footnote w:id="1"><w:p><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Inspect the seals.</w:t></w:r></w:p>',
-              "<w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:footnote>",
+              '<w:tbl><w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Old instruction</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:footnote>',
               "</w:footnotes>",
             ].join(""),
             "word/endnotes.xml": [
@@ -1732,19 +1832,54 @@ describe("question answer paths", () => {
           exact:
             "Use the north entrance.\nWait near the red marker.\nBring your badge.\nVisible control.\nKeep common parent.",
         },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:foreign="urn:example">',
+              '<office:automatic-styles><s:style s:name="P1" s:family="paragraph"><s:text-properties text:display="none"/></s:style>',
+              '<s:style s:name="HiddenChild" s:family="paragraph" s:parent-style-name="HiddenBase"/>',
+              '<s:style s:name="ShowSpan" s:family="text"><s:text-properties text:display="true"/></s:style>',
+              '<s:style s:name="ForeignHidden" s:family="paragraph"><s:text-properties foreign:display="none"/></s:style></office:automatic-styles>',
+              "<office:body><office:text>",
+              '<text:p text:style-name="P1">Retired <text:line-break/> route.</text:p>',
+              '<text:h text:outline-level="2" text:style-name="HiddenBase">Retired section</text:h>',
+              '<text:p text:style-name="HiddenChild">Draft <text:span text:style-name="ShowSpan">North entrance</text:span> only.</text:p>',
+              '<text:p text:style-name="Shared">Hidden shared paragraph.</text:p>',
+              '<text:p>Keep <text:span text:style-name="Shared">shared text</text:span>.</text:p>',
+              '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+              '<text:p text:style-name="ForeignHidden">Foreign display control.</text:p>',
+              '<text:p foreign:style-name="P1">Foreign style control.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+            "styles.xml": [
+              '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>',
+              '<style:style style:name="HiddenBase" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="text"><style:text-properties t:display="true"/></style:style>',
+              '<style:style style:name="TextOnly" style:family="text"><style:text-properties t:display="none"/></style:style>',
+              "</office:styles></office:document-styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "North entrance\nKeep shared text.\nParagraph ignores text family.\nForeign display control.\nForeign style control.",
+        },
         ...["<mismatch>", "<nested>".repeat(129) + "</nested>".repeat(129)].map((trailer) => ({
           ext: "odt",
           parts: {
             "styles.xml":
               '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>' +
-              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style></office:styles>' +
+              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style>' +
+              '<s:style s:name="Retired" s:family="paragraph"><s:text-properties text:display="none"/></s:style></office:styles>' +
               trailer +
               "</office:document-styles>",
             "content.xml":
-              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p></office:text></office:body></office:document-content>',
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p><text:p text:style-name="Retired">Check in at reception.</text:p></office:text></office:body></office:document-content>',
           },
           expected: [],
-          exact: "Bring your badge.",
+          exact: "Bring your badge.\nCheck in at reception.",
         })),
         {
           ext: "odt",
@@ -1909,14 +2044,15 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "xl/workbook.xml":
-              '<workbook><workbookPr date1904="true"/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
+              '<workbook><workbookPr date1904=" true "/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/dates.xml"/></Relationships>',
             "xl/styles.xml": '<styleSheet><cellXfs><xf numFmtId="14"/></cellXfs></styleSheet>',
             "xl/worksheets/dates.xml":
               "<worksheet><sheetData><row><c><v>1</v></c></row></sheetData></worksheet>",
           },
-          expected: ["## Sheet: Dates", "1 [Excel numFmtId=14; date system 1904]"],
+          expected: [],
+          exact: "## Sheet: Dates\n1 [Excel numFmtId=14; date system 1904]",
         },
         {
           ext: "xlsx",
@@ -2134,10 +2270,25 @@ describe("question answer paths", () => {
               '<text:p><draw:frame draw:name="Frame1" text:anchor-type="paragraph"><draw:text-box><text:p>Call the dock manager</text:p><text:p>before noon</text:p></draw:text-box></draw:frame>Trucks leave at six.</text:p>' +
               '<text:p><draw:custom-shape text:anchor-type="char" draw:name="Text Box 1"><text:p>Gate 4</text:p><text:p>North side</text:p><draw:enhanced-geometry draw:type="ooxml-rect"/></draw:custom-shape>Drivers sign in.</text:p>' +
               '<text:p>Badge <draw:custom-shape text:anchor-type="as-char"><text:p>A</text:p><text:p>B</text:p></draw:custom-shape> required.</text:p>' +
+              "<table:table><table:table-row><table:table-cell><draw:custom-shape><text:p>Cell callout</text:p></draw:custom-shape></table:table-cell></table:table-row></table:table>" +
               "</office:text></office:body></office:document-content>",
           },
           exact:
-            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.",
+            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.\nCell callout",
+          expected: [],
+        },
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:d="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:foo="urn:example:foo"><office:body><office:spreadsheet><table:table table:name="Stock">' +
+              '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell office:value-type="float" office:value="99"><draw:custom-shape><text:p>Check bin</text:p></draw:custom-shape></table:table-cell><table:table-cell><d:g><d:custom-shape><text:p>Grouped note</text:p></d:custom-shape></d:g></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Crate A</text:p></text:list-item><text:list-item><text:p>Crate B</text:p></text:list-item></text:list><custom-shape xmlns="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" foo:xmlns="urn:example:other"><text:p>Default NS shape</text:p></custom-shape></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell><text:p>Badge <draw:frame text:anchor-type="as-char"><draw:text-box><text:p>A</text:p></draw:text-box></draw:frame> required.</text:p></table:table-cell></table:table-row>' +
+              "</table:table></office:spreadsheet></office:body></office:document-content>",
+          },
+          exact: "## Sheet: Stock\nApples\t42\nPears\n99\t\tCrate A Crate B\nBadge A required.",
           expected: [],
         },
         {

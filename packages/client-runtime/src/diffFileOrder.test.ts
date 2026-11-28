@@ -95,12 +95,24 @@ describe("orderDiffFilesForReview", () => {
     expect(
       order([file("src/ui/a.ts", ['import { b } from "../lib/b";']), file("src/lib/b.ts")]),
     ).toEqual(["src/lib/b.ts", "src/ui/a.ts"]);
+    expect(order([file("a.ts", ['import { z } from "../z";']), file("z.ts")])).toEqual([
+      "a.ts",
+      "z.ts",
+    ]);
   });
 
   it("resolves a directory specifier to that directory's index file", () => {
     expect(
       order([file("src/a.ts", ['import { b } from "./lib";']), file("src/lib/index.ts")]),
     ).toEqual(["src/lib/index.ts", "src/a.ts"]);
+    expect(order([file("a/app.ts", ['import { x } from "..";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "a/app.ts",
+    ]);
+    expect(order([file("app.ts", ['import { x } from ".";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "app.ts",
+    ]);
   });
 
   it("resolves .mts and .cts modules from NodeNext and extensionless specifiers", () => {

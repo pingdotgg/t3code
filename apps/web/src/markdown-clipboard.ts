@@ -74,6 +74,19 @@ export function serializeCodeBlockToMarkdown(source: string, language: string | 
 // Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
 // copied as shown, without fences; DOM text from rendered markdown carries no NUL.
 const CODE_BOUNDARY = "\u0000";
+// An empty code part before a marker the serializer writes keeps escapeBlockStarts off it.
+const BLOCK_GUARD = `${CODE_BOUNDARY}${CODE_BOUNDARY}`;
+// CommonMark/GFM block starts: headings, quotes, lists, rules, setext, fences, table delimiters.
+// Deeper indentation is indented code or a continuation line, where a backslash would show.
+const BLOCK_START =
+  /\u0000[\s\S]*?\u0000|^( {0,3})(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
+const escapeBlockStart = (match: string, indent?: string, rule?: string) => {
+  if (indent === undefined) return match;
+  return rule ? `${indent}${rule.replace(/[*_~]/g, "\\$&")}` : `${match}\\`;
+};
+const escapeBlockStarts = (text: string) => text.replace(BLOCK_START, escapeBlockStart);
+const protectVerbatim = (text: string) =>
+  text ? CODE_BOUNDARY + text.replace(/(?<!\n)\n*$/, `${CODE_BOUNDARY}$&`) : "";
 
 function verbatimBlock(code: string): string {
   return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
@@ -131,7 +144,7 @@ function serializeTable(table: Element): string {
       emittedSeparator = true;
     }
   }
-  return `${lines.join("\n")}\n\n`;
+  return `${BLOCK_GUARD}${lines.join(`\n${BLOCK_GUARD}`)}\n\n`;
 }
 
 function serializeListItem(
@@ -147,6 +160,7 @@ function serializeListItem(
   let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
+  if (!inTableCell) content = escapeBlockStarts(content);
   if (!item.querySelector(":scope > p")) {
     content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
@@ -154,7 +168,7 @@ function serializeListItem(
   const continuationIndent = " ".repeat(bullet.length);
   const [first = "", ...rest] = content.split("\n");
   return [
-    `${marker}${first}`,
+    `${BLOCK_GUARD}${marker}${first}`,
     ...rest.map((line) => (line.length > 0 ? `${continuationIndent}${line}` : line)),
   ].join("\n");
 }
@@ -189,6 +203,7 @@ function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
     }
     content += serializeNode(child, inTableCell);
   }
+  if (!inTableCell) content = escapeBlockStarts(content);
   return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
 }
 
@@ -198,7 +213,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
   if (!content) return "";
   const quoted = content
     .split("\n")
-    .map((line) => (line.length > 0 ? `> ${line}` : ">"))
+    .map((line) => (line.length > 0 ? `${BLOCK_GUARD}> ${line}` : `${BLOCK_GUARD}>`))
     .join("\n");
   return `${quoted}\n\n`;
 }
@@ -385,9 +400,10 @@ function serializeNode(node: Node, inTableCell = false): string {
     if (element.hasAttribute("data-markdown-mermaid")) {
       return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
     }
-    return element.hasAttribute("data-markdown-math")
+    const copy = element.hasAttribute("data-markdown-math")
       ? markdownCopy
       : escapeTablePipes(markdownCopy, inTableCell);
+    return protectVerbatim(copy);
   }
   if (isSkippedElement(element)) return "";
   const alert = element.getAttribute(ALERT_ATTRIBUTE);
@@ -396,21 +412,22 @@ function serializeNode(node: Node, inTableCell = false): string {
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
-    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
+    return `${BLOCK_GUARD}${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
   }
 
   switch (element.tagName) {
     case "BR":
       return "\n";
     case "HR":
-      return "---\n\n";
+      return `${BLOCK_GUARD}---\n\n`;
     case "P":
       return `${serializeChildren(element, inTableCell).trim()}\n\n`;
     case "PRE":
       return escapeTablePipes(serializeCodeBlock(element), inTableCell);
     case "CODE": {
       const content = escapeTablePipes(element.textContent ?? "", inTableCell);
-      return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      const code = isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      return protectVerbatim(code);
     }
     case "STRONG":
     case "B":
@@ -501,7 +518,7 @@ function soleCodeBlock(container: Node): Element | null {
 function tidyMarkdown(markdown: string): string {
   // Odd parts are code, kept verbatim, so a selection that starts or ends inside
   // code keeps that code's leading and trailing whitespace.
-  const parts = markdown.split(CODE_BOUNDARY);
+  const parts = escapeBlockStarts(markdown).split(CODE_BOUNDARY);
   const last = parts.length - 1;
   return parts
     .map((part, index) => {
@@ -559,8 +576,10 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 // CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+// The ranges skip nonspacing marks that would make a narrow base look wide.
+// Symbols such as ™, © and ↔ show as text, one column, unless a variation selector makes them emoji.
 const WIDE_GRAPHEME =
-  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+  /\p{Emoji_Presentation}|\ufe0f|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\u3029\u302e-\u3098\u309b-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{16fe0}-\u{16fe3}\u{16ff0}-\u{191d2}\u{1aff0}-\u{1b2fb}\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}]/u;
 let graphemes: Intl.Segmenter | undefined;
 
 function monospaceWidth(text: string): number {
@@ -924,11 +943,29 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+const TABLE_CONTAINERS = new Set(["TABLE", "THEAD", "TBODY", "TFOOT", "TR"]);
+
 function isList(node: Node): node is HTMLOListElement | HTMLUListElement {
   return node instanceof Element && (node.tagName === "OL" || node.tagName === "UL");
 }
 
-// An endpoint can clone empty item wrappers at any nesting depth.
+function enclosingWrappers(node: Node): Element[] {
+  if (isList(node)) return [node];
+  if (!(node instanceof Element) || !TABLE_CONTAINERS.has(node.tagName)) return [];
+  const wrappers: Element[] = [];
+  for (let current: Element | null = node; current; current = current.parentElement) {
+    if (!TABLE_CONTAINERS.has(current.tagName)) return [];
+    wrappers.push(current);
+    if (current.tagName === "TABLE") return wrappers;
+  }
+  return [];
+}
+
+const hasTableContent = (element: Element): boolean =>
+  Boolean(element.textContent?.trim()) ||
+  element.querySelector("img, [data-markdown-copy], input") !== null;
+
+// An endpoint can clone empty item or table wrappers at any nesting depth.
 function emptyListBoundary(
   ancestor: Node,
   node: Node,
@@ -957,6 +994,13 @@ function emptyListBoundary(
       boundary = node;
     } else if (boundary && isList(node)) {
       boundary = node;
+    } else if (
+      node instanceof Element &&
+      ((node.tagName === "TD" || node.tagName === "TH") && node.parentElement?.tagName === "TR"
+        ? hasTableContent(node)
+        : TABLE_CONTAINERS.has(node.tagName) && (boundary !== null || hasTableContent(node)))
+    ) {
+      boundary = node;
     }
     remaining = next(node);
     node = node.parentNode;
@@ -964,7 +1008,7 @@ function emptyListBoundary(
   return boundary;
 }
 
-/** Clones the selection and restores the markers shown for its copied list items. */
+/** Clones the selection and restores enclosing list markers and table wrappers. */
 function cloneWithListMarkers(range: Range, container: Element): void {
   const originalAncestor = range.commonAncestorContainer;
   const start = emptyListBoundary(
@@ -980,16 +1024,16 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (end) range.setEndBefore(end);
   }
   const ancestor = range.commonAncestorContainer;
-  const withinList = isList(ancestor);
+  const wrappers = enclosingWrappers(ancestor);
   container.appendChild(range.cloneContents());
-  if (withinList) {
-    // Items copied within one list clone without the list around them.
-    const list = ancestor.cloneNode(false) as Element;
-    list.append(...container.childNodes);
-    container.replaceChildren(list);
+  // Items or table rows copied within one container clone without their enclosing wrapper tags.
+  for (const wrapper of wrappers) {
+    const copy = wrapper.cloneNode(false) as Element;
+    copy.append(...container.childNodes);
+    container.replaceChildren(copy);
   }
   // The start's ancestors below the cloned top clone as the fragment's first-child chain.
-  const top = withinList ? ancestor.parentNode : ancestor;
+  const top = wrappers.at(-1)?.parentNode ?? ancestor;
   const chain: Node[] = [];
   for (let node: Node | null = range.startContainer; node && node !== top; node = node.parentNode) {
     chain.unshift(node);
@@ -1018,6 +1062,10 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (shown && cloned && shown.number !== cloned.number) {
       clone.setAttribute("start", String(shown.number));
     }
+  }
+  if (wrappers.at(-1)?.tagName === "TABLE") {
+    const cells = container.querySelectorAll("th, td");
+    if (cells.length === 1) container.replaceChildren(...cells[0]!.childNodes);
   }
 }
 
