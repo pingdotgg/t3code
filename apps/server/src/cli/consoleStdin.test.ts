@@ -30,7 +30,7 @@ const originalStdin = Object.getOwnPropertyDescriptor(process, "stdin")!;
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  vi.stubEnv("T3CODE_DESKTOP_CLI_LAUNCHER", "1");
+  vi.stubEnv("HYAKKI_DESKTOP_CLI_LAUNCHER", "1");
 });
 
 afterEach(() => {
@@ -45,7 +45,7 @@ describe("attachConsoleStdin", () => {
     expect(attachConsoleStdin()).toBe(42);
     expect(process.stdin.isTTY).toBe(true);
     expect(interactiveStdin()).toBe(42);
-    expect(process.env.T3CODE_DESKTOP_CLI_LAUNCHER).toBeUndefined();
+    expect(process.env.HYAKKI_DESKTOP_CLI_LAUNCHER).toBeUndefined();
   });
 
   it("releases console reads when the picker pauses stdin before launching an agent", async () => {
@@ -98,13 +98,13 @@ describe("attachConsoleStdin", () => {
     async (scenario) => {
       if (scenario === "console input") io.isatty.mockReturnValue(true);
       if (scenario === "redirected output") io.isatty.mockReturnValue(false);
-      if (scenario === "unmarked process") delete process.env.T3CODE_DESKTOP_CLI_LAUNCHER;
+      if (scenario === "unmarked process") delete process.env.HYAKKI_DESKTOP_CLI_LAUNCHER;
       if (scenario === "non-Windows") io.platform.mockReturnValue("darwin");
       const { attachConsoleStdin, interactiveStdin } = await import("./consoleStdin.ts");
       expect(attachConsoleStdin()).toBeUndefined();
       expect(interactiveStdin()).toBe("inherit");
       expect(io.open).not.toHaveBeenCalled();
-      expect(process.env.T3CODE_DESKTOP_CLI_LAUNCHER).toBeUndefined();
+      expect(process.env.HYAKKI_DESKTOP_CLI_LAUNCHER).toBeUndefined();
     },
   );
 

@@ -147,7 +147,7 @@ describe("ProjectSetupScriptRunner", () => {
   it.effect("keeps setup scripts independent of the interactive shell preference", () =>
     Effect.gen(function* () {
       const { opens } = yield* setup();
-      expect(opens[0]?.env?.T3CODE_TERMINAL_SHELL).toBe("");
+      expect(opens[0]?.env?.HYAKKI_TERMINAL_SHELL).toBe("");
     }),
   );
 
@@ -178,8 +178,8 @@ describe("ProjectSetupScriptRunner", () => {
       expect(written).toBe(
         ` ${[
           "$env.LAST_EXIT_CODE = 0",
-          "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
-          `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+          "let __t3f = try { mktemp --tmpdir-path $env.HYAKKI_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+          `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.HYAKKI_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
           "let __t3c = $env.LAST_EXIT_CODE",
           "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
           `print $"\\n${sentinel}($__t3c)"`,

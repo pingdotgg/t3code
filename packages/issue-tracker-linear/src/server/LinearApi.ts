@@ -57,7 +57,7 @@ export const KIND = LINEAR_KIND;
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
 
 const LinearApiConfig = Config.all({
-  apiUrl: Config.String("T3CODE_LINEAR_API_URL").pipe(Config.withDefault(DEFAULT_API_URL)),
+  apiUrl: Config.String("HYAKKI_LINEAR_API_URL").pipe(Config.withDefault(DEFAULT_API_URL)),
 });
 
 const LinearTemplateData = Schema.Struct({

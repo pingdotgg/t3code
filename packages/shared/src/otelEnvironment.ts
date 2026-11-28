@@ -77,8 +77,8 @@ const flag = (
   );
 
 // `Config.Boolean`'s literals, which effect does not export on their own.
-const T3CODE_TRUE = ["true", "yes", "on", "1", "y"];
-const T3CODE_FALSE = ["false", "no", "off", "0", "n"];
+const HYAKKI_TRUE = ["true", "yes", "on", "1", "y"];
+const HYAKKI_FALSE = ["false", "no", "off", "0", "n"];
 
 const RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES";
 
@@ -253,10 +253,10 @@ const endpointSignal = (name: OtlpSignalName, own: Settings, generic: Settings):
 
 const sdkFlags = {
   t3: flag(
-    "T3CODE_OTEL_SDK_DISABLED",
-    T3CODE_TRUE,
-    T3CODE_FALSE,
-    (value) => `T3CODE_OTEL_SDK_DISABLED=${value} is not a yes or a no and was ignored`,
+    "HYAKKI_OTEL_SDK_DISABLED",
+    HYAKKI_TRUE,
+    HYAKKI_FALSE,
+    (value) => `HYAKKI_OTEL_SDK_DISABLED=${value} is not a yes or a no and was ignored`,
   ),
   // OTEL booleans are true only for case-insensitive true; warn on unrecognized values.
   spec: flag(
@@ -264,7 +264,7 @@ const sdkFlags = {
     ["true"],
     ["false"],
     (value) =>
-      `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or T3CODE_OTEL_SDK_DISABLED to say it any other way`,
+      `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or HYAKKI_OTEL_SDK_DISABLED to say it any other way`,
   ),
 };
 
@@ -302,8 +302,8 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
     if (disabled) {
       warnings.push(
         t3.value
-          ? "T3CODE_OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it"
-          : "OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it; set T3CODE_OTEL_SDK_DISABLED=false to export anyway",
+          ? "HYAKKI_OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it"
+          : "OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it; set HYAKKI_OTEL_SDK_DISABLED=false to export anyway",
       );
     }
     return {
@@ -335,7 +335,7 @@ const CI_VARIABLES = [
   "APPVEYOR",
 ] as const;
 
-/** CI runs are not installs, so telemetry is off there unless `T3CODE_TELEMETRY_ENABLED` says otherwise. */
+/** CI runs are not installs, so telemetry is off there unless `HYAKKI_TELEMETRY_ENABLED` says otherwise. */
 export const isCiEnvironment = (env: Readonly<Record<string, string | undefined>>) =>
   CI_VARIABLES.some((name) => {
     const value = env[name]?.trim().toLowerCase();
@@ -344,12 +344,12 @@ export const isCiEnvironment = (env: Readonly<Record<string, string | undefined>
 
 /** The cross-tool `DO_NOT_TRACK=1` convention turns off product analytics and relay tracing. */
 const isDoNotTrackSet = (env: Readonly<Record<string, string | undefined>>) =>
-  T3CODE_TRUE.includes(env.DO_NOT_TRACK?.trim().toLowerCase() ?? "");
+  HYAKKI_TRUE.includes(env.DO_NOT_TRACK?.trim().toLowerCase() ?? "");
 
 export const isRelayTracingEnabled = (env: Readonly<Record<string, string | undefined>>) =>
   Config.all({
     ...sdkFlags,
-    telemetry: flag("T3CODE_TELEMETRY_ENABLED", T3CODE_TRUE, T3CODE_FALSE, String),
+    telemetry: flag("HYAKKI_TELEMETRY_ENABLED", HYAKKI_TRUE, HYAKKI_FALSE, String),
   }).pipe(
     Effect.map(
       ({ telemetry, t3, spec }) =>
@@ -387,7 +387,7 @@ export const resolveSignalEndpoint = (
       url: t3Url,
       export: t3.export,
       source: "environment",
-      variable: `T3CODE_OTLP_${signal.toUpperCase()}_URL`,
+      variable: `HYAKKI_OTLP_${signal.toUpperCase()}_URL`,
     };
   }
   return OtelSignal.$match(otel[signal], {

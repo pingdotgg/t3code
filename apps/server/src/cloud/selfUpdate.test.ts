@@ -208,7 +208,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       yield* TestClock.adjust("14 seconds");
       const error = yield* Fiber.join(failing);
       expect(error.reason).toBe(
-        `Could not prepare t3@1.1.0 while downloading the t3 release ${asset} (HTTP ${status} from cdn.example).`,
+        `Could not prepare hyakki@1.1.0 while downloading the t3 release ${asset} (HTTP ${status} from cdn.example).`,
       );
       expect(order).toEqual([]);
       const fs = yield* FileSystem.FileSystem;
@@ -303,7 +303,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(order).toEqual([]);
       // The mirror lists only 1.1.0's archive.
       expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
-        "Example Corp's update mirror has no t3@1.2.0 for this machine.",
+        "Example Corp's update mirror has no hyakki@1.2.0 for this machine.",
       );
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
       // The release comes from the policy's mirror, not GitHub.
@@ -503,7 +503,7 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
   });
 
-  // The SSH launcher runs `t3 serve` straight from the pinned runtime, with no boot service.
+  // The SSH launcher runs `hyakki serve` straight from the pinned runtime, with no boot service.
   it.effect("prunes for a server started from its home's pinned runtime", () =>
     Effect.gen(function* () {
       const { removed, remaining } = yield* pruneOnStart({ executable: "own runtime" });

@@ -19,7 +19,7 @@ const PINNED_RUNTIME_ENTRY = /^(.*)\/runtime\/versions\/[^/]+\/t3$/;
 
 export type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
-/** Detection is best-effort; callers must fail closed to a plain `t3` command. */
+/** Detection is best-effort; callers must fail closed to a plain `hyakki` command. */
 export function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
   if (path.includes("/_npx/")) {
@@ -46,11 +46,11 @@ const InstallManifest = Schema.Struct({
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
 /**
- * `T3CODE_NPM_LAUNCHER_PATH` is inherited by child shells, so accept it only for this package
- * version to avoid claiming another `t3` invocation is the npm install.
+ * `HYAKKI_NPM_LAUNCHER_PATH` is inherited by child shells, so accept it only for this package
+ * version to avoid claiming another `hyakki` invocation is the npm install.
  */
 export const resolveEntryPath = Effect.gen(function* () {
-  const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();
+  const npmLauncher = (yield* HostProcess.Environment).HYAKKI_NPM_LAUNCHER_PATH?.trim();
   if (npmLauncher) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -91,7 +91,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
     const target = Option.isSome(link)
       ? path.resolve(path.dirname(launcher), link.value)
       : yield* readPosixLauncherTarget(launcher);
-    // Keep the home as the launcher spells it; `t3 update` only repoints launchers into that spelling.
+    // Keep the home as the launcher spells it; `hyakki update` only repoints launchers into that spelling.
     const linked = target === undefined ? null : PINNED_RUNTIME_ENTRY.exec(target);
     if (!linked || (yield* fs.realPath(linked[1] || "/")) !== (runtime[1] || "/")) return null;
     return {
@@ -127,28 +127,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
 }).pipe(Effect.orElseSucceed(() => null));
 
-/** The original package spec is unavailable at startup; infer its channel from the version. */
-function suggestedPackageSpec(version: string): string {
-  const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
-  return channel === undefined ? "t3" : `t3@${channel}`;
-}
-
-function formatCliCommand(input: {
-  readonly subcommand: string;
-  readonly entryPath: string;
-  readonly version: string;
-}): string {
-  const runner = detectCliRunner(input.entryPath);
-  if (runner === null) {
-    return `t3 ${input.subcommand}`;
-  }
-  return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
-}
-
-export const resolveCliCommand = (subcommand: string) =>
-  Effect.map(resolveEntryPath, (entryPath) =>
-    formatCliCommand({ subcommand, entryPath, version: packageJson.version }),
-  );
+export const resolveCliCommand = (subcommand: string) => Effect.succeed(`hyakki ${subcommand}`);
 
 const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -166,7 +145,7 @@ export const hostShellWord = (platform: NodeJS.Platform, value: string) =>
 /** Script installs have no single launcher; desktop shims and standalone binaries do. */
 const resolveInstallLauncher = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
+  const shim = (yield* HostProcess.Environment).HYAKKI_CLI_PATH?.trim();
   if (shim && (yield* fs.exists(shim).pipe(Effect.orElseSucceed(() => false)))) {
     return Option.some(shim);
   }
@@ -176,7 +155,7 @@ const resolveInstallLauncher = Effect.gen(function* () {
 });
 
 /**
- * Uses this install's `t3` on PATH, the originating runner, or its absolute launcher path.
+ * Uses this install's `hyakki` on PATH, the originating runner, or its absolute launcher path.
  * Arguments are quoted for POSIX shells or PowerShell on Windows.
  */
 export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand")(function* (
@@ -185,13 +164,13 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
 ) {
   const platform = yield* HostProcess.Platform;
   const withArgs = (prefix: string) =>
-    // An empty subcommand names the root `t3` command.
+    // An empty subcommand names the root `hyakki` command.
     [prefix.trimEnd(), ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
-  if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
-  const onPath = yield* resolveCommandPath("t3");
+  if (command !== `hyakki ${subcommand}`) return { command: withArgs(command), launcher: false };
+  const onPath = yield* resolveCommandPath("hyakki");
   if (onPath !== null) {
-    const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
+    const shim = (yield* HostProcess.Environment).HYAKKI_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
     // Windows `t3.cmd` shims are text files that never realpath to the executable they run.
@@ -207,7 +186,7 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
     if (own === null || own === (yield* real(onPath))) {
       const path = yield* Path.Path;
       const searchPath = (yield* HostProcess.Environment).PATH ?? "";
-      // With an empty or relative PATH entry, plain `t3` depends on the directory it runs from.
+      // With an empty or relative PATH entry, plain `hyakki` depends on the directory it runs from.
       const cwdDependent =
         platform !== "win32" &&
         searchPath.length > 0 &&
@@ -238,7 +217,7 @@ export const resolveHostCliHint = (
 
 /**
  * `sudo` resets PATH on most distributions, which drops a user-installed Node
- * (nvm, fnm, a tarball) and with it `npx` or a global `t3`, so the command
+ * (nvm, fnm, a tarball) and with it `npx` or a global `hyakki`, so the command
  * carries PATH through unless Node is on root's PATH too. An absolute launcher
  * needs neither.
  */

@@ -119,7 +119,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   const platformKey = resourceMonitorPlatformKey(platform, architecture);
   const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
   const overrideCandidates = [
-    environment.T3CODE_RESOURCE_MONITOR_PATH,
+    environment.HYAKKI_RESOURCE_MONITOR_PATH,
     config.resourceMonitorPath,
   ].filter((candidate): candidate is string => Boolean(candidate));
   const cargoOutputDirectories =

@@ -37,7 +37,7 @@ export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopApp
   {},
 ) {
   override get message(): string {
-    return "`t3 app` only controls a desktop app on the same machine. It cannot run over SSH.";
+    return "`hyakki app` only controls a desktop app on the same machine. It cannot run over SSH.";
   }
 }
 
@@ -46,7 +46,7 @@ export class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<Deskt
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `\`t3 app\` is not supported on ${this.platform}.`;
+    return `\`hyakki app\` is not supported on ${this.platform}.`;
   }
 }
 
@@ -60,7 +60,7 @@ export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnr
   },
 ) {
   override get message(): string {
-    return "Could not reach the Hyakki desktop app. Start or update the desktop app on this machine, then run `t3 app` again. A running Hyakki server is not enough.";
+    return "Could not reach the Hyakki desktop app. Start or update the desktop app on this machine, then run `hyakki app` again. A running Hyakki server is not enough.";
   }
 }
 
@@ -192,7 +192,7 @@ async function sendDesktopAppActivationRequest(input: {
 }
 
 const appEnvironment = Config.all({
-  t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  t3Home: Config.String("HYAKKI_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   sshConnection: Config.String("SSH_CONNECTION").pipe(Config.option),
   sshTty: Config.String("SSH_TTY").pipe(Config.option),
 });

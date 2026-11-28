@@ -424,7 +424,7 @@ export const OpenCodeDriver: ProviderDriver<
     const skillRescans = yield* Queue.unbounded<string, Cause.Done>();
     yield* Effect.addFinalizer(() => Queue.end(skillRescans));
     const skillUpdates = new Map<string, number>();
-    // Locations T3 has listed, by the cwd the registry asked for.
+    // Locations Hyakki has listed, by the cwd the registry asked for.
     const listed = new Map<string, string>();
     const driverScope = yield* Effect.scope;
     // A configured server keeps one connection, so a dropped event stream is resubscribed on read.

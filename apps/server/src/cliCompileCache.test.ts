@@ -37,7 +37,7 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
           {
             env: {
               XDG_CACHE_HOME: `${root}/cache`,
-              T3CODE_HOME: `${root}/home`,
+              HYAKKI_HOME: `${root}/home`,
               NODE_COMPILE_CACHE: undefined,
               NODE_DISABLE_COMPILE_CACHE: undefined,
               APPIMAGE: "",
@@ -59,25 +59,25 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
     expect(normal.exitCode).toBe(0);
     expect(normal.stderr).toContain("LOADED_CLI_MAIN");
     expect(normal.stderr.replaceAll("\\", "/")).toContain(
-      `CACHE=${root}/cache/t3code/compile-cache`.replaceAll("\\", "/"),
+      `CACHE=${root}/cache/hyakki/compile-cache`.replaceAll("\\", "/"),
     );
-    const launcher = yield* run({ T3CODE_HOME: "" }, ["__service-launcher"]);
+    const launcher = yield* run({ HYAKKI_HOME: "" }, ["__service-launcher"]);
     expect(launcher.exitCode).toBe(1);
-    expect(launcher.stderr).toContain("[service-launcher] T3CODE_HOME is required");
+    expect(launcher.stderr).toContain("[service-launcher] HYAKKI_HOME is required");
     expect(launcher.stderr).not.toMatch(/LOADED_CLI_MAIN|CACHE=/);
-    const launcherHelp = yield* run({ T3CODE_HOME: "" }, ["__service-launcher", "--help"]);
+    const launcherHelp = yield* run({ HYAKKI_HOME: "" }, ["__service-launcher", "--help"]);
     expect(launcherHelp.exitCode).toBe(0);
     expect(launcherHelp.stderr).toContain("LOADED_CLI_MAIN");
-    expect(launcherHelp.stdout).toContain("t3 __service-launcher [flags]");
-    const launcherFlags = yield* run({ T3CODE_HOME: "" }, [
+    expect(launcherHelp.stdout).toContain("hyakki __service-launcher [flags]");
+    const launcherFlags = yield* run({ HYAKKI_HOME: "" }, [
       "__service-launcher",
       "--log-level",
       "debug",
     ]);
     expect(launcherFlags.exitCode).toBe(1);
     expect(launcherFlags.stderr).toContain("LOADED_CLI_MAIN");
-    expect(launcherFlags.stderr).toContain("[service-launcher] T3CODE_HOME is required");
-    const cacheDir = `${root}/cache/t3code/compile-cache`;
+    expect(launcherFlags.stderr).toContain("[service-launcher] HYAKKI_HOME is required");
+    const cacheDir = `${root}/cache/hyakki/compile-cache`;
     yield* fs.makeDirectory(`${cacheDir}/v24.0.0-x64-legacy-1000`, { recursive: true });
     yield* fs.writeFileString(`${cacheDir}/v24.0.0-x64-legacy-1000/0123abcd`, "stale");
     yield* fs.makeDirectory(`${cacheDir}/server`, { recursive: true });

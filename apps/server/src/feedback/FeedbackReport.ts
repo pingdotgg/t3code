@@ -12,7 +12,9 @@ export const FEEDBACK_TRACE_TURNS = 5;
 
 const reportFields = {
   kind: AgentFeedbackKind,
-  subject: Schema.String.annotate({ description: "Hyakki tool name, `t3` command, or `general`." }),
+  subject: Schema.String.annotate({
+    description: "Hyakki tool name, `hyakki` command, or `general`.",
+  }),
   expected: FeedbackText,
   actual: FeedbackText,
   workaround: FeedbackText.annotate({ description: "What you did instead, or empty." }),
@@ -81,7 +83,7 @@ export type FeedbackSource = "mcp" | "cli";
 
 // Requested reports count when their card is shown, unprompted ones when stored.
 export const MAX_REPORTS_PER_TURN = 3;
-// Reports from no turn, such as `t3 feedback`, have no turn to count in.
+// Reports from no turn, such as `hyakki feedback`, have no turn to count in.
 export const MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR = 10;
 
 export class FeedbackLimitError extends Schema.TaggedError<FeedbackLimitError>()(
@@ -120,98 +122,98 @@ export class FeedbackStorageError extends Schema.TaggedError<FeedbackStorageErro
   }
 }
 
-/** The MCP client label `t3 feedback` signs in with, so its reports count as `cli`. */
-export const FEEDBACK_CLI_CLIENT_LABEL = "t3 feedback cli";
+/** The MCP client label `hyakki feedback` signs in with, so its reports count as `cli`. */
+export const FEEDBACK_CLI_CLIENT_LABEL = "hyakki feedback cli";
 
-/** Listed `t3` command paths a report may name. A CLI test keeps this in step with binCli. */
+/** Listed `hyakki` command paths a report may name. A CLI test keeps this in step with binCli. */
 export const T3_CLI_COMMANDS: ReadonlyArray<string> = [
-  "t3",
-  "t3 help",
-  "t3 serve",
-  "t3 app",
-  "t3 pair",
-  "t3 auth",
-  "t3 auth connect-device",
-  "t3 auth connect-device approve",
-  "t3 auth connect-device list",
-  "t3 auth connect-device revoke",
-  "t3 auth pairing",
-  "t3 auth pairing create",
-  "t3 auth pairing list",
-  "t3 auth pairing revoke",
-  "t3 auth session",
-  "t3 auth session issue",
-  "t3 auth session list",
-  "t3 auth session revoke",
-  "t3 environment",
-  "t3 environment link",
-  "t3 environment list",
-  "t3 environment unlink",
-  "t3 browser",
-  "t3 browser setup",
-  "t3 project",
-  "t3 project add",
-  "t3 project remove",
-  "t3 project rename",
-  "t3 thread",
-  "t3 thread list",
-  "t3 thread start",
-  "t3 thread send",
-  "t3 thread show",
-  "t3 feedback",
-  "t3 feedback list",
-  "t3 workflow",
-  "t3 workflow start",
-  "t3 workflow list",
-  "t3 workflow show",
-  "t3 workflow resume",
-  "t3 workflow cancel",
-  "t3 workflow signal",
-  "t3 workflow withdraw",
-  "t3 workflow questions",
-  "t3 workflow hooks",
-  "t3 workflow store",
-  "t3 workflow store list",
-  "t3 workflow store set",
-  "t3 workflow store delete",
-  "t3 up",
-  "t3 status",
-  "t3 service",
-  "t3 service install",
-  "t3 service restart",
-  "t3 service uninstall",
-  "t3 service status",
-  "t3 service protect",
-  "t3 update",
-  "t3 install",
-  "t3 uninstall",
-  "t3 theme",
-  "t3 theme set",
-  "t3 theme clear",
-  "t3 theme show",
-  "t3 trace",
-  "t3 trace summary",
-  "t3 doctor",
-  "t3 policy",
-  "t3 policy show",
-  "t3 policy check",
-  "t3 policy templates",
-  "t3 policy settings",
-  "t3 triage",
-  "t3 connect",
-  "t3 connect link",
-  "t3 connect login",
-  "t3 connect logout",
-  "t3 connect publish",
-  "t3 connect status",
-  "t3 connect unlink",
+  "hyakki",
+  "hyakki help",
+  "hyakki serve",
+  "hyakki app",
+  "hyakki pair",
+  "hyakki auth",
+  "hyakki auth connect-device",
+  "hyakki auth connect-device approve",
+  "hyakki auth connect-device list",
+  "hyakki auth connect-device revoke",
+  "hyakki auth pairing",
+  "hyakki auth pairing create",
+  "hyakki auth pairing list",
+  "hyakki auth pairing revoke",
+  "hyakki auth session",
+  "hyakki auth session issue",
+  "hyakki auth session list",
+  "hyakki auth session revoke",
+  "hyakki environment",
+  "hyakki environment link",
+  "hyakki environment list",
+  "hyakki environment unlink",
+  "hyakki browser",
+  "hyakki browser setup",
+  "hyakki project",
+  "hyakki project add",
+  "hyakki project remove",
+  "hyakki project rename",
+  "hyakki thread",
+  "hyakki thread list",
+  "hyakki thread start",
+  "hyakki thread send",
+  "hyakki thread show",
+  "hyakki feedback",
+  "hyakki feedback list",
+  "hyakki workflow",
+  "hyakki workflow start",
+  "hyakki workflow list",
+  "hyakki workflow show",
+  "hyakki workflow resume",
+  "hyakki workflow cancel",
+  "hyakki workflow signal",
+  "hyakki workflow withdraw",
+  "hyakki workflow questions",
+  "hyakki workflow hooks",
+  "hyakki workflow store",
+  "hyakki workflow store list",
+  "hyakki workflow store set",
+  "hyakki workflow store delete",
+  "hyakki up",
+  "hyakki status",
+  "hyakki service",
+  "hyakki service install",
+  "hyakki service restart",
+  "hyakki service uninstall",
+  "hyakki service status",
+  "hyakki service protect",
+  "hyakki update",
+  "hyakki install",
+  "hyakki uninstall",
+  "hyakki theme",
+  "hyakki theme set",
+  "hyakki theme clear",
+  "hyakki theme show",
+  "hyakki trace",
+  "hyakki trace summary",
+  "hyakki doctor",
+  "hyakki policy",
+  "hyakki policy show",
+  "hyakki policy check",
+  "hyakki policy templates",
+  "hyakki policy settings",
+  "hyakki triage",
+  "hyakki connect",
+  "hyakki connect link",
+  "hyakki connect login",
+  "hyakki connect logout",
+  "hyakki connect publish",
+  "hyakki connect status",
+  "hyakki connect unlink",
 ];
 
 export type FeedbackInput = typeof FeedbackInput.Type;
 export type FeedbackReport = typeof FeedbackReport.Type;
 
 export const FEEDBACK_SUBJECT_MESSAGE =
-  "Set subject to the exact Hyakki tool name, the t3 command, or `general`.";
+  "Set subject to the exact Hyakki tool name, the hyakki command, or `general`.";
 
 // The shared resolver knows the presented tools; the prefix covers the rest, such as these.
 // Codex also registers `t3-code-direct` for Hyakki tools it keeps out of Code Mode.
@@ -228,7 +230,7 @@ export const resolveT3ToolName = (name: string, toolNames: ReadonlyArray<string>
     .toSorted((a, b) => b.length - a.length)[0];
 };
 
-/** The stored subject, or undefined when the value names no Hyakki tool, `t3` command, or `general`. */
+/** The stored subject, or undefined when the value names no Hyakki tool, `hyakki` command, or `general`. */
 export const resolveFeedbackSubject = (value: string, toolNames: ReadonlyArray<string>) => {
   const subject = value.trim();
   if (subject === "general" || T3_CLI_COMMANDS.includes(subject)) return subject;

@@ -47,6 +47,13 @@ import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
 import { WorkLogRow } from "./WorkLog";
+import { PrivateReadRequestCard } from "./PrivateReadRequestCard";
+import * as Redacted from "effect/Redacted";
+import { VaultPinField } from "../settings/VaultPinDialog";
+import { Checkbox } from "../ui/checkbox";
+import { Label } from "../ui/label";
+import { VaultRequestPicker } from "./VaultRequestPicker";
+import { useVaultApprovalToast } from "./useVaultApprovalToast";
 
 export function SecretRequestCard(props: {
   readonly environmentId: EnvironmentId;
@@ -56,6 +63,30 @@ export function SecretRequestCard(props: {
   const { item } = props;
   const messages = useMessages();
   const display = secretRequestDisplay(item, props.visibility, messages);
+  const tag = item.taggedVault;
+  if (
+    tag &&
+    !("field" in tag) &&
+    props.visibility === "local" &&
+    (display.kind === "pending" || (display.kind === "answered" && display.outcome === "saved"))
+  ) {
+    return (
+      <PrivateReadRequestCard
+        key={JSON.stringify([
+          props.environmentId,
+          item.threadId,
+          item.id,
+          tag.name,
+          "gmail" in tag ? tag.gmail.folder : tag.serviceRead.service,
+          "gmail" in tag ? tag.gmail.limit : tag.serviceRead.limit,
+        ])}
+        environmentId={props.environmentId}
+        item={item}
+        tag={tag}
+        pending={display.kind === "pending"}
+      />
+    );
+  }
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -85,7 +116,10 @@ function useSecretRequestSources(environmentId: EnvironmentId) {
   const messages = useMessages();
   // The server accepts a reference answer only with this scope; without it the card is typed.
   const canUseReferences = useEnvironmentScope(environmentId, AuthProvidersManageScope);
-  return canUseReferences && hasFeatureFlag(config, "secretProviders")
+  return canUseReferences &&
+    config?.vaultPinSecurity === true &&
+    config.localSecretStorage === "linux-keyring-aes256gcm" &&
+    hasFeatureFlag(config, "secretProviders")
     ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
@@ -95,7 +129,9 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
+  useVaultApprovalToast(props.environmentId, item.threadId, item.id);
   const messages = useMessages();
+  const gt = useGT();
   const formId = useId();
   const errorId = useId();
   const privacyId = useId();
@@ -105,6 +141,15 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
+  const [usingVault, setUsingVault] = useState(false);
+  const vaultAvailable = useAtomValue(
+    serverEnvironment.configValueAtom(props.environmentId),
+    (config) =>
+      config?.localSecretStorage === "linux-keyring-aes256gcm" &&
+      config.localVaultEntries === true &&
+      config.vaultPinSecurity === true,
+  );
+  const canApproveVault = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
   const multiple = item.fields !== undefined;
   // A reference answers one value, so a card with fields is always typed.
   const configuredSources = useSecretRequestSources(props.environmentId);
@@ -113,6 +158,8 @@ function PendingSecretRequestForm(props: {
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [reference, setReference] = useState("");
+  const [pin, setPin] = useState("");
+  const [disclose, setDisclose] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
@@ -123,7 +170,9 @@ function PendingSecretRequestForm(props: {
   const canSave =
     source === null
       ? secretRequestAnswerInput(item, { type: "save", values }) !== null
-      : reference.trim().length > 0;
+      : reference.trim().length > 0 &&
+        /^[0-9]{6,8}$/.test(pin) &&
+        (item.delivery !== "file" || disclose);
 
   const send = async (reply: SecretRequestReply) => {
     const input = secretRequestAnswerInput(item, reply);
@@ -135,7 +184,25 @@ function PendingSecretRequestForm(props: {
     // so the card is emptied before it closes; a failed answer puts the values back.
     const typed = values;
     setValues({});
-    const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
+    const approval = input.answer.type === "reference" ? Redacted.make(pin) : undefined;
+    setPin("");
+    const approvedInput =
+      input.answer.type === "reference" && approval
+        ? {
+            ...input,
+            answer: {
+              ...input.answer,
+              pin: approval,
+              ...(item.delivery === "file" ? { discloseToCommands: disclose } : {}),
+            },
+          }
+        : input;
+    const result = await answer({
+      environmentId: props.environmentId,
+      input: approvedInput,
+    }).finally(() => {
+      if (reply.type === "vault") Redacted.wipeUnsafe(reply.pin);
+      if (approval) Redacted.wipeUnsafe(approval);
       inFlight.current = false;
       setSubmitting(false);
     });
@@ -185,6 +252,62 @@ function PendingSecretRequestForm(props: {
     </Button>
   );
 
+  if (item.taggedVault)
+    return (
+      <form
+        className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
+        autoComplete="off"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (vaultAvailable && canApproveVault && /^[0-9]{6,8}$/.test(pin) && !inFlight.current)
+            void send({ type: "vault", pin: Redacted.make(pin) });
+        }}
+      >
+        <p className="text-sm font-medium">
+          <LockIcon className="mr-1 inline size-4" aria-hidden />
+          {item.label}
+        </p>
+        <p className="text-sm text-muted-foreground">{item.reason}</p>
+        <p className="text-xs text-muted-foreground">{secretRequestPrivacyNote(item, messages)}</p>
+        <VaultPinField
+          value={pin}
+          onChange={setPin}
+          disabled={submitting || !vaultAvailable || !canApproveVault}
+        />
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="submit"
+            disabled={
+              submitting || !vaultAvailable || !canApproveVault || !/^[0-9]{6,8}$/.test(pin)
+            }
+          >
+            {gt("Approve for this request")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={submitting}
+            onClick={() => void send({ type: "decline" })}
+          >
+            {gt("Decline", { $context: "verb, refuses the secret request" })}
+          </Button>
+        </div>
+      </form>
+    );
+
+  if (usingVault)
+    return (
+      <VaultRequestPicker
+        environmentId={props.environmentId}
+        item={item}
+        onBack={() => setUsingVault(false)}
+      />
+    );
   return (
     <form
       data-v2-item-type={item.type}
@@ -232,6 +355,26 @@ function PendingSecretRequestForm(props: {
           ) : null}
         </div>
       ) : null}
+      {vaultAvailable ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={submitting}
+            onClick={() => {
+              setValues({});
+              setPin("");
+              setUsingVault(true);
+            }}
+          >
+            <LockIcon aria-hidden />
+            <T>Allow from vault</T>
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {gt("Choose a saved credential. Hyakki asks for your PIN when required.")}
+          </span>
+        </div>
+      ) : null}
       {multiple ? (
         <div className="flex min-w-0 flex-col gap-2.5">{inputs.map(field)}</div>
       ) : (
@@ -244,6 +387,8 @@ function PendingSecretRequestForm(props: {
               disabled={submitting}
               onValueChange={(next) => {
                 setSourceId(next);
+                setPin("");
+                setDisclose(false);
                 setError(null);
               }}
             />
@@ -274,6 +419,22 @@ function PendingSecretRequestForm(props: {
           {saveButton}
         </div>
       )}
+      {source !== null ? (
+        <VaultPinField value={pin} onChange={setPin} disabled={submitting} />
+      ) : null}
+      {source !== null && item.delivery === "file" ? (
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id={`${formId}-disclose`}
+            checked={disclose}
+            disabled={submitting}
+            onCheckedChange={(checked) => setDisclose(checked === true)}
+          />
+          <Label htmlFor={`${formId}-disclose`}>
+            {gt("Allow this agent's commands to read the real selected field for this request.")}
+          </Label>
+        </div>
+      ) : null}
       {error !== null ? (
         <p id={errorId} role="alert" className="text-xs text-destructive">
           {error}

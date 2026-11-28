@@ -16,7 +16,7 @@ import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { browserCommand } from "./browser.ts";
 
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
-const BROWSER_ROOT = "/home/me/.t3/tools/chrome-headless-shell";
+const BROWSER_ROOT = "/home/me/.hyakki/tools/chrome-headless-shell";
 const BROWSER = `${BROWSER_ROOT}/linux64/154/chrome-headless-shell`;
 
 const notFound = (method: string, path: string) =>
@@ -85,7 +85,7 @@ const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
     yield* Command.runWith(browserCommand, { version: packageJson.version })([
       "setup",
       "--base-dir",
-      "/home/me/.t3",
+      "/home/me/.hyakki",
     ]);
     return {
       output: (yield* TestConsole.logLines).join("\n"),
@@ -128,7 +128,7 @@ it.effect.each([
     written: CUSTOMIZED_PROFILE,
     said: "Reloaded the AppArmor profile",
   },
-])("t3 browser setup as root $label", (input) =>
+])("hyakki browser setup as root $label", (input) =>
   Effect.gen(function* () {
     const result = yield* runSetupAsRoot({ profile: input.profile });
     expect(result.loads).toEqual([LOAD]);

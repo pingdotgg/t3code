@@ -10,7 +10,7 @@ starts them; it does not control or answer for what they send.
 ## Agent feedback
 
 **Settings → Labs → Agent feedback** lets an agent write down a Hyakki bug or missing capability
-it ran into. Reports stay on your machine: inspect them with `t3 feedback list [--json]`. File
+it ran into. Reports stay on your machine: inspect them with `hyakki feedback list [--json]`. File
 paths, usernames, hostnames, git remotes and secret-like strings are scrubbed before a report is
 saved.
 
@@ -22,4 +22,4 @@ saved.
 
 Open **Settings → Maintenance → Diagnostics** (per environment) and enter OTLP HTTP endpoints (e.g. `http://localhost:4318/v1/traces`), save, and restart the server. Use **Test** to verify connectivity.
 
-`T3CODE_OTLP_*_URL` and standard `OTEL_EXPORTER_OTLP_*` env vars override saved settings (use `T3CODE_OTLP_HEADERS` / `T3CODE_OTLP_PROTOCOL=http/protobuf` or the standard `OTEL_EXPORTER_OTLP_*` equivalents for auth and protobuf).
+`HYAKKI_OTLP_*_URL` and standard `OTEL_EXPORTER_OTLP_*` env vars override saved settings (use `HYAKKI_OTLP_HEADERS` / `HYAKKI_OTLP_PROTOCOL=http/protobuf` or the standard `OTEL_EXPORTER_OTLP_*` equivalents for auth and protobuf).

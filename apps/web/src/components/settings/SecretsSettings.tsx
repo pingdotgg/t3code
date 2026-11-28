@@ -1,3 +1,4 @@
+import { LocalVaultSettings } from "./LocalVaultSettings";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -39,8 +40,21 @@ export function SecretsSettingsPanel() {
   const setting = useSearchableSetting();
   const { scope, environment } = useSettingsScope();
   const connected = environment?.connection.phase === "connected";
+  const storage = connected ? environment.serverConfig?.localSecretStorage : undefined;
   return (
     <SettingsPageContainer>
+      {connected ? (
+        <LocalVaultSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          encrypted={storage === "linux-keyring-aes256gcm"}
+          supported={
+            environment.serverConfig?.localVaultEntries === true &&
+            environment.serverConfig.vaultPinSecurity === true
+          }
+          legacy={storage === "private-files"}
+        />
+      ) : null}
       {connected &&
       environment.serverConfig !== null &&
       environment.serverConfig.secretProviderSettings !== true ? (

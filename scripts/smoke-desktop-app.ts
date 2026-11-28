@@ -49,9 +49,9 @@ try {
       ...process.env,
       XDG_CONFIG_HOME: NodePath.join(home, ".config"),
       XDG_DATA_HOME: NodePath.join(home, ".local/share"),
-      T3CODE_HOME: t3Home,
-      T3CODE_TELEMETRY_ENABLED: "false",
-      T3CODE_DISABLE_AUTO_UPDATE: "true",
+      HYAKKI_HOME: t3Home,
+      HYAKKI_TELEMETRY_ENABLED: "false",
+      HYAKKI_DISABLE_AUTO_UPDATE: "true",
     },
     timeout: STEP_TIMEOUT_MS,
   });

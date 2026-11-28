@@ -9,7 +9,7 @@ Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigra
 ## Why use Hyakki instead of Claude Code or the Codex app?
 
 - **Bring your own subscription**: Use Claude, Codex, and every other agent you already have installed in one place.
-- **Remote-first**: Run `t3 up` on any box and drive it from anywhere.
+- **Remote-first**: Run `hyakki up` on any box and drive it from anywhere.
 - **Native mobile app**: Approve steps, review PRs, and steer threads from iOS and Android.
 - **Open source (MIT)**: Fork the source code under your own branding if you ever want something different.
 
@@ -31,7 +31,7 @@ Since v0.1.7, Claude in Hyakki drains your 5-hour limit at the same rate as Clau
 
 ## How do I use Hyakki remotely?
 
-Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect over your LAN, Tailscale, a VPN or SSH. See [Remote access](./remote-access.md).
+Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `hyakki up` on that machine and connect over your LAN, Tailscale, a VPN or SSH. See [Remote access](./remote-access.md).
 
 ## How do I use Hyakki on my phone?
 
@@ -69,7 +69,7 @@ Yes—on-device speech on iOS, Android, and macOS 26+ desktop, or via a paired e
 
 ## Does it work on Windows, Mac, and Linux?
 
-Yes, all three (desktop app and CLI). Note: there is no standalone `t3` binary for Intel Macs (use the desktop app there), and Windows users can also run agents inside WSL. See [Install](./install.md).
+Yes, all three (desktop app and CLI). Note: there is no standalone `hyakki` binary for Intel Macs (use the desktop app there), and Windows users can also run agents inside WSL. See [Install](./install.md).
 
 ## Why is my provider not showing up?
 

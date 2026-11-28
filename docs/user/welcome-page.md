@@ -3,7 +3,7 @@
 The Welcome page runs on a fresh local installation to help you verify an agent, optionally import existing projects and conversations, and connect the mobile app. Only one ready agent is required to start.
 
 - Reopen it anytime from **Settings → About → Welcome page → Open**.
-- Hosted `hyakki.ryoku.dev` skips this page and prompts you to sign in to Hyakki Connect and run `t3 connect` on your computer instead.
+- Hosted `hyakki.ryoku.dev` skips this page and prompts you to sign in to Hyakki Connect and run `hyakki connect` on your computer instead.
 
 ## Agents
 
@@ -13,7 +13,7 @@ Hyakki lists detected agents first (ready ones on top), followed by **Add more a
 - **Claude Code**: **Install** or **Sign in** opens a setup terminal using the vendor's installer (so **Update now** keeps working in Settings).
 - **Codex**: **Set up** offers ChatGPT sign-in or your existing Codex CLI.
 - **Outdated or other agents**: **Update** or selecting the agent opens its page in **Settings → Providers**. **Browse** opens the ACP Registry.
-- **Desktop CLI**: Click **Add to PATH** if the `t3` command isn't yet on your shell `PATH`.
+- **Desktop CLI**: Click **Add to PATH** if the `hyakki` command isn't yet on your shell `PATH`.
 
 Click **Start** once at least one agent is ready, or **Start without an agent** to enter the app immediately (checked projects still import).
 

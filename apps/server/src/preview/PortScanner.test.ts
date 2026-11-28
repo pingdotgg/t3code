@@ -783,7 +783,7 @@ effectIt.effect("rechecks the socket owner before stopping a Linux server withou
 });
 
 effectIt.effect.each(["linux", "darwin", "win32"] as const)(
-  "reads no listeners on %s while T3CODE_PORT_DISCOVERY=0, and still probes configured URLs",
+  "reads no listeners on %s while HYAKKI_PORT_DISCOVERY=0, and still probes configured URLs",
   (platform) => {
     const configuredUrl = `http://localhost:${LSOF_TEST_PORT}/docs`;
     const commands: string[] = [];
@@ -810,7 +810,7 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
             },
           }),
           Layer.succeed(HostProcess.Platform, platform),
-          Layer.succeed(HostProcess.Environment, { T3CODE_PORT_DISCOVERY: "0" }),
+          Layer.succeed(HostProcess.Environment, { HYAKKI_PORT_DISCOVERY: "0" }),
           FetchHttpClient.layer.pipe(
             Layer.provide(
               Layer.succeed(FetchHttpClient.Fetch, (input) => {
@@ -1218,7 +1218,7 @@ server.listen(0, "127.0.0.1", () => {
 });
 `;
 
-const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
+const AGENT_COMMAND_ENV = "HYAKKI_TEST_AGENT_COMMAND";
 
 /**
  * A real HTML server with an agent's environment, started the way an agent's tool shell starts a

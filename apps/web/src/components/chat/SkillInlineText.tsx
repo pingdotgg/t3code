@@ -11,15 +11,26 @@ import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
 import { PopoverClose } from "../ui/popover";
 import { ModelMentionChip } from "./ModelMentionChip";
+import { collectVaultMentions } from "@t3tools/contracts";
+import { VaultMentionChip } from "./VaultMentionChip";
 
 function SkillInlineText(props: {
   text: string;
   skills: ReadonlyArray<ServerProviderSkill>;
   threadRef: ScopedThreadRef | undefined;
   environmentId: EnvironmentId | null;
+  showVaultMentions: boolean;
 }) {
-  const chips: Array<{ start: number; end: number; node: ReactNode }> = [];
+  const vault = props.showVaultMentions ? collectVaultMentions(props.text) : [];
+  const chips: Array<{ start: number; end: number; node: ReactNode }> = vault.map((mention) => ({
+    start: mention.start,
+    end: mention.end,
+    node: <VaultMentionChip key={`${mention.start}:vault`} label={mention.label} />,
+  }));
+  const overlapsVault = (start: number, end: number) =>
+    vault.some((mention) => start < mention.end && end > mention.start);
   for (const { start, end, skill, rawText } of matchInlineSkills(props.text, props.skills)) {
+    if (overlapsVault(start, end)) continue;
     chips.push({
       start,
       end,
@@ -35,6 +46,7 @@ function SkillInlineText(props: {
     });
   }
   for (const mention of collectComposerModelMentions(props.text)) {
+    if (overlapsVault(mention.start, mention.end)) continue;
     chips.push({
       start: mention.start,
       end: mention.end,
@@ -74,6 +86,7 @@ export function renderSkillInlineMarkdownChildren(
   skills: ReadonlyArray<ServerProviderSkill>,
   threadRef: ScopedThreadRef | undefined,
   environmentId: EnvironmentId | null,
+  showVaultMentions = false,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
@@ -83,6 +96,7 @@ export function renderSkillInlineMarkdownChildren(
           skills={skills}
           threadRef={threadRef}
           environmentId={environmentId}
+          showVaultMentions={showVaultMentions}
         />
       );
     }
@@ -100,7 +114,13 @@ export function renderSkillInlineMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderSkillInlineMarkdownChildren(child.props.children, skills, threadRef, environmentId),
+      renderSkillInlineMarkdownChildren(
+        child.props.children,
+        skills,
+        threadRef,
+        environmentId,
+        showVaultMentions,
+      ),
     );
   });
 }

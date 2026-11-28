@@ -545,7 +545,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
             // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
-            environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
+            environment: { ...options.environment, HYAKKI_THREAD_ID: input.threadId },
             mcpSession,
             extensionPath,
             sessionPath,
@@ -571,7 +571,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             cwd,
             env: launch.env,
           });
-          // Its tools carry T3CODE_THREAD_ID, so port discovery must scan while Pi runs.
+          // Its tools carry HYAKKI_THREAD_ID, so port discovery must scan while Pi runs.
           const trackAgent = host.trackAgent;
           if (trackAgent !== undefined) {
             yield* Effect.acquireRelease(Effect.sync(trackAgent), (release) =>

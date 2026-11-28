@@ -12,7 +12,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { awaitCliNotarization, signMacArchiveContents } from "./build-cli-archive.ts";
 
 const signedEnv = {
-  T3CODE_CLI_MAC_SIGN_IDENTITY: "Developer ID Application: Test (TEAM)",
+  HYAKKI_CLI_MAC_SIGN_IDENTITY: "Developer ID Application: Test (TEAM)",
   APPLE_API_KEY: "/tmp/AuthKey_TEST.p8",
   APPLE_API_KEY_ID: "TEST",
   APPLE_API_ISSUER: "issuer",
@@ -166,7 +166,7 @@ it.layer(NodeServices.layer)("build-cli-archive notarization", (it) => {
         {
           name: "submission without credentials",
           wait: { exitCode: 0, stdout: '{"id":"sub","status":"Accepted"}' },
-          env: { T3CODE_CLI_MAC_SIGN_IDENTITY: signedEnv.T3CODE_CLI_MAC_SIGN_IDENTITY },
+          env: { HYAKKI_CLI_MAC_SIGN_IDENTITY: signedEnv.HYAKKI_CLI_MAC_SIGN_IDENTITY },
           error: "CliArchiveInputMissingError",
         },
         {

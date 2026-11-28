@@ -49,12 +49,12 @@ const RELEASE_CHANNEL =
       ? "preview"
       : releaseChannelOf(APP_VERSION);
 const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3code-web",
+  serviceName: "hyakki-web",
   attributes: {
-    "service.namespace": "t3code",
+    "service.namespace": "hyakki",
     "service.instance.id": ClientTracer.serviceInstanceId,
     ...releaseResourceAttributes(RELEASE_CHANNEL),
-    "service.runtime": "t3-web",
+    "service.runtime": "hyakki-web",
     "t3code.client.surface": isElectron ? "desktop" : "web",
     "service.version": APP_VERSION,
     ...browserResourceAttributes(),

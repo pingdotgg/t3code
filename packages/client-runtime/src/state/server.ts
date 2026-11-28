@@ -1626,6 +1626,10 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetProviderRuntimeModeLimits,
       staleTimeMs: 5_000,
     }),
+    localVault: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:local-vault",
+      tag: WS_METHODS.serverListLocalVault,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -2062,6 +2066,10 @@ export function createServerEnvironmentAtoms<R, E>(
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
+    }),
+    manageLocalVault: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:local-vault",
+      tag: WS_METHODS.serverManageLocalVault,
     }),
     checkSecretSource: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-secret-source",

@@ -543,6 +543,21 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it("renders a vault-only mention in a sent user message, not in an assistant reply", async () => {
+    const text = 'Get the latest messages using vault:"gmail"';
+    await using screen = await renderTimeline([
+      message(text, { role: "user" }, "vault-user"),
+      message(text, { role: "assistant" }, "vault-assistant"),
+    ]);
+    await expect
+      .element(screen.getByRole("img", { name: "Vault credential: gmail", exact: true }))
+      .toBeVisible();
+    expect(screen.container.querySelectorAll("[data-vault-mention]")).toHaveLength(1);
+    expect(screen.container.querySelector("[data-user-message-body]")?.textContent).toBe(
+      "Get the latest messages using gmail",
+    );
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");

@@ -179,7 +179,7 @@ export function useServerUpdate() {
                   version: result.value.targetVersion,
                 }),
               )
-            : m(msg("Reconnected on t3@{version}.", { version: result.value.targetVersion })),
+            : m(msg("Reconnected on hyakki@{version}.", { version: result.value.targetVersion })),
       });
     }
     return { status: "updated" };
@@ -323,12 +323,12 @@ export function ServerUpdateAction({
         type: "success",
         title: updatesInstall ? gt("Update command copied") : gt("Relaunch command copied"),
         description: updatesInstall
-          ? gt("Run `{command}` on {serverLabel}, then restart t3 with your usual options.", {
+          ? gt("Run `{command}` on {serverLabel}, then restart hyakki with your usual options.", {
               command,
               serverLabel,
             })
           : gt(
-              "Stop t3 on {serverLabel}, then relaunch with `{command}` using the same subcommand and options. This does not update an installed t3 command.",
+              "Stop Hyakki on {serverLabel}, then relaunch with `{command}` using the same subcommand and options. This does not update an installed hyakki command.",
               { command, serverLabel },
             ),
       });
@@ -398,6 +398,20 @@ export function ServerUpdateAction({
 
   const manualCommand =
     selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
+  if (selfUpdate === null && manualCommand === null) {
+    const unpublishedMessage = gt(
+      "Hyakki does not publish its server yet; install it on that machine from source.",
+    );
+    return appearance === "icon" ? (
+      <ManagedControl reason={unpublishedMessage}>
+        <Button size="icon-xs" variant="ghost-muted" aria-label={unpublishedMessage} disabled>
+          <CircleArrowUpIcon className="size-3.5" />
+        </Button>
+      </ManagedControl>
+    ) : (
+      <span className="text-muted-foreground text-xs">{unpublishedMessage}</span>
+    );
+  }
   const actionLabel =
     manualCommand !== null
       ? updatesInstall
@@ -479,7 +493,9 @@ export function OutdatedServerUpdateAction({
     toastManager.add({
       type: "success",
       title: m(msg("{serverLabel} updated", { serverLabel })),
-      description: m(msg("Reconnected on t3@{version}.", { version: result.value.targetVersion })),
+      description: m(
+        msg("Reconnected on hyakki@{version}.", { version: result.value.targetVersion }),
+      ),
     });
   };
   if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, targetVersion)) {

@@ -17,6 +17,10 @@ import {
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
+  OrchestratorMcpGmailListRecentInput,
+  OrchestratorMcpGmailListRecentResult,
+  OrchestratorMcpListConnectedItemsInput,
+  OrchestratorMcpListConnectedItemsResult,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
   OrchestratorMcpSaveScheduledTaskInput,
@@ -37,6 +41,7 @@ import {
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
+  VAULT_SERVICE_RESOURCES,
 } from "@t3tools/contracts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
@@ -208,7 +213,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
+    'Open a private credential card. A vault mention selects the entry: use its exact title as `label` and `delivery: "secretRef"` only for a Hyakki tool that accepts that ref. Hyakki asks for the PIN, not you. No compatible consumer: stop. For untagged secrets, use one value per input; `delivery: "file"` is for a command, `url` for a sign-in link, `value` for a secret already pasted in this thread. Never ask in chat.',
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,
@@ -219,6 +224,33 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Destructive, false)
   // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
   .annotate(Tool.Meta, { "anthropic/alwaysLoad": true })
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const ListConnectedItemsTool = Tool.make("list_connected_items", {
+  description: `Show a private list from the tagged account: ${Object.values(VAULT_SERVICE_RESOURCES).join(", ")}. Use the exact vault title from this user turn and the matching service. Hyakki asks for the PIN and shows the items in the private card. On success report only the returned count. If the user declines or the requested operation isn't listed, stop; never request a token or use a command instead.`,
+  parameters: OrchestratorMcpListConnectedItemsInput,
+  success: OrchestratorMcpListConnectedItemsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List items from a connected account")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const GmailListRecentTool = Tool.make("gmail_list_recent", {
+  description:
+    'Show recent Gmail messages privately to the user. Use the exact title from this turn\'s vault tag as `vaultTitle`. Defaults to five inbox messages; set `folder: "spam"` for spam. The card handles first-time connection and PIN approval. On success the card already shows the messages; report only the returned count. Never ask for credentials in chat.',
+  parameters: OrchestratorMcpGmailListRecentInput,
+  success: OrchestratorMcpGmailListRecentResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Read recent Gmail messages")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateThreadsTool = Tool.make("create_threads", {
@@ -373,6 +405,8 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  GmailListRecentTool,
+  ListConnectedItemsTool,
   CreateThreadsTool,
   ThreadListTool,
   ThreadReadTool,

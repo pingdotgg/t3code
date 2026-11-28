@@ -71,7 +71,7 @@ it("attributes ESM and CommonJS imports without changing module execution", () =
         "-e",
         `await import(${JSON.stringify(root)})`,
       ],
-      { env: { ...process.env, NODE_OPTIONS: "", T3CODE_STARTUP_PROFILE_DIR: output } },
+      { env: { ...process.env, NODE_OPTIONS: "", HYAKKI_STARTUP_PROFILE_DIR: output } },
     );
     const spans = NodeFS.readdirSync(output)
       .filter((name) => name.endsWith(".modules.json"))
@@ -120,7 +120,7 @@ it("captures only the dev runner and preserves its exit status", () => {
       [NodePath.join(import.meta.dirname, "profile-startup.mjs"), "--no-seed"],
       {
         cwd: directory,
-        env: { ...process.env, NODE_OPTIONS: "", T3CODE_STARTUP_PROFILE_DIR: output },
+        env: { ...process.env, NODE_OPTIONS: "", HYAKKI_STARTUP_PROFILE_DIR: output },
         encoding: "utf8",
       },
     );
@@ -138,7 +138,7 @@ it("captures only the dev runner and preserves its exit status", () => {
       [NodePath.join(import.meta.dirname, "profile-startup.mjs")],
       {
         cwd: directory,
-        env: { ...process.env, NODE_OPTIONS: "", T3CODE_STARTUP_PROFILE_DIR: output },
+        env: { ...process.env, NODE_OPTIONS: "", HYAKKI_STARTUP_PROFILE_DIR: output },
       },
     );
     expect(interrupted.error).toBeUndefined();

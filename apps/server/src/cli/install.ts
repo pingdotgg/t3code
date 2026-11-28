@@ -43,7 +43,7 @@ const standaloneRuntime = Effect.gen(function* () {
   return Option.some({ executable, versionsDir, runtimeDir });
 });
 
-/** Installs this runtime as the `t3` command the way the install scripts do, replacing only our own launcher. */
+/** Installs this runtime as the `hyakki` command the way the install scripts do, replacing only our own launcher. */
 export const installCli = Effect.fn("cli.install.install")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -64,14 +64,14 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   // cmd.exe expands `%` and reads the shim in the OEM code page, so such a path would not run.
   if (windows && /[%\u0080-\uffff]/.test(executable)) {
     return yield* new CliInstallError({
-      reason: `A t3.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Keep using npx t3.`,
+      reason: `A hyakki.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Run the executable directly.`,
     });
   }
   // Absolute, so the PATH hint never adds a folder that changes with the working directory.
   const binDir = path.resolve(
-    environment.T3CODE_INSTALL_BIN_DIR?.trim() || path.join(home, ".local", "bin"),
+    environment.HYAKKI_INSTALL_BIN_DIR?.trim() || path.join(home, ".local", "bin"),
   );
-  const name = windows ? "t3.cmd" : "t3";
+  const name = windows ? "hyakki.cmd" : "hyakki";
   const link = path.join(binDir, name);
   const failed = (reason: string) => (cause: unknown) => new CliInstallError({ reason, cause });
 
@@ -108,7 +108,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     )
   ) {
     return yield* new CliInstallError({
-      reason: `Another t3 is already at ${link}. Remove it, then run this again.`,
+      reason: `Another hyakki is already at ${link}. Remove it, then run this again.`,
     });
   }
 
@@ -149,7 +149,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const rawPath = environment.PATH ?? environment.Path ?? "";
   const entries = rawPath === "" ? [] : rawPath.split(windows ? ";" : ":");
   let cwd = yield* Effect.catchDefect(HostProcess.WorkingDirectory, () => Effect.undefined);
-  // A t3 earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
+  // A hyakki earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
   // .bin) are not installs.
   const firstOther = Effect.gen(function* () {
     for (const entry of entries) {
@@ -157,7 +157,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       if ((windows || absolute) && same(entry)) return null;
       const dir = absolute ? entry : windows || !cwd ? undefined : path.resolve(cwd, entry);
       if (dir === undefined || detectCliRunner(`${dir}/`) !== null) continue;
-      for (const name of windows ? ["t3.cmd", "t3.exe"] : ["t3"]) {
+      for (const name of windows ? ["hyakki.cmd", "t3.exe"] : ["hyakki"]) {
         const candidate = path.join(dir, name);
         if (!(yield* resolveCommandPath(candidate, { env: environment }))) continue;
         if (windows) return candidate;
@@ -169,7 +169,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     }
     return undefined;
   });
-  // null: this launcher runs first; a path: another t3 does; undefined: no t3 on PATH.
+  // null: this launcher runs first; a path: another hyakki does; undefined: no hyakki on PATH.
   const found = yield* firstOther;
   return {
     link,
@@ -199,30 +199,30 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
 const reportInstalled = Effect.fn("cli.install.report")(function* (
   installed: Effect.Success<ReturnType<typeof installCli>>,
 ) {
-  yield* Console.log(`Installed t3 ${packageJson.version} at ${installed.link}.`);
+  yield* Console.log(`Installed hyakki ${packageJson.version} at ${installed.link}.`);
   if (installed.shadowedBy !== undefined) {
     return yield* Console.log(
-      `Another t3 at ${installed.shadowedBy} runs first, so run ${installed.link} to use this one.`,
+      `Another hyakki at ${installed.shadowedBy} runs first, so run ${installed.link} to use this one.`,
     );
   }
-  if (installed.onPath) return yield* Console.log("Run `t3` to get started.");
+  if (installed.onPath) return yield* Console.log("Run `hyakki` to get started.");
   if (installed.pathCommand === undefined) {
-    return yield* Console.log(`Add ${installed.binDir} to your PATH, then run \`t3\`.`);
+    return yield* Console.log(`Add ${installed.binDir} to your PATH, then run \`hyakki\`.`);
   }
   if ((yield* HostProcess.Platform) === "win32") {
     yield* Console.log(
       `${installed.binDir} is not on your PATH yet. In this PowerShell window, run:`,
     );
     yield* Console.log(`  ${installed.pathCommand}`);
-    return yield* Console.log("Then run `t3`. For new windows, add the folder to your PATH.");
+    return yield* Console.log("Then run `hyakki`. For new windows, add the folder to your PATH.");
   }
   yield* Console.log(`${installed.binDir} is not on your PATH yet. Add it with:`);
   yield* Console.log(`  ${installed.pathCommand}`);
-  yield* Console.log("Then open a new terminal and run `t3`.");
+  yield* Console.log("Then open a new terminal and run `hyakki`.");
 });
 
 export const installCommand = Command.make("install").pipe(
-  Command.withDescription("Install this version as the `t3` command."),
+  Command.withDescription("Install this version as the `hyakki` command."),
   Command.withHandler(() => installCli().pipe(Effect.flatMap(reportInstalled))),
 );
 
@@ -268,7 +268,7 @@ export const isForegroundPs = (output: string) => {
 };
 
 /**
- * A background job (`npx t3 serve &`) that reads the terminal is stopped by the shell, so only
+ * A background job (`npx hyakki serve &`) that reads the terminal is stopped by the shell, so only
  * the terminal's foreground process group may prompt. Unknown counts as background.
  */
 export const inTerminalForeground = Effect.gen(function* () {
@@ -295,7 +295,7 @@ export const inTerminalForeground = Effect.gen(function* () {
 });
 
 /**
- * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `t3`
+ * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `hyakki`
  * command. Yes is the default. No, no answer, or a failed install is saved in the Hyakki home until
  * the next minor release. Returns false when the user quits the prompt, so the command does not run.
  */
@@ -323,16 +323,16 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   if (Option.isNone(runtime)) return true;
   const { runtimeDir } = runtime.value;
 
-  // Any t3 already installed means no prompt: ours (even when off PATH) or another on PATH.
+  // Any hyakki already installed means no prompt: ours (even when off PATH) or another on PATH.
   // Runners put their own cache's node_modules/.bin on PATH, so skip those.
   const windows = platform === "win32";
-  const names = windows ? ["t3.cmd", "t3.exe"] : ["t3"];
+  const names = windows ? ["hyakki.cmd", "t3.exe"] : ["hyakki"];
   const launchers = yield* fs
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
   const candidates = [
     ...launchers.split(/\r?\n/).filter((launcher) => path.isAbsolute(launcher)),
-    path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
+    path.join(path.dirname(runtimeDir), "bin", windows ? "hyakki.cmd" : "hyakki"),
     ...(environment.PATH ?? environment.Path ?? "")
       .split(windows ? ";" : ":")
       .filter(
@@ -376,7 +376,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
 
 export const confirmCliInstall = Prompt.run(
   Prompt.Confirm({
-    message: "Install the t3 command? Then you can run `t3` directly.",
+    message: "Install the hyakki command? Then you can run `hyakki` directly.",
     initial: true,
   }),
 ).pipe(Effect.catchTags({ QuitError: () => Effect.void }));

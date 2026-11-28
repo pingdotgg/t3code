@@ -28,7 +28,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 1. **Install Hyakki** on the machine where your agents will run ([Install Hyakki](./install.md)).
 2. **Set up at least one agent** via the [Welcome page](./welcome-page.md) or **Settings → Providers** (for example, `claude auth login` or `codex login`).
 3. **Open or clone a project** and start a thread ([Working with threads](./thread-sidebar.md)).
-4. **Optional — connect your phone or another computer**: Run `t3 up` on the host or turn on **Network access** in **Settings → Sharing & access** ([Remote access](./remote-access.md)).
+4. **Optional — connect your phone or another computer**: Run `hyakki up` on the host or turn on **Network access** in **Settings → Sharing & access** ([Remote access](./remote-access.md)).
 
 ---
 
@@ -36,7 +36,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 
 ### Getting started
 
-- [Install Hyakki](./install.md) — Desktop app, `t3` CLI, mobile app, WSL, and provider setup.
+- [Install Hyakki](./install.md) — Desktop app, `hyakki` CLI, mobile app, WSL, and provider setup.
 - [Welcome page](./welcome-page.md) — First-run setup and importing existing Claude, Codex, and Pi sessions.
 - [FAQ](./faq.md) — Common questions on pricing, subscriptions, privacy, limits, and troubleshooting.
 - [Threads from older Hyakki versions](./thread-migration.md) — V1 → V2 database migration and recovery backups.
@@ -95,18 +95,18 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 - [Remote access](./remote-access.md) — LAN/Tailscale pairing, desktop SSH, multi-route failover, load balancing, and linked environments.
 - [Mobile notifications](./mobile-notifications.md) — Push alerts, iOS Live Activities/widgets, and Android Live Updates.
 - [Guest links](./guest-links.md) — Sharing a live thread with a teammate in their browser (no account needed).
-- [Outside agents](./outside-agents.md) — Connecting Claude Code, Codex, ChatGPT, or bots to Hyakki over MCP, plus `t3 thread` host scripting.
+- [Outside agents](./outside-agents.md) — Connecting Claude Code, Codex, ChatGPT, or bots to Hyakki over MCP, plus `hyakki thread` host scripting.
 - [Secrets](./secrets.md) — 1Password CLI references and private in-thread agent secret cards.
 - [1Password service account](./secrets-1password-service-account.md) — Headless 1Password setup with a service account token.
 - [1Password Connect](./secrets-1password-connect.md) — Headless 1Password setup with a Connect server.
 
 ### Operations, monitoring & admin
 
-- [Running Hyakki in the background](./background-service.md) — Background user service, `service.env`, Linux OOM protection, and `t3 doctor`.
+- [Running Hyakki in the background](./background-service.md) — Background user service, `service.env`, Linux OOM protection, and `hyakki doctor`.
 - [Updating Hyakki](./updating.md) — Updating desktop, servers, providers, Stable/Nightly tracks, and restart continuation.
 - [Usage and limits](./usage.md) — Token/cost tracking, custom model pricing, pooled subscription quotas, CLIProxyAPI hubs, and HTTP quota sources.
-- [Maintenance, power, and diagnostics](./diagnostics.md) — Background activity profiles, keep awake, Diagnostics UI, and `t3 trace`.
-- [CLI reference (`t3`)](./cli.md) — Complete overview of `t3` subcommands.
+- [Maintenance, power, and diagnostics](./diagnostics.md) — Background activity profiles, keep awake, Diagnostics UI, and `hyakki trace`.
+- [CLI reference (`hyakki`)](./cli.md) — Complete overview of `hyakki` subcommands.
 - [Usage data and diagnostics](./telemetry.md) — No usage data, local agent feedback, and OTLP export to your own receiver.
 - [Triage an issue](./triage.md) — Letting an agent investigate a Hyakki bug and draft an issue.
 - [Managed policy](./managed-policy.md) — Machine-wide enterprise configuration via JSON, macOS profiles, and Windows GPO/registry.

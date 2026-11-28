@@ -798,7 +798,7 @@ export const title = (
 };
 
 /**
- * Tag the run, for finding it among the others: `t3 workflow list --tag` and `runs({ tag })`.
+ * Tag the run, for finding it among the others: `hyakki workflow list --tag` and `runs({ tag })`.
  * Calling it again replaces the tags.
  */
 export const tags = (
@@ -829,7 +829,7 @@ export const tags = (
 /**
  * Say what the run is about: an issue or pull request a trigger or listing gave, `{ threadId }`,
  * or a web address. Lists show it and link to it, and `runs({ subject })` and
- * `t3 workflow list --subject` find the run by it. Calling it again replaces the subject.
+ * `hyakki workflow list --subject` find the run by it. Calling it again replaces the subject.
  */
 export const subject = (
   value: SubjectInput,

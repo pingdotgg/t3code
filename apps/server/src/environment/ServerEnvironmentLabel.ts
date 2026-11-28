@@ -194,7 +194,7 @@ const isWsl = Effect.fn("isWsl")(function* () {
 });
 
 // Names this environment instead of the machine, e.g. for staged demos and scenario captures.
-const labelOverride = Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(
+const labelOverride = Config.String("HYAKKI_ENVIRONMENT_LABEL").pipe(
   Config.option,
   Config.map(Option.flatMap((label) => Option.fromNullishOr(normalizeLabel(label)))),
 );

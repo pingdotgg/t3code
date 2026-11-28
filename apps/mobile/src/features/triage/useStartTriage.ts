@@ -24,7 +24,7 @@ import { usePrepareTriage } from "./usePrepareTriage";
 const CLI_COMMAND = "npx t3 triage";
 
 /**
- * In-app `t3 triage`, as on web: the server writes the session files and
+ * In-app `hyakki triage`, as on web: the server writes the session files and
  * clones the matching source, then a No project draft opens with the prompt.
  */
 export function useStartTriage() {

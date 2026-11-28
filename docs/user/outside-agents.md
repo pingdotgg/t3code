@@ -26,7 +26,7 @@ Open the command palette (`Cmd/Ctrl+K`) and run **Use Hyakki in another app (MCP
 
 ## Approve access and permissions
 
-The first time an outside agent connects, approve its sign-in page (via your Hyakki Connect account, an already-authorized browser, or a one-time pairing code from **Settings → Sharing & access** / `t3 auth pairing create`).
+The first time an outside agent connects, approve its sign-in page (via your Hyakki Connect account, an already-authorized browser, or a one-time pairing code from **Settings → Sharing & access** / `hyakki auth pairing create`).
 
 - **Read only**: Inspect projects, threads, providers, and models.
 - **Supervised → Full access**: Also launch, message, and stop threads up to the granted permission mode. Managing [workflow runs](./workflows.md) or using approval-skipping agent modes requires **Full access** (or your policy's maximum mode).
@@ -34,13 +34,13 @@ The first time an outside agent connects, approve its sign-in page (via your Hya
 
 ## Available tools and limits
 
-Tools that act as a running Hyakki thread (`delegate_task`, `create_threads`, `request_secret`, `html_render`, `preview_*`, `device_*`, `t3_worktree_handoff`) only work for agents running **inside** Hyakki.
+Tools that act as a running Hyakki thread (`delegate_task`, `create_threads`, `request_secret`, `gmail_list_recent`, `list_connected_items`, `html_render`, `preview_*`, `device_*`, `t3_worktree_handoff`) only work for agents running **inside** Hyakki. Outside-agent sign-in doesn't authorize private account reads. Tag the [connected credential](./secrets.md#connect-a-service) in your Hyakki thread and approve the operation in the vault PIN card.
 
 - Use `t3_thread_launch` + `t3_thread_wait` / `t3_thread_read` to run and follow work.
 - Pass `projectId` or `threadId` explicitly (or `allProjects: true` on `t3_thread_list`).
-- **MCP Events (`io.modelcontextprotocol/events`)**: Bots can poll, stream, or subscribe via HTTPS webhooks (up to 1-hour leases; latest 1,000 milestones buffered in memory) for turn, approval, guest, PR watch, and workflow events. For local webhook testing, set `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS=localhost,127.0.0.1` on the server.
+- **MCP Events (`io.modelcontextprotocol/events`)**: Bots can poll, stream, or subscribe via HTTPS webhooks (up to 1-hour leases; latest 1,000 milestones buffered in memory) for turn, approval, guest, PR watch, and workflow events. For local webhook testing, set `HYAKKI_MCP_WEBHOOK_ALLOWED_HOSTS=localhost,127.0.0.1` on the server.
 
-## Host scripts (`t3 thread`)
+## Host scripts (`hyakki thread`)
 
 On the server machine itself, drive threads directly without OAuth:
 

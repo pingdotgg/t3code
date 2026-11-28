@@ -709,7 +709,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   );
 
   // OpenCode 2.4.2 announces a skill that appears after a location's scan with another
-  // skill.updated: a SKILL.md written while T3 is open, or an MCP server's skills once it connects.
+  // skill.updated: a SKILL.md written while Hyakki is open, or an MCP server's skills once it connects.
   const makeLateSkillServer = Effect.gen(function* () {
     let skillsRead = yield* Deferred.make<void>();
     let skillAdded = false;
@@ -779,7 +779,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       });
     return {
       skillNames,
-      /** Opens a project OpenCode has not loaded: T3 reads, then OpenCode ends the scan. */
+      /** Opens a project OpenCode has not loaded: Hyakki reads, then OpenCode ends the scan. */
       open: (cwd: string) =>
         Effect.gen(function* () {
           skillsRead = yield* Deferred.make<void>();
@@ -790,7 +790,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           yield* TestClock.adjust("10 seconds");
           return (yield* Fiber.join(read)).skills.map((skill) => skill.name);
         }),
-      /** A skill appears in OpenCode; returns the first cwd T3 is asked to rescan, if any. */
+      /** A skill appears in OpenCode; returns the first cwd Hyakki is asked to rescan, if any. */
       addSkill: (cwd: string) =>
         Effect.gen(function* () {
           const leftover = yield* instance.workspaceRescans!.pipe(

@@ -46,7 +46,7 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
     env: {
       PATH: `${path.join(SECOND_HOME, "bin")}:${hostEnvironment.PATH ?? ""}`,
       HOME: hostEnvironment.HOME,
-      T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+      HYAKKI_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
       ...SCENARIO_MACHINE_ENV,
     },
     onLine: (line) => {

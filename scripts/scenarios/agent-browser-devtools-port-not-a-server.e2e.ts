@@ -32,7 +32,7 @@ const listen = Effect.fn("scenario.listen")(function* (threadId: string, arg: st
   const hostEnvironment = yield* HostProcess.Environment;
   const child = yield* spawner.spawn(
     ChildProcess.make(yield* HostProcess.ExecutablePath, ["-e", LISTENER, "--", arg], {
-      env: { PATH: hostEnvironment.PATH, T3CODE_THREAD_ID: threadId },
+      env: { PATH: hostEnvironment.PATH, HYAKKI_THREAD_ID: threadId },
       extendEnv: false,
       stdin: "ignore",
       stdout: "pipe",

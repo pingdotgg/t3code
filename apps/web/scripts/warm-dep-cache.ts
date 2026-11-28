@@ -12,12 +12,12 @@ const webRoot = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.m
 
 const configStart = performance.now();
 const config = await resolveConfig({ root: webRoot, logLevel: "error" }, "serve");
-if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+if (process.env.HYAKKI_STARTUP_PROFILE_DIR) {
   performance.measure("web.warmDepCache.resolveConfig", { start: configStart });
 }
 const optimizeStart = performance.now();
 await optimizeDeps(config);
-if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+if (process.env.HYAKKI_STARTUP_PROFILE_DIR) {
   performance.measure("web.warmDepCache.optimizeDeps", { start: optimizeStart });
 }
 console.log("[warm-dep-cache] web dependency cache is warm");

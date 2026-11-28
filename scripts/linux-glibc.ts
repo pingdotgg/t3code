@@ -5,8 +5,8 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
 // Both Linux release jobs build on Ubuntu 24.04; this is a build ceiling, not a distro support promise.
-// A build made for one machine on a newer distro can raise it with T3CODE_DESKTOP_GLIBC_CEILING.
-const GLIBC_BUILD_CEILING = process.env.T3CODE_DESKTOP_GLIBC_CEILING?.trim() || "2.39";
+// A build made for one machine on a newer distro can raise it with HYAKKI_DESKTOP_GLIBC_CEILING.
+const GLIBC_BUILD_CEILING = process.env.HYAKKI_DESKTOP_GLIBC_CEILING?.trim() || "2.39";
 const readelf = NodeUtil.promisify(NodeChildProcess.execFile);
 
 function compareVersions(left: string, right: string): number {

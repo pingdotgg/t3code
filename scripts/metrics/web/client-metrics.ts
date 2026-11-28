@@ -131,7 +131,7 @@ const buildWeb = Effect.fn("clientMetrics.buildWeb")(function* (checkout: string
     Object.entries(environment).filter(
       (entry): entry is [string, string] =>
         entry[1] !== undefined &&
-        !["T3CODE_WEB_SOURCEMAP", "VITE_HTTP_URL", "VITE_WS_URL"].includes(entry[0]),
+        !["HYAKKI_WEB_SOURCEMAP", "VITE_HTTP_URL", "VITE_WS_URL"].includes(entry[0]),
     ),
   );
   yield* run("vp", minify ? ["build"] : ["build", "--minify", "false"], { cwd: web, env });
@@ -234,7 +234,7 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
   }
   yield* forge.setupProject(project);
 
-  const dropped = new Set(["T3CODE_HOME", "XDG_CONFIG_HOME", "VITE_HTTP_URL", "VITE_WS_URL"]);
+  const dropped = new Set(["HYAKKI_HOME", "XDG_CONFIG_HOME", "VITE_HTTP_URL", "VITE_WS_URL"]);
   const env: Record<string, string> = {
     ...Object.fromEntries(
       Object.entries(hostEnvironment).filter(
@@ -245,8 +245,8 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
     USERPROFILE: home,
     PATH: [path.join(baseDir, "bin"), hostEnvironment.PATH ?? ""].join(":"),
     OTEL_SDK_DISABLED: "true",
-    T3CODE_DEV_SEED: "0",
-    T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+    HYAKKI_DEV_SEED: "0",
+    HYAKKI_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
     ...SCENARIO_MACHINE_ENV,
     ...forge.env,
     // The fake GitHub's proxy only tunnels its host; the Browser case's headless shell downloads direct.

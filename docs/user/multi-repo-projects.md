@@ -12,7 +12,7 @@ The project folder itself does not need to be a Git repository.
 
 Hyakki automatically discovers every Git repository inside the project folder—one level down, plus one level deeper inside non-repo folders (such as `src/` or `packages/`). Cloned or deleted repos update automatically; worktrees of other repos are ignored. View covered repos in **Settings → Projects → Repositories**.
 
-- **Add external folders**: Use **Add folder** in **Settings → Projects → Repositories** (web/desktop), import entries from a `.code-workspace` file (web/desktop/mobile), or run `t3 project add <path> --track <folder>`. Added folders are per machine (up to 128 folders per project); removing one never deletes files.
+- **Add external folders**: Use **Add folder** in **Settings → Projects → Repositories** (web/desktop), import entries from a `.code-workspace` file (web/desktop/mobile), or run `hyakki project add <path> --track <folder>`. Added folders are per machine (up to 128 folders per project); removing one never deletes files.
 - **Ignore a repository**: Add relative paths to `t3.json` in the project folder (applies on every machine):
 
 ```json

@@ -156,7 +156,7 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
  * the WSL server it manages, so both can name one Windows directory alike
  * without merging separate machines that share a hostname and path.
  */
-export const DESKTOP_HOST_SCOPE_ENV = "T3CODE_DESKTOP_HOST_SCOPE";
+export const DESKTOP_HOST_SCOPE_ENV = "HYAKKI_DESKTOP_HOST_SCOPE";
 
 const MOUNT_FIELD_ESCAPE = /\\([0-7]{3})/g;
 const WINDOWS_ROOT = /^(?:[A-Za-z]:|\\\\[^\\]+\\[^\\]+)\\?$/;

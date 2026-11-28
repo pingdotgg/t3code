@@ -18,7 +18,7 @@ tracing, and none should be added. What users see and rely on is [PRIVACY.md](..
 ## What is not telemetry
 
 - OTLP export to an endpoint the user configures (Settings › Maintenance › Diagnostics, or the
-  `T3CODE_OTLP_*` / `OTEL_EXPORTER_OTLP_*` variables). It goes only where the user points it.
+  `HYAKKI_OTLP_*` / `OTEL_EXPORTER_OTLP_*` variables). It goes only where the user points it.
 - Desktop host state (power, idle, lock) passed from the desktop shell to its own local backend.
 - The coding agents Hyakki starts. They talk to their own providers under their own terms.
 

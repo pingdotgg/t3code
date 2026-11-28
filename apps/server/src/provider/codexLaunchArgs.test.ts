@@ -24,13 +24,13 @@ describe("codexAppServerArgs", () => {
     {
       name: "preserves an escaped trailing space in the environment override",
       launchArgs: "--strict-config",
-      environment: { T3CODE_CODEX_LAUNCH_ARGS: "--cloud-skills-snapshot skills.json\\ " },
+      environment: { HYAKKI_CODEX_LAUNCH_ARGS: "--cloud-skills-snapshot skills.json\\ " },
       expected: ["--cloud-skills-snapshot", "skills.json "],
     },
     {
       name: "uses configured arguments when the environment override is blank",
       launchArgs: "--strict-config",
-      environment: { T3CODE_CODEX_LAUNCH_ARGS: " \t " },
+      environment: { HYAKKI_CODEX_LAUNCH_ARGS: " \t " },
       expected: ["--strict-config"],
     },
   ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {

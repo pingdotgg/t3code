@@ -828,6 +828,12 @@ function atomJsonForSegment(
       attrs: { instanceId: segment.instanceId, model: segment.model, source: segment.source },
     };
   }
+  if (segment.type === "vault-credential") {
+    return {
+      type: "composer-vault-credential",
+      attrs: { label: segment.label, source: segment.source },
+    };
+  }
   if (segment.type === "citation") {
     return {
       type: "composer-citation",
@@ -1204,6 +1210,7 @@ function readAtomSource(node: ProseMirrorNode): string {
   switch (node.type.name) {
     case "composer-mention":
     case "composer-model":
+    case "composer-vault-credential":
     case "composer-citation":
     case "composer-context-reference":
       return typeof attrs.source === "string" ? attrs.source : "";

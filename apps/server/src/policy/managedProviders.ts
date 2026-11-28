@@ -154,7 +154,7 @@ export const disallowedDriverReason = (
  * server they are ignored under any policy, which can lock launch arguments in more than one way;
  * from an instance's own variables they are ignored when the policy locks launch arguments.
  */
-const LAUNCH_OVERRIDE_VARIABLES = ["T3CODE_CODEX_LAUNCH_ARGS"] as const;
+const LAUNCH_OVERRIDE_VARIABLES = ["HYAKKI_CODEX_LAUNCH_ARGS"] as const;
 
 /** The environment provider drivers launch from under the policy clients were told about. */
 export const providerHostEnvironment = (

@@ -17,7 +17,7 @@ import {
 import { linuxProcessIdentity } from "./LinuxProcessIdentity.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
-const directoryName = "t3code-backend-recovery";
+const directoryName = "hyakki-backend-recovery";
 const maxRecordBytes = 512;
 const isDarwin = NodeProcess.platform === "darwin";
 // Darwin sys/fcntl.h. Node accepts these open flags but does not export them. Linux has no

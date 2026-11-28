@@ -117,6 +117,12 @@ describe("searchSettings", () => {
     }
   });
 
+  it("finds the credential library by its action and supported service names", () => {
+    for (const query of ["Add credential", "GitHub", "GitLab", "Slack", "Gmail"]) {
+      expect(searchSettings(query).map((item) => item.id)).toContain("local-vault");
+    }
+  });
+
   it("finds where subagents and side chats open by any of its names", () => {
     for (const query of ["side panel", "subagent", "side chat", "linked thread", "middle click"]) {
       expect(searchSettings(query).map((item) => item.id)).toContain("side-thread-open-target");

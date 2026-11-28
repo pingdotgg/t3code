@@ -90,7 +90,7 @@ export interface McpToolSession {
 
 /**
  * One initialized MCP session over Hyakki's HTTP endpoint, terminated when
- * the scope closes. Used by the ACP terminal fallback and `t3 thread`.
+ * the scope closes. Used by the ACP terminal fallback and `hyakki thread`.
  */
 export const mcpToolSession = (
   options: McpToolSessionOptions,

@@ -16,6 +16,7 @@ import {
 import type { ReactElement } from "react";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
+import { VaultMentionChip } from "./VaultMentionChip";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
 import type {
   ComposerDraftContextRecord,
@@ -74,6 +75,8 @@ export function CollapsedComposerPromptPreview(props: {
       // The editor's model chip is a popover trigger, which cannot nest in the row's button.
       case "model":
         return segment.source;
+      case "vault-credential":
+        return <VaultMentionChip key={key} label={segment.label} />;
       case "citation":
         return (
           <ContextChip key={key} kind="citation">

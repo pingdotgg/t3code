@@ -40,8 +40,8 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const names = input.isDevelopment
-      ? { current: "t3code-dev", legacy: "Hyakki (Dev)" }
-      : { current: "t3code-v2", legacy: "Hyakki (Alpha)" };
+      ? { current: "hyakki-dev", previous: "t3code-dev", legacy: "Hyakki (Dev)" }
+      : { current: "hyakki", previous: "t3code-v2", legacy: "Hyakki (Alpha)" };
     const destinationPath = path.join(input.appDataDirectory, names.current);
     const legacyPath = path.join(input.appDataDirectory, names.legacy);
     const inspect = (resourcePath: string) =>
@@ -52,9 +52,13 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
             DesktopUserDataInitializationError.fromFileSystem(cause, "inspect", resourcePath),
           ),
         );
-    if (input.isDevelopment) {
-      return (yield* inspect(legacyPath)) ? legacyPath : destinationPath;
+    const previousPath = path.join(input.appDataDirectory, names.previous);
+    // Keep existing Chromium profiles in place; the old app may still own its profile lock.
+    if (!(yield* inspect(destinationPath))) {
+      if (yield* inspect(previousPath)) return previousPath;
+      if (input.isDevelopment && (yield* inspect(legacyPath))) return legacyPath;
     }
+    if (input.isDevelopment) return destinationPath;
     // Chromium databases require their own profile for each running version.
     if (input.platform !== "win32") return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");

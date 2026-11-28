@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.1.12",
+  "version": "1.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -8,7 +8,7 @@
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "hyakki": "./dist/bin.mjs"
   },
   "files": [
     "dist"

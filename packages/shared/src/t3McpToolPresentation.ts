@@ -41,6 +41,8 @@ export type T3McpToolSummaryAction =
   | "question-read"
   | "question-respond"
   | "secret-request"
+  | "gmail-list-recent"
+  | "connected-items"
   | "worktree-handoff"
   | "worktree-list"
   | "worktree-status"
@@ -226,6 +228,14 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
+  gmail_list_recent: tool(
+    ["Request", "Requesting", "Requested", "recent Gmail messages"],
+    "gmail-list-recent",
+  ),
+  list_connected_items: tool(
+    ["Request", "Requesting", "Requested", "a private account list"],
+    "connected-items",
+  ),
   create_threads: tool(["Create", "Creating", "Created", "Hyakki threads"], "thread-create"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a Hyakki thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "Hyakki threads"], "thread-list"),

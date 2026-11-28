@@ -27,9 +27,8 @@ the server process is currently running, and the exact paths for state, logs, an
 the database.
 
 Its triage CLI version (called "Installed version" in older context files) is only
-the version of the \`t3\` that ran \`t3 triage\`. It is often not the build the bug
-happened on: \`npx t3 triage\` runs whatever \`t3\` npm resolves, while the user may
-run the desktop app, the background service, or a nightly. The server process line
+the version of the CLI that ran \`hyakki triage\`. The affected build may be the
+desktop app, a background service, or a nightly. The server process line
 gives the local server's version when the server recorded one.
 
 ## 3. Check for a newer playbook
@@ -69,7 +68,7 @@ Diagnosis grounded in source beats guessing.
 First establish the shape of the install, because the same symptom points at
 different code depending on it:
 
-- How is Hyakki running on this machine: \`npx t3 serve\` in a terminal, the
+- How is Hyakki running on this machine: \`hyakki serve\` in a terminal, the
   background service, or the desktop app?
 - Which surface is the user connecting from: the website (hyakki.ryoku.dev), the
   desktop app against a local server, the desktop app against a remote server,
@@ -166,7 +165,7 @@ user's environment and evidence instead of filing a new issue. A confirmed
 duplicate with fresh evidence is more useful than a second thread.
 `;
 
-/** Where the session started: the `t3 triage` CLI, or "Triage an issue" in a client. */
+/** Where the session started: the `hyakki triage` CLI, or "Triage an issue" in a client. */
 export type TriageEntry =
   | { readonly kind: "cli"; readonly cliVersion: string; readonly launchedAs: string }
   | { readonly kind: "app"; readonly client: string };

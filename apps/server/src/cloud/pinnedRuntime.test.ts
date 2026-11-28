@@ -705,7 +705,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
           lsofRunner(`p42\nftxt\nn${path.join(versionsDir, "1.3.0", "t3")}\n`),
         ),
         Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: binDir }),
+        Effect.provideService(HostProcess.Environment, { HYAKKI_INSTALL_BIN_DIR: binDir }),
       );
 
       // 1.2.0 is the default launcher, 1.2.5 a recorded one, 1.3.0 running, 1.3.5 in the unit,
@@ -817,7 +817,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         ),
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HostProcess.Environment, {
-          T3CODE_INSTALL_BIN_DIR: binDir,
+          HYAKKI_INSTALL_BIN_DIR: binDir,
           PATH: onPath ? `${ownDir}:/usr/bin:/bin` : "/usr/bin:/bin",
         }),
       );
@@ -955,7 +955,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner(lsof)),
         Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: baseDir }),
+        Effect.provideService(HostProcess.Environment, { HYAKKI_INSTALL_BIN_DIR: baseDir }),
       );
       assert.deepEqual(removed, []);
       assert.deepEqual(yield* fs.readDirectory(versionsDir), ["1.0.0"]);
@@ -975,7 +975,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         yield* fs.chmod(entry, 0o755);
         const link = path.join(baseDir, "t3");
         yield* fs.symlink(entry, link);
-        // Its argv names only the link, as with `t3 serve` run from PATH. Removing the link after
+        // Its argv names only the link, as with `hyakki serve` run from PATH. Removing the link after
         // spawning leaves the process's executable as the only reference.
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         yield* spawner.spawn(ChildProcess.make(link, ["-e", "setTimeout(() => {}, 30_000)"]));
@@ -983,7 +983,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
 
         const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
           Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: baseDir }),
+          Effect.provideService(HostProcess.Environment, { HYAKKI_INSTALL_BIN_DIR: baseDir }),
           Effect.provide(ProcessRunner.layer),
         );
         assert.deepEqual(removed, ["1.1.0"]);
@@ -1042,7 +1042,7 @@ it.layer(NodeServices.layer)("launcher lookup on PATH", (it) => {
         findPosixLauncher({ launchedAs: executable, versionsDir }).pipe(
           Effect.provideService(HostProcess.Environment, {
             PATH: searchPath,
-            T3CODE_INSTALL_BIN_DIR: missing,
+            HYAKKI_INSTALL_BIN_DIR: missing,
           }),
           Effect.provideService(HostProcess.WorkingDirectory, bin),
         );

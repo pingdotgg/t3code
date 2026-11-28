@@ -89,7 +89,7 @@ export const indexedMessageText = (sql: SqlClient.SqlClient, payload: string) =>
 
 // What the index stores: a message's readable text with apostrophes folded.
 // Migrations 69 and 74 create the triggers before migration 81 adds
-// search_text, and `t3 doctor` can rebuild a database that has not migrated,
+// search_text, and `hyakki doctor` can rebuild a database that has not migrated,
 // so those fall back to the stored text.
 const indexedText = Effect.fn("MessageSearchIndex.indexedText")(function* (
   sql: SqlClient.SqlClient,

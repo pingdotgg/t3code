@@ -22,7 +22,7 @@ function isFileDrag(event: DragEvent) {
 }
 
 /**
- * Folders dropped from the OS file manager open as projects, like `t3 <dir>`.
+ * Folders dropped from the OS file manager open as projects, like `hyakki <dir>`.
  * Thread rows take file drops for themselves by calling preventDefault first;
  * this zone then stays hidden and only picks up folders from the drop.
  * Browsers expose no absolute paths, so only the desktop app can add them.

@@ -26,6 +26,41 @@ describe("compactDynamicToolOutput", () => {
     }
   });
 
+  it("keeps only Gmail outcomes and confirmed counts across capture and wire projection", () => {
+    const name = "t3-code.gmail_list_recent";
+    const messages = [{ from: "Private sender", subject: "Private subject", snippet: "Private" }];
+    const raw = { structuredContent: { status: "read", messages, sentMessage: "Private" } };
+    const compact = compactT3McpToolOutput(name, raw);
+    expect(compact).toEqual({ status: "read", messageCount: 1 });
+    expect(compactDynamicToolOutput(raw, name)).toEqual(compact);
+    expect(compactDynamicToolOutput(compact, name)).toEqual(compact);
+    expect(compactDynamicToolOutput(compact, "other.gmail_list_recent")).toBeUndefined();
+    expect(compactT3McpToolOutput(name, { isError: true, ...raw })).toEqual({ isError: true });
+    expect(compactT3McpToolOutput(name, { status: "declined", note: "Private" })).toEqual({
+      status: "declined",
+    });
+    expect(compactT3McpToolOutput(name, { status: "read", messageCount: 21 })).toBeUndefined();
+    const receipt = { status: "displayed", messageCount: 5 };
+    expect(compactT3McpToolOutput(name, { status: "displayed", count: 5, messages })).toEqual(
+      receipt,
+    );
+    expect(compactDynamicToolOutput(receipt, name)).toEqual(receipt);
+    expect(compactT3McpToolOutput(name, { status: "displayed", count: 21 })).toBeUndefined();
+  });
+
+  it("keeps only service display receipts, even when an envelope includes private rows", () => {
+    const name = "t3-code.list_connected_items";
+    const receipt = { status: "displayed", count: 2 };
+    const raw = {
+      structuredContent: { ...receipt, items: [{ label: "private-repo" }], sentMessage: "private" },
+    };
+    expect(compactT3McpToolOutput(name, raw)).toEqual(receipt);
+    expect(compactDynamicToolOutput(raw, name)).toEqual(receipt);
+    expect(compactDynamicToolOutput(receipt, name)).toEqual(receipt);
+    expect(compactT3McpToolOutput(name, { status: "read", messages: [] })).toBeUndefined();
+    expect(compactT3McpToolOutput(name, { status: "displayed", count: 21 })).toBeUndefined();
+  });
+
   it("keeps a send_to_user message up to its limit, even in 3-byte characters", () => {
     const longest = "界".repeat(SEND_TO_USER_MAX_LENGTH);
     for (const sentMessage of ["Draft:\n\n> Hi Sam,", longest]) {

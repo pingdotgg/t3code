@@ -225,7 +225,7 @@ it.layer(layerTest)("GrokDriver", (it) => {
     );
   }
 
-  // An `npx t3` server inherits npm_config_user_agent, which Grok ranks above `[cli] installer`.
+  // An `npx hyakki` server inherits npm_config_user_agent, which Grok ranks above `[cli] installer`.
   it.effect.skipIf(windowsHost)("keeps a script install off the npm updater under npx", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

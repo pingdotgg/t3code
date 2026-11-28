@@ -85,7 +85,7 @@ function layerEnvironmentFor(baseDir: string, env: Record<string, string | undef
       Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
-        DesktopConfig.layerTest({ T3CODE_HOME: baseDir, ...env }),
+        DesktopConfig.layerTest({ HYAKKI_HOME: baseDir, ...env }),
       ),
     ),
   );
@@ -99,7 +99,7 @@ function layer(input: {
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
   readonly managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>;
 }) {
-  const env = { T3CODE_HOME: input.baseDir, ...input.env };
+  const env = { HYAKKI_HOME: input.baseDir, ...input.env };
   const layerEnvironment = layerEnvironmentFor(input.baseDir, env);
   const layerNetwork = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
@@ -512,8 +512,8 @@ describe("DesktopServerExposure", () => {
         );
       }),
       {
-        T3CODE_DESKTOP_LAN_HOST: "100.90.1.2",
-        T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
+        HYAKKI_DESKTOP_LAN_HOST: "100.90.1.2",
+        HYAKKI_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
       },
     ),
   );

@@ -109,7 +109,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall com
       label: "names another home's service it leaves installed",
       otherFromRead: 1,
       removed: [],
-      output: "--base-dir '/home/me/.t3'",
+      output: "--base-dir '/home/me/.hyakki'",
     },
     {
       label: "leaves a service that serves another home by the time it is removed",
@@ -131,10 +131,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall com
               supported: true,
               installed: true,
               current: true,
-              installedBaseDir: "/home/me/.t3",
-              ...(++reads >= input.otherFromRead ? { otherBaseDir: "/home/me/.t3" } : {}),
+              installedBaseDir: "/home/me/.hyakki",
+              ...(++reads >= input.otherFromRead ? { otherBaseDir: "/home/me/.hyakki" } : {}),
               unitPath: "/home/me/.config/systemd/user/t3code.service",
-              logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+              logPath: "/home/me/.hyakki/userdata/logs/boot-service.log",
             })),
             withStopped: (operation) => operation,
             restart: Effect.die("unexpected restart"),
@@ -186,7 +186,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "");
       }
-      const ours = path.join(root, "bin/t3");
+      const ours = path.join(root, "bin/hyakki");
       const theirs = path.join(root, "other/bin/t3");
       yield* fs.makeDirectory(path.dirname(ours), { recursive: true });
       yield* fs.makeDirectory(path.dirname(theirs), { recursive: true });
@@ -213,7 +213,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
 
       // On Windows, only the shim exactly as written is ours; a user's wrapper stays.
       const shimDir = path.join(root, "win-bin");
-      const shim = path.join(shimDir, "t3.cmd");
+      const shim = path.join(shimDir, "hyakki.cmd");
       yield* fs.makeDirectory(shimDir);
       const windowsOwner = (contents: string) =>
         fs
@@ -279,7 +279,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const cmd = path.join(root, "bin/t3.cmd");
       const edited = path.join(root, "bin/edited.cmd");
       yield* fs.writeFileString(cmd, `@echo off\r\n"${exe}" %*`);
-      yield* fs.writeFileString(edited, `@echo off\r\nset "T3CODE_HOME=D:\\other"\r\n"${exe}" %*`);
+      yield* fs.writeFileString(edited, `@echo off\r\nset "HYAKKI_HOME=D:\\other"\r\n"${exe}" %*`);
       yield* fs.writeFileString(path.join(root, "runtime/launchers"), `${cmd}\r\n${edited}\r\n`);
       assert.deepStrictEqual(
         yield* findRecordedLaunchers(versionsDir).pipe(
@@ -302,7 +302,7 @@ it.live.runIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
       yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3.exe"), "");
 
-      // The directory `t3 uninstall` is run from holds its own `ping`, which must stay unused.
+      // The directory `hyakki uninstall` is run from holds its own `ping`, which must stay unused.
       const marker = path.join(root, "ping-ran.txt");
       yield* fs.writeFileString(path.join(root, "ping.cmd"), '@echo ran>"%~dp0ping-ran.txt"\r\n');
       yield* Effect.acquireRelease(

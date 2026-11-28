@@ -99,6 +99,7 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
 } from "../markdown/markdownText";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { collectVaultMentions } from "@t3tools/contracts";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -270,6 +271,7 @@ interface ChatMarkdownProps {
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
+  showVaultMentions?: boolean | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -594,6 +596,7 @@ function useChatMarkdownState(
     onImageExpand,
     renderContextReference,
     headingLevelOffset = 0,
+    showVaultMentions = false,
     sourceControlMedia = false,
     sourceControlMediaRepository,
   }: ChatMarkdownProps,
@@ -1097,6 +1100,7 @@ function useChatMarkdownState(
     sourceControlMediaRepository,
     renderContextReference,
     headingLevelOffset,
+    showVaultMentions,
     imageBaseDir,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
@@ -1184,10 +1188,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <div {...props}>{children}</div>;
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, threadRef, environmentId, showVaultMentions } = use(
+      ChatMarkdownRendererContext,
+    );
     return (
       <p {...props}>
-        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(
+          children,
+          skills,
+          threadRef,
+          environmentId,
+          showVaultMentions,
+        )}
       </p>
     );
   },
@@ -1228,12 +1240,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, threadRef, environmentId, showVaultMentions } = use(
+      ChatMarkdownRendererContext,
+    );
     // Resolve checkbox markers by offset to avoid rerendering list items on every streamed token.
     const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
       <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
-        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(
+          children,
+          skills,
+          threadRef,
+          environmentId,
+          showVaultMentions,
+        )}
       </li>
     );
   },
@@ -1954,17 +1974,21 @@ function hastClassName(node: HastElement): string | undefined {
   return Array.isArray(className) ? className.join(" ") : (className as string | undefined);
 }
 
-// Paragraphs and list items turn skill and model mentions in their text into chips, except in
-// code and links, as SkillInlineText does.
-function hastTextHasChip(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
+// Use the interactive renderer only for paragraphs or list items with chips outside code and links.
+function hastTextHasChip(
+  node: HastElement,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  showVaultMentions: boolean,
+): boolean {
   return node.children.some((child) =>
     child.type === "text"
       ? (skills.length > 0 && !matchInlineSkills(child.value, skills).next().done) ||
-        collectComposerModelMentions(child.value).length > 0
+        collectComposerModelMentions(child.value).length > 0 ||
+        (showVaultMentions && collectVaultMentions(child.value).length > 0)
       : child.type === "element" &&
         child.tagName !== "code" &&
         child.tagName !== "a" &&
-        hastTextHasChip(child, skills),
+        hastTextHasChip(child, skills, showVaultMentions),
   );
 }
 
@@ -1986,10 +2010,11 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
     inlineCodeFileLinkMetaByText,
     onTaskListChange,
     skills,
+    showVaultMentions,
   } = state;
   const options: MarkdownIslandOptions = {
     components: CHAT_MARKDOWN_COMPONENTS,
-    variant: String(headingLevelOffset),
+    variant: showVaultMentions ? `${headingLevelOffset}:vault` : String(headingLevelOffset),
     isIsland: (node) => {
       switch (node.tagName) {
         case "a":
@@ -2014,7 +2039,7 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
         }
         case "p":
         case "li":
-          return hastTextHasChip(node, skills);
+          return hastTextHasChip(node, skills, showVaultMentions);
         default:
           return false;
       }

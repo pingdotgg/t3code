@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
  * Hosts that may receive webhooks although they are private or plain `http:`, for testing
  * against a local receiver. Comma-separated host names or addresses; unset denies them all.
  */
-export const ALLOWED_HOSTS_ENV = "T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS";
+export const ALLOWED_HOSTS_ENV = "HYAKKI_MCP_WEBHOOK_ALLOWED_HOSTS";
 
 export const allowedHosts = Config.String(ALLOWED_HOSTS_ENV).pipe(
   Config.withDefault(""),

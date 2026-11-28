@@ -28,6 +28,7 @@ import {
 } from "../serviceLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isUnpublishedRelease,
   launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
@@ -115,10 +116,10 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
-    `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    `Environment=HYAKKI_HOME=${quoteSystemdValue(plan.baseDir)}`,
     ...(plan.installBinDir === undefined
       ? []
-      : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
+      : [`Environment=HYAKKI_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
     `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -135,7 +136,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // protection of user.slice and user@.service, which only root can grant.
     "MemoryLow=1536M",
     // A user manager's own score, the lowest it may set: below its other services (200) and agents (800).
-    // `t3 service protect` lowers it further through a drop-in.
+    // `hyakki service protect` lowers it further through a drop-in.
     "OOMScoreAdjust=100",
     // systemd-oomd ignores this preference when the watched cgroup is root-owned, as user-1000.slice usually is.
     "ManagedOOMPreference=avoid",
@@ -175,12 +176,12 @@ export function renderBootServicePlist(
     `  <dict>`,
     `    <key>PATH</key>`,
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
-    `    <key>T3CODE_HOME</key>`,
+    `    <key>HYAKKI_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
     ...(plan.installBinDir === undefined
       ? []
       : [
-          `    <key>T3CODE_INSTALL_BIN_DIR</key>`,
+          `    <key>HYAKKI_INSTALL_BIN_DIR</key>`,
           `    <string>${escapeXmlText(plan.installBinDir)}</string>`,
         ]),
     `    <key>${SERVICE_UNIT_ENV}</key>`,
@@ -723,7 +724,7 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   },
 ) {
   override get message(): string {
-    return `Refusing to replace t3@${this.installedVersion} with older t3@${this.targetVersion}. Run the command again with --allow-downgrade to continue.`;
+    return `Refusing to replace hyakki@${this.installedVersion} with older hyakki@${this.targetVersion}. Run the command again with --allow-downgrade to continue.`;
   }
 }
 
@@ -738,7 +739,7 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   },
 ) {
   override get message(): string {
-    return `The Hyakki service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+    return `The Hyakki service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`hyakki service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
   }
 
   // A refusal the user fixes by rerunning, so the CLI prints the message, not a stack trace.
@@ -834,7 +835,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const installBinDir = Option.getOrUndefined(
-    yield* Config.String("T3CODE_INSTALL_BIN_DIR").pipe(Config.option),
+    yield* Config.String("HYAKKI_INSTALL_BIN_DIR").pipe(Config.option),
   );
   const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
   // Root under sudo must not reach or start a separate root service.
@@ -1062,7 +1063,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const planForUnit = (unit: string): BootServicePlan => {
     const effectiveInstallBinDir =
-      installBinDir || serviceUnitEnvironmentValueOf(unit, "T3CODE_INSTALL_BIN_DIR");
+      installBinDir || serviceUnitEnvironmentValueOf(unit, "HYAKKI_INSTALL_BIN_DIR");
     return effectiveInstallBinDir ? { ...plan, installBinDir: effectiveInstallBinDir } : plan;
   };
   const requireManager = Effect.suspend(() =>
@@ -1358,15 +1359,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           ),
     }).pipe(
       Effect.mapError((error) =>
-        error._tag === "PinnedRuntimeInstallError"
-          ? new BootServiceCommandError({
-              step: error.step,
-              exitCode: error.exitCode,
-              stdoutLength: error.stdoutLength,
-              stderrLength: error.stderrLength,
-              cause: error,
+        isUnpublishedRelease(error) && releaseBaseUrl === undefined
+          ? new BootServiceInstallError({
+              cause: new Error(
+                "Hyakki does not publish its server yet; install it on that machine from source.",
+              ),
             })
-          : new BootServiceInstallError({ cause: error }),
+          : error._tag === "PinnedRuntimeInstallError"
+            ? new BootServiceCommandError({
+                step: error.step,
+                exitCode: error.exitCode,
+                stdoutLength: error.stdoutLength,
+                stderrLength: error.stderrLength,
+                cause: error,
+              })
+            : new BootServiceInstallError({ cause: error }),
       ),
     );
     const installed = yield* fs
@@ -1431,7 +1438,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
                       // PowerShell has no inline variable assignment; the launcher takes a flag.
                       recoveryCommand: windows
                         ? `& ${launcher(installedVersion)} __service-launcher --base-dir ${quote(input.baseDir)}`
-                        : `T3CODE_HOME=${quote(input.baseDir)} ${launcher(installedVersion)} __service-launcher`,
+                        : `HYAKKI_HOME=${quote(input.baseDir)} ${launcher(installedVersion)} __service-launcher`,
                     }
                   : {},
               );

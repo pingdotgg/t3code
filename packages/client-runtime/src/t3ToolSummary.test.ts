@@ -1,13 +1,79 @@
 import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import { describe, expect, it } from "vite-plus/test";
 
-import { summarizeT3ToolCalls, type T3ToolSummaryCall } from "./t3ToolSummary.ts";
+import {
+  summarizeT3ToolCalls,
+  t3ToolOutcomeLabel,
+  type T3ToolSummaryCall,
+} from "./t3ToolSummary.ts";
 
 function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
   return { input, output, outcome: "completed" };
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("counts only Gmail messages returned by completed reads, including an empty list", () => {
+    const input = { vaultTitle: "Private account", limit: 5 };
+    const messages = [{ from: "Private sender", subject: "Private subject", snippet: "Private" }];
+    const read = completed(input, { structuredContent: { status: "read", messages } });
+    const empty = completed(input, { status: "read", messages: [] });
+    expect(t3ToolOutcomeLabel("gmail-list-recent", read)).toBe("Read 1 Gmail message");
+    expect(t3ToolOutcomeLabel("gmail-list-recent", empty)).toBe("Found no Gmail messages");
+    expect(
+      t3ToolOutcomeLabel("gmail-list-recent", completed(input, { status: "displayed", count: 5 })),
+    ).toBe("Read 5 Gmail messages");
+    expect(
+      summarizeT3ToolCalls("gmail-list-recent", [
+        read,
+        completed(input, { status: "read", messageCount: 2 }),
+        empty,
+        completed(input, { status: "declined", note: "Private" }),
+        completed(input, { isError: true, structuredContent: read.output }),
+      ]),
+    ).toEqual({ label: "Read 3 Gmail messages", failedCount: 1 });
+  });
+
+  it("never announces a Gmail read from approval inputs, non-read outcomes or failures", () => {
+    const input = { vaultTitle: "Private", limit: 5, status: "read", messageCount: 5 };
+    for (const [status, label] of [
+      ["declined", "Gmail request declined"],
+      ["cancelled", "Gmail request cancelled"],
+      ["timed_out", "Gmail request timed out"],
+    ] as const) {
+      const call = completed(input, { status, note: "Private", messages: [] });
+      expect(t3ToolOutcomeLabel("gmail-list-recent", call)).toBe(label);
+      expect(summarizeT3ToolCalls("gmail-list-recent", [call])).toEqual({ label, failedCount: 0 });
+    }
+    const read = { status: "read", messages: [] };
+    for (const call of [
+      completed(input),
+      completed(input, { status: "read" }),
+      completed(input, { isError: true, structuredContent: read }),
+      { input, output: read, outcome: "failed" },
+      { input, output: read, outcome: "unfinished" },
+    ] satisfies T3ToolSummaryCall[]) {
+      expect(t3ToolOutcomeLabel("gmail-list-recent", call)).toBe(
+        "Tried to list recent Gmail messages",
+      );
+    }
+  });
+
+  it("counts only displayed service items, not requested items or private rows", () => {
+    const input = { vaultTitle: "Private", service: "gitlab", limit: 20 };
+    expect(
+      t3ToolOutcomeLabel("connected-items", completed(input, { status: "displayed", count: 2 })),
+    ).toBe("Displayed 2 items privately");
+    expect(
+      t3ToolOutcomeLabel(
+        "connected-items",
+        completed(input, { status: "declined", note: "Private" }),
+      ),
+    ).toBe("Request declined");
+    expect(
+      t3ToolOutcomeLabel("connected-items", completed(input, { items: [{ label: "Private" }] })),
+    ).toBe("Requested a private list");
+  });
+
   it("reads provider result envelopes without treating JSON in the message as result data", () => {
     const result = { messageId: "message-1", threadId: "actual-thread" };
     const json = JSON.stringify(result);

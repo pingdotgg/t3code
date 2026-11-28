@@ -366,7 +366,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
             payload: {
               id: requestId,
               method: "thread/start",
-              params: { config: { "shell_environment_policy.set.T3CODE_THREAD_ID": appThreadId } },
+              params: { config: { "shell_environment_policy.set.HYAKKI_THREAD_ID": appThreadId } },
             },
           });
           yield* protocolLogger({
@@ -605,7 +605,7 @@ const CODEX_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy
   interactionMode: "default",
   cwd: "/workspace",
 });
-const T3_THREAD_ENV_KEY = "shell_environment_policy.set.T3CODE_THREAD_ID";
+const T3_THREAD_ENV_KEY = "shell_environment_policy.set.HYAKKI_THREAD_ID";
 const threadEnvOf = (params: unknown) =>
   Predicate.hasProperty(params, "config") && Predicate.hasProperty(params.config, T3_THREAD_ENV_KEY)
     ? params.config[T3_THREAD_ENV_KEY]
@@ -3018,8 +3018,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
             "features.concurrent_reasoning_summaries": true,
-            "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
-            "mcp_servers.envprobe.env.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "shell_environment_policy.set.HYAKKI_THREAD_ID": `thread-${scenario}`,
+            "mcp_servers.envprobe.env.HYAKKI_THREAD_ID": `thread-${scenario}`,
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
@@ -4657,6 +4657,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "delegate_task",
       );
+      const appContext = Object.values(params.additionalContext ?? {})
+        .map((entry) => entry.value)
+        .join("\n");
+      assert.include(appContext, "Hyakki tools coexist with the harness's native tools");
+      assert.include(appContext, "not Hyakki's vault PIN");
       const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
       const transcript = makeCodexReplayTranscript({
         scenario: "restore-context",

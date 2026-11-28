@@ -15,7 +15,7 @@ Connect during onboarding or in **Settings → Providers** (select your target e
 
 Run `codex login` on the environment's machine, then add a Codex instance in **Settings → Providers** via **Configure manually**. See [provider setup](./install.md#providers) for installation details.
 
-If provider status checks time out on a slower machine, set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the server environment and restart. See [Provider check timeouts](./install.md#provider-check-timeouts).
+If provider status checks time out on a slower machine, set `HYAKKI_CODEX_PROBE_TIMEOUT_MS=60000` in the server environment and restart. See [Provider check timeouts](./install.md#provider-check-timeouts).
 
 ## Use multiple accounts
 

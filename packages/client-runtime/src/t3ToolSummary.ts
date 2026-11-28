@@ -1,6 +1,7 @@
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { compactPrivateListOutput } from "@t3tools/shared/toolOutput";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -76,6 +77,8 @@ export function t3ToolOutcomeLabel(
   call: T3ToolSummaryCall,
   resolve: MFunctionType = mFallback,
 ): string | undefined {
+  if (action === "gmail-list-recent" || action === "connected-items")
+    return summarizeT3ToolCalls(action, [call], resolve).label;
   if (
     action !== "create-pr" &&
     action !== "merge-pr" &&
@@ -132,6 +135,53 @@ export function summarizeT3ToolCalls(
   calls: ReadonlyArray<T3ToolSummaryCall>,
   resolve: MFunctionType = mFallback,
 ): { label: string; failedCount: number } {
+  if (action === "gmail-list-recent" || action === "connected-items") {
+    const gmail = action === "gmail-list-recent";
+    let failedCount = 0;
+    let itemCount: number | undefined;
+    let singleStatus: "declined" | "cancelled" | "timed_out" | undefined;
+    for (const call of calls) {
+      const output = compactPrivateListOutput(
+        call.output,
+        gmail ? "gmail_list_recent" : "list_connected_items",
+      );
+      if (call.outcome === "failed" || (output && "isError" in output)) {
+        failedCount++;
+      } else if (call.outcome === "completed" && output) {
+        if ("messageCount" in output) itemCount = (itemCount ?? 0) + output.messageCount;
+        else if (output.status === "displayed") itemCount = (itemCount ?? 0) + output.count;
+        else if (calls.length === 1) singleStatus = output.status;
+      }
+    }
+    let label: string;
+    if (!gmail) {
+      if (itemCount !== undefined)
+        label = resolve(
+          msg(
+            "{count, plural, =0 {No items to display} one {Displayed {count} item privately} other {Displayed {count} items privately}}",
+            { count: itemCount },
+          ),
+        );
+      else if (singleStatus === "declined") label = resolve(msg("Request declined"));
+      else if (singleStatus === "cancelled") label = resolve(msg("Request cancelled"));
+      else if (singleStatus === "timed_out") label = resolve(msg("Request timed out"));
+      else label = resolve(msg("Requested a private list"));
+    } else if (itemCount === 0) label = resolve(msg("Found no Gmail messages"));
+    else if (itemCount !== undefined) {
+      label = resolve(
+        msg(
+          "{count, plural, one {Read {count} Gmail message} other {Read {count} Gmail messages}}",
+          {
+            count: itemCount,
+          },
+        ),
+      );
+    } else if (singleStatus === "declined") label = resolve(msg("Gmail request declined"));
+    else if (singleStatus === "cancelled") label = resolve(msg("Gmail request cancelled"));
+    else if (singleStatus === "timed_out") label = resolve(msg("Gmail request timed out"));
+    else label = resolve(msg("Tried to list recent Gmail messages"));
+    return { label, failedCount };
+  }
   const results = calls.map((call) => {
     const result = readResult(call.output);
     return {

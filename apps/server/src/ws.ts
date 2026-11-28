@@ -1,3 +1,5 @@
+import { manageLocalVault } from "./secrets/LocalVault.ts";
+import { GmailOAuth, manageGmailVault } from "./secrets/GmailOAuth.ts";
 import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
@@ -52,6 +54,7 @@ import {
   type OrchestrationV2Command,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type LocalVaultInput,
   type MessageId,
   type AcpRegistryDeleteSessionInput,
   type AcpRegistryDisableProviderInput,
@@ -204,6 +207,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ManagedProviders from "./policy/managedProviders.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
@@ -1590,6 +1594,29 @@ export const layerWsRpc = (
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const secretStore = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+      const gmailFlows = yield* Effect.serviceOption(GmailOAuth);
+      const vaultStore = Option.getOrUndefined(secretStore);
+      const vaultOptions = {
+        canSetInitialPin:
+          currentSession.subject === "desktop-bootstrap" ||
+          currentSession.subject === EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+      };
+      const manageVault = (input: LocalVaultInput) => {
+        const action =
+          input.action === "gmail-start" ||
+          input.action === "gmail-finish" ||
+          input.action === "gmail-disconnect"
+            ? manageGmailVault(
+                Option.getOrUndefined(gmailFlows),
+                currentSessionId,
+                vaultStore,
+                input,
+                vaultOptions,
+              )
+            : manageLocalVault(vaultStore, input, vaultOptions);
+        return action.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
+      };
       const hostEnvironment = yield* HostProcess.Environment;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
@@ -1968,6 +1995,13 @@ export const layerWsRpc = (
           threadFind: true,
           threadFindProgressive: true,
           secretProviderSettings: true,
+          ...(Option.isSome(secretStore) && secretStore.value.storageMode
+            ? { localSecretStorage: secretStore.value.storageMode }
+            : {}),
+          vaultPinSecurity: true,
+          localVaultEntries:
+            Option.isSome(secretStore) &&
+            secretStore.value.storageMode === "linux-keyring-aes256gcm",
           secretReferences: true,
           secretRequestReferences: true,
           featureFlags: {
@@ -2876,6 +2910,8 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverCheckSecretSource]: (input) => secretCheck.check(input.source),
+        [WS_METHODS.serverListLocalVault]: () => manageVault({ action: "list" }),
+        [WS_METHODS.serverManageLocalVault]: manageVault,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({
             traceFilePath: config.serverTracePath,

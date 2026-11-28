@@ -115,7 +115,7 @@ export const daily = (
 };
 
 /**
- * A run for each request to this workflow's hook URL (`t3 workflow hooks` prints it). The run
+ * A run for each request to this workflow's hook URL (`hyakki workflow hooks` prints it). The run
  * decides what the request means, `stop` included. Two requests for which `key` gives the same
  * text are one run, which is how a sender's retries are told from new deliveries.
  */

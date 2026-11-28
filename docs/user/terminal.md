@@ -4,12 +4,12 @@ Hyakki includes integrated terminals running on the environment's host machine, 
 
 ## Choose a shell
 
-Set `T3CODE_TERMINAL_SHELL` in the Hyakki server's environment to an executable name or full path (no quotes or arguments) to override the platform default shell for new terminals. This does not affect agent commands or project setup/settle scripts.
+Set `HYAKKI_TERMINAL_SHELL` in the Hyakki server's environment to an executable name or full path (no quotes or arguments) to override the platform default shell for new terminals. This does not affect agent commands or project setup/settle scripts.
 
 Example for Git Bash on Windows (PowerShell, then fully quit and reopen Hyakki):
 
 ```powershell
-[Environment]::SetEnvironmentVariable('T3CODE_TERMINAL_SHELL', 'C:\Program Files\Git\bin\bash.exe', 'User')
+[Environment]::SetEnvironmentVariable('HYAKKI_TERMINAL_SHELL', 'C:\Program Files\Git\bin\bash.exe', 'User')
 ```
 
 > Note: Use `bin\bash.exe`, not `git-bash.exe`. Remove with `$null` to restore the default.

@@ -1,7 +1,11 @@
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
-import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
+import {
+  STATIC_KEYBINDING_COMMANDS,
+  VAULT_SERVICE_LABELS,
+  type KeybindingCommand,
+} from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
@@ -562,7 +566,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Guest links"),
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: [msg("beta share guest invite link teammate watch t3 connect tunnel")],
+    searchTerms: [msg("beta share guest invite link teammate watch hyakki connect tunnel")],
   },
   {
     id: "linked-environments-beta",
@@ -997,7 +1001,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "cli-command",
-    title: msg("t3 command"),
+    title: msg("hyakki command"),
     to: "/settings/about",
     searchTerms: [msg("cli terminal shell path install command line")],
     desktopOnly: true,
@@ -1042,7 +1046,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     agentFeedbackOnly: true,
     searchTerms: [
-      msg("report bug problem t3 team send feedback agents tools automatic when i ask"),
+      msg("report bug problem hyakki team send feedback agents tools automatic when i ask"),
     ],
   },
   {
@@ -1442,7 +1446,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/access",
     targetId: "connections-environment",
     searchTerms: [
-      msg("t3 connect devices approve deny trust revoke pairing code security account"),
+      msg("hyakki connect devices approve deny trust revoke pairing code security account"),
     ],
     cloudOnly: true,
     managedTunnelOnly: true,
@@ -1453,7 +1457,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Hold webhooks while offline"),
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: [msg("webhook automations offline queue mailbox t3 connect")],
+    searchTerms: [msg("webhook automations offline queue mailbox hyakki connect")],
     cloudOnly: true,
     managedTunnelOnly: true,
   },
@@ -1497,7 +1501,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: msg("Environments"),
     to: "/settings/connections",
-    searchTerms: [msg("add pair backend host code ssh config agent tunnel saved t3 connect")],
+    searchTerms: [msg("add pair backend host code ssh config agent tunnel saved hyakki connect")],
   },
   {
     id: "load-balancing",
@@ -1516,6 +1520,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       `pull request routing trusted environments shared credentials permissions read actions source control ${SOURCE_CONTROL_HOST_LABELS}`,
     ],
+  },
+  {
+    id: "local-vault",
+    title: msg("Hyakki vault"),
+    to: "/settings/secrets",
+    searchTerms: [
+      msg("Add credential"),
+      msg("API token"),
+      msg("Website login"),
+      msg("Secure note"),
+      ...Object.values(VAULT_SERVICE_LABELS),
+    ],
+    environmentOnly: true,
+    secretProvidersOnly: true,
   },
   {
     id: "secret-providers",

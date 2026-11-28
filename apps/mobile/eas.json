@@ -59,7 +59,7 @@
     "testflight": {
       "extends": "production",
       "env": {
-        "T3CODE_MOBILE_VERSION": "3.0.0"
+        "HYAKKI_MOBILE_VERSION": "3.0.0"
       }
     },
     "production": {

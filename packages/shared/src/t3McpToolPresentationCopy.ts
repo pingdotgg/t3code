@@ -40,6 +40,7 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Update a scheduled task", msg("Update a scheduled task")],
   ["Delete a scheduled task", msg("Delete a scheduled task")],
   ["Ask for a secret", msg("Ask for a secret")],
+  ["Request recent Gmail messages", msg("Request recent Gmail messages")],
   ["Create Hyakki threads", msg("Create Hyakki threads")],
   ["Start a Hyakki thread", msg("Start a Hyakki thread")],
   ["List Hyakki threads", msg("List Hyakki threads")],

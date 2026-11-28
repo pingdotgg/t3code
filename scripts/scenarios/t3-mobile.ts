@@ -1,4 +1,4 @@
-// `test` for iOS scenarios: e2e's mobile test plus `t3`, which seeds state like the web one and
+// `test` for iOS scenarios: e2e's mobile test plus `hyakki`, which seeds state like the web one and
 // opens the dev client paired with the scenario's server.
 import { test as base } from "@e2e-dev/mobile";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -47,7 +47,7 @@ let paired = false;
 export const test = base.extend<{ t3: MobileT3 }>({
   t3: async ({ device, screen }, use) => {
     const { state, cli, cleanup } = makeState(MOBILE_T3_HOME, {
-      T3CODE_PORT: String(MOBILE.serverPort),
+      HYAKKI_PORT: String(MOBILE.serverPort),
     });
     const pairingUrl = Effect.gen(function* () {
       const origin = `http://${MOBILE.host}:${MOBILE.serverPort}`;

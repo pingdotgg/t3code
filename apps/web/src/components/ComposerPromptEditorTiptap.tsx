@@ -131,6 +131,7 @@ import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { ModelMentionChip, modelMentionKey, modelMentionKeysAtom } from "./chat/ModelMentionChip";
+import { VaultMentionChip } from "./chat/VaultMentionChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChip } from "./ContextChip";
 import {
@@ -400,6 +401,31 @@ const ComposerModelExtension = Node.create({
   },
   addNodeView() {
     return ReactNodeViewRenderer(ComposerModelNodeView);
+  },
+});
+
+function ComposerVaultCredentialNodeView({ node }: NodeViewProps) {
+  return (
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+      <VaultMentionChip label={String(node.attrs.label)} />
+    </NodeViewWrapper>
+  );
+}
+
+const ComposerVaultCredentialExtension = Node.create({
+  name: "composer-vault-credential",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { label: { default: "" }, source: { default: "" } };
+  },
+  renderHTML({ node }) {
+    return ["span", {}, String(node.attrs.source)];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ComposerVaultCredentialNodeView);
   },
 });
 
@@ -911,6 +937,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerMentionExtension,
     ComposerSkillExtension,
     ComposerModelExtension,
+    ComposerVaultCredentialExtension,
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
@@ -1235,6 +1262,7 @@ function ComposerPromptEditorTiptapInner(
     const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
     const isChip = (token: (typeof tokens)[number] | undefined) =>
       token?.type === "mention" ||
+      token?.type === "vault-credential" ||
       (token?.type === "skill" && skillLabelFor(token.value) !== null) ||
       (token?.type === "model" && isKnownModel(token.instanceId, token.model));
     const lastToken = tokens.at(-1);

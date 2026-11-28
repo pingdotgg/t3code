@@ -218,7 +218,7 @@ const environmentLinkCommand = Command.make("link", {
     Flag.atLeast(0),
   ),
   pairingCode: Flag.String("pairing-code").pipe(
-    Flag.withDescription("A pairing code from the other environment (`t3 pair` there)."),
+    Flag.withDescription("A pairing code from the other environment (`hyakki pair` there)."),
     Flag.optional,
   ),
   from: Flag.String("from").pipe(

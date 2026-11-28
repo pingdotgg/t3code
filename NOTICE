@@ -12,4 +12,7 @@ of T3 Tools, Inc.; Hyakki uses none of them as its own branding.
 Upstream fixes are brought in with `git cherry-pick -x`, so each one names the
 T3 Code commit it came from.
 
+Service marks identify the account you are connecting to, not Hyakki itself.
+Gmail, GitHub, GitLab and Slack are trademarks of their respective owners.
+
 Third-party software notices are in third-party-licenses/.

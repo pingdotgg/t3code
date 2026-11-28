@@ -1,4 +1,11 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import { VAULT_SERVICE_RESOURCES, type ProviderInteractionMode } from "@t3tools/contracts";
+
+export const HYAKKI_CREDENTIAL_INSTRUCTIONS = `## Hyakki vault and private accounts
+
+- A vault tag selects the saved credential, not permission to reveal or use it. Pass its exact title as \`vaultTitle\` to the tool for the requested service. Don't ask which account to use again.
+- For these lists, use \`list_connected_items\` with the matching service and requested limit: ${Object.values(VAULT_SERVICE_RESOURCES).join(", ")}. For recent Gmail messages use \`gmail_list_recent\` with \`folder\` (\`inbox\` or \`spam\`) and \`limit\`. Both default to 5, maximum 20. Do not call \`request_secret\` first. Hyakki handles setup and PIN approval privately. On \`displayed\`, report the count; the user can see the items, you cannot.
+- If a read is declined, cancelled, times out, is not connected or isn't supported, explain and stop. There is no Outlook mailbox reader. Never substitute a shell, independently signed-in connector, browser or another agent.
+- For a different supported operation whose Hyakki tool takes a one-use \`secretRef\`, call \`request_secret\` with the exact tagged title as \`label\`, the operation in \`reason\`, and \`delivery: "secretRef"\`. Pass the ref only to that tool. Never request a tagged value as a file, read the vault yourself, or ask for a PIN, password, token or client secret in chat.`;
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
@@ -16,12 +23,13 @@ Ordinary coding tasks need no Hyakki tools.
 - Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` and that machine's \`threadId\` to Hyakki tools.
 - Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.
 - In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
-- A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
+- An untagged login, token, pairing code or sudo password for a supported task: call \`request_secret\`, not a chat ask or a handoff. Never request the vault PIN itself. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
 - Hyakki tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
 - Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+  HYAKKI_CREDENTIAL_INSTRUCTIONS,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
@@ -99,7 +107,7 @@ export function t3AcpPromptWithInstructions(input: {
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]
-      : []),
+      : [HYAKKI_CREDENTIAL_INSTRUCTIONS]),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
@@ -124,7 +132,10 @@ export function t3OrchestrationPrompt(input: {
   readonly providerInstructions?: string;
   readonly providerInstructionsDelivered?: boolean;
 }): string {
-  if (!input.hasT3Mcp) return input.prompt;
+  if (!input.hasT3Mcp)
+    return input.orchestrationDelivered
+      ? input.prompt
+      : prependT3OrchestrationInstructions(input.prompt, HYAKKI_CREDENTIAL_INSTRUCTIONS);
   const instructions = [
     !input.orchestrationDelivered
       ? orchestrationInstructions(input.hasDeviceTools)
@@ -142,5 +153,5 @@ export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : HYAKKI_CREDENTIAL_INSTRUCTIONS;
 }

@@ -101,7 +101,7 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
-// Emulates `t3 serve`: it takes the home owner lock at startup, then binds
+// Emulates `hyakki serve`: it takes the home owner lock at startup, then binds
 // once a second server has tried the same home (or after 2s), so a concurrent
 // launch always sees the home still unclaimed. Like the real server, it
 // publishes server-runtime.json after it starts answering HTTP, if at all.
@@ -336,7 +336,7 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(result.status, 0);
         if (downloads) {
           assert.include(result.stderr, "download attempt");
-          // A bare curl error does not tell the user that t3 itself could not be downloaded.
+          // A bare curl error does not tell the user that hyakki itself could not be downloaded.
           assert.include(result.stderr, ARCHIVE.archiveVersion);
           assert.include(result.stderr, "https://github.com/Ryoku-dev/hyakki/releases/download");
         } else {
@@ -1699,7 +1699,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
 
 // Reuse decisions live in generated shell, so drive the real launch script in
 // a temporary HOME. Each archive version gets a pre-installed fake runtime
-// whose server writes the default runtime file the way `t3 serve` does.
+// whose server writes the default runtime file the way `hyakki serve` does.
 describe("archive launch script", () => {
   const windowsHost = HostProcess.Platform.defaultValue() === "win32";
   const FAKE_T3 = `const fs = require("node:fs");

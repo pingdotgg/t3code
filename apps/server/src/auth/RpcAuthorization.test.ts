@@ -29,6 +29,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
@@ -717,6 +718,44 @@ describe("settings mutation authorization", () => {
   );
 });
 
+it.effect("changing vault credentials requires both settings and provider management", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverManageLocalVault
+        > => tag !== WS_METHODS.serverManageLocalVault,
+      ),
+    );
+    let called = 0;
+    const handler = group.toLayerHandler(WS_METHODS.serverManageLocalVault, () =>
+      Effect.sync(() => {
+        called++;
+        return { names: [], entries: [], error: null };
+      }),
+    );
+    const clientWith = (...scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+      );
+    const input = { action: "remove" as const, name: "work-token" };
+    const settings = yield* clientWith(AuthSettingsWriteScope);
+    expect(
+      yield* settings[WS_METHODS.serverManageLocalVault](input).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    const providers = yield* clientWith(AuthProvidersManageScope);
+    expect(
+      yield* providers[WS_METHODS.serverManageLocalVault](input).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+    expect(called).toBe(0);
+    const owner = yield* clientWith(AuthSettingsWriteScope, AuthProvidersManageScope);
+    yield* owner[WS_METHODS.serverManageLocalVault](input);
+    expect(called).toBe(1);
+  }),
+);
 it.effect("answering a secret request with a reference needs provider management", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
@@ -733,6 +772,7 @@ it.effect("answering a secret request with a reference needs provider management
     const handler = group.toLayerHandler(WS_METHODS.secretsAnswerRequest, ({ answer }) =>
       Effect.sync(() => {
         handled.push(answer.type);
+        return undefined;
       }),
     );
     const clientWith = (...scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
@@ -769,6 +809,31 @@ it.effect("answering a secret request with a reference needs provider management
     const manage = yield* clientWith(AuthOrchestrationOperateScope, AuthProvidersManageScope);
     yield* manage[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference });
     expect(handled).toEqual(["save", "save", "reference"]);
+    const vaultAnswer = {
+      type: "vault" as const,
+      name: "login",
+      fields: { value: "password" as const },
+    };
+    expect(
+      yield* operate[WS_METHODS.secretsAnswerRequest]({ ...request, answer: vaultAnswer }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    yield* manage[WS_METHODS.secretsAnswerRequest]({ ...request, answer: vaultAnswer });
+    expect(handled).toEqual(["save", "save", "reference", "vault"]);
+    const display = {
+      type: "vault_gmail_display",
+      name: "mail",
+      account: "work@example.test",
+      pin: Redacted.make("123456"),
+    } as const;
+    expect(
+      yield* operate[WS_METHODS.secretsAnswerRequest]({ ...request, answer: display }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    yield* manage[WS_METHODS.secretsAnswerRequest]({ ...request, answer: display });
+    expect(handled.at(-1)).toBe("vault_gmail_display");
     const manageOnly = yield* clientWith(AuthProvidersManageScope);
     expect(
       yield* manageOnly[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference }).pipe(

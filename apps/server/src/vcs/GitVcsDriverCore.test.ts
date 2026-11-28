@@ -7136,7 +7136,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        // A local `t3` branch is why launches start on the flat `t3-<hex>` temporary branch.
+        // A local `hyakki` branch is why launches start on the flat `t3-<hex>` temporary branch.
         yield* git(cwd, ["branch", parent]);
         yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
         yield* git(cwd, ["branch", "t3-fix-login"]);
@@ -11012,7 +11012,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(origin, ["init", "--bare"]);
           yield* git(fork, ["init", "--bare"]);
           yield* git(cwd, ["remote", "add", "origin", origin]);
-          // e.g. the remote T3 adds when checking out a pull request from alice's fork.
+          // e.g. the remote Hyakki adds when checking out a pull request from alice's fork.
           yield* git(cwd, ["remote", "add", "alice", fork]);
           yield* git(cwd, ["checkout", "-b", "alice/fix"]);
           yield* writeTextFile(cwd, "fix.txt", "fix\n");

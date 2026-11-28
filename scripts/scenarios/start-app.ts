@@ -44,9 +44,9 @@ const REAL_PROVIDERS = [
 export const SCENARIO_LINEAR_PORT = 13_997;
 
 export const SCENARIO_MACHINE_ENV = {
-  T3CODE_ENVIRONMENT_LABEL: "Scenario",
-  T3CODE_ENVIRONMENT_MACHINE_KIND: "laptop",
-  T3CODE_LINEAR_API_URL: `http://127.0.0.1:${SCENARIO_LINEAR_PORT}/graphql`,
+  HYAKKI_ENVIRONMENT_LABEL: "Scenario",
+  HYAKKI_ENVIRONMENT_MACHINE_KIND: "laptop",
+  HYAKKI_LINEAR_API_URL: `http://127.0.0.1:${SCENARIO_LINEAR_PORT}/graphql`,
 };
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -137,7 +137,7 @@ const startApp = Effect.fn("startApp")(function* (input: {
     PATH: [path.join(input.home, "bin"), hostEnvironment.PATH ?? ""].join(
       (yield* HostProcess.Platform) === "win32" ? ";" : ":",
     ),
-    T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+    HYAKKI_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
     ...SCENARIO_MACHINE_ENV,
   };
   const devRunner = (mode: string, args: ReadonlyArray<string>) => [
@@ -162,15 +162,15 @@ const startApp = Effect.fn("startApp")(function* (input: {
       mode: 0o600,
     });
     const ports = ["--port", serverPort, "--dev-url", origin];
-    const webEnv = { ...env, T3CODE_PORT_OFFSET: String(Number(webPort) - BASE_WEB_PORT) };
+    const webEnv = { ...env, HYAKKI_PORT_OFFSET: String(Number(webPort) - BASE_WEB_PORT) };
     const server = yield* start({
       cwd: checkout,
       command: node,
       args: devRunner("dev:server", ports),
       env: {
         ...webEnv,
-        T3CODE_DEV_ALLOWED_ORIGINS: origin,
-        T3CODE_DEV_AUTH_TOKEN: credential,
+        HYAKKI_DEV_ALLOWED_ORIGINS: origin,
+        HYAKKI_DEV_AUTH_TOKEN: credential,
       },
       onLine: (line) => (line.includes("pairingUrl:") ? Effect.void : Console.log(line)),
     });

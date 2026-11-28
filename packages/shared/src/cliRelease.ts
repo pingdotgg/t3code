@@ -6,7 +6,7 @@ import { compareSemverVersions } from "./semver.ts";
 const CLI_RELEASE_REPOSITORY = "Ryoku-dev/hyakki";
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
-export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
+export const CLI_RELEASE_BASE_URL_ENV = "HYAKKI_RELEASE_BASE_URL";
 
 // Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml,
 // and with the SSH runner's host check in packages/ssh/src/tunnel.ts.
@@ -158,7 +158,7 @@ const NpmReleaseMigrationManifest = Schema.Struct({
 });
 const decodeNpmReleaseMigrationManifest = Schema.decodeUnknownOption(NpmReleaseMigrationManifest);
 
-/** Highest database migration a release's server knows, from its npm `t3` manifest. */
+/** Highest database migration a release's server knows, from its npm `hyakki` manifest. */
 export function npmReleaseDatabaseMigration(manifest: unknown): number | undefined {
   return Option.getOrUndefined(decodeNpmReleaseMigrationManifest(manifest))?.t3code
     .databaseMigration;

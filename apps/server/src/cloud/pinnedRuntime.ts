@@ -504,8 +504,8 @@ const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
  */
 const PINNED_RUNTIME_PRUNE_GRACE = Duration.hours(1);
 /**
- * One `t3` launcher path per line, appended by the install scripts and by any prune that finds a
- * launcher on PATH. A service does not see the installer's `T3CODE_INSTALL_BIN_DIR` or the
+ * One `hyakki` launcher path per line, appended by the install scripts and by any prune that finds a
+ * launcher on PATH. A service does not see the installer's `HYAKKI_INSTALL_BIN_DIR` or the
  * interactive PATH, so this is how it finds a custom one, including installs that predate the file.
  */
 const PINNED_RUNTIME_LAUNCHERS_FILE = "launchers";
@@ -557,7 +557,7 @@ export const resolveLauncherPath = Effect.gen(function* () {
 });
 
 /**
- * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the
+ * `hyakki update` repoints the launcher it was started through, which may be on neither PATH nor the
  * default bin dir. Unrecorded, the next prune would remove the runtime it now points at.
  */
 export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.record_launcher")(
@@ -588,7 +588,7 @@ export function isVersionExecutable(
   return !path.isAbsolute(relative) && /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
 }
 
-/** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
+/** The executable a `t3.cmd` shim written by the install script or `hyakki update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 
 /** Like {@link windowsShimTarget}, but only for a shim exactly as written; never a user's wrapper. */
@@ -596,7 +596,7 @@ export const generatedWindowsShimTarget = (contents: string) =>
   /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1];
 
 /**
- * The `t3` script the install scripts and `t3 update` write on macOS and Linux. Exec by absolute
+ * The `hyakki` script the install scripts and `hyakki update` write on macOS and Linux. Exec by absolute
  * path: through a symlink, argv0 is the link, and the Cursor SDK looks for its helpers beside it.
  */
 export const posixLauncherScript = (executable: string) =>
@@ -650,15 +650,17 @@ export const findPosixLauncher = Effect.fn("cloud.pinned_runtime.find_posix_laun
     const cwd = yield* HostProcess.WorkingDirectory;
     const searchPath = environment["PATH"] ?? "";
     const candidates = [
-      // PATH first, resolved like the shell does: it decides which t3 the user runs. An empty
+      // PATH first, resolved like the shell does: it decides which hyakki the user runs. An empty
       // entry of a nonempty PATH is the working directory; an empty PATH searches nothing.
-      ...(searchPath.length === 0 ? [] : searchPath.split(":")).map((directory) =>
-        path.resolve(cwd, directory || ".", "t3"),
+      ...["hyakki", "t3"].flatMap((name) =>
+        (searchPath.length === 0 ? [] : searchPath.split(":")).map((directory) =>
+          path.resolve(cwd, directory || ".", name),
+        ),
       ),
       path.join(
-        environment["T3CODE_INSTALL_BIN_DIR"] ||
+        environment["HYAKKI_INSTALL_BIN_DIR"] ||
           path.join(yield* HostProcess.HomeDirectory, ".local", "bin"),
-        "t3",
+        "hyakki",
       ),
       ...recorded.split(/\r?\n/),
     ].filter((candidate) => path.isAbsolute(candidate));
@@ -697,7 +699,7 @@ export const writePosixLauncher = Effect.fn("cloud.pinned_runtime.write_posix_la
   Effect.scoped,
 );
 
-/** Where the `t3` launchers written by the install scripts and `t3 update` point. */
+/** Where the `hyakki` launchers written by the install scripts and `hyakki update` point. */
 const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targets")(function* (
   baseDir: string,
 ) {
@@ -706,17 +708,17 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const home = yield* HostProcess.HomeDirectory;
-  const launcherName = platform === "win32" ? "t3.cmd" : "t3";
+  const launcherNames = platform === "win32" ? ["hyakki.cmd", "t3.cmd"] : ["hyakki", "t3"];
   const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
   const recorded = (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
     .split(/\r?\n/)
     .filter((launcher) => launcher.trim().length > 0);
   const found = [
-    environment["T3CODE_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
+    environment["HYAKKI_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),
   ]
     .filter((directory) => path.isAbsolute(directory))
-    .map((directory) => path.join(directory, launcherName));
+    .flatMap((directory) => launcherNames.map((name) => path.join(directory, name)));
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
@@ -768,8 +770,8 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
 });
 
 /**
- * Resolved executables rather than command lines: a server started through the `t3` symlink
- * shows up as `t3 serve`, possibly from another Hyakki home that runs this home's runtimes. Windows
+ * Resolved executables rather than command lines: a server started through the `hyakki` symlink
+ * shows up as `hyakki serve`, possibly from another Hyakki home that runs this home's runtimes. Windows
  * has no symlink launcher, and its `t3.cmd` shim runs the absolute path, so command lines do there.
  */
 const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")(function* () {
@@ -783,7 +785,7 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
     for (const pid of pids.value) {
       if (!/^\d+$/.test(pid)) continue;
       // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
-      // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
+      // --user, ssh-agent). Neither runs a hyakki runtime, and bailing on them would never prune.
       const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
       if (Option.isSome(executable)) executables.push(executable.value);
     }

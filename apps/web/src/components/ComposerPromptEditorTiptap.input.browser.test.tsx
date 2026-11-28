@@ -23,7 +23,7 @@ import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { cdp, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, fakeTimers, render } from "../../test/render";
@@ -310,6 +310,15 @@ it.each([
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(value));
   },
 );
+
+it("renders a vault mention as a lock chip but preserves its name-only prompt text", async () => {
+  const value = 'Use vault:"Gmail" for this task.';
+  await using screen = await mountEditor(value);
+  await expect
+    .element(page.getByRole("img", { name: "Vault credential: Gmail", exact: true }))
+    .toBeVisible();
+  expect(serializeEditorDoc(screen.editor.state.doc).value).toBe(value);
+});
 
 it("distinguishes text edits from caret moves in change notifications", async () => {
   const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();

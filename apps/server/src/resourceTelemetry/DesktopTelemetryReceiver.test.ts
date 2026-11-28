@@ -93,7 +93,7 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
       const replacement = NodeTls.rootCertificates[2]!;
       NodeTls.setDefaultCACertificates([baseline]);
       yield* fs.writeFileString(certificatePath, `${extra}\n${replacement}`);
-      const environment: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+      const environment: NodeJS.ProcessEnv = { HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
       const applySnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, "darwin");
       const message = {
         version: 1,
@@ -106,13 +106,13 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
         certificates.map((pem) => new NodeCrypto.X509Certificate(pem).fingerprint256).sort();
       yield* applySnapshot({ ...message, platform: "win32" });
       expect(fingerprints(NodeTls.getCACertificates("default"))).toEqual(fingerprints([baseline]));
-      expect(environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING).toBe("1");
+      expect(environment.HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING).toBe("1");
       yield* applySnapshot(message);
       expect(fingerprints(NodeTls.getCACertificates("default"))).toEqual(
         fingerprints([baseline, extra, replacement]),
       );
       expect(environment.NODE_EXTRA_CA_CERTS).toBe(certificatePath);
-      expect(environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING).toBeUndefined();
+      expect(environment.HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING).toBeUndefined();
 
       yield* fs.writeFileString(certificatePath, replacement);
       yield* applySnapshot(message);
@@ -169,7 +169,7 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
           PATH: "/old/bin",
           JAVA_HOME: "/old/java",
           UNRELATED: "keep",
-          T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
+          HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         };
         yield* makeApplyDesktopShellEnvironmentSnapshot(
           environment,
@@ -185,7 +185,7 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
           PATH: applied ? "/fresh/bin" : "/old/bin",
           ...(applied ? {} : { JAVA_HOME: "/old/java" }),
           UNRELATED: "keep",
-          ...(pending ? { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" } : {}),
+          ...(pending ? { HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING: "1" } : {}),
         });
       }).pipe(Effect.provide(NodeServices.layer)),
   );

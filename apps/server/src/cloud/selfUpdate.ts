@@ -73,7 +73,7 @@ export class ServerSelfUpdate extends Context.Service<
 /**
  * A server starting from the runtime its launcher settled on means runtimes left by earlier
  * updates can go. The boot service says so through its IPC context. The SSH launcher and the
- * install script's `t3` start this home's pinned runtime directly, without one.
+ * install script's `hyakki` start this home's pinned runtime directly, without one.
  */
 export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
   function* (input: { readonly baseDir: string; readonly managed: boolean }) {
@@ -126,10 +126,10 @@ export function trackSwitchBlockReason(input: {
   if (!crossesReleaseTrack(input.serverVersion, input.targetVersion)) return null;
   const databaseMigration = input.databaseMigration();
   if (input.targetDatabaseMigration === undefined || databaseMigration === undefined) {
-    return `Cannot confirm this database works with t3@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
+    return `Cannot confirm this database works with hyakki@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
   }
   return input.targetDatabaseMigration < databaseMigration
-    ? `This database has changes t3@${input.targetVersion} does not support yet; it stays on this release.`
+    ? `This database has changes hyakki@${input.targetVersion} does not support yet; it stays on this release.`
     : null;
 }
 
@@ -198,7 +198,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     const launcherProtocol = launcher.protocol;
     if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
-        "Remote updates require the Hyakki background service. Run `t3 service install` on the server machine.",
+        "Remote updates require the Hyakki background service. Run `hyakki service install` on the server machine.",
       );
     }
 
@@ -240,7 +240,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
           }
           if (mirror !== undefined && isUnpublishedRelease(error)) {
             return failWith(
-              `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+              `${mirror.organization}'s update mirror has no hyakki@${targetVersion} for this machine.`,
               error,
             );
           }
@@ -251,7 +251,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
             .filter((part) => part !== undefined)
             .join(" ");
           return failWith(
-            `Could not prepare t3@${targetVersion} while ${error.step}${downloadFailure ? ` (${downloadFailure})` : ""}.`,
+            `Could not prepare hyakki@${targetVersion} while ${error.step}${downloadFailure ? ` (${downloadFailure})` : ""}.`,
             error,
           );
         }),

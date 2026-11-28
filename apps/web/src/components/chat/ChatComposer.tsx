@@ -121,6 +121,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
+import { formatVaultMention } from "./composerVaultMentions";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   type QueuedAttachmentContextBinding,
@@ -2226,9 +2227,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
-    if (item.type === "model") {
+    if (item.type === "model" || item.type === "vault-credential") {
       if (trigger.kind !== "path") return;
-      const replacement = `${formatComposerModelMention(item.instanceId, item.model)} `;
+      const mention =
+        item.type === "vault-credential"
+          ? formatVaultMention(item.label)
+          : formatComposerModelMention(item.instanceId, item.model);
+      const replacement = `${mention} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

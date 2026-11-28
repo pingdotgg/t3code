@@ -43,6 +43,8 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
+import { matchVaultMentions } from "./composerVaultMentions";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
   matchesPullRequestQuery,
@@ -125,6 +127,22 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
+  const canUseVault = useAtomValue(
+    serverEnvironment.manageLocalVault.permissionAtom(environmentId),
+  );
+  const vaultAvailable = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.localVaultEntries === true && config.vaultPinSecurity === true,
+  );
+  const vaultLookup = useEnvironmentQuery(
+    isPathTrigger &&
+      pathTriggerQuery.length > 0 &&
+      questionAttachmentTarget === null &&
+      canUseVault &&
+      vaultAvailable
+      ? serverEnvironment.localVault({ environmentId, input: {} })
+      : null,
+  );
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
@@ -212,6 +230,12 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
+        ...(canUseVault && vaultAvailable && questionAttachmentTarget === null
+          ? matchVaultMentions(vaultLookup.data?.entries ?? [], pathTriggerQuery).map((item) => ({
+              ...item,
+              description: gt("Vault credential · Name only"),
+            }))
+          : []),
         ...matchComposerThreadItems(
           {
             shells: environmentThreadShells,

@@ -10,11 +10,11 @@ import * as HostProcess from "./HostProcess.ts";
  * One comma-separated list, such as `tanstack_source,github_app_client_id=Iv23…`. A bare name
  * turns a flag on. Read once when the server starts; changing it takes a restart.
  */
-const VARIABLE = "T3CODE_FEATURE_FLAGS";
+const VARIABLE = "HYAKKI_FEATURE_FLAGS";
 
 const config = Config.all({
-  secretProviders: Config.Boolean("secret_providers").pipe(Config.withDefault(false)),
-  tanstackSource: Config.Boolean("tanstack_source").pipe(Config.withDefault(false)),
+  secretProviders: Config.Boolean("secret_providers").pipe(Config.withDefault(true)),
+  tanstackSource: Config.Boolean("tanstack_source").pipe(Config.withDefault(true)),
   /** The public client ID of the Hyakki for GitHub app; unset turns its sign-in off. */
   githubAppClientId: Config.option(Config.String("github_app_client_id")),
 });
@@ -42,9 +42,10 @@ const parse = (record: Record<string, string>) => config.parse(ConfigProvider.fr
 export const resolve = Effect.fn("FeatureFlags.resolve")(function* (list: string | undefined) {
   return yield* parse(parseList(list)).pipe(
     Effect.catch((error) =>
-      Effect.logWarning(`Ignoring invalid ${VARIABLE}; every flag is off.`, error).pipe(
-        Effect.andThen(parse({})),
-      ),
+      Effect.logWarning(
+        `Ignoring invalid ${VARIABLE}; using default feature settings.`,
+        error,
+      ).pipe(Effect.andThen(parse({}))),
     ),
   );
 });

@@ -4090,7 +4090,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     }).pipe(Effect.repeat(Schedule.spaced("2 seconds")), Effect.forkScoped);
 
-    // External servers outlive T3; stop their turns before losing observation.
+    // External servers outlive Hyakki; stop their turns before losing observation.
     if (connection.external) {
       yield* Effect.addFinalizer(() =>
         Effect.forEach(

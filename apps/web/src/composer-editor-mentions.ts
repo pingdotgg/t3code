@@ -8,6 +8,7 @@ import {
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
 import { markdownMathRanges } from "~/markdown/wordsHast";
+import { collectVaultMentions } from "@t3tools/contracts";
 
 export type ComposerPromptSegment =
   | {
@@ -30,6 +31,7 @@ export type ComposerPromptSegment =
       model: string;
       source: string;
     }
+  | { type: "vault-credential"; label: string; source: string }
   | {
       type: "citation";
       citation: AssistantCitation;
@@ -101,10 +103,23 @@ function collectModelTokens(text: string, inlineTokens: ReadonlyArray<ComposerIn
 export function collectComposerPromptInlineTokens(text: string) {
   const inlineTokens = collectComposerInlineTokens(text, { findMath: markdownMathRanges });
   const models = collectModelTokens(text, inlineTokens);
+  const vault = collectVaultMentions(text);
+  const math = vault.length > 0 ? composerMathRanges(text, markdownMathRanges) : [];
+  const vaultTokens = vault.filter(
+    (token) => !math.some((range) => token.start < range.end && token.end > range.start),
+  );
   const tokens =
-    models.length === 0
+    models.length === 0 && vaultTokens.length === 0
       ? inlineTokens
-      : [...inlineTokens, ...models].sort((left, right) => left.start - right.start);
+      : [
+          ...[...inlineTokens, ...models].filter(
+            (token) =>
+              !vaultTokens.some(
+                (mention) => token.start < mention.end && token.end > mention.start,
+              ),
+          ),
+          ...vaultTokens,
+        ].sort((left, right) => left.start - right.start);
   const citations = collectAssistantCitations(text);
   const references = collectComposerContextReferences(text);
   if (citations.length === 0 && references.length === 0) return tokens;
@@ -139,7 +154,9 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       pushTextSegment(segments, text.slice(cursor, match.start));
     }
 
-    if (match.type === "citation") {
+    if (match.type === "vault-credential") {
+      segments.push({ type: match.type, label: match.label, source: match.source });
+    } else if (match.type === "citation") {
       segments.push({ type: "citation", citation: match.citation, source: match.source });
     } else if (match.type === "context-reference") {
       segments.push({

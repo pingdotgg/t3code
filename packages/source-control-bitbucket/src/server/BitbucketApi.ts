@@ -47,16 +47,16 @@ const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 const CONCURRENCY = 4;
 
 const BitbucketApiEnvConfig = Config.all({
-  baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+  baseUrl: Config.String("HYAKKI_BITBUCKET_API_BASE_URL").pipe(
     Config.withDefault(DEFAULT_API_BASE_URL),
   ),
-  accessToken: Config.String("T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
-  email: Config.String("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
-  apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
+  accessToken: Config.String("HYAKKI_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
+  email: Config.String("HYAKKI_BITBUCKET_EMAIL").pipe(Config.option),
+  apiToken: Config.String("HYAKKI_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
 // Server and Data Center use a different API; a custom Cloud endpoint must be explicit.
-export const BitbucketServesHost = Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+export const BitbucketServesHost = Config.String("HYAKKI_BITBUCKET_API_BASE_URL").pipe(
   Config.option,
   Config.map(
     (baseUrl) => (host: string) =>
@@ -610,7 +610,7 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.",
+      "Add a Bitbucket token in Settings → Source control & issues, or set the HYAKKI_BITBUCKET_* environment variables on the server.",
     ),
   };
 }

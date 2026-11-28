@@ -398,7 +398,7 @@ export const linkEnvironmentToCloud: (input: {
   const configuredRelayUrl = relayUrl();
   if (!configuredRelayUrl) {
     return yield* new CloudEnvironmentLinkError({
-      message: m(msg("{name} is not configured.", { name: "T3CODE_RELAY_URL" })),
+      message: m(msg("{name} is not configured.", { name: "HYAKKI_RELAY_URL" })),
     });
   }
   const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";

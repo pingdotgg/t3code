@@ -56,7 +56,7 @@ const make = Effect.gen(function* () {
     yield* fs.readFileString(reclaimFiles.failure).pipe(Effect.option),
   );
 
-  // The notice shows host-shell quoting verbatim; desktop needs its launcher because t3 is absent from PATH.
+  // The notice shows host-shell quoting verbatim; desktop needs its launcher because hyakki is absent from PATH.
   const { command: compactCommand } = yield* resolveHostCliCommand("doctor", [
     "--base-dir",
     config.baseDir,

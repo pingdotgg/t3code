@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -36,6 +37,8 @@ import * as ServerConfig from "./config.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import { callbackPath, GmailOAuth, makeGmailFlows } from "./secrets/GmailOAuth.ts";
+import * as GmailOAuthHttp from "./secrets/GmailOAuthHttp.ts";
 
 describe("MCP app asset responses", () => {
   it.effect(
@@ -306,19 +309,78 @@ describe("desktop readiness proof", () => {
 });
 
 describe("untraced requests", () => {
+  const captureServerSpans = (spans: Array<Tracer.NativeSpan>) =>
+    Layer.succeed(
+      Tracer.Tracer,
+      Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          if (options.kind === "server") spans.push(span);
+          return span;
+        },
+      }),
+    );
+
+  it.effect("keeps Gmail callbacks out of HTTP spans and response logs, even before routing", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const logs: Array<string> = [];
+      const logger = Logger.make((options) => logs.push(Logger.formatJson.log(options)));
+      const flows = makeGmailFlows({
+        exchange: () => Effect.die("The callback must not exchange credentials"),
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => flows.close()));
+      const flow = yield* flows.start(
+        { sessionId: "test-session", name: "gmail", title: "Gmail" },
+        {
+          clientId: "test-client",
+          redirectUri: `http://127.0.0.1${callbackPath}`,
+          revision: "one",
+        },
+      );
+      const state = new URL(flow.url).searchParams.get("state")!;
+      const code = "synthetic-telemetry-test-code";
+      const callback = `${callbackPath}?${new URLSearchParams({ state, code })}`;
+      const routes = Layer.merge(
+        GmailOAuthHttp.routeLayer,
+        HttpRouter.add("GET", "/api/environment", HttpServerResponse.empty()),
+      );
+      const services = yield* Layer.build(
+        HttpRouter.serve(routes, {
+          disableListenLog: true,
+          middleware: ServerHttp.withGmailCallbackLoggerDisabled,
+        }).pipe(
+          ServerHttp.withUntracedRequests,
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(Layer.succeed(GmailOAuth, flows)),
+        ),
+      ).pipe(
+        Effect.provide(
+          Layer.merge(
+            captureServerSpans(spans),
+            Logger.layer([logger], { mergeWithExisting: false }),
+          ),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+      expect((yield* client.get(callback)).status).toBe(200);
+      expect((yield* client.get(callback)).status).toBe(400); // State already consumed.
+      expect((yield* client.post(callback)).status).toBe(404); // No handler for this method.
+      yield* client.get("/api/environment");
+
+      expect(spans.map((span) => span.attributes.get("url.path"))).toEqual(["/api/environment"]);
+      const output = logs.join("\n");
+      expect(output).toContain("/api/environment");
+      expect(output).not.toContain(callbackPath);
+      expect(output).not.toContain(code);
+      expect(output).not.toContain(state);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("starts a separate trace for each request, not the server's lifetime trace", () =>
     Effect.gen(function* () {
       const requestSpans: Array<Tracer.NativeSpan> = [];
-      const layerTracer = Layer.succeed(
-        Tracer.Tracer,
-        Tracer.make({
-          span: (options) => {
-            const span = new Tracer.NativeSpan(options);
-            if (options.kind === "server") requestSpans.push(span);
-            return span;
-          },
-        }),
-      );
+      const layerTracer = captureServerSpans(requestSpans);
       const layerRoutes = Layer.effectDiscard(
         Effect.gen(function* () {
           const router = yield* HttpRouter.HttpRouter;

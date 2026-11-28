@@ -132,7 +132,7 @@ function startFixtureServer(webOrigin: string) {
           HOME,
           GH_HOST: HOST,
           GH_ENTERPRISE_TOKEN: "scenario-only-token",
-          T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+          HYAKKI_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
         },
         onLine: (line) => {
           const value = /^Token:\s*(\S+)/.exec(line)?.[1];

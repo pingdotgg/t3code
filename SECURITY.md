@@ -100,7 +100,7 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   that mode is in scope (see 3).
 - A compromised relay signing key can mint for linked environments. That is
   the stated trust assumption; device approval is the mitigation.
-- `T3CODE_DEV_AUTH_TOKEN` and dev startup URLs are administrative by design and
+- `HYAKKI_DEV_AUTH_TOKEN` and dev startup URLs are administrative by design and
   ignored outside development servers.
 - A webhook URL is a credential for one task. Unless the task requires a
   signature, whoever holds the URL can start that task's run, and the request's

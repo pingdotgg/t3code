@@ -226,7 +226,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
   const hostIdPath = path.join(config.baseDir, "usage-host-id");
-  const explicitHostId = hostEnvironment["T3CODE_HOST_ID"]?.trim();
+  const explicitHostId = hostEnvironment["HYAKKI_HOST_ID"]?.trim();
   const hostId =
     explicitHostId ||
     (yield* fileSystem.readFileString(hostIdPath).pipe(

@@ -10,7 +10,7 @@ export function loadCursorSdk(): typeof import("@cursor/sdk") {
   if (sdk !== undefined) return sdk;
   const start = performance.now();
   sdk = requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
-  if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+  if (process.env.HYAKKI_STARTUP_PROFILE_DIR) {
     performance.measure("provider.cursor.importSdk", { start });
   }
   return sdk;
@@ -20,7 +20,7 @@ export function loadCursorSqlite(): typeof import("@cursor/sdk/sqlite") {
   if (sqlite !== undefined) return sqlite;
   const start = performance.now();
   sqlite = requireCursorSdk("@cursor/sdk/sqlite") as typeof import("@cursor/sdk/sqlite");
-  if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+  if (process.env.HYAKKI_STARTUP_PROFILE_DIR) {
     performance.measure("provider.cursor.importSqliteStore", { start });
   }
   return sqlite;

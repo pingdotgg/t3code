@@ -93,6 +93,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverLogoutAcpRegistry]: "server",
   [WS_METHODS.serverDiscoverSourceControl]: "server",
   [WS_METHODS.serverCheckSecretSource]: "server",
+  [WS_METHODS.serverManageLocalVault]: "server",
+  [WS_METHODS.serverListLocalVault]: "server",
   [WS_METHODS.serverGetTraceDiagnostics]: "server",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",
   [WS_METHODS.serverGetHostResources]: "server",
@@ -281,6 +283,8 @@ const DEFAULT_RPC_SPAN_ATTRIBUTES = {
   "rpc.system": "effect-rpc",
 } as const;
 const RPC_METHODS_WITH_TRACING_DISABLED: ReadonlySet<string> = new Set([
+  WS_METHODS.serverManageLocalVault,
+  WS_METHODS.secretsAnswerRequest,
   WS_METHODS.serverGetTraceDiagnostics,
   WS_METHODS.serverGetProcessDiagnostics,
   WS_METHODS.serverGetProcessResourceHistory,

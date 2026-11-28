@@ -22,6 +22,8 @@ export const SEND_TO_USER_TOOL_NAME = "send_to_user";
 export const SEND_TO_USER_MAX_LENGTH = 4_000;
 
 const MAX_PARSED_BYTES = 16_384;
+// A full page has up to 20 summaries; JSON text envelopes may escape every header and preview.
+const MAX_GMAIL_PARSED_BYTES = 256 * 1024;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
 const MAX_THREADS = 100;
@@ -50,7 +52,9 @@ interface CompactToolOutput {
   messageId?: string;
   taskId?: string;
   scheduledTaskId?: string;
-  status?: "rolled_back";
+  status?: "rolled_back" | "read" | "displayed" | "declined" | "cancelled" | "timed_out";
+  count?: number;
+  messageCount?: number;
   htmlRender?: HtmlRenderReference;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
@@ -147,7 +151,52 @@ function readEntries<T>(
   return entries;
 }
 
-export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
+type PrivateListTool = "gmail_list_recent" | "list_connected_items";
+type PrivateListActivity =
+  | { isError: true }
+  | { status: "displayed"; count: number }
+  | { status: "read" | "displayed"; messageCount: number }
+  | { status: "declined" | "cancelled" | "timed_out" };
+
+/** Never retain account names, returned items, denial text, or credentials in tool activity. */
+export function compactPrivateListOutput(
+  value: unknown,
+  tool: PrivateListTool,
+): PrivateListActivity | undefined {
+  const gmail = tool === "gmail_list_recent";
+  const budget: ResultReadBudget = {
+    remainingBytes: gmail ? MAX_GMAIL_PARSED_BYTES : MAX_METADATA_BYTES,
+    remainingNodes: MAX_ENVELOPE_NODES,
+    exceeded: false,
+  };
+  const { data, failed } = readResult(value, budget);
+  if (failed) return { isError: true };
+  if (budget.exceeded || !data) return undefined;
+  const { status } = data;
+  if (status === "declined" || status === "cancelled" || status === "timed_out") return { status };
+  if (status !== "displayed" && !(gmail && status === "read")) return undefined;
+  // Older Gmail records used messageCount, or contained messages prior to private display.
+  const count =
+    status === "displayed"
+      ? (data.count ?? (gmail ? data.messageCount : undefined))
+      : Array.isArray(data.messages)
+        ? data.messages.length
+        : data.messages === undefined
+          ? data.messageCount
+          : undefined;
+  if (typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 20)
+    return undefined;
+  return status === "read" || gmail ? { status, messageCount: count } : { status, count };
+}
+
+export function compactDynamicToolOutput(
+  value: unknown,
+  toolName?: string | null,
+): CompactToolOutput | undefined {
+  const tool = toolName && resolveT3McpToolId(toolName);
+  if (tool === "gmail_list_recent" || tool === "list_connected_items") {
+    return compactPrivateListOutput(value, tool);
+  }
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
@@ -299,6 +348,8 @@ export function compactT3McpToolOutput(
 ): Record<string, unknown> | undefined {
   const resolved = resolveT3McpToolId(toolName);
   if (resolved === null) return undefined;
+  if (resolved === "gmail_list_recent" || resolved === "list_connected_items")
+    return compactPrivateListOutput(value, resolved);
   const compact = compactDynamicToolOutput(value);
   if (resolved === "preview_recording_stop" && !compact?.isError) {
     const recordingId = previewRecordingIdFromToolItem({ toolName: resolved, output: value });

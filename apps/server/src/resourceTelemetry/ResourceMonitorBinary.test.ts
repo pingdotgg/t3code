@@ -31,7 +31,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcess.Platform, "freebsd"),
         Effect.provideService(HostProcess.Architecture, "ia32"),
         Effect.provideService(HostProcess.Environment, {
-          T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
+          HYAKKI_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
 
@@ -55,7 +55,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcess.Architecture, "x64"),
         Effect.provideService(HostProcess.LinuxLibc, "gnu"),
         Effect.provideService(HostProcess.Environment, {
-          T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
+          HYAKKI_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
       const error = yield* Effect.flip(service.resolve);
@@ -78,7 +78,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(HostProcess.Architecture, "arm64"),
         Effect.provideService(HostProcess.Environment, {
-          T3CODE_RESOURCE_MONITOR_PATH: baseDir,
+          HYAKKI_RESOURCE_MONITOR_PATH: baseDir,
         }),
       );
       const error = yield* Effect.flip(service.resolve);

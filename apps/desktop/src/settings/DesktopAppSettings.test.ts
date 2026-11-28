@@ -57,7 +57,7 @@ function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
       Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
-        DesktopConfig.layerTest({ T3CODE_HOME: baseDir }),
+        DesktopConfig.layerTest({ HYAKKI_HOME: baseDir }),
       ),
     ),
   );

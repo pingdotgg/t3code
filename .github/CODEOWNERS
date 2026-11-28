@@ -8,7 +8,7 @@
 /apps/server/src/policy/ @neur0map
 /apps/server/src/serverSettings.ts @neur0map
 /apps/server/src/ws.ts @neur0map
-/apps/server/src/mcp/OrchestratorMcpService.ts @neur0map
+/apps/server/src/mcp/ @neur0map
 /apps/desktop/src/electron/ElectronSafeStorage.ts @neur0map
 /apps/desktop/src/settings/DesktopSavedEnvironments.ts @neur0map
 /apps/desktop/src/app/DesktopConnectionCatalogStore.ts @neur0map

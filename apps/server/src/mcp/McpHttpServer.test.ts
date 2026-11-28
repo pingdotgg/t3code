@@ -17,6 +17,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  VAULT_TOKEN_SERVICES,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +46,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
@@ -62,10 +67,12 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
 import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
 import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
+import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -606,6 +613,79 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
       );
     expect(click.message).toContain("Tool 'preview_act' not found");
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "routes private list tools only from Hyakki threads and rejects extra destinations",
+  () => {
+    const fixtures = [
+      { name: "gmail_list_recent", input: { vaultTitle: "Acme Mail", folder: "spam", limit: 3 } },
+      {
+        name: "list_connected_items",
+        input: { vaultTitle: "Acme Team", service: "gitlab", limit: 2 },
+      },
+      {
+        name: "list_connected_items",
+        input: { vaultTitle: "Acme forms", service: "typeform", limit: 3 },
+      },
+    ] as const;
+    const calls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      for (const { name, input } of fixtures) {
+        calls.length = 0;
+        const denied = yield* server.callTool({ name, arguments: input }).pipe(
+          Effect.flip,
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...invocation,
+            thread: undefined,
+            requestNamespace: "client:test",
+            client: { sessionId: "test", label: "Outside", access: "full-access" },
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+        expect(denied.message).toContain(`Tool '${name}' not found`);
+        const unexpected = yield* callTool(name, {
+          ...input,
+          url: "https://example.test",
+        }).pipe(Effect.flip);
+        expect(unexpected.message).toContain('Unknown argument "url"');
+        expect(calls).toEqual([]);
+
+        const result = yield* callTool(name, input);
+        expect(calls).toEqual([[threadId, input]]);
+        expect(result.structuredContent).toEqual({ status: "displayed", count: 1 });
+      }
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.toolkitRegistration(OrchestratorToolkit, OrchestratorHandlers.layer).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(
+            Layer.mergeAll(
+              McpToolAccessTestkit.liveThreadsLayer,
+              Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+                gmailListRecent: (scope, args) =>
+                  Effect.sync(() => {
+                    calls.push([scope.thread?.threadId, args]);
+                    return { status: "displayed" as const, count: 1 };
+                  }),
+                listConnectedItems: (scope, args) =>
+                  Effect.sync(() => {
+                    calls.push([scope.thread?.threadId, args]);
+                    return { status: "displayed" as const, count: 1 };
+                  }),
+              }),
+              Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
+              Layer.mock(PeerForwarding.PeerForwarding)({}),
+              Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+              Layer.mock(PeerLinks.PeerLinks)({}),
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            ),
+          ),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("advertises the compact input schema for every registered tool", () =>
@@ -1872,7 +1952,7 @@ it.effect("offers agent feedback tools only while the setting is on, to every cl
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
-      // Any OAuth client can register under the label `t3 feedback` signs in with.
+      // Any OAuth client can register under the label `hyakki feedback` signs in with.
       const cliScope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         requestNamespace: "cliToken",
@@ -1971,7 +2051,7 @@ it.effect("offers agent feedback tools only while the setting is on, to every cl
       expect(yield* found).toEqual([]);
       for (const token of ["agentToken", "cliToken"]) {
         expect(yield* listed(token)).toEqual([]);
-        // `t3 feedback` turns exactly this answer into the Labs message.
+        // `hyakki feedback` turns exactly this answer into the Labs message.
         expect(yield* report(token)).toMatchObject({
           error: { code: -32602, message: "Tool 't3_feedback' not found" },
         });
@@ -2272,7 +2352,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
       ]);
-      const tool = (name: string, description: string) =>
+      const tool = <Name extends string>(name: Name, description: string) =>
         Tool.make(name, {
           description,
           success: Schema.Struct({}),
@@ -2283,6 +2363,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        OrchestratorToolkit.tools.gmail_list_recent,
+        OrchestratorToolkit.tools.list_connected_items,
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2293,6 +2375,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              gmail_list_recent: McpToolAccess.actsAsCaller(() =>
+                Effect.succeed({ status: "declined" as const }),
+              ),
+              list_connected_items: McpToolAccess.actsAsCaller(() =>
+                Effect.succeed({ status: "declined" as const }),
+              ),
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2300,6 +2388,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2366,7 +2455,14 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const deferring = yield* session("deferringToken", true);
       const other = yield* session("otherToken", false);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      const allTools = [
+        "delegate_task",
+        "gmail_list_recent",
+        "list_connected_items",
+        "preview_open",
+        "schedule_task",
+      ];
+      expect(yield* other.listed).toEqual(allTools);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
@@ -2374,7 +2470,31 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect((yield* deferring.call("tool_search", { query: "spam" })).structuredContent).toEqual({
+        tools: [
+          {
+            name: "gmail_list_recent",
+            description: OrchestratorToolkit.tools.gmail_list_recent.description,
+          },
+        ],
+      });
+      expect(yield* deferring.listed).toEqual([
+        "delegate_task",
+        "gmail_list_recent",
+        "preview_open",
+        "tool_search",
+      ]);
+      for (const query of VAULT_TOKEN_SERVICES) {
+        expect((yield* deferring.call("tool_search", { query })).structuredContent).toEqual({
+          tools: [
+            {
+              name: "list_connected_items",
+              description: OrchestratorToolkit.tools.list_connected_items.description,
+            },
+          ],
+        });
+      }
+      expect(yield* other.listed).toEqual(allTools);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

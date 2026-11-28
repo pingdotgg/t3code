@@ -1,6 +1,6 @@
 # Install Hyakki
 
-Hyakki runs coding agents on your computer (or server) and lets you control them from the desktop app, web app, or mobile app. Install Hyakki on the machine where your agents will run first.
+Hyakki runs coding agents on your computer or server and lets you control them from the desktop app or a web browser. Install Hyakki on the machine where your agents will run first.
 
 ## Requirements
 
@@ -8,7 +8,7 @@ You need at least one installed, authenticated coding agent (provider) before st
 
 ## Command line
 
-Install the `t3` command to `~/.local/bin`:
+The desktop build bundles the `hyakki` command. The standalone installers below require a Hyakki release archive or a configured Hyakki release mirror. Until public archives are available, use a desktop build or build the CLI from source.
 
 ```bash
 # macOS / Linux
@@ -20,50 +20,46 @@ curl -fsSL https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/insta
 irm https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/install.ps1 | iex
 ```
 
-Set `T3CODE_CHANNEL=nightly` for nightly builds or `T3CODE_VERSION=<ver>` to pin a version. To try once without installing, run `npx t3@latest` (requires Node.js; always runs the latest stable release).
+Set `HYAKKI_CHANNEL=nightly` for nightly builds or `HYAKKI_VERSION=<ver>` to pin a version.
 
-| Task                          | Command                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| Start server and open web app | `t3` (or `t3 ./my-project`)                                             |
-| Start server without browser  | `t3 serve`                                                              |
-| Set up remote access          | `t3 up` ([Remote access](./remote-access.md))                           |
-| Run in the background         | `t3 service install` ([Background service](./background-service.md))    |
-| Update                        | `t3 update`                                                             |
-| Reclaim database space        | `t3 doctor` ([Details](./background-service.md#reclaim-database-space)) |
-| Uninstall                     | `t3 uninstall`                                                          |
+| Task                          | Command                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| Start server and open web app | `hyakki` (or `hyakki ./my-project`)                                         |
+| Start server without browser  | `hyakki serve`                                                              |
+| Set up remote access          | `hyakki up` ([Remote access](./remote-access.md))                           |
+| Run in the background         | `hyakki service install` ([Background service](./background-service.md))    |
+| Update                        | `hyakki update`                                                             |
+| Reclaim database space        | `hyakki doctor` ([Details](./background-service.md#reclaim-database-space)) |
+| Uninstall                     | `hyakki uninstall`                                                          |
 
-If `t3` reports a server is already running, connect with `t3 pair` or pass a separate `--base-dir`. Run `t3 --help` for all commands.
+If `hyakki` reports a server is already running, connect with `hyakki pair` or pass a separate `--base-dir`. Run `hyakki --help` for all commands.
 
 ### Intel Macs
 
-There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):
+There is no standalone `hyakki` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/Ryoku-dev/hyakki
-cd t3code && vp i && vp run build:desktop
+cd hyakki && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
 ## Desktop app
 
-Download from [GitHub Releases](https://github.com/Ryoku-dev/hyakki/releases) or install via a package manager:
+Use a Hyakki artifact from [GitHub Releases](https://github.com/Ryoku-dev/hyakki/releases) when available, or follow the [build instructions](../operations/03_release.md). Packages named `t3code` install upstream T3 Code, not Hyakki.
 
-| Platform                | Command                                                        |
-| ----------------------- | -------------------------------------------------------------- |
-| macOS                   | `brew install --cask t3-code`                                  |
-| Windows                 | `winget install Ryoku.Hyakki` or `scoop install extras/t3code` |
-| Debian / Ubuntu         | `sudo apt install ./Hyakki-*.deb`                              |
-| Arch Linux              | `yay -S t3code-bin` (or `yay -S t3code-nightly-bin`)           |
-| Nix (flakes, Nix 2.30+) | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`   |
+- **Linux AppImage**: `chmod +x ./Hyakki-*.AppImage && ./Hyakki-*.AppImage`.
+- **Debian / Ubuntu**: `sudo apt install ./Hyakki-*.deb`.
 
-- **Linux AppImage**: `chmod +x ./Hyakki-*.AppImage && ./Hyakki-*.AppImage` (x86_64 and ARM64). `.deb` self-updates with a password prompt; update AUR packages via your AUR helper (`yay -Syu`).
-- **NixOS / Home Manager**: Add `pkgs.t3code` to `environment.systemPackages` or `home.packages` (`t3code-desktop` launches the app; `t3` is included). Update via Nix rather than the in-app updater.
+### Moving an existing Hyakki home
 
-### The `t3` command
+New installs use `~/.hyakki`. If you already used Hyakki with `~/.t3`, you can keep that location by setting `HYAKKI_HOME` or passing `--base-dir` to the server. To move it on Linux or macOS, first quit Hyakki, T3 Code, and any Hyakki background server. From the Hyakki checkout run `sh scripts/migrate-hyakki-home.sh --confirm-legacy-is-hyakki`, but only if the old directory belongs to Hyakki. The script backs up the directory and keeps a `~/.t3` compatibility link so existing worktree paths still resolve. Do not run upstream T3 Code against that link; configure a different home for it. Existing Electron profiles are kept in place.
 
-The desktop app bundles `t3` and sets it up on first launch (manage anytime under **Settings → About → t3 command**). Use **Add to PATH** if needed, then open a new terminal.
+### The `hyakki` command
 
-- **Open a folder in the running desktop app**: Run `t3 app` (or `t3 app ../my-project`) from a terminal, or drag folders from your file manager onto the desktop sidebar.
+The desktop app bundles `hyakki` and sets it up on first launch (manage anytime under **Settings → About → hyakki command**). Use **Add to PATH** if needed, then open a new terminal.
+
+- **Open a folder in the running desktop app**: Run `hyakki app` (or `hyakki app ../my-project`) from a terminal, or drag folders from your file manager onto the desktop sidebar.
 
 ### Windows Subsystem for Linux
 
@@ -71,10 +67,7 @@ Select a WSL distro in **Settings → Sharing & access** to run agents and proje
 
 ## Mobile app
 
-Install from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=dev.ryoku.hyakki) (QR codes are also in **Settings → About → Mobile app**). The mobile app connects to a server on another machine via [remote access](./remote-access.md).
-
-- Store builds work with both Stable and Nightly servers. Optional Android beta APKs are under [Android beta releases](https://github.com/Ryoku-dev/hyakki/releases?q=android-beta-).
-- If the mobile app crashes on launch, open **Settings → Diagnostics** on the next launch to copy recent startup crash reports.
+Hyakki does not currently ship a mobile app. Use the web app in your phone's browser over [direct remote access](./remote-access.md).
 
 ## Providers
 
@@ -103,22 +96,22 @@ Open **Settings → Providers** (web or desktop), select the environment, and en
 If a working CLI times out during Hyakki's readiness check, increase its probe deadline (in milliseconds) in the server's environment (or systemd override / `service.env`) and restart:
 
 ```bash
-T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
+HYAKKI_CODEX_PROBE_TIMEOUT_MS=60000 HYAKKI_CLAUDE_PROBE_TIMEOUT_MS=60000 hyakki serve
 ```
 
 | Provider     | Environment variable                   |
 | ------------ | -------------------------------------- |
-| Codex        | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
-| Claude       | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
-| Cursor       | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
-| Antigravity  | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
-| Grok         | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
-| Kiro         | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
-| fx           | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
-| Pi           | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
-| Muse Code    | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
-| OpenCode     | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
-| ACP Registry | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
+| Codex        | `HYAKKI_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude       | `HYAKKI_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor       | `HYAKKI_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity  | `HYAKKI_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok         | `HYAKKI_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro         | `HYAKKI_KIRO_PROBE_TIMEOUT_MS`         |
+| fx           | `HYAKKI_FX_PROBE_TIMEOUT_MS`           |
+| Pi           | `HYAKKI_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code    | `HYAKKI_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode     | `HYAKKI_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry | `HYAKKI_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
 
 ## Next steps
 

@@ -13,7 +13,7 @@ try {
       process.platform === "linux"
         ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache")
         : NodeOS.tmpdir();
-    const directory = NodePath.join(cacheRoot, "t3code", "compile-cache");
+    const directory = NodePath.join(cacheRoot, "hyakki", "compile-cache");
     const prepared =
       process.env.ELECTRON_RUN_AS_NODE === "1" &&
       enablePreparedServerCache(process.argv[1] ?? "", directory);

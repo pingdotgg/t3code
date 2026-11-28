@@ -5,6 +5,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -17,6 +18,25 @@ import {
 } from "./secretRequest.ts";
 
 describe("secretRequestDisplay", () => {
+  it("distinguishes approving a Gmail read from saving a secret or displaying its result", () => {
+    expect(
+      secretRequestDisplay(
+        {
+          secretStatus: "saved",
+          taggedVault: { name: "mail", gmail: { folder: "spam", limit: 5 } },
+        },
+        "local",
+      ),
+    ).toMatchObject({ label: "Gmail read approved" });
+  });
+  it("does not reopen a retired mailbox request as a credential form", () => {
+    expect(
+      secretRequestDisplay(
+        { id: TurnItemId.make("turn-item:vault-access:retired"), secretStatus: "pending" },
+        "local",
+      ),
+    ).toMatchObject({ kind: "answered", outcome: "ended" });
+  });
   it("never offers the form for a request inherited from another thread", () => {
     expect(secretRequestDisplay({ secretStatus: "pending" }, "inherited")).toEqual({
       kind: "pending-elsewhere",
@@ -65,6 +85,89 @@ describe("secretRequestAnswerInput", () => {
     // An unset field named like an Object.prototype member is empty, not that member.
     const named = { ...single, fields: [{ name: "constructor", label: "Key" }] } as const;
     expect(secretRequestAnswerInput(named as never, { type: "save", values: {} })).toBe(null);
+  });
+
+  it("approves a tagged Gmail read with only the vault PIN and no field mapping", () => {
+    const gmail = {
+      id: TurnItemId.make("item"),
+      threadId: ThreadId.make("thread"),
+      label: "Read Gmail",
+      taggedVault: { name: "mail", gmail: { folder: "spam", limit: 3 } },
+    } as const;
+    const pin = Redacted.make("123456");
+    expect(secretRequestAnswerInput(gmail, { type: "vault", pin })).toBeNull();
+    const privateAnswer = {
+      type: "vault_display",
+      pin,
+      account: "work@example.test",
+    } as const;
+    expect(secretRequestAnswerInput(gmail, privateAnswer)).toEqual({
+      ...ids,
+      answer: { type: "vault_gmail_display", name: "mail", account: privateAnswer.account, pin },
+    });
+    expect(
+      secretRequestAnswerInput(
+        { ...gmail, taggedVault: { name: "mail", field: "token" } },
+        privateAnswer,
+      ),
+    ).toBeNull();
+    expect(
+      secretRequestAnswerInput({ ...gmail, delivery: "file" }, { type: "vault", pin }),
+    ).toBeNull();
+    expect(secretRequestAnswerInput(gmail, { type: "save", values: { "": "typed" } })).toBeNull();
+    const [source] = secretRequestSources(
+      { secretRequestReferences: true },
+      {
+        [SecretProviderId.make("1password")]: {
+          kind: SecretProviderKind.make("one_password"),
+          label: "1Password",
+          config: { account: "my" },
+        },
+      },
+    );
+    if (!source) throw new Error("Missing test provider");
+    expect(
+      secretRequestAnswerInput(gmail, { type: "reference", source, reference: "op://v/i/f" }),
+    ).toBeNull();
+    expect(secretRequestAnswerInput(gmail, { type: "decline" })).toEqual({
+      ...ids,
+      answer: { type: "decline" },
+    });
+    expect(
+      secretRequestAnswerInput(
+        { ...gmail, taggedVault: { name: "mail", field: "token" } },
+        { type: "vault", pin },
+      ),
+    ).toEqual({ ...ids, answer: { type: "vault", name: "mail", fields: { value: "token" }, pin } });
+  });
+
+  it("binds a service read to a private display approval and never exports a field", () => {
+    const serviceRead = { service: "gitlab", limit: 4 } as const;
+    const taggedVault = { name: "work", serviceRead };
+    const request = {
+      ...single,
+      id: TurnItemId.make("item"),
+      threadId: ThreadId.make("thread"),
+      taggedVault,
+    };
+    const pin = Redacted.make("123456");
+    const approval = { type: "vault_display", pin, account: "work-account" } as const;
+    expect(secretRequestAnswerInput(request, approval)).toEqual({
+      ...ids,
+      answer: { type: "vault_service_display", name: "work", account: approval.account, pin },
+    });
+    expect(secretRequestAnswerInput(request, { type: "vault", pin })).toBeNull();
+    expect(secretRequestAnswerInput(request, { type: "save", values: { "": "token" } })).toBeNull();
+    expect(secretRequestAnswerInput({ ...request, delivery: "file" }, approval)).toBeNull();
+    expect(secretRequestAnswerInput(request, { ...approval, account: "" })).toBeNull();
+    expect(secretRequestAnswerInput(request, { type: "decline" })).toEqual({
+      ...ids,
+      answer: { type: "decline" },
+    });
+    expect(secretRequestDisplay({ taggedVault, secretStatus: "saved" }, "local")).toMatchObject({
+      label: "Private read approved",
+    });
+    expect(secretRequestPrivacyNote({ taggedVault })).toContain("item count, not the contents");
   });
 });
 

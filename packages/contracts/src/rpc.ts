@@ -1,3 +1,4 @@
+import { LocalVaultInput, LocalVaultResult } from "./localVault.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -460,7 +461,11 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
-import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
+import {
+  SecretRequestAnswerInput,
+  SecretRequestAnswerResult,
+  SecretRequestError,
+} from "./secretRequest.ts";
 import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
 import {
   ProjectCloneActionInput,
@@ -618,6 +623,8 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverCheckSecretSource: "server.checkSecretSource",
+  serverManageLocalVault: "server.manageLocalVault",
+  serverListLocalVault: "server.listLocalVault",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
   serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
@@ -1053,6 +1060,18 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerManageLocalVaultRpc = Rpc.make(WS_METHODS.serverManageLocalVault, {
+  payload: LocalVaultInput,
+  success: LocalVaultResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerListLocalVaultRpc = Rpc.make(WS_METHODS.serverListLocalVault, {
+  payload: Schema.Struct({}),
+  success: LocalVaultResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2451,6 +2470,7 @@ const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
 
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
+  success: SecretRequestAnswerResult,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
 });
 
@@ -2555,6 +2575,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksPairLinkRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
+  WsServerManageLocalVaultRpc,
+  WsServerListLocalVaultRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
   WsServerUninstallAcpRegistryManagedBinaryRpc,

@@ -73,7 +73,7 @@ it.layer(services, { excludeTestServices: true })("terminal startup deadlines", 
         });
         const manager = yield* makeWithOptions({
           logsDir: path.join(root, "logs"),
-          env: { T3CODE_TERMINAL_SHELL: configured, SHELL: fallback },
+          env: { HYAKKI_TERMINAL_SHELL: configured, SHELL: fallback },
           shellResolver: () => preferred,
           ptyAdapter: { spawn: () => Effect.sync(fakePtyProcess) },
         });
@@ -153,7 +153,7 @@ it.layer(services, { excludeTestServices: true })("terminal startup deadlines", 
         cwd,
         threadId: "thread",
         terminalId: DEFAULT_TERMINAL_ID,
-        ...(stalled === "lookup" ? { env: { T3CODE_TERMINAL_SHELL: "stalled-shell" } } : {}),
+        ...(stalled === "lookup" ? { env: { HYAKKI_TERMINAL_SHELL: "stalled-shell" } } : {}),
       };
       const opening = yield* manager.open(input).pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(waiting);

@@ -147,7 +147,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
 // Overrides detection, e.g. for staged demos on a VM that should read as a laptop.
 const machineKindOverride = Config.schema(
   EnvironmentMachineKind,
-  "T3CODE_ENVIRONMENT_MACHINE_KIND",
+  "HYAKKI_ENVIRONMENT_MACHINE_KIND",
 ).pipe(Config.option);
 
 export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnvironmentMachineKind")(

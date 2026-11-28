@@ -198,7 +198,7 @@ it.effect("serves only Bitbucket Cloud hosts unless an API base url is configure
 
     expect(yield* servedHosts({})).toEqual(["bitbucket.org", "altssh.bitbucket.org"]);
     expect(
-      yield* servedHosts({ T3CODE_BITBUCKET_API_BASE_URL: "https://bitbucket.example.com/api" }),
+      yield* servedHosts({ HYAKKI_BITBUCKET_API_BASE_URL: "https://bitbucket.example.com/api" }),
     ).toEqual(["bitbucket.org", "altssh.bitbucket.org", "bitbucket.example.com"]);
   }),
 );

@@ -779,7 +779,7 @@ describe("WebRTC device streams", () => {
   });
 
   it("streams an iOS simulator over WebRTC instead of MJPEG when WebCodecs is missing", async () => {
-    // T3 Code's own device hub reports "http" and still answers WebRTC offers.
+    // Hyakki's own device hub reports "http" and still answers WebRTC offers.
     const iceServers = [{ urls: "turn:turn.test:3478", username: "u", credential: "c" }];
     const { client, events, fetch, peers, videos, present, image } = setup("ios", {
       transport: "http",

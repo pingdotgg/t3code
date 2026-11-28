@@ -268,7 +268,7 @@ const signalCommand = Command.make("signal", {
         });
       }
       // An agent answers through this command, so its answer is named after its thread.
-      const callingThread = (yield* HostProcess.Environment).T3CODE_THREAD_ID?.trim();
+      const callingThread = (yield* HostProcess.Environment).HYAKKI_THREAD_ID?.trim();
       const threadTitle =
         callingThread === undefined || callingThread === ""
           ? undefined

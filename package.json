@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "vault:enable": "node scripts/enable-local-vault.mjs",
     "prepare": "vp config --no-agent",
     "dev": "node scripts/dev-runner.ts dev",
     "profile:startup": "node scripts/profile-startup.mjs",

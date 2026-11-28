@@ -1662,6 +1662,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         },
       ],
       contextTransfers: [],
+      messages: [],
       subagents,
     }) as unknown as OrchestrationV2ThreadProjection;
 
@@ -5593,6 +5594,25 @@ describe("OrchestratorMcpService thread lookup", () => {
       assert.isUndefined(fromLink?.senderThreadId);
       assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
     }),
+  );
+
+  it.effect(
+    "refuses Gmail reads from an outside client before looking up a tag or opening a card",
+    () =>
+      Effect.gen(function* () {
+        const sent = yield* Ref.make(0);
+        const error = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) => mcp.gmailListRecent(client, { vaultTitle: "gmail" })),
+          Effect.flip,
+          Effect.provide(
+            service([], sent, {
+              getThreadRecords: () => Effect.die("Outside clients must not look up Gmail tags"),
+              dispatch: () => Effect.die("Outside clients must not open Gmail cards"),
+            }),
+          ),
+        );
+        assert.equal(error.code, "capability_denied");
+      }),
   );
 
   it.effect("refuses waiting without orchestration capability before reading the target", () =>

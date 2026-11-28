@@ -34,8 +34,8 @@ const layerEnvironment = (input: {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          T3CODE_HOME: input.baseDir,
-          T3CODE_MODE: "desktop",
+          HYAKKI_HOME: input.baseDir,
+          HYAKKI_MODE: "desktop",
         }),
       ),
     ),

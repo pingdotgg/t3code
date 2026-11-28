@@ -173,7 +173,7 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
   }
 }
 
-const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
+const envT3Home = Config.String("HYAKKI_HOME").pipe(Config.option);
 const DEV_STATE_PLACEHOLDER_URL = new URL("http://localhost");
 
 const hasLiveServer = (statePath: string) =>
@@ -190,7 +190,7 @@ const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<st
     baseDirIsExplicit: Option.isSome(configuredBaseDir),
   });
   // A dev server with an implicit home keeps its state in `dev`; follow it unless a
-  // `userdata` server is running too, the same order `t3 pair` checks.
+  // `userdata` server is running too, the same order `hyakki pair` checks.
   let derivedPaths = userdataPaths;
   if (
     Option.isNone(configuredBaseDir) &&

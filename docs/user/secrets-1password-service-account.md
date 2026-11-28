@@ -6,7 +6,7 @@ Use a 1Password service account so a headless, VM, or [background-service](./bac
 
 1. In 1Password (**Developer → Service Accounts**), create a service account with read access **only** to the vaults Hyakki needs (cannot access Personal/Private/Employee vaults). Copy the one-time token.
 2. Install the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on the Hyakki server machine.
-3. Set `OP_SERVICE_ACCOUNT_TOKEN` in the server's environment (for a background service, add it to [`service.env`](./background-service.md#configure-the-service-environment) and run `t3 service restart`). Do not set `OP_CONNECT_HOST` / `OP_CONNECT_TOKEN` in the same environment.
+3. Set `OP_SERVICE_ACCOUNT_TOKEN` in the server's environment (for a background service, add it to [`service.env`](./background-service.md#configure-the-service-environment) and run `hyakki service restart`). Do not set `OP_CONNECT_HOST` / `OP_CONNECT_TOKEN` in the same environment.
 4. In **Settings → Secrets → Add provider**, enter any sign-in address (e.g. `my.1password.com`; `op` ignores it while the token is set), then use `op://vault/item/field` references.
 
 ## Verify

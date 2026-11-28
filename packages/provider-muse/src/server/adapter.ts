@@ -43,6 +43,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { HYAKKI_CREDENTIAL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
   MuseApproval,
@@ -2210,13 +2211,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 input: [
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({
-                      agentFeedback: hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                      runtimePolicy: turnInput.runtimePolicy,
-                    }),
+                    text:
+                      buildRuntimeInstructions({
+                        agentFeedback: hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
+                        harness: "Muse Code",
+                        model: session.model ?? undefined,
+                        reasoningEffort: effort,
+                        runtimePolicy: turnInput.runtimePolicy,
+                      }) + `\n\n${HYAKKI_CREDENTIAL_INSTRUCTIONS}`,
                   },
                   ...parts,
                 ],

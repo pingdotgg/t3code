@@ -38,63 +38,63 @@ export function loadRepoEnv({
     ...baseEnv,
     ...(config.clerkPublishableKey
       ? {
-          T3CODE_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
+          HYAKKI_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
           VITE_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
           EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
         }
       : {}),
     ...(config.clerkJwtTemplate
       ? {
-          T3CODE_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
+          HYAKKI_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
           VITE_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
           EXPO_PUBLIC_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
         }
       : {}),
     ...(config.clerkCliOAuthClientId
       ? {
-          T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: config.clerkCliOAuthClientId,
+          HYAKKI_CLERK_CLI_OAUTH_CLIENT_ID: config.clerkCliOAuthClientId,
           VITE_CLERK_CLI_OAUTH_CLIENT_ID: config.clerkCliOAuthClientId,
         }
       : {}),
     ...(config.relayUrl
       ? {
-          T3CODE_RELAY_URL: config.relayUrl,
-          VITE_T3CODE_RELAY_URL: config.relayUrl,
+          HYAKKI_RELAY_URL: config.relayUrl,
+          VITE_HYAKKI_RELAY_URL: config.relayUrl,
         }
       : {}),
     ...(config.mobileOtlpTracesUrl
       ? {
-          T3CODE_MOBILE_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
+          HYAKKI_MOBILE_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
           EXPO_PUBLIC_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
         }
       : {}),
     ...(config.mobileOtlpTracesDataset
       ? {
-          T3CODE_MOBILE_OTLP_TRACES_DATASET: config.mobileOtlpTracesDataset,
+          HYAKKI_MOBILE_OTLP_TRACES_DATASET: config.mobileOtlpTracesDataset,
           EXPO_PUBLIC_OTLP_TRACES_DATASET: config.mobileOtlpTracesDataset,
         }
       : {}),
     ...(config.mobileOtlpTracesToken
       ? {
-          T3CODE_MOBILE_OTLP_TRACES_TOKEN: config.mobileOtlpTracesToken,
+          HYAKKI_MOBILE_OTLP_TRACES_TOKEN: config.mobileOtlpTracesToken,
           EXPO_PUBLIC_OTLP_TRACES_TOKEN: config.mobileOtlpTracesToken,
         }
       : {}),
     ...(config.relayClientOtlpTracesUrl
       ? {
-          T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: config.relayClientOtlpTracesUrl,
+          HYAKKI_RELAY_CLIENT_OTLP_TRACES_URL: config.relayClientOtlpTracesUrl,
           VITE_RELAY_OTLP_TRACES_URL: config.relayClientOtlpTracesUrl,
         }
       : {}),
     ...(config.relayClientOtlpTracesDataset
       ? {
-          T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.relayClientOtlpTracesDataset,
+          HYAKKI_RELAY_CLIENT_OTLP_TRACES_DATASET: config.relayClientOtlpTracesDataset,
           VITE_RELAY_OTLP_TRACES_DATASET: config.relayClientOtlpTracesDataset,
         }
       : {}),
     ...(config.relayClientOtlpTracesToken
       ? {
-          T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.relayClientOtlpTracesToken,
+          HYAKKI_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.relayClientOtlpTracesToken,
           VITE_RELAY_OTLP_TRACES_TOKEN: config.relayClientOtlpTracesToken,
         }
       : {}),
@@ -105,50 +105,50 @@ function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicCo
   return {
     clerkPublishableKey: firstNonEmpty(
       sources,
-      "T3CODE_CLERK_PUBLISHABLE_KEY",
+      "HYAKKI_CLERK_PUBLISHABLE_KEY",
       "VITE_CLERK_PUBLISHABLE_KEY",
       "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
     ),
     clerkJwtTemplate: firstNonEmpty(
       sources,
-      "T3CODE_CLERK_JWT_TEMPLATE",
+      "HYAKKI_CLERK_JWT_TEMPLATE",
       "VITE_CLERK_JWT_TEMPLATE",
       "EXPO_PUBLIC_CLERK_JWT_TEMPLATE",
     ),
     clerkCliOAuthClientId: firstNonEmpty(
       sources,
-      "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+      "HYAKKI_CLERK_CLI_OAUTH_CLIENT_ID",
       "VITE_CLERK_CLI_OAUTH_CLIENT_ID",
     ),
-    relayUrl: firstNonEmpty(sources, "T3CODE_RELAY_URL", "VITE_T3CODE_RELAY_URL"),
+    relayUrl: firstNonEmpty(sources, "HYAKKI_RELAY_URL", "VITE_HYAKKI_RELAY_URL"),
     mobileOtlpTracesUrl: firstNonEmpty(
       sources,
-      "T3CODE_MOBILE_OTLP_TRACES_URL",
+      "HYAKKI_MOBILE_OTLP_TRACES_URL",
       "EXPO_PUBLIC_OTLP_TRACES_URL",
     ),
     mobileOtlpTracesDataset: firstNonEmpty(
       sources,
-      "T3CODE_MOBILE_OTLP_TRACES_DATASET",
+      "HYAKKI_MOBILE_OTLP_TRACES_DATASET",
       "EXPO_PUBLIC_OTLP_TRACES_DATASET",
     ),
     mobileOtlpTracesToken: firstNonEmpty(
       sources,
-      "T3CODE_MOBILE_OTLP_TRACES_TOKEN",
+      "HYAKKI_MOBILE_OTLP_TRACES_TOKEN",
       "EXPO_PUBLIC_OTLP_TRACES_TOKEN",
     ),
     relayClientOtlpTracesUrl: firstNonEmpty(
       sources,
-      "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL",
+      "HYAKKI_RELAY_CLIENT_OTLP_TRACES_URL",
       "VITE_RELAY_OTLP_TRACES_URL",
     ),
     relayClientOtlpTracesDataset: firstNonEmpty(
       sources,
-      "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET",
+      "HYAKKI_RELAY_CLIENT_OTLP_TRACES_DATASET",
       "VITE_RELAY_OTLP_TRACES_DATASET",
     ),
     relayClientOtlpTracesToken: firstNonEmpty(
       sources,
-      "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN",
+      "HYAKKI_RELAY_CLIENT_OTLP_TRACES_TOKEN",
       "VITE_RELAY_OTLP_TRACES_TOKEN",
     ),
   };

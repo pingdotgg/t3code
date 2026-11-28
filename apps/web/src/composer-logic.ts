@@ -136,20 +136,7 @@ export function expandCollapsedComposerCursor(
   let expandedCursor = 0;
 
   for (const segment of segments) {
-    if (
-      segment.type === "mention" ||
-      segment.type === "citation" ||
-      segment.type === "context-reference"
-    ) {
-      const expandedLength = segment.source.length;
-      if (remaining <= 1) {
-        return expandedCursor + (remaining === 0 ? 0 : expandedLength);
-      }
-      remaining -= 1;
-      expandedCursor += expandedLength;
-      continue;
-    }
-    if (segment.type === "skill" || segment.type === "model") {
+    if (segment.type !== "text") {
       const expandedLength = segment.source.length;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
@@ -219,23 +206,7 @@ export function collapseExpandedComposerCursor(
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (
-      segment.type === "mention" ||
-      segment.type === "citation" ||
-      segment.type === "context-reference"
-    ) {
-      const expandedLength = segment.source.length;
-      if (remaining === 0) {
-        return collapsedCursor;
-      }
-      if (remaining <= expandedLength) {
-        return collapsedCursor + 1;
-      }
-      remaining -= expandedLength;
-      collapsedCursor += 1;
-      continue;
-    }
-    if (segment.type === "skill" || segment.type === "model") {
+    if (segment.type !== "text") {
       const expandedLength = segment.source.length;
       if (remaining === 0) {
         return collapsedCursor;

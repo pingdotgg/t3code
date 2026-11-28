@@ -71,7 +71,7 @@ export interface RunFilter {
   readonly keyPrefix?: string | undefined;
   readonly kind?: string | undefined;
   readonly tag?: string | undefined;
-  /** A subject's kind and key, or a web address matched as `t3 workflow list --subject` does. */
+  /** A subject's kind and key, or a web address matched as `hyakki workflow list --subject` does. */
   readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
 }
 

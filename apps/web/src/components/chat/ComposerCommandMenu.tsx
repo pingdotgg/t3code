@@ -18,6 +18,7 @@ import {
 import {
   BlocksIcon,
   FolderIcon,
+  LockKeyholeIcon,
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
@@ -39,6 +40,7 @@ import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
+  | { id: string; type: "vault-credential"; label: string; description: string }
   | {
       id: string;
       type: "path";
@@ -262,6 +264,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : null}
+      {props.item.type === "vault-credential" ? (
+        <LockKeyholeIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />

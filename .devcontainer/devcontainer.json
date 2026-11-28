@@ -23,7 +23,7 @@
   "containerEnv": {
     // Keep all runtime state inside the (gitignored) workspace .t3, matching
     // the worktree default. An explicit --home-dir still wins.
-    "T3CODE_HOME": "${containerWorkspaceFolder}/.t3"
+    "HYAKKI_HOME": "${containerWorkspaceFolder}/.t3"
   },
   "mounts": [
     // vp keeps the pnpm content-addressable store and metadata cache under

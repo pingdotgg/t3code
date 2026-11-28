@@ -47,7 +47,7 @@ export const PeerLinkCreateInput = Schema.Struct({
   url: TrimmedNonEmptyString,
   /** More addresses for the same peer, tried after `url`. */
   alternateUrls: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
-  /** A pairing code from the peer (`t3 pair` there, or its Connections settings). */
+  /** A pairing code from the peer (`hyakki pair` there, or its Connections settings). */
   pairingCode: TrimmedNonEmptyString,
   access: AuthMcpClientAccess,
   /**

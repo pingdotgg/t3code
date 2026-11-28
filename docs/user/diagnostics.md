@@ -23,7 +23,7 @@ Open **Settings → Maintenance → Diagnostics** (select an environment) to ins
 
 On mobile, startup crashes from the last 7 days are recorded under **Settings → Diagnostics** for bug reports.
 
-## Inspect local trace files (`t3 trace`)
+## Inspect local trace files (`hyakki trace`)
 
 Summarize latency, rates, interrupts, and failures from the server's rotated trace files directly from the host terminal:
 
@@ -33,4 +33,4 @@ t3 trace summary --since 30m        # Spans ended in the last 30 minutes
 t3 trace summary --since 2h --limit 50
 ```
 
-Pass `--base-dir <path>` (or set `T3CODE_HOME`) for a non-default data directory.
+Pass `--base-dir <path>` (or set `HYAKKI_HOME`) for a non-default data directory.

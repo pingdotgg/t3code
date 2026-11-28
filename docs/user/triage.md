@@ -11,10 +11,10 @@ Open the command palette (`Cmd/Ctrl+K`) and run **Triage an issue**. A no-projec
 If the app won't start or in-app triage fails, run:
 
 ```sh
-npx t3 triage
+hyakki triage
 # Or choose a specific CLI agent and model:
-npx t3 triage --agent codex --model <model-id>
-npx t3 triage --agent antigravity
+hyakki triage --agent codex --model <model-id>
+hyakki triage --agent antigravity
 ```
 
 Supports Claude Code, Codex, and standalone Antigravity (`agy` on `PATH` with its own sign-in; Hyakki's managed ACP runtime does not include the standalone terminal CLI).

@@ -225,18 +225,18 @@ export function mergePathEntries(
 }
 
 function envCaptureStart(name: string): string {
-  return `__T3CODE_ENV_${name}_START__`;
+  return `__HYAKKI_ENV_${name}_START__`;
 }
 
 function envCaptureEnd(name: string): string {
-  return `__T3CODE_ENV_${name}_END__`;
+  return `__HYAKKI_ENV_${name}_END__`;
 }
 
 const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
-const POSIX_CAPTURE_SYNTAX = { assignment: "__T3CODE_PRINTENV=$(", orElse: " || " };
+const POSIX_CAPTURE_SYNTAX = { assignment: "__HYAKKI_PRINTENV=$(", orElse: " || " };
 const PRINTENV_CAPTURE_SYNTAX = new Map(
   [...DEBUG_TRAP_SHELLS, "dash", "ash"].map((shell) => [shell, POSIX_CAPTURE_SYNTAX] as const),
-).set("fish", { assignment: "set -l __T3CODE_PRINTENV (", orElse: "; or " });
+).set("fish", { assignment: "set -l __HYAKKI_PRINTENV (", orElse: "; or " });
 // Network PATH entries must be probed inside the shell's deadline, away from the desktop thread.
 const PRINTENV_LOOKUP_COMMAND = `/bin/sh -c 'command -v printenv || { [ -n "$1" ] && PATH="$1" command -v printenv; } || printf %s /usr/bin/printenv' t3`;
 
@@ -287,7 +287,7 @@ export function buildEnvironmentCaptureCommand(
       return [
         `printf '%s\\n' '${envCaptureStart(name)}'`,
         supportsFallback
-          ? `printenv ${name}${orElse}"$__T3CODE_PRINTENV" ${name}${orElse}true`
+          ? `printenv ${name}${orElse}"$__HYAKKI_PRINTENV" ${name}${orElse}true`
           : `printenv ${name} || true`,
         `printf '%s\\n' '${envCaptureEnd(name)}'`,
       ].join("; ");
@@ -1333,7 +1333,7 @@ interface PathSetupInput {
 
 /**
  * The startup file (`~/...`, or absolute under `configHome`) and line that put `directory` last on
- * PATH for new zsh, bash, or fish terminals, so it never shadows another `t3`. Undefined on Windows (writing PATH there would flatten the registry's
+ * PATH for new zsh, bash, or fish terminals, so it never shadows another `hyakki`. Undefined on Windows (writing PATH there would flatten the registry's
  * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
  */
 export function pathSetup(

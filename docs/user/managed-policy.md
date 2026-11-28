@@ -5,10 +5,10 @@ A managed policy lets an administrator set defaults, lock settings, and restrict
 ## Roll out a policy
 
 1. Author a JSON policy (see [Write a policy](#write-a-policy)). Do **not** include secrets—all local users can read the policy.
-2. Validate it: `t3 policy check policy.json`.
+2. Validate it: `hyakki policy check policy.json`.
 3. Deploy via MDM/GPO or a file to [one supported location](#where-the-policy-goes).
 4. Restart Hyakki on the machine (policies load at startup only).
-5. Verify with `t3 policy show`.
+5. Verify with `hyakki policy show`.
 
 ## Write a policy
 
@@ -41,19 +41,19 @@ Use **one** source per machine (having both a native policy and a policy file pr
 | **Windows** | GPO template or `Policy` (`REG_SZ`) under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\Program Files\T3Code\policy.json`             |
 | **Linux**   | —                                                                                 | `/etc/t3code/policy.json`                         |
 
-- **macOS profile**: Generate `macos/t3code.mobileconfig` with `t3 policy templates <dir> --policy policy.json` (or `plutil -convert xml1 -o dev.ryoku.hyakki.plist policy.json`). Deploy as a single device profile (profiles cannot represent `null`; use a policy file if needed).
-- **Windows GPO**: Generate `windows/t3code.admx` and `windows/en-US/t3code.adml` with `t3 policy templates <dir>`, import into `PolicyDefinitions`/Intune under **Computer Configuration → Administrative Templates → Hyakki**, set **Organization**, run `gpupdate /target:computer /force`, and restart Hyakki.
+- **macOS profile**: Generate `macos/t3code.mobileconfig` with `hyakki policy templates <dir> --policy policy.json` (or `plutil -convert xml1 -o dev.ryoku.hyakki.plist policy.json`). Deploy as a single device profile (profiles cannot represent `null`; use a policy file if needed).
+- **Windows GPO**: Generate `windows/t3code.admx` and `windows/en-US/t3code.adml` with `hyakki policy templates <dir>`, import into `PolicyDefinitions`/Intune under **Computer Configuration → Administrative Templates → Hyakki**, set **Organization**, run `gpupdate /target:computer /force`, and restart Hyakki.
 - **Windows registry**: Set `Policy` (`REG_SZ`) to single-line JSON (do not mix with GPO template values).
 
 ## Check what the server loaded
 
-Run `t3 policy show` as the user running Hyakki to inspect the installed policy, fingerprint, and whether the running server has loaded it. After any policy change or removal, restart the desktop app or run `t3 service restart`. Removing a policy restores the user's own saved settings.
+Run `hyakki policy show` as the user running Hyakki to inspect the installed policy, fingerprint, and whether the running server has loaded it. After any policy change or removal, restart the desktop app or run `hyakki service restart`. Removing a policy restores the user's own saved settings.
 
-> Note: Hyakki **refuses to start** if a policy is unreadable, invalid, uses unknown keys from a newer version, or conflicts with another policy source. Always validate with `t3 policy check` and upgrade Hyakki before deploying newer keys.
+> Note: Hyakki **refuses to start** if a policy is unreadable, invalid, uses unknown keys from a newer version, or conflicts with another policy source. Always validate with `hyakki policy check` and upgrade Hyakki before deploying newer keys.
 
 ## Settings
 
-Run `t3 policy settings` to list every manageable path from `settings.json` and its default.
+Run `hyakki policy settings` to list every manageable path from `settings.json` and its default.
 
 - `"locked": false` sets a default (users can override).
 - `"locked": true` enforces the value across Settings and project overrides.
@@ -104,7 +104,7 @@ When `maxRuntimeMode` is set, users cannot modify provider launch settings (`bin
 
 `clients` allows any subset of `desktop`, `local-browser`, and `remote` (keep `desktop` on desktop machines).
 
-- Omitting `remote` restricts the server to loopback, revokes paired devices, disables LAN/Tailscale Serve/Hyakki Connect, and refuses startup if a Tailscale Serve route still forwards to Hyakki (or if a legacy service has LAN enabled—run `t3 up --no-lan`).
+- Omitting `remote` restricts the server to loopback, revokes paired devices, disables LAN/Tailscale Serve/Hyakki Connect, and refuses startup if a Tailscale Serve route still forwards to Hyakki (or if a legacy service has LAN enabled—run `hyakki up --no-lan`).
 - Set `"connect": false` to disable Hyakki Connect while allowing LAN/Tailscale remote access.
 
 ### Other capabilities

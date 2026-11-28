@@ -1218,7 +1218,7 @@ function acpMcpContext(
       // from its shell can find its Hyakki thread. Claude and Codex sessions set
       // the same variable (PortScanner.AGENT_THREAD_ENV; a string literal here
       // because this package cannot reach apps/server).
-      T3CODE_THREAD_ID: session.threadId,
+      HYAKKI_THREAD_ID: session.threadId,
       T3_ACP_MCP_ENDPOINT: session.endpoint,
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
@@ -11099,7 +11099,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ...(canReportBackgroundWork
             ? { hasPendingBackgroundWork: sessionHasPendingBackgroundWork }
             : {}),
-          // Root-subscription probe: only T3's own trailing transcript reads. Replacement checks
+          // Root-subscription probe: only Hyakki's own trailing transcript reads. Replacement checks
           // (includeSubagents) keep the session-wide answer they used before this probe existed.
           hasPendingBackgroundWorkForThread: (providerThread, options) =>
             options?.includeSubagents === true

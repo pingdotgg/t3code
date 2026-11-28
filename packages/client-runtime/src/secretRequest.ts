@@ -1,16 +1,19 @@
 import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
   SecretReference,
+  isRetiredVaultOperation,
   secretRequestPageUrl,
   type OrchestrationV2TurnItem,
   type SecretProviderId,
   type SecretRequestAnswerInput,
   type ServerConfig,
+  type VaultServiceRead,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Redacted from "effect/Redacted";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -19,12 +22,55 @@ export type SecretRequestItem = Extract<
   { readonly type: "secret_request" }
 >;
 
-/** A `file` request lets the agent's commands read the value, so its card must not promise more. */
-export const secretRequestPrivacyNote = (
-  item: Pick<SecretRequestItem, "delivery" | "fields">,
+/** Describe the fixed operation, not an agent-provided reason or URL. */
+export function vaultServiceReadLabel(
+  { service, limit }: VaultServiceRead,
   resolve: MFunctionType = mFallback,
-) =>
-  item.delivery !== "file"
+) {
+  switch (service) {
+    case "github":
+      return resolve(msg("List GitHub repositories (up to {limit})", { limit }));
+    case "gitlab":
+      return resolve(msg("List GitLab membership projects (up to {limit})", { limit }));
+    case "slack":
+      return resolve(msg("List Slack public channels (up to {limit})", { limit }));
+    case "airtable":
+      return resolve(msg("List Airtable bases (up to {limit})", { limit }));
+    case "asana":
+      return resolve(msg("List Asana workspaces (up to {limit})", { limit }));
+    case "linear":
+      return resolve(msg("List Linear teams (up to {limit})", { limit }));
+    case "netlify":
+      return resolve(msg("List Netlify sites (up to {limit})", { limit }));
+    case "notion":
+      return resolve(msg("List shared Notion pages (up to {limit})", { limit }));
+    case "todoist":
+      return resolve(msg("List Todoist projects (up to {limit})", { limit }));
+    case "typeform":
+      return resolve(msg("List Typeform forms (up to {limit})", { limit }));
+    case "vercel":
+      return resolve(msg("List Vercel projects (up to {limit})", { limit }));
+  }
+}
+
+/** Tell the user what the agent can read after this particular approval. */
+export const secretRequestPrivacyNote = (
+  item: Pick<SecretRequestItem, "delivery" | "fields" | "taggedVault">,
+  resolve: MFunctionType = mFallback,
+) => {
+  if (item.taggedVault && "gmail" in item.taggedVault) {
+    return resolve(
+      msg(
+        "Only you see the listed email details. The agent receives the message count, not the messages.",
+      ),
+    );
+  }
+  if (item.taggedVault && "serviceRead" in item.taggedVault) {
+    return resolve(
+      msg("Only you see the list. The agent receives the item count, not the contents."),
+    );
+  }
+  return item.delivery !== "file"
     ? resolve(msg("Stored securely, never shown to the agent"))
     : item.fields === undefined
       ? resolve(
@@ -33,6 +79,7 @@ export const secretRequestPrivacyNote = (
       : resolve(
           msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
         );
+};
 const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
 
 export interface SecretRequestInput {
@@ -135,11 +182,16 @@ const PENDING_DISPLAY: SecretRequestDisplay = { kind: "pending" };
  * thread (a fork) can only be answered where it was asked.
  */
 export function secretRequestDisplay(
-  item: Pick<SecretRequestItem, "secretStatus">,
+  item: Pick<SecretRequestItem, "secretStatus"> &
+    Partial<Pick<SecretRequestItem, "id" | "taggedVault">>,
   visibility: "local" | "inherited" | "synthetic",
   resolve: MFunctionType = mFallback,
 ): SecretRequestDisplay {
-  switch (item.secretStatus) {
+  const status =
+    item.secretStatus === "pending" && isRetiredVaultOperation(item.id)
+      ? "cancelled"
+      : item.secretStatus;
+  switch (status) {
     case "pending":
       return visibility === "local"
         ? PENDING_DISPLAY
@@ -151,7 +203,12 @@ export function secretRequestDisplay(
       return {
         kind: "answered",
         outcome: "saved",
-        label: resolve(msg("Saved securely and kept private")),
+        label:
+          item.taggedVault && "gmail" in item.taggedVault
+            ? resolve(msg("Gmail read approved"))
+            : item.taggedVault && "serviceRead" in item.taggedVault
+              ? resolve(msg("Private read approved"))
+              : resolve(msg("Saved securely and kept private")),
       };
     case "declined":
       return { kind: "answered", outcome: "declined", label: resolve(msg("Declined")) };
@@ -256,15 +313,54 @@ export type SecretRequestReply =
   | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
   /** Single-value cards only: the server reads it through `source`. */
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
+  | {
+      readonly type: "vault";
+      readonly pin: Redacted.Redacted<string>;
+    }
+  | {
+      readonly type: "vault_display";
+      readonly pin: Redacted.Redacted<string>;
+      readonly account: string;
+    }
   | { readonly type: "decline" };
 
 /** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
+  item: Pick<
+    SecretRequestItem,
+    "id" | "threadId" | "label" | "placeholder" | "fields" | "taggedVault" | "delivery"
+  >,
   answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
   const base = { threadId: item.threadId, turnItemId: item.id };
   if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
+  if (answer.type === "vault" || answer.type === "vault_display") {
+    const entry = item.taggedVault;
+    if (!entry || item.delivery || item.fields) return null;
+    if (answer.type === "vault_display")
+      return "field" in entry || !answer.account.trim()
+        ? null
+        : {
+            ...base,
+            answer: {
+              type: "gmail" in entry ? "vault_gmail_display" : "vault_service_display",
+              name: entry.name,
+              account: answer.account,
+              pin: answer.pin,
+            },
+          };
+    if (!("field" in entry)) return null;
+    return {
+      ...base,
+      answer: {
+        type: "vault",
+        name: entry.name,
+        fields: { value: entry.field },
+        pin: answer.pin,
+      },
+    };
+  }
+  if (item.taggedVault) return null;
   if (answer.type === "reference") {
     const reference =
       item.fields === undefined

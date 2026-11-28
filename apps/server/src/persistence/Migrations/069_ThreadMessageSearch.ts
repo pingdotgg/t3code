@@ -11,7 +11,7 @@ import {
 /**
  * Trigrams match 3+ character substrings without a scan, ignoring case and accents.
  * Generated user-role notices would flood results and appear as "You".
- * VACUUM can change rowids, so `t3 doctor` must rebuild this contentless index afterward.
+ * VACUUM can change rowids, so `hyakki doctor` must rebuild this contentless index afterward.
  * Index only finished messages, folding apostrophes as queries do; scan if the index is missing.
  */
 export default Effect.gen(function* () {

@@ -7,7 +7,7 @@ Read secrets from a self-hosted 1Password Connect server on headless or [remote]
 1. In 1Password, create a Connect server and access token scoped **only** to the vaults Hyakki needs.
 2. Deploy the Connect API and sync containers where the Hyakki server can reach them.
 3. Install the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on the Hyakki server machine.
-4. Set `OP_CONNECT_HOST` (use `https://` unless local or on a trusted private network) and `OP_CONNECT_TOKEN` in the server's environment (for a background service, add them to [`service.env`](./background-service.md#configure-the-service-environment) and run `t3 service restart`). Do not set `OP_SERVICE_ACCOUNT_TOKEN` in the same environment.
+4. Set `OP_CONNECT_HOST` (use `https://` unless local or on a trusted private network) and `OP_CONNECT_TOKEN` in the server's environment (for a background service, add them to [`service.env`](./background-service.md#configure-the-service-environment) and run `hyakki service restart`). Do not set `OP_SERVICE_ACCOUNT_TOKEN` in the same environment.
 5. In **Settings → Secrets → Add provider**, enter any sign-in address (e.g. `my.1password.com`; `op` ignores it while Connect is configured), then use `op://vault/item/field` references.
 
 ## Verify

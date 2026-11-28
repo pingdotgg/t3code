@@ -1,5 +1,6 @@
 import {
   CommandId,
+  collectVaultMentions,
   type RunId,
   idleCompactionOf,
   isProviderAvailable,
@@ -24,6 +25,15 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
+  type OrchestratorMcpGmailListRecentInput,
+  type OrchestratorMcpGmailListRecentResult,
+  type OrchestratorMcpListConnectedItemsInput,
+  type OrchestratorMcpListConnectedItemsResult,
+  type GmailReadOperation,
+  type VaultServiceRead,
+  VAULT_SERVICE_RESOURCES,
+  SecretRequestError,
+  type TaggedVaultEntry,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
@@ -77,8 +87,10 @@ import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -91,6 +103,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
@@ -148,7 +161,9 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 45_000;
 const DEFAULT_SECRET_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
+const GMAIL_ONBOARDING_TIMEOUT_MS = 20 * 60 * 1_000;
 const MAX_SECRET_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000;
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
   { thread: "child", eventType: "run.updated" },
@@ -219,6 +234,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  readonly gmailListRecent: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpGmailListRecentInput,
+  ) => Effect.Effect<OrchestratorMcpGmailListRecentResult, OrchestratorMcpFailure>;
+  readonly listConnectedItems: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpListConnectedItemsInput,
+  ) => Effect.Effect<OrchestratorMcpListConnectedItemsResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -247,6 +270,9 @@ export class OrchestratorMcpService extends Context.Service<
 >()("t3/mcp/OrchestratorMcpService") {}
 
 export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
+const encodePrivateRequestKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(Schema.Union([Schema.String, Schema.Int]))),
+);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -1359,6 +1385,8 @@ function timelineItemsWithinBudget(
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
+  const identityEncoder = new TextEncoder();
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1399,6 +1427,7 @@ const make = Effect.gen(function* () {
     return selection;
   });
   const secretRequests = yield* SecretRequests.SecretRequests;
+  const mcpSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -2455,6 +2484,356 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const loadCardCaller = Effect.fn("OrchestratorMcpService.loadCardCaller")(function* (
+    scope: McpInvocationScope,
+    tool: "request_secret" | "gmail_list_recent" | "list_connected_items",
+  ) {
+    const { scope: threadScope, parent } = yield* loadThreadCaller(scope, tool);
+    const threadId = threadScope.thread.threadId;
+    const run = ThreadManagementService.latestActiveRun(parent);
+    if (
+      run === undefined ||
+      run.rootNodeId === null ||
+      run.providerInstanceId !== threadScope.thread.providerInstanceId
+    ) {
+      return yield* failure(
+        "parent_not_active",
+        `${tool} requires an active run owned by this MCP provider session.`,
+      );
+    }
+    const privateRead = tool !== "request_secret";
+    const records = yield* loadThreadRecords(
+      threadId,
+      privateRead ? ["messages", "nodes"] : ["messages"],
+      {
+        messageRoles: ["user"],
+        messageRunIds: [run.id],
+        ...(privateRead ? { nodeIds: [run.rootNodeId] } : {}),
+      },
+    );
+    if (
+      privateRead &&
+      !records.nodes.some(
+        (node) =>
+          node.id === run.rootNodeId &&
+          node.threadId === threadId &&
+          node.runId === run.id &&
+          node.kind === "root_turn" &&
+          (node.status === "running" || node.status === "waiting" || node.status === "pending"),
+      )
+    ) {
+      return yield* failure("parent_not_active", "The private read has no active root turn.");
+    }
+    return { threadId, runId: run.id, nodeId: run.rootNodeId, messages: records.messages };
+  });
+
+  const isCurrentPrivateSession = (scope: McpInvocationScope) => {
+    const caller = scope.thread;
+    if (caller === undefined || scope.client !== undefined || Option.isNone(mcpSessions))
+      return Effect.succeed(false);
+    return mcpSessions.value
+      .read(caller.threadId)
+      .pipe(
+        Effect.map(
+          (session) =>
+            session !== undefined &&
+            session.providerSessionId === caller.providerSessionId &&
+            session.providerInstanceId === caller.providerInstanceId &&
+            session.environmentId === scope.environmentId,
+        ),
+      );
+  };
+
+  function taggedUserMessage(
+    messages: OrchestrationV2ThreadProjection["messages"],
+    caller: { threadId: ThreadId; runId: RunId; nodeId: NodeId },
+    title: string,
+  ) {
+    const message = messages.at(-1);
+    return message?.role === "user" &&
+      message.createdBy === "user" &&
+      (message.creationSource === "web" || message.creationSource === "mobile") &&
+      message.scheduledTaskId === undefined &&
+      message.senderThreadId === undefined &&
+      message.linkedSender === undefined &&
+      message.runId === caller.runId &&
+      message.threadId === caller.threadId &&
+      message.nodeId === caller.nodeId &&
+      collectVaultMentions(message.text).some((mention) => mention.label === title)
+      ? message.id
+      : undefined;
+  }
+
+  const waitForSecretCard = Effect.fn("OrchestratorMcpService.waitForSecretCard")(function* (
+    scope: McpInvocationScope,
+    { threadId, runId, nodeId }: { threadId: ThreadId; runId: RunId; nodeId: NodeId },
+    input: OrchestratorMcpRequestSecretInput,
+    taggedVault?: TaggedVaultEntry,
+    sourceMessageId?: MessageId,
+  ) {
+    const requestId = yield* requestKey(input.clientRequestId);
+    const privateTag = taggedVault && !("field" in taggedVault) ? taggedVault : undefined;
+    const identity = privateTag
+      ? encodePrivateRequestKey([
+          scope.requestNamespace,
+          runId,
+          nodeId,
+          sourceMessageId!,
+          privateTag.name,
+          "gmail" in privateTag ? privateTag.gmail.folder : privateTag.serviceRead.service,
+          "gmail" in privateTag ? privateTag.gmail.limit : privateTag.serviceRead.limit,
+          ...("serviceRead" in privateTag && privateTag.revision ? [privateTag.revision] : []),
+          requestId,
+        ])
+      : taggedVault
+        ? `vault:${runId}:${taggedVault.name}:${requestId}`
+        : `${runId}:${requestId}`;
+    // Retry the same card only for the same connection; never put its revision in timeline IDs.
+    const key =
+      privateTag && "serviceRead" in privateTag
+        ? yield* digest.digestHex(Digest.sha256, identityEncoder.encode(identity))
+        : identity;
+    const namespace = privateTag
+      ? "gmail" in privateTag
+        ? "gmail-read"
+        : "service-read"
+      : "secret-request";
+    const turnItemId = TurnItemId.make(
+      `turn-item:${namespace}:${stablePart(threadId)}:${stablePart(key)}`,
+    );
+    const record = (secretStatus: "pending" | "cancelled") =>
+      threadManagement
+        .dispatch({
+          type: "secret_request.record",
+          commandId: stableCommandId({
+            scope,
+            requestKey: key,
+            operation: `${privateTag ? namespace : "secret"}-${secretStatus}`,
+          }),
+          threadId,
+          runId,
+          nodeId,
+          turnItemId,
+          label: input.label,
+          ...(taggedVault === undefined ? {} : { taggedVault }),
+          reason: input.reason,
+          ...(input.url === undefined ? {} : { url: input.url }),
+          ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+          ...(input.delivery === "file" || input.fields !== undefined
+            ? { delivery: "file" as const }
+            : {}),
+          ...(input.fields === undefined ? {} : { fields: input.fields }),
+          secretStatus,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              privateTag
+                ? "Could not record the private approval."
+                : `Could not record the secret request: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+    const closeCard = record("cancelled").pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not close a secret request card", { error: error.message }),
+      ),
+      Effect.ensuring(
+        privateTag ? secretRequests.cancelPrivateDisplay(threadId, turnItemId) : Effect.void,
+      ),
+    );
+    const answered = yield* Effect.acquireUseRelease(
+      record("pending"),
+      () =>
+        Effect.gen(function* () {
+          while (true) {
+            const projection = yield* loadThreadRecords(
+              threadId,
+              privateTag ? ["runs", "turnItems", "messages"] : ["runs", "turnItems"],
+              {
+                turnItemTypes: ["secret_request"],
+                messageRoles: privateTag ? ["user"] : [],
+                ...(privateTag ? { messageRunIds: [runId] } : {}),
+              },
+            );
+            const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
+            const current = projection.runs.find((candidate) => candidate.id === runId);
+            const active =
+              current !== undefined &&
+              current.rootNodeId === nodeId &&
+              !ThreadManagementService.isTerminalRunStatus(current.status);
+            if (
+              privateTag &&
+              (!active ||
+                !(yield* isCurrentPrivateSession(scope)) ||
+                taggedUserMessage(projection.messages, { threadId, runId, nodeId }, input.label) !==
+                  sourceMessageId)
+            ) {
+              yield* closeCard;
+              return "cancelled" as const;
+            }
+            if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+              return item.secretStatus;
+            }
+            if (!active) {
+              yield* record("cancelled");
+              return "cancelled" as const;
+            }
+            yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
+          }
+        }).pipe(
+          Effect.timeoutOption(
+            Duration.millis(
+              Math.min(
+                input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
+                MAX_SECRET_REQUEST_TIMEOUT_MS,
+              ),
+            ),
+          ),
+        ),
+      (_, exit) => (Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : closeCard),
+    );
+    // A file or ordinary secret may already have been saved while its timer fired;
+    // a private operation timeout must never start an upstream read.
+    const status = Option.isSome(answered)
+      ? answered.value
+      : privateTag
+        ? ("timed_out" as const)
+        : yield* threadManagement
+            .getThreadRecords(threadId, ["turnItems"], {
+              turnItemTypes: ["secret_request"],
+              messageRoles: [],
+            })
+            .pipe(
+              Effect.map((records) => {
+                const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+                return item?.type === "secret_request" &&
+                  (item.secretStatus === "saved" || item.secretStatus === "declined")
+                  ? item.secretStatus
+                  : ("timed_out" as const);
+              }),
+              Effect.orElseSucceed(() => "timed_out" as const),
+            );
+    yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
+    yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
+    return { status, turnItemId };
+  });
+
+  const savedCardRef = Effect.fn("OrchestratorMcpService.savedCardRef")(function* (
+    threadId: ThreadId,
+    turnItemId: TurnItemId,
+  ) {
+    const ref = yield* secretRequests.savedRef({ threadId, turnItemId });
+    if (Option.isNone(ref))
+      return yield* failure(
+        "orchestration_error",
+        "The saved approval is no longer available. Ask again with a new clientRequestId.",
+      );
+    return ref.value;
+  });
+
+  const listPrivately = Effect.fn("OrchestratorMcpService.listPrivately")(
+    function* (
+      scope: McpInvocationScope,
+      input: Pick<OrchestratorMcpGmailListRecentInput, "vaultTitle" | "clientRequestId">,
+      operation: GmailReadOperation | VaultServiceRead,
+    ) {
+      if (!(yield* isCurrentPrivateSession(scope)))
+        return yield* failure(
+          "capability_denied",
+          "Private reads require the thread's current Hyakki provider session.",
+        );
+      const tool = "service" in operation ? "list_connected_items" : "gmail_list_recent";
+      const caller = yield* loadCardCaller(scope, tool);
+      const source = taggedUserMessage(caller.messages, caller, input.vaultTitle);
+      if (!source)
+        return yield* failure(
+          "invalid_request",
+          "Private reads require the exact vault tag in the current user message.",
+        );
+      const { limit } = operation;
+      const resolve = (error: SecretRequestError) =>
+        failure(
+          "invalid_request",
+          new SecretRequestError({
+            reason:
+              error.reason === "vault_service_not_connected"
+                ? "vault_service_not_connected"
+                : "vault_tag_unavailable",
+          }).message,
+        );
+      const tag =
+        "service" in operation
+          ? yield* secretRequests
+              .resolveServiceEntry(input.vaultTitle, operation)
+              .pipe(Effect.mapError(resolve))
+          : yield* secretRequests
+              .resolveGmailEntry(input.vaultTitle, operation)
+              .pipe(Effect.mapError(resolve));
+      const { status, turnItemId } = yield* waitForSecretCard(
+        scope,
+        caller,
+        {
+          label: input.vaultTitle,
+          reason:
+            "gmail" in tag
+              ? `Read the latest ${limit} messages from Gmail ${tag.gmail.folder}.`
+              : `List up to ${limit} ${VAULT_SERVICE_RESOURCES[tag.serviceRead.service]}.`,
+          ...("gmail" in tag && tag.needsGmailConnection
+            ? { timeoutMs: GMAIL_ONBOARDING_TIMEOUT_MS }
+            : {}),
+          clientRequestId: input.clientRequestId,
+        },
+        tag,
+        source,
+      );
+      if (status !== "saved") return { status };
+      const current = Effect.gen(function* () {
+        if (!(yield* isCurrentPrivateSession(scope))) return false;
+        const records = yield* loadThreadRecords(caller.threadId, ["messages"], {
+          messageRoles: ["user"],
+          messageRunIds: [caller.runId],
+        });
+        return taggedUserMessage(records.messages, caller, input.vaultTitle) === source;
+      }).pipe(Effect.orElseSucceed(() => false));
+      return yield* Effect.gen(function* () {
+        const ref = yield* savedCardRef(caller.threadId, turnItemId);
+        const read =
+          "gmail" in tag
+            ? secretRequests.consumeGmail(
+                { ref, threadId: caller.threadId, operation: tag.gmail },
+                current,
+              )
+            : secretRequests.consumeService(
+                { ref, threadId: caller.threadId, operation: tag.serviceRead },
+                current,
+              );
+        return yield* read.pipe(
+          Effect.mapError(() =>
+            failure("orchestration_error", "The private read could not be completed."),
+          ),
+        );
+      }).pipe(
+        Effect.onInterrupt(() => secretRequests.cancelPrivateDisplay(caller.threadId, turnItemId)),
+      );
+    },
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterrupts(cause)) return Effect.interrupt;
+      const error = Cause.squash(cause);
+      if (
+        isOrchestratorMcpFailure(error) &&
+        (error.code === "invalid_request" ||
+          error.code === "capability_denied" ||
+          error.code === "parent_not_active")
+      )
+        return Effect.fail(error);
+      return Effect.fail(
+        failure("orchestration_error", "The private read could not be completed."),
+      );
+    }),
+  );
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
@@ -2647,19 +3026,26 @@ const make = Effect.gen(function* () {
       },
     ),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
-      const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
-      const threadId = threadScope.thread.threadId;
-      const run = ThreadManagementService.latestActiveRun(parent);
+      const caller = yield* loadCardCaller(scope, "request_secret");
+      const { threadId } = caller;
+      const titles = caller.messages
+        .filter((message) => message.createdBy === "user")
+        .flatMap((message) => collectVaultMentions(message.text).map((mention) => mention.label));
+      const taggedTitle = titles.includes(input.label) ? input.label : undefined;
       if (
-        run === undefined ||
-        run.rootNodeId === null ||
-        run.providerInstanceId !== threadScope.thread.providerInstanceId
-      ) {
+        titles.length &&
+        (!taggedTitle || input.fields || input.value !== undefined || input.delivery === "file")
+      )
         return yield* failure(
-          "parent_not_active",
-          "Asking for a secret requires an active run owned by this MCP provider session.",
+          "invalid_request",
+          "Use the exact tagged entry label with protected secretRef delivery only. Do not ask for a password, file, or PIN.",
         );
-      }
+      const taggedVault =
+        taggedTitle === undefined
+          ? undefined
+          : yield* secretRequests
+              .resolveTaggedEntry(taggedTitle)
+              .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       if (
         input.fields !== undefined &&
         (input.value !== undefined || input.delivery === "secretRef")
@@ -2690,120 +3076,7 @@ const make = Effect.gen(function* () {
         yield* Metrics.increment(Metrics.secretRequestsTotal, { status: "saved_pasted" });
         return { status: "saved" as const, file };
       }
-      const runId = run.id;
-      const nodeId = run.rootNodeId;
-      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
-      const turnItemId = TurnItemId.make(
-        `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
-      );
-      const record = (secretStatus: "pending" | "cancelled") =>
-        threadManagement
-          .dispatch({
-            type: "secret_request.record",
-            commandId: stableCommandId({
-              scope,
-              requestKey: key,
-              operation: `secret-${secretStatus}`,
-            }),
-            threadId: threadId,
-            runId,
-            nodeId,
-            turnItemId,
-            label: input.label,
-            reason: input.reason,
-            ...(input.url === undefined ? {} : { url: input.url }),
-            ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
-            ...(delivery === "file" ? { delivery: "file" as const } : {}),
-            ...(input.fields === undefined ? {} : { fields: input.fields }),
-            secretStatus,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Could not record the secret request: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-      // Only this call can hand the agent its ref, so the card must not
-      // outlive it: a timeout, a failed wait or an aborted call closes it as
-      // cancelled.
-      const closeCard = record("cancelled").pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not close a secret request card", { error: error.message }),
-        ),
-      );
-
-      const answered = yield* Effect.acquireUseRelease(
-        record("pending"),
-        () =>
-          Effect.gen(function* () {
-            while (true) {
-              const projection = yield* threadManagement
-                .getThreadRecords(threadId, ["runs", "turnItems"], {
-                  turnItemTypes: ["secret_request"],
-                  messageRoles: [],
-                })
-                .pipe(
-                  Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to read the secret request: ${errorMessage(error)}`,
-                    ),
-                  ),
-                );
-              const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
-              if (item?.type === "secret_request" && item.secretStatus !== "pending") {
-                return item.secretStatus;
-              }
-              const current = projection.runs.find((candidate) => candidate.id === runId);
-              if (
-                current === undefined ||
-                ThreadManagementService.isTerminalRunStatus(current.status)
-              ) {
-                yield* record("cancelled");
-                return "cancelled" as const;
-              }
-              // A steering restart replaced the run's root, so this request belonged to
-              // the superseded attempt: its card can never be answered into that attempt,
-              // and the call must stop blocking the agent's turn.
-              if (current.rootNodeId !== nodeId) {
-                yield* record("cancelled");
-                return "cancelled" as const;
-              }
-              yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
-            }
-          }).pipe(
-            Effect.timeoutOption(
-              Duration.millis(
-                Math.min(
-                  input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
-                  MAX_SECRET_REQUEST_TIMEOUT_MS,
-                ),
-              ),
-            ),
-          ),
-        (_, exit) => (Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : closeCard),
-      );
-      const status = Option.isSome(answered)
-        ? answered.value
-        : yield* threadManagement
-            .getThreadRecords(threadId, ["turnItems"], {
-              turnItemTypes: ["secret_request"],
-              messageRoles: [],
-            })
-            .pipe(
-              Effect.map((records) => {
-                const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
-                return item?.type === "secret_request" &&
-                  (item.secretStatus === "saved" || item.secretStatus === "declined")
-                  ? item.secretStatus
-                  : ("timed_out" as const);
-              }),
-              Effect.orElseSucceed(() => "timed_out" as const),
-            );
-      yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
-      yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
+      const { status, turnItemId } = yield* waitForSecretCard(scope, caller, input, taggedVault);
       if (status !== "saved") return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] };
       if (delivery === "file") {
         const saved = yield* secretRequests
@@ -2811,15 +3084,14 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
         return { status, ...saved };
       }
-      const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
-      if (Option.isNone(secretRef)) {
-        return yield* failure(
-          "orchestration_error",
-          "The user saved the secret, but it could not be read. Ask again with a new clientRequestId.",
-        );
-      }
-      return { status, secretRef: secretRef.value };
+      return { status, secretRef: yield* savedCardRef(threadId, turnItemId) };
     }),
+    listConnectedItems: Effect.fn("OrchestratorMcpService.listConnectedItems")((scope, input) =>
+      listPrivately(scope, input, { service: input.service, limit: input.limit ?? 5 }),
+    ),
+    gmailListRecent: Effect.fn("OrchestratorMcpService.gmailListRecent")((scope, input) =>
+      listPrivately(scope, input, { folder: input.folder ?? "inbox", limit: input.limit ?? 5 }),
+    ),
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope, []);
@@ -3969,6 +4241,7 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver

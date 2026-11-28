@@ -109,14 +109,14 @@ function shellSingleQuote(value) {
 export function makeDevelopmentEnvironmentScript(environment) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", environment.T3CODE_PORT],
-    ["T3CODE_HOME", environment.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
-    ["T3CODE_OTLP_HEADERS", environment.T3CODE_OTLP_HEADERS],
-    ["T3CODE_OTLP_PROTOCOL", environment.T3CODE_OTLP_PROTOCOL],
-    ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
+    ["HYAKKI_PORT", environment.HYAKKI_PORT],
+    ["HYAKKI_HOME", environment.HYAKKI_HOME],
+    ["HYAKKI_COMMIT_HASH", environment.HYAKKI_COMMIT_HASH],
+    ["HYAKKI_OTLP_TRACES_URL", environment.HYAKKI_OTLP_TRACES_URL],
+    ["HYAKKI_OTLP_EXPORT_INTERVAL_MS", environment.HYAKKI_OTLP_EXPORT_INTERVAL_MS],
+    ["HYAKKI_OTLP_HEADERS", environment.HYAKKI_OTLP_HEADERS],
+    ["HYAKKI_OTLP_PROTOCOL", environment.HYAKKI_OTLP_PROTOCOL],
+    ["HYAKKI_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     ...envEntries.map(

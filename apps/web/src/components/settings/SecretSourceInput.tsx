@@ -1,9 +1,10 @@
 import {
   SecretReference,
+  LOCAL_VAULT_PROVIDER,
+  SecretProviderId,
+  SecretProviderKind,
   type EnvironmentId,
   type SecretProviderConfig,
-  type SecretProviderId,
-  type SecretProviderKind,
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import { invalidSecretReferenceText } from "@t3tools/client-runtime/secret-request";
@@ -24,6 +25,7 @@ import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { SecretInput } from "./SecretInput";
+import { VaultTokenPicker } from "./VaultTokenPicker";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
@@ -40,14 +42,25 @@ const decodeSecretReference = Schema.decodeUnknownOption(SecretReference);
 /** Secret providers a setting can point at; empty when the environment cannot read references. */
 export function useSecretSources(environmentId: EnvironmentId): ReadonlyArray<SecretSource> {
   const providers = useEnvironmentSettings(environmentId, (settings) => settings.secretProviders);
-  const supported = useAtomValue(
-    serverEnvironment.configValueAtom(environmentId),
-    (config) => hasFeatureFlag(config, "secretProviders") && config?.secretReferences === true,
-  );
+  const gt = useGT();
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const supported = hasFeatureFlag(config, "secretProviders") && config?.secretReferences === true;
   if (!supported) return NO_SECRET_SOURCES;
-  return (Object.entries(providers) as Array<[SecretProviderId, SecretProviderConfig]>)
+  const configured = (Object.entries(providers) as Array<[SecretProviderId, SecretProviderConfig]>)
     .filter(([, config]) => classifySecretProvider(config).kind !== "unsupported")
     .map(([id, config]) => ({ id, kind: config.kind, label: config.label }));
+  return config?.localSecretStorage === "linux-keyring-aes256gcm" &&
+    config.localVaultEntries === true &&
+    config.vaultPinSecurity === true
+    ? [
+        {
+          id: SecretProviderId.make(LOCAL_VAULT_PROVIDER),
+          kind: SecretProviderKind.make(LOCAL_VAULT_PROVIDER),
+          label: gt("Hyakki vault"),
+        },
+        ...configured,
+      ]
+    : configured;
 }
 
 function SourceIcon(props: { readonly icon: ComponentType<{ readonly className?: string }> }) {
@@ -98,7 +111,17 @@ export function SecretSourceSelect(props: {
         title={title}
       >
         <SelectValue>
-          <SourceIcon icon={value === null ? TypeIcon : known ? OnePasswordIcon : KeyRoundIcon} />
+          <SourceIcon
+            icon={
+              value === null
+                ? TypeIcon
+                : value === LOCAL_VAULT_PROVIDER
+                  ? KeyRoundIcon
+                  : known
+                    ? OnePasswordIcon
+                    : KeyRoundIcon
+            }
+          />
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="start" alignItemWithTrigger={false}>
@@ -110,7 +133,10 @@ export function SecretSourceSelect(props: {
         </SelectItem>
         {sources.map((source) => (
           <SelectItem key={source.id} value={source.id}>
-            <SourceLabel icon={OnePasswordIcon} label={source.label} />
+            <SourceLabel
+              icon={source.id === LOCAL_VAULT_PROVIDER ? KeyRoundIcon : OnePasswordIcon}
+              label={source.label}
+            />
           </SelectItem>
         ))}
         {known ? null : (
@@ -268,6 +294,32 @@ export function SecretSourceInput({
   const valueField =
     provider === null ? (
       <SecretInput {...input} />
+    ) : provider === LOCAL_VAULT_PROVIDER && environmentId !== undefined ? (
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <VaultTokenPicker
+          environmentId={environmentId}
+          value={reference}
+          label={gt("{label} saved token", { label })}
+          disabled={input.disabled}
+          onValueChange={(next) => {
+            setRejectedReference(null);
+            setPendingProvider(null);
+            onValidityChange?.(true);
+            onSecretChange({
+              provider: SecretProviderId.make(LOCAL_VAULT_PROVIDER),
+              reference: next,
+            });
+          }}
+        />
+        {secret !== undefined && pendingProvider === null ? (
+          <SecretCheckButton
+            environmentId={environmentId}
+            secret={secret}
+            label={gt("Check {label}", { label })}
+            disabled={input.disabled}
+          />
+        ) : null}
+      </div>
     ) : (
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex min-w-0 items-center gap-1.5">

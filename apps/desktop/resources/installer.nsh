@@ -15,11 +15,11 @@
   Push $0
   Push $1
   ${If} $IsPowerShellAvailable == 0
-    System::Call 'kernel32::SetEnvironmentVariable(t "T3CODE_INSTALL_DIR", t "$INSTDIR")'
-    nsExec::ExecToStack `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and [IO.Path]::GetDirectoryName($$_.ExecutablePath) -eq $$env:T3CODE_INSTALL_DIR } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($$_.ExecutablePath) } | Where-Object { $$_ -in 'Hyakki (Alpha)', 'Hyakki (Beta)', 'Hyakki (Nightly)' } | Select-Object -First 1 | ForEach-Object { [Console]::Write($$_) }"`
+    System::Call 'kernel32::SetEnvironmentVariable(t "HYAKKI_INSTALL_DIR", t "$INSTDIR")'
+    nsExec::ExecToStack `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and [IO.Path]::GetDirectoryName($$_.ExecutablePath) -eq $$env:HYAKKI_INSTALL_DIR } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($$_.ExecutablePath) } | Where-Object { $$_ -in 'Hyakki (Alpha)', 'Hyakki (Beta)', 'Hyakki (Nightly)' } | Select-Object -First 1 | ForEach-Object { [Console]::Write($$_) }"`
     Pop $0
     Pop $1
-    System::Call 'kernel32::SetEnvironmentVariable(t "T3CODE_INSTALL_DIR", p 0)'
+    System::Call 'kernel32::SetEnvironmentVariable(t "HYAKKI_INSTALL_DIR", p 0)'
     ${If} $0 == 0
       ${If} $1 == "Hyakki (Alpha)"
       ${OrIf} $1 == "Hyakki (Beta)"

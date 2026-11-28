@@ -98,7 +98,7 @@ describe("t3 theme", () => {
   it.effect("sets the theme of a dev server running in the default home", () =>
     Effect.gen(function* () {
       const home = makeBaseDir();
-      const devStateDir = NodePath.join(home, ".t3", "dev");
+      const devStateDir = NodePath.join(home, ".hyakki", "dev");
       NodeFS.mkdirSync(devStateDir, { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(devStateDir, "server-runtime.json"),
@@ -119,7 +119,7 @@ describe("t3 theme", () => {
       );
 
       assert.equal(
-        NodeFS.existsSync(NodePath.join(home, ".t3", "userdata", "settings.json")),
+        NodeFS.existsSync(NodePath.join(home, ".hyakki", "userdata", "settings.json")),
         false,
       );
       if (result._tag === "Success") {

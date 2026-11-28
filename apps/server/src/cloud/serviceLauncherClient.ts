@@ -118,7 +118,7 @@ export class ServiceLauncherClient extends Context.Service<
       readonly targetVersion: string;
       readonly dbPath: string;
     }) => Effect.Effect<string, ServiceLauncherClientError | ServiceLauncherRejectedError>;
-    /** Owned `t3` launchers move to the new runtime only when this start commits the trial. */
+    /** Owned `hyakki` launchers move to the new runtime only when this start commits the trial. */
     readonly prepareTrial: (input: {
       readonly baseDir: string;
     }) => Effect.Effect<ServerSelfUpdateOutcome | undefined, ServiceLauncherClientError>;
@@ -162,37 +162,46 @@ export const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint
     const platform = yield* HostProcess.Platform;
     if (platform !== "linux" && platform !== "darwin") return;
     const installBinDir =
-      environment["T3CODE_INSTALL_BIN_DIR"] ||
+      environment["HYAKKI_INSTALL_BIN_DIR"] ||
       (environment["HOME"] ? path.join(environment["HOME"], ".local", "bin") : undefined);
     const candidates = new Set<string>();
-    if (installBinDir !== undefined) candidates.add(path.join(installBinDir, "t3"));
+    if (installBinDir !== undefined) {
+      candidates.add(path.join(installBinDir, "hyakki"));
+      candidates.add(path.join(installBinDir, "t3"));
+    }
     const searchPath = environment["PATH"] ?? "";
     const cwd = yield* HostProcess.WorkingDirectory;
-    for (const directory of searchPath.split(":")) {
-      // Like the shell, an empty entry of a nonempty PATH is the working directory.
-      if (directory.length === 0 && searchPath.length === 0) continue;
-      const candidate = path.join(directory || cwd, "t3");
-      if (directory.length === 0) {
-        // The shell passes over a working-directory entry it cannot run and keeps searching.
-        const info = yield* fs.stat(candidate).pipe(Effect.option);
-        if (Option.isNone(info) || info.value.type !== "File" || (info.value.mode & 0o111) === 0) {
-          continue;
+    for (const name of ["hyakki", "t3"]) {
+      for (const directory of searchPath.split(":")) {
+        // Like the shell, an empty entry of a nonempty PATH is the working directory.
+        if (directory.length === 0 && searchPath.length === 0) continue;
+        const candidate = path.join(directory || cwd, name);
+        if (directory.length === 0) {
+          // The shell passes over a working-directory entry it cannot run and keeps searching.
+          const info = yield* fs.stat(candidate).pipe(Effect.option);
+          if (
+            Option.isNone(info) ||
+            info.value.type !== "File" ||
+            (info.value.mode & 0o111) === 0
+          ) {
+            continue;
+          }
+          candidates.add(candidate);
+          break;
         }
-        candidates.add(candidate);
-        break;
-      }
-      if (
-        yield* fs.exists(candidate).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not check the t3 command on PATH", {
-              launchedAs: candidate,
-              cause,
-            }).pipe(Effect.as(false)),
-          ),
-        )
-      ) {
-        candidates.add(candidate);
-        break;
+        if (
+          yield* fs.exists(candidate).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not check the hyakki command on PATH", {
+                launchedAs: candidate,
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          )
+        ) {
+          candidates.add(candidate);
+          break;
+        }
       }
     }
     const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
@@ -209,7 +218,7 @@ export const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint
               () => Effect.succeedNone,
             ),
           );
-          // A legacy symlink, or the script install.sh and `t3 update` write.
+          // A legacy symlink, or the script install.sh and `hyakki update` write.
           const current = Option.isSome(linkTarget)
             ? path.resolve(path.dirname(launchedAs), linkTarget.value)
             : yield* readPosixLauncherTarget(launchedAs);
@@ -232,7 +241,7 @@ export const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint
         Effect.catchCause((cause) =>
           Cause.hasInterrupts(cause)
             ? Effect.interrupt
-            : Effect.logWarning("Could not move the t3 command to the updated version", {
+            : Effect.logWarning("Could not move the hyakki command to the updated version", {
                 launchedAs,
                 cause,
               }),

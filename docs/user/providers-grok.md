@@ -23,4 +23,4 @@ Run xAI's [Grok Build CLI](https://x.ai/cli) in Hyakki using your xAI subscripti
 
 ## Troubleshooting
 
-- **Provider check timeouts**: Startup checks in large directories can take 9–14 seconds. If discovery times out, set `T3CODE_GROK_PROBE_TIMEOUT_MS=60000` in the server's environment and restart ([Provider check timeouts](./install.md#provider-check-timeouts)).
+- **Provider check timeouts**: Startup checks in large directories can take 9–14 seconds. If discovery times out, set `HYAKKI_GROK_PROBE_TIMEOUT_MS=60000` in the server's environment and restart ([Provider check timeouts](./install.md#provider-check-timeouts)).

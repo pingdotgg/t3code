@@ -23,7 +23,7 @@ export const allowedFor = (
   policy: ManagedPolicySummary | undefined,
 ) =>
   policy?.limits?.telemetry !== false &&
-  env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING !== "1" &&
+  env.HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING !== "1" &&
   isRelayTracingEnabled(env);
 
 /** Relay traces leave the machine for Hyakki Connect, so a policy with `telemetry: false` stops them. */

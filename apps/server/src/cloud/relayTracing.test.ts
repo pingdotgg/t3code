@@ -36,7 +36,7 @@ it.effect("relay tracing stays off, even when configured", () =>
 
 it.effect("relay tracing waits for the desktop shell's telemetry opt-out", () => {
   const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-  const environment: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+  const environment: NodeJS.ProcessEnv = { HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
   return Effect.void.pipe(
     Effect.withSpan("relay.request"),
     RelayTracing.withRelayClientTracing,
@@ -44,8 +44,8 @@ it.effect("relay tracing waits for the desktop shell's telemetry opt-out", () =>
       Effect.sync(() => {
         assert.isFalse(allowedFor(environment, undefined));
         // What desktop shell discovery does once ~/.zshrc turns telemetry off.
-        environment.T3CODE_TELEMETRY_ENABLED = "false";
-        delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+        environment.HYAKKI_TELEMETRY_ENABLED = "false";
+        delete environment.HYAKKI_DESKTOP_SHELL_DISCOVERY_PENDING;
       }),
     ),
     Layer.effectDiscard,
@@ -67,12 +67,12 @@ it.effect("relay tracing waits for the desktop shell's telemetry opt-out", () =>
 
 it("reports the server's relay tracing policy to clients", () => {
   assert.isTrue(allowedFor({}, undefined));
-  assert.isFalse(allowedFor({ T3CODE_TELEMETRY_ENABLED: "false" }, undefined));
+  assert.isFalse(allowedFor({ HYAKKI_TELEMETRY_ENABLED: "false" }, undefined));
   assert.isFalse(allowedFor({ CI: "true" }, undefined));
-  assert.isTrue(allowedFor({ CI: "true", T3CODE_TELEMETRY_ENABLED: "true" }, undefined));
+  assert.isTrue(allowedFor({ CI: "true", HYAKKI_TELEMETRY_ENABLED: "true" }, undefined));
   assert.isFalse(
     allowedFor(
-      { T3CODE_TELEMETRY_ENABLED: "true" },
+      { HYAKKI_TELEMETRY_ENABLED: "true" },
       { organization: "Example Corp", lockedSettings: [], limits: { telemetry: false } },
     ),
   );

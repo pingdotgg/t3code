@@ -28,7 +28,7 @@ it.each([
       ],
       {
         encoding: "utf8",
-        env: { ...process.env, T3CODE_DESKTOP_UNTRUSTED_BUNDLE: untrusted ? "true" : "" },
+        env: { ...process.env, HYAKKI_DESKTOP_UNTRUSTED_BUNDLE: untrusted ? "true" : "" },
       },
     );
     expect(result.status, result.stderr).toBe(0);

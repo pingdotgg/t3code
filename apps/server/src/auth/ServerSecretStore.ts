@@ -11,6 +11,13 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import {
+  isVaultCiphertext,
+  openVaultValue,
+  readVaultKey,
+  sealVaultValue,
+  vaultMarker,
+} from "./VaultCipher.ts";
 import { routineSpan } from "@t3tools/shared/observability";
 
 const secretStoreErrorContext = {
@@ -153,6 +160,7 @@ export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
     readonly directory?: string;
+    readonly storageMode?: "linux-keyring-aes256gcm" | "private-files";
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -182,6 +190,61 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const markerPath = path.join(serverConfig.secretsDir, vaultMarker);
+  const sealed = yield* fileSystem.exists(markerPath);
+  if (!sealed) {
+    const names = yield* fileSystem.readDirectory(serverConfig.secretsDir);
+    for (const name of names.filter((entry) => entry.endsWith(".bin"))) {
+      const value = yield* fileSystem.readFile(path.join(serverConfig.secretsDir, name));
+      if (isVaultCiphertext(value)) {
+        return yield* new SecretStoreSecureError({
+          resource: "vault marker; rerun vault activation",
+          cause: null,
+        });
+      }
+    }
+  }
+  const key = sealed
+    ? yield* fileSystem.realPath(serverConfig.secretsDir).pipe(
+        Effect.flatMap((directory) =>
+          Effect.tryPromise({
+            try: () => readVaultKey(directory),
+            catch: (cause) => new SecretStoreSecureError({ resource: "vault key", cause }),
+          }),
+        ),
+      )
+    : null;
+  const encodeValue = (
+    name: string,
+    value: Uint8Array,
+  ): Effect.Effect<Uint8Array, SecretStoreError> =>
+    key
+      ? Effect.try({
+          try: () => sealVaultValue(key, name, value),
+          catch: (cause) => new SecretStoreEncodeError({ resource: "vault record", cause }),
+        })
+      : fileSystem.exists(markerPath).pipe(
+          Effect.mapError(
+            (cause) => new SecretStoreSecureError({ resource: "vault marker", cause }),
+          ),
+          Effect.flatMap((enabled) =>
+            enabled
+              ? Effect.fail(
+                  new SecretStoreSecureError({ resource: "vault; restart Hyakki", cause: null }),
+                )
+              : Effect.succeed(value),
+          ),
+        );
+  const decodeValue = (name: string, value: Uint8Array) =>
+    Effect.try({
+      try: () => {
+        if (key) return openVaultValue(key, name, value);
+        if (isVaultCiphertext(value)) throw new Error("Hyakki vault marker is missing.");
+        return Uint8Array.from(value);
+      },
+      catch: (cause) => new SecretStoreDecodeError({ resource: "vault record", cause }),
+    });
+
   // Some names carry text from outside the server; one with a separator would leave the directory.
   const resolveSecretPath = (name: string): Effect.Effect<string, SecretStoreNameError> =>
     /[/\\\0]/.test(name)
@@ -195,7 +258,7 @@ export const make = Effect.gen(function* () {
     resolveSecretPath(name).pipe(
       Effect.flatMap((secretPath) =>
         fileSystem.readFile(secretPath).pipe(
-          Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
+          Effect.asSome,
           Effect.catch((cause) =>
             cause.reason._tag === "NotFound"
               ? Effect.succeedNone
@@ -206,6 +269,11 @@ export const make = Effect.gen(function* () {
                   }),
                 ),
           ),
+          Effect.flatMap((result) =>
+            Option.isNone(result)
+              ? Effect.succeedNone
+              : decodeValue(name, result.value).pipe(Effect.asSome),
+          ),
         ),
       ),
       Effect.withSpan("ServerSecretStore.get", { attributes: routineSpan }),
@@ -213,7 +281,9 @@ export const make = Effect.gen(function* () {
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) =>
     resolveSecretPath(name).pipe(
-      Effect.flatMap((secretPath) => setAt(name, secretPath, value)),
+      Effect.flatMap((secretPath) =>
+        encodeValue(name, value).pipe(Effect.flatMap((bytes) => setAt(name, secretPath, bytes))),
+      ),
       Effect.withSpan("ServerSecretStore.set"),
     );
 
@@ -253,7 +323,11 @@ export const make = Effect.gen(function* () {
   // `link` publishes the fully written temp file under the final name, or fails with
   // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) =>
-    resolveSecretPath(name).pipe(Effect.flatMap((secretPath) => createAt(name, secretPath, value)));
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) =>
+        encodeValue(name, value).pipe(Effect.flatMap((bytes) => createAt(name, secretPath, bytes))),
+      ),
+    );
 
   const createAt = (name: string, secretPath: string, value: Uint8Array) =>
     crypto.uuidV4().pipe(
@@ -365,6 +439,7 @@ export const make = Effect.gen(function* () {
 
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
+    storageMode: sealed ? "linux-keyring-aes256gcm" : "private-files",
     get,
     set,
     create,

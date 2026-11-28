@@ -261,7 +261,7 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
   }
 });
 
-/** Node links libatomic.so.1, which Ubuntu server and container images lack, so t3 carries its own. */
+/** Node links libatomic.so.1, which Ubuntu server and container images lack, so hyakki carries its own. */
 const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input: {
   readonly repoRoot: string;
   readonly contentDir: string;
@@ -325,7 +325,7 @@ const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input:
 });
 
 const MacSigningConfig = Config.all({
-  identity: Config.String("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
+  identity: Config.String("HYAKKI_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
   appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
   appleApiKeyId: Config.String("APPLE_API_KEY_ID").pipe(Config.option),
   appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
@@ -450,7 +450,7 @@ export const signMacArchiveContents = Effect.fn("signMacArchiveContents")(functi
     );
   }
   if (identity === "-") {
-    yield* Effect.log("[cli-archive] Signed ad hoc (no T3CODE_CLI_MAC_SIGN_IDENTITY).");
+    yield* Effect.log("[cli-archive] Signed ad hoc (no HYAKKI_CLI_MAC_SIGN_IDENTITY).");
     return;
   }
   if (Option.isNone(credentials)) {
@@ -490,7 +490,7 @@ export const awaitCliNotarization = Effect.fn("awaitCliNotarization")(function* 
   if (Option.isNone(credentials)) {
     if (submitted) {
       return yield* new CliArchiveInputMissingError({
-        inputPath: "T3CODE_CLI_MAC_SIGN_IDENTITY and APPLE_API_KEY*",
+        inputPath: "HYAKKI_CLI_MAC_SIGN_IDENTITY and APPLE_API_KEY*",
         hint: `${submissionFile} names a submission, but its credentials are not set.`,
       });
     }

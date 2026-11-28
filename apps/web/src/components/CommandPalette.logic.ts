@@ -709,7 +709,7 @@ export function filterCommandPaletteGroups(
       ];
 }
 
-/** Every option inside a submenu as one row, e.g. "New thread in t3code" or "Change theme: Dracula". */
+/** Every option inside a submenu as one row, e.g. "New thread in hyakki" or "Change theme: Dracula". */
 export function buildNestedSearchItems(
   items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>,
   query: string,

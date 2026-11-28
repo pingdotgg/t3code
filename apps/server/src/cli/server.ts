@@ -13,6 +13,7 @@ import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AutomaticPort from "./automaticPort.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { discardLegacyGmailEnvironment } from "./gmailServerEnv.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -25,6 +26,7 @@ const runServerCommand = Effect.fnUntraced(function* (
     readonly rejectRunningServer?: boolean;
   },
 ) {
+  discardLegacyGmailEnvironment(yield* HostProcess.Environment);
   // Before config resolution, which claims a port and creates directories.
   const { runServer } = yield* Effect.promise(() => import("../server.ts"));
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -78,7 +80,7 @@ const { autoBootstrapProjectFromCwd: _, ...serveCommandFlags } = sharedServerCom
 export const serveCommand = Command.make("serve", serveCommandFlags).pipe(
   Command.withShortDescription("Run Hyakki in this terminal, with no browser."),
   Command.withDescription(
-    "Run Hyakki in this terminal without opening a browser, and print pairing details. The background service runs this too, without printing them: pair with `t3 pair`. To set up access from your other devices, run `t3 up`.",
+    "Run Hyakki in this terminal without opening a browser, and print pairing details. The background service runs this too, without printing them: pair with `hyakki pair`. To set up access from your other devices, run `hyakki up`.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(

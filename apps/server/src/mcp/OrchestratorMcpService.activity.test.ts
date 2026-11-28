@@ -12,6 +12,8 @@ import {
   RunId,
   ScheduledTaskId,
   SECRET_REQUEST_UNSAVED_NOTE,
+  SecretRequestError,
+  SecretRef,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -23,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -715,7 +718,7 @@ it("readThread returns the newest items that fit the response budget", async () 
     expect(outside.items.at(-1)?.position).toBe(99);
     expect(outside.earlierPosition).toBe(outside.items[0]?.position);
     expect(outside.hasMore).toBe(false);
-    // The t3 thread CLI pages forward from here, following only hasMore.
+    // The hyakki thread CLI pages forward from here, following only hasMore.
     expect(fromStart.items[0]?.position).toBe(0);
     expect(fromStart.hasMore).toBe(true);
     expect(fromStart.nextPosition).toBe(fromStart.items.at(-1)?.position);
@@ -1582,7 +1585,7 @@ it("requestSecret closes its card when the call is aborted while the card is bei
   expect(statuses).toEqual(["pending", "cancelled"]);
 });
 
-it("requestSecret delivers a fields card as one file per field", async () => {
+it("delivers ordinary fields to files but restricts tagged requests to the named entry and secretRef", async () => {
   const dispatched: Array<{
     readonly type: string;
     readonly turnItemId?: string;
@@ -1592,6 +1595,7 @@ it("requestSecret delivers a fields card as one file per field", async () => {
     email: "/home/user/.t3/userdata/secrets/files/0123456789abcdef0123456789abcdef",
     password: "/home/user/.t3/userdata/secrets/files/fedcba9876543210fedcba9876543210",
   };
+  let prompt = "Sign in to staging.";
   const projection = () => {
     const card = dispatched.find((command) => command.type === "secret_request.record");
     return {
@@ -1610,7 +1614,7 @@ it("requestSecret delivers a fields card as one file per field", async () => {
           ? []
           : [{ type: "secret_request", id: card.turnItemId, secretStatus: "saved" }],
       runtimeRequests: [],
-      messages: [],
+      messages: [{ createdBy: "user", text: prompt }],
       contextTransfers: [],
       subagents: [],
       updatedAt: now,
@@ -1631,6 +1635,9 @@ it("requestSecret delivers a fields card as one file per field", async () => {
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({
+          resolveTaggedEntry: () => Effect.succeed({ name: "work-hooks", field: "token" }),
+          savedRef: () =>
+            Effect.succeedSome(SecretRef.make("secret-ref:0123456789abcdef0123456789abcdef")),
           saveToFile: () => Effect.succeed({ files }),
         }),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -1672,5 +1679,350 @@ it("requestSecret delivers a fields card as one file per field", async () => {
       delivery: "file",
       fields,
     });
+    dispatched.length = 0;
+    prompt = 'Configure the webhook with vault:"Work hooks".';
+    for (const input of [
+      { label: "Work hooks", delivery: "file" as const },
+      { label: "Work hooks", value: "pasted-value" },
+      { label: "Work hooks", fields },
+      { label: "Different entry" },
+    ]) {
+      const error = yield* service
+        .requestSecret(makeScope(), { reason: "Sign the webhook", ...input })
+        .pipe(Effect.flip);
+      expect(error.code).toBe("invalid_request");
+    }
+    expect(dispatched).toEqual([]);
+    expect(
+      yield* service.requestSecret(makeScope(), {
+        label: "Work hooks",
+        reason: "Sign the webhook",
+      }),
+    ).toMatchObject({
+      status: "saved",
+      secretRef: "secret-ref:0123456789abcdef0123456789abcdef",
+    });
+    expect(dispatched[0]).toMatchObject({ taggedVault: { name: "work-hooks", field: "token" } });
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("gmailListRecent binds a PIN card to the tagged user turn, mailbox operation, and root", async () => {
+  const scope = makeScope();
+  const session = scope.thread!;
+  const ref = SecretRef.make("secret-ref:0123456789abcdef0123456789abcdef");
+  let text = 'Show my latest messages from vault:"gmail".';
+  let sourceMessageId = "current-user-message";
+  let failServiceRead = false;
+  const serviceReads: Array<unknown> = [];
+  let serviceRevision = "a".repeat(32);
+  let author: "agent" | "user" = "user";
+  let connected = true;
+  let needsConnection = false;
+  let outcome: "saved" | "declined" | "pending" = "saved";
+  let completeAfterDispatch = false;
+  let root = taskId;
+  const cards: Array<{
+    type: "secret_request.record";
+    turnItemId: TurnItemId;
+    secretStatus: string;
+    commandId: string;
+  }> = [];
+  const reads: Array<Parameters<SecretRequests.SecretRequests["Service"]["consumeGmail"]>[0]> = [];
+  const projection = () => {
+    const card = cards.at(-1);
+    return {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Mail",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [
+        {
+          ...makeRun({
+            id: activeRunId,
+            ordinal: 1,
+            status: completeAfterDispatch && card ? "completed" : "running",
+          }),
+          rootNodeId: root,
+        },
+      ],
+      nodes: [
+        {
+          id: root,
+          threadId: parentThreadId,
+          runId: activeRunId,
+          kind: "root_turn",
+          status: "running",
+        },
+      ],
+      messages: [
+        {
+          role: "user",
+          createdBy: "user",
+          creationSource: "web",
+          threadId: parentThreadId,
+          runId: activeRunId,
+          text: 'Earlier: vault:"gmail".',
+        },
+        {
+          id: sourceMessageId,
+          nodeId: root,
+          role: "user",
+          createdBy: author,
+          creationSource: "web",
+          threadId: parentThreadId,
+          runId: activeRunId,
+          text,
+        },
+      ],
+      turnItems: card
+        ? [{ type: "secret_request", id: card.turnItemId, secretStatus: outcome }]
+        : [],
+    } as unknown as OrchestrationV2ThreadProjection;
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (command.type !== "secret_request.record") throw new Error("Unexpected command");
+              cards.push(command);
+              return undefined as never;
+            }),
+        }),
+        Layer.mock(McpProviderSessions.McpProviderSessions)({
+          read: () =>
+            Effect.succeed({
+              ...session,
+              environmentId,
+              authorizationHeader: "",
+              endpoint: "",
+              browserToolsAvailable: false,
+            }),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          cancelPrivateDisplay: () => Effect.void,
+          resolveServiceEntry: (title, operation) =>
+            (title === "team" && operation.service === "slack") ||
+            (title === "Team wiki" && operation.service === "notion")
+              ? Effect.succeed({
+                  name: "account",
+                  serviceRead: operation,
+                  revision: serviceRevision,
+                })
+              : Effect.fail(new SecretRequestError({ reason: "vault_service_not_connected" })),
+          consumeService: (input, current) =>
+            Effect.gen(function* () {
+              serviceReads.push(input);
+              expect(yield* current).toBe(true);
+              if (failServiceRead)
+                return yield* Effect.die(new Error("fixture-private-upstream-detail"));
+              return { status: "displayed" as const, count: 2 };
+            }),
+          resolveGmailEntry: (title, operation) =>
+            connected && title === "gmail"
+              ? Effect.succeed({
+                  name: "account",
+                  gmail: operation,
+                  ...(needsConnection ? { needsGmailConnection: true as const } : {}),
+                })
+              : Effect.fail(new SecretRequestError({ reason: "vault_tag_unavailable" })),
+          savedRef: () => Effect.succeedSome(ref),
+          consumeGmail: (input) =>
+            Effect.sync(() => {
+              reads.push(input);
+              return { status: "displayed" as const, count: 5 };
+            }),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const input = { vaultTitle: "gmail", clientRequestId: "read-mail" };
+    expect(
+      (yield* service
+        .gmailListRecent(
+          {
+            ...scope,
+            thread: { ...session, providerSessionId: "retired" },
+          },
+          input,
+        )
+        .pipe(Effect.flip)).code,
+    ).toBe("capability_denied");
+    author = "agent";
+    expect((yield* service.gmailListRecent(scope, input).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    author = "user";
+    text = 'Show my latest messages from vault:"gmail-work".';
+    expect((yield* service.gmailListRecent(scope, input).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    text = 'Show my latest messages from vault:"gmail".';
+    connected = false;
+    expect((yield* service.gmailListRecent(scope, input).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    expect(cards).toHaveLength(0);
+    expect(reads).toHaveLength(0);
+    connected = true;
+    expect(yield* service.gmailListRecent(scope, input)).toEqual({
+      status: "displayed",
+      count: 5,
+    });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      label: "gmail",
+      reason: "Read the latest 5 messages from Gmail inbox.",
+      threadId: parentThreadId,
+      runId: activeRunId,
+      nodeId: taskId,
+      secretStatus: "pending",
+      taggedVault: { name: "account", gmail: { folder: "inbox", limit: 5 } },
+    });
+    expect(reads).toEqual([
+      { ref, threadId: parentThreadId, operation: { folder: "inbox", limit: 5 } },
+    ]);
+
+    outcome = "declined";
+    const spam = { ...input, folder: "spam" as const, limit: 2 };
+    expect(yield* service.gmailListRecent(scope, spam)).toEqual({ status: "declined" });
+    expect(cards[1]).toMatchObject({ taggedVault: { gmail: { folder: "spam", limit: 2 } } });
+    expect(cards[1]?.turnItemId).not.toBe(cards[0]?.turnItemId);
+    expect(cards[1]?.commandId).not.toBe(cards[0]?.commandId);
+    root = NodeId.make("steered-root");
+    expect(yield* service.gmailListRecent(scope, spam)).toEqual({ status: "declined" });
+    expect(cards[2]?.turnItemId).not.toBe(cards[1]?.turnItemId);
+    expect(reads).toHaveLength(1);
+
+    const listing = {
+      vaultTitle: "team",
+      service: "slack" as const,
+      limit: 2,
+      clientRequestId: "team-list",
+    };
+    expect((yield* service.listConnectedItems(scope, listing).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    text = 'Show channels from vault:"team".';
+    author = "agent";
+    expect((yield* service.listConnectedItems(scope, listing).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    author = "user";
+    expect(
+      (yield* service
+        .listConnectedItems(scope, { ...listing, service: "gitlab" })
+        .pipe(Effect.flip)).code,
+    ).toBe("invalid_request");
+    const wiki = {
+      vaultTitle: "Team wiki",
+      service: "notion" as const,
+      limit: 3,
+      clientRequestId: "show-wiki",
+    };
+    text = 'Show pages from vault:"Team wiki archive".';
+    expect((yield* service.listConnectedItems(scope, wiki).pipe(Effect.flip)).code).toBe(
+      "invalid_request",
+    );
+    expect(cards).toHaveLength(3);
+    text = 'Show pages from vault:"Team wiki".';
+    expect(yield* service.listConnectedItems(scope, wiki)).toEqual({ status: "declined" });
+    expect(cards.at(-1)).toMatchObject({
+      label: "Team wiki",
+      reason: "List up to 3 shared Notion pages.",
+      taggedVault: {
+        name: "account",
+        serviceRead: { service: "notion", limit: 3 },
+        revision: serviceRevision,
+      },
+    });
+    expect(serviceReads).toEqual([]);
+    const previousId = cards.at(-1)!.turnItemId;
+    expect(previousId).not.toContain(serviceRevision);
+    serviceRevision = "b".repeat(32);
+    outcome = "saved";
+    expect(yield* service.listConnectedItems(scope, wiki)).toEqual({
+      status: "displayed",
+      count: 2,
+    });
+    expect(cards.at(-1)!.turnItemId).not.toBe(previousId);
+    expect(cards.at(-1)!.turnItemId).not.toContain(serviceRevision);
+    outcome = "declined";
+    text = 'Show channels from vault:"team".';
+    expect(yield* service.listConnectedItems(scope, listing)).toEqual({ status: "declined" });
+    expect(cards.at(-1)).toMatchObject({
+      taggedVault: { name: "account", serviceRead: { service: "slack", limit: 2 } },
+    });
+    outcome = "saved";
+    expect(yield* service.listConnectedItems(scope, listing)).toEqual({
+      status: "displayed",
+      count: 2,
+    });
+    expect(serviceReads).toEqual([
+      { ref, threadId: parentThreadId, operation: { service: "notion", limit: 3 } },
+      { ref, threadId: parentThreadId, operation: { service: "slack", limit: 2 } },
+    ]);
+    failServiceRead = true;
+    const upstreamError = yield* service.listConnectedItems(scope, listing).pipe(Effect.flip);
+    expect(upstreamError.message).toBe("The private read could not be completed.");
+    failServiceRead = false;
+    cards.length = 0;
+    outcome = "pending";
+    const waitingForTeam = yield* service
+      .listConnectedItems(scope, listing)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("500 millis");
+    expect(cards.map((card) => card.secretStatus)).toEqual(["pending"]);
+    sourceMessageId = "same-tag-but-a-new-user-turn";
+    yield* TestClock.adjust("500 millis");
+    expect(yield* Fiber.join(waitingForTeam)).toEqual({ status: "cancelled" });
+    expect(cards.map((card) => card.secretStatus)).toEqual(["pending", "cancelled"]);
+    text = 'Show my latest messages from vault:"gmail".';
+
+    cards.length = 0;
+    outcome = "saved";
+    completeAfterDispatch = true;
+    expect(yield* service.gmailListRecent(scope, input)).toEqual({ status: "cancelled" });
+    expect(cards.map((card) => card.secretStatus)).toEqual(["pending", "cancelled"]);
+    expect(reads).toHaveLength(1);
+    cards.length = 0;
+    outcome = "pending";
+    completeAfterDispatch = false;
+    const waiting = yield* service
+      .gmailListRecent(scope, input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("10 minutes");
+    expect(yield* Fiber.join(waiting)).toEqual({ status: "timed_out" });
+    expect(cards.map((card) => card.secretStatus)).toEqual(["pending", "cancelled"]);
+    expect(reads).toHaveLength(1);
+    cards.length = 0;
+    needsConnection = true;
+    const onboarding = yield* service
+      .gmailListRecent(scope, input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("10 minutes");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      secretStatus: "pending",
+      taggedVault: { needsGmailConnection: true },
+    });
+    outcome = "saved";
+    yield* TestClock.adjust("500 millis");
+    expect(yield* Fiber.join(onboarding)).toEqual({ status: "displayed", count: 5 });
+    expect(cards).toHaveLength(1);
+  }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())), Effect.runPromise);
 });

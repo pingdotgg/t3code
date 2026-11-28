@@ -471,7 +471,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       Effect.gen(function* () {
         const h = yield* makeHarness({
           environment: [
-            { name: "T3CODE_THREAD_ID", value: "thread-antigravity-ambient" },
+            { name: "HYAKKI_THREAD_ID", value: "thread-antigravity-ambient" },
             { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:9/ambient" },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer ambient-token" },
             { name: "T3_ACP_MCP_NODE", value: "/ambient/node" },
@@ -520,7 +520,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(agentLaunches).toHaveLength(2);
         expect(agentLaunches[1]?.environment).toMatchObject({
-          T3CODE_THREAD_ID: threadId,
+          HYAKKI_THREAD_ID: threadId,
           T3_ACP_MCP_ENDPOINT: endpoint,
           T3_ACP_MCP_AUTHORIZATION: "Bearer antigravity-thread-token",
           T3_ACP_MCP_NODE: process.execPath,
@@ -528,7 +528,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         });
         // Model refresh and sign-in launches are not part of a thread.
         expect(agentLaunches[0]?.environment).toMatchObject({
-          T3CODE_THREAD_ID: "thread-antigravity-ambient",
+          HYAKKI_THREAD_ID: "thread-antigravity-ambient",
           T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
           T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",
           T3_ACP_MCP_NODE: "/ambient/node",

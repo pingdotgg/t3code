@@ -55,7 +55,7 @@ const runJsign = Effect.fn("runJsign")(function* (jsign: string, args: ReadonlyA
 
 export const signWithJsign = Effect.fn("signWithJsign")(function* (file: string) {
   const { jsign, endpoint, account, profile } = yield* Config.all({
-    jsign: Config.String("T3CODE_JSIGN").pipe(Config.withDefault("jsign")),
+    jsign: Config.String("HYAKKI_JSIGN").pipe(Config.withDefault("jsign")),
     endpoint: Config.String("AZURE_TRUSTED_SIGNING_ENDPOINT"),
     account: Config.String("AZURE_TRUSTED_SIGNING_ACCOUNT_NAME"),
     profile: Config.String("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME"),

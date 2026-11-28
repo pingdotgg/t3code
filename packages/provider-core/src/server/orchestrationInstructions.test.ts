@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  HYAKKI_CREDENTIAL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -8,6 +9,17 @@ import {
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
+
+it("tells ACP agents how to handle a mailbox request even when MCP did not load", () => {
+  for (const hasT3Mcp of [true, false]) {
+    const prompt = t3AcpPromptWithInstructions({
+      prompt: 'List my latest spam messages using vault:"Acme Gmail".',
+      state: { interactionMode: "default", hasT3Mcp, hasDeviceTools: false },
+    });
+    assert.include(prompt, HYAKKI_CREDENTIAL_INSTRUCTIONS);
+    assert.equal(prompt.includes("ACP fallback:"), hasT3Mcp);
+  }
+});
 
 describe("Hyakki device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {
@@ -42,7 +54,7 @@ describe("Hyakki device instructions", () => {
   it("reach OpenCode and Cursor only when the session holds device access", () => {
     assert.include(t3OrchestrationSystemPrompt(true, true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
     assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## Hyakki devices");
-    assert.isUndefined(t3OrchestrationSystemPrompt(false, true));
+    assert.equal(t3OrchestrationSystemPrompt(false, true), HYAKKI_CREDENTIAL_INSTRUCTIONS);
 
     const firstRun = (hasDeviceTools: boolean) =>
       t3OrchestrationPrompt({

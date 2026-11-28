@@ -113,9 +113,9 @@ export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "un
     for (const { path, contents } of plan.system) {
       lines.push(
         `mkdir -p ${quoteShell(directoryOf(path))}`,
-        `cat >${quoteShell(path)} <<'T3CODE_PROTECT'`,
+        `cat >${quoteShell(path)} <<'HYAKKI_PROTECT'`,
         contents.trimEnd(),
-        "T3CODE_PROTECT",
+        "HYAKKI_PROTECT",
       );
     }
   } else {

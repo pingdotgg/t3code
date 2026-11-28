@@ -46,6 +46,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./vcs/VcsAutomaticFetchInterval.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
@@ -559,7 +560,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         "orchestration-v2.effect-worker.start",
         startEffectWorkerWithRelay({
           runWorker: EffectWorker.runDaemon,
-          startRelay: agentAwarenessRelay.start(),
+          startRelay: hasCloudPublicConfig ? agentAwarenessRelay.start() : Effect.void,
           workerFiberRef: effectWorkerFiber,
         }),
       ),

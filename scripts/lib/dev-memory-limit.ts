@@ -19,7 +19,7 @@ export class DevRunnerMemoryLimitError extends Schema.TaggedError<DevRunnerMemor
 ) {
   override get message(): string {
     const gib = (bytes: number) => (bytes / GiB).toFixed(1);
-    return `The dev server used ${gib(this.usedBytes)} GiB of RAM and swap, over its ${gib(this.limitBytes)} GiB limit, so it was stopped. Start it again, or set --memory-limit-gb (T3CODE_DEV_MEMORY_LIMIT_GB; 0 turns the limit off).`;
+    return `The dev server used ${gib(this.usedBytes)} GiB of RAM and swap, over its ${gib(this.limitBytes)} GiB limit, so it was stopped. Start it again, or set --memory-limit-gb (HYAKKI_DEV_MEMORY_LIMIT_GB; 0 turns the limit off).`;
   }
 }
 

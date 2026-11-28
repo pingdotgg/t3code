@@ -392,7 +392,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  // Git cannot create a ref whose path is a parent or child of an existing one (`t3code` blocks `t3code/...`).
+  // Git cannot create a ref whose path is a parent or child of an existing one (`hyakki` blocks `t3code/...`).
   const isCreatable = (name: string) =>
     !name
       .split("/")

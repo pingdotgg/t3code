@@ -93,7 +93,7 @@ export class DevServePortTakenError extends Schema.TaggedError<DevServePortTaken
   }
 
   get hint(): string {
-    return `Pick another port with T3CODE_PORT_OFFSET, or remove that mapping with \`tailscale serve --https=${String(this.webPort)} --set-path=/ off\` if nothing needs it.`;
+    return `Pick another port with HYAKKI_PORT_OFFSET, or remove that mapping with \`tailscale serve --https=${String(this.webPort)} --set-path=/ off\` if nothing needs it.`;
   }
 }
 

@@ -15,7 +15,7 @@ const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "w
 const TERMINATE_GRACE_MS = 5_000;
 
 function t3Home() {
-  const raw = (process.env.T3CODE_HOME || "").trim();
+  const raw = (process.env.HYAKKI_HOME || "").trim();
   if (raw === "") return path.join(os.homedir(), ".t3");
   if (raw === "~") return os.homedir();
   if (raw.startsWith("~/") || raw.startsWith("~\\")) return path.join(os.homedir(), raw.slice(2));
@@ -78,7 +78,7 @@ async function download(url, file) {
 async function install(dir, key) {
   const archive = `t3-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
   const base = (
-    process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/Ryoku-dev/hyakki/releases/download"
+    process.env.HYAKKI_RELEASE_BASE_URL || "https://github.com/Ryoku-dev/hyakki/releases/download"
   ).replace(/\/+$/, "");
   const sums = await (await get(`${base}/v${version}/SHA256SUMS`)).text();
   const expected = /^([0-9a-f]{64})\s+\*?(.+)$/im;
@@ -193,7 +193,7 @@ async function main() {
     {
       stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
       // The executable lives in the Hyakki home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
+      env: { ...process.env, HYAKKI_NPM_LAUNCHER_PATH: import.meta.filename },
     },
   );
   if (ipc) {

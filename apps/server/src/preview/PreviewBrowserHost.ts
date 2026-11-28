@@ -12,7 +12,7 @@ export const NO_SANDBOX_SIGNATURE = "No usable sandbox";
 const ROOT_SANDBOX_SIGNATURE = "Running as root without --no-sandbox";
 
 export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>>) =>
-  env.T3CODE_SERVER_BROWSER_SANDBOX === "0";
+  env.HYAKKI_SERVER_BROWSER_SANDBOX === "0";
 
 /** Set on Ubuntu 23.10+: unprivileged user namespaces need an AppArmor profile. */
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
@@ -75,7 +75,7 @@ export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRo
   {},
 ) {
   override get message(): string {
-    return "Hyakki server is running as root; Chrome's sandbox cannot start. Run Hyakki as a nonroot user. Otherwise set `T3CODE_SERVER_BROWSER_SANDBOX=0` in the Hyakki server's environment and restart the server; this disables Chrome's sandbox. Manual: `T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve`. Systemd: add `Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]`, reload systemd, then restart the service. `t3 browser setup` cannot fix root sandboxing.";
+    return "Hyakki server is running as root; Chrome's sandbox cannot start. Run Hyakki as a nonroot user. Otherwise set `HYAKKI_SERVER_BROWSER_SANDBOX=0` in the Hyakki server's environment and restart the server; this disables Chrome's sandbox. Manual: `HYAKKI_SERVER_BROWSER_SANDBOX=0 t3 serve`. Systemd: add `Environment=HYAKKI_SERVER_BROWSER_SANDBOX=0` under `[Service]`, reload systemd, then restart the service. `t3 browser setup` cannot fix root sandboxing.";
   }
 }
 

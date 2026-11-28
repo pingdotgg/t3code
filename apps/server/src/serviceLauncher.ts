@@ -127,7 +127,7 @@ function appendOutput(source: NodeJS.ReadableStream, fd: number): void {
 }
 
 /**
- * The unit or launch agent that `t3 service install` wrote. Its program names
+ * The unit or launch agent that `hyakki service install` wrote. Its program names
  * the runtime that ran the install, and a remote update never replaces it, so
  * after a commit the launcher points it at the committed runtime. Otherwise the
  * next start lands on a runtime that nothing in the service state records.
@@ -264,7 +264,7 @@ const SERVICE_UNIT_PROGRAMS = [
 
 /**
  * The unit contents with their program pointed at `version`'s runtime. A unit
- * already at that version or a newer one is returned unchanged: `t3 update`
+ * already at that version or a newer one is returned unchanged: `hyakki update`
  * may have repointed it to a later version while this commit was in flight.
  */
 function repointServiceUnit(contents: string, version: string): string {
@@ -334,7 +334,7 @@ async function pathExists(target: string): Promise<boolean> {
 
 const MANAGED_SERVICE_ENV_NAMES = new Set([
   "PATH",
-  "T3CODE_HOME",
+  "HYAKKI_HOME",
   "T3_BOOT_SERVICE_UNIT",
   SERVICE_LAUNCHER_CONTEXT_ENV,
 ]);
@@ -1285,7 +1285,7 @@ export class Launcher {
     )
       return;
     if (!(await runtimeExists(this.#baseDir, version))) {
-      throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
+      throw new Error(`Selected hyakki@${version} runtime is missing or incomplete.`);
     }
     if (this.#stopping) return;
     const paths = runtimePaths(this.#baseDir, version);
@@ -1509,7 +1509,7 @@ export class Launcher {
       }
     } catch (error) {
       process.stderr.write(
-        `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
+        `[service-launcher] Could not point ${unit.path} at hyakki@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     }
   }
@@ -1654,9 +1654,9 @@ export interface LauncherOptions {
 }
 
 export async function main(options: LauncherOptions = {}): Promise<void> {
-  const baseDir = options.baseDir ?? process.env.T3CODE_HOME;
+  const baseDir = options.baseDir ?? process.env.HYAKKI_HOME;
   if (baseDir === undefined || baseDir.trim() === "") {
-    throw new Error("T3CODE_HOME is required by the Hyakki service launcher.");
+    throw new Error("HYAKKI_HOME is required by the Hyakki service launcher.");
   }
   const output =
     options.logFile === undefined ? undefined : NodeFS.openSync(options.logFile, "a", 0o600);
@@ -1670,7 +1670,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // changes only what the server gets.
     const managerEnvironment = {
       ...process.env,
-      T3CODE_HOME: baseDir,
+      HYAKKI_HOME: baseDir,
       ...(options.serviceUnit === undefined ? {} : { [SERVICE_UNIT_ENV]: options.serviceUnit }),
     };
     const environment = await readServiceEnvironment(baseDir, managerEnvironment);
@@ -1684,7 +1684,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
       state = adoptLegacyServiceState(contents);
       if (state === undefined) throw new Error("Service state is invalid or unsupported.");
       if (!(await runtimeExists(baseDir, state.activeVersion))) {
-        throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
+        throw new Error(`Selected hyakki@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
     const logPath = await serviceLogPath(options, serviceUnit);

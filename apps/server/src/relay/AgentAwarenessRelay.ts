@@ -904,7 +904,7 @@ export const make = Effect.gen(function* () {
   });
 
   // Many environments never link, so while unlinked the retry backs off from 5
-  // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
+  // s to 60 s. A linked environment keeps the 5 s retry, because `hyakki connect
   // publish` can turn publishing on from another process. Keep this untraced:
   // an unlinked environment can retry for the lifetime of the process.
   const publishActiveThreadsWhenConfigured = Effect.fnUntraced(function* (

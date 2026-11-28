@@ -77,7 +77,7 @@ export class PortDiscovery extends Context.Service<
  * Agents launch with this set to their thread, and every job they start inherits it, so a
  * server stays attributed after its launching shell exits or the agent settles.
  */
-export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
+export const AGENT_THREAD_ENV = "HYAKKI_THREAD_ID";
 
 export interface AgentCommandStopWatcher {
   /** The variable the CLI sets on each command it starts, naming that command. */
@@ -88,7 +88,7 @@ export interface AgentCommandStopWatcher {
 }
 
 /** `0` turns off listener discovery; configured preview URLs are still probed. */
-const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
+const PORT_DISCOVERY_ENV = "HYAKKI_PORT_DISCOVERY";
 
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;

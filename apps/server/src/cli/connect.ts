@@ -363,7 +363,7 @@ function formatAlertBox(text: string): string {
 }
 
 /**
- * Waits for the server that `t3 connect` just started to prove other devices
+ * Waits for the server that `hyakki connect` just started to prove other devices
  * can reach it, so a broken tunnel fails setup instead of looking green.
  */
 export const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(function* () {
@@ -576,7 +576,7 @@ function formatRelayClientReady(version: string): string {
 const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(function* (options: {
   readonly headless: boolean;
   readonly publishOnly?: boolean;
-  /** For `t3 up`, where the user already chose Hyakki Connect: install it quietly, without asking. */
+  /** For `hyakki up`, where the user already chose Hyakki Connect: install it quietly, without asking. */
   readonly installRelayClient?: boolean;
 }) {
   const publishOnly = options.publishOnly ?? false;
@@ -823,7 +823,7 @@ const connectLogoutCommand = Command.make("logout", {
   ),
 );
 
-// `t3 connect` itself is `t3 up --connect`, in up.ts.
+// `hyakki connect` itself is `hyakki up --connect`, in up.ts.
 export const connectSubcommands = [
   connectLoginCommand,
   connectLinkCommand,

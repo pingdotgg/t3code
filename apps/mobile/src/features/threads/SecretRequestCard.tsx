@@ -8,6 +8,7 @@ import {
   secretRequestReference,
   secretRequestSources,
   secretRequestValue,
+  vaultServiceReadLabel,
   type SecretRequestItem,
   type SecretRequestReply,
   type SecretRequestSource,
@@ -17,12 +18,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
   type SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import * as Redacted from "effect/Redacted";
 import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
@@ -84,6 +87,8 @@ function PendingSecretRequestForm(props: {
   const gt = useGT();
   const m = useMessages();
   const { item } = props;
+  const privateRead = item.taggedVault && !("field" in item.taggedVault) ? item.taggedVault : null;
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
     // The failure cause holds the request; keep it out of the console.
@@ -104,6 +109,7 @@ function PendingSecretRequestForm(props: {
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [reference, setReference] = useState("");
+  const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
@@ -111,6 +117,7 @@ function PendingSecretRequestForm(props: {
   const inputRefs = useRef<Array<SecretTextInputHandle | null>>([]);
 
   const send = async (reply: SecretRequestReply) => {
+    if (!canOperate || (privateRead && reply.type !== "decline")) return;
     const input = secretRequestAnswerInput(item, reply);
     if (input === null || inFlight.current) return;
     inFlight.current = true;
@@ -120,7 +127,9 @@ function PendingSecretRequestForm(props: {
     // password, so the card is emptied before it closes; a failed answer puts the values back.
     const typed = reply.type === "save" ? reply.values : values;
     setValues({});
+    setPin("");
     const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
+      if (reply.type === "vault") Redacted.wipeUnsafe(reply.pin);
       inFlight.current = false;
       setSubmitting(false);
     });
@@ -142,8 +151,9 @@ function PendingSecretRequestForm(props: {
       void send({ type: "reference", source, reference });
     }
   };
-  const canSave =
-    source === null
+  const canSave = item.taggedVault
+    ? !privateRead && canUseReferences && /^[0-9]{6,8}$/.test(pin)
+    : source === null
       ? secretRequestAnswerInput(item, { type: "save", values }) !== null
       : reference.trim().length > 0;
   const link = secretRequestLink(item);
@@ -152,13 +162,17 @@ function PendingSecretRequestForm(props: {
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
         <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
-        {item.reason.trim() ? (
+        {privateRead && "serviceRead" in privateRead ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+            {vaultServiceReadLabel(privateRead.serviceRead, m)}
+          </Text>
+        ) : item.reason.trim() ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
             {item.reason}
           </Text>
         ) : null}
       </View>
-      {link !== null ? (
+      {!item.taggedVault && link !== null ? (
         <View className="gap-1.5">
           <Button
             label={gt("Open {host}", { host: link.host })}
@@ -174,7 +188,7 @@ function PendingSecretRequestForm(props: {
           ) : null}
         </View>
       ) : null}
-      {sources.length > 0 ? (
+      {!item.taggedVault && sources.length > 0 ? (
         <View className="flex-row flex-wrap gap-2">
           <Chip
             label={gt("Value", { $context: "noun, enter the secret value directly" })}
@@ -201,7 +215,27 @@ function PendingSecretRequestForm(props: {
           ))}
         </View>
       ) : null}
-      {source === null ? (
+      {privateRead ? (
+        <Text className="font-sans text-sm leading-5 text-foreground-muted">
+          {gt(
+            "Open this request on the host desktop to approve it and view the results privately.",
+          )}
+        </Text>
+      ) : item.taggedVault ? (
+        <TextInput
+          accessibilityLabel={gt("Vault PIN")}
+          placeholder={gt("Vault PIN")}
+          value={pin}
+          onChangeText={setPin}
+          editable={!submitting && canUseReferences}
+          secureTextEntry
+          keyboardType="number-pad"
+          maxLength={8}
+          autoComplete="off"
+          textContentType="none"
+          importantForAutofill="no"
+        />
+      ) : source === null ? (
         inputs.map((input, index) => {
           const last = index === inputs.length - 1;
           const field = (
@@ -267,13 +301,19 @@ function PendingSecretRequestForm(props: {
           {error}
         </Text>
       ) : null}
-      <Button
-        label={gt("Save securely")}
-        tone="primary"
-        fullWidth
-        disabled={submitting || !canSave}
-        onPress={() => save(values)}
-      />
+      {!privateRead ? (
+        <Button
+          label={item.taggedVault ? gt("Approve for this request") : gt("Save securely")}
+          tone="primary"
+          fullWidth
+          disabled={submitting || !canSave || !canOperate}
+          onPress={() => {
+            if (!item.taggedVault) save(values);
+            else if (canSave && !inFlight.current)
+              void send({ type: "vault", pin: Redacted.make(pin) });
+          }}
+        />
+      ) : null}
       <View className="flex-row items-center justify-between gap-2">
         <View className="flex-1 flex-row items-center gap-1.5">
           <SymbolView
@@ -289,7 +329,7 @@ function PendingSecretRequestForm(props: {
         <Button
           label={gt("Decline", { $context: "verb, refuses the secret request" })}
           tone="text"
-          disabled={submitting}
+          disabled={submitting || !canOperate}
           onPress={() => void send({ type: "decline" })}
         />
       </View>

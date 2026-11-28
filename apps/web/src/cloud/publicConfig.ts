@@ -7,7 +7,7 @@ import { isHostedStaticApp } from "../hostedPairing";
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
-    key: Schema.Literal("T3CODE_CLERK_JWT_TEMPLATE"),
+    key: Schema.Literal("HYAKKI_CLERK_JWT_TEMPLATE"),
   },
 ) {
   override get message(): string {
@@ -46,7 +46,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
     relayUrl: normalizeSecureRelayUrl(
-      (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
+      (import.meta.env.VITE_HYAKKI_RELAY_URL as string | undefined) ?? "",
     ),
     relayTracing: {
       tracesUrl: normalizeSecureUrl(
@@ -91,7 +91,7 @@ export function resolveRelayTracingConfig() {
     : null;
 }
 
-// Hyakki ships without T3's hosted cloud (Clerk sign-in, relay, T3 Chat), whatever the build env.
+// Hyakki ships without Hyakki's hosted cloud (Clerk sign-in, relay, Hyakki Chat), whatever the build env.
 export function hasCloudPublicConfig(): boolean {
   return false;
 }
@@ -99,7 +99,7 @@ export function hasCloudPublicConfig(): boolean {
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
-    throw new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" });
+    throw new CloudPublicConfigMissingError({ key: "HYAKKI_CLERK_JWT_TEMPLATE" });
   }
   return relayClerkTokenOptions(clerkJwtTemplate);
 }

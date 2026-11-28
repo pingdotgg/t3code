@@ -251,7 +251,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
               ([name]) =>
                 !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
-                name.toUpperCase() !== "T3CODE_THREAD_ID",
+                name.toUpperCase() !== "HYAKKI_THREAD_ID",
             ),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);

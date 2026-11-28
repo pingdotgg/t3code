@@ -37,7 +37,7 @@ Open **Custom CSS** in the theme editor for styling beyond palette colors. Custo
 - Use `.dark` or `:root:not(.dark)` to target one appearance.
 - Target `data-slot` and other `data-` attributes (such as `[data-chat-header]` or `[data-slot="button"]`) rather than class names, which change between releases.
 - External resource loading (`@import`, `image-set()`, and non-`data:`/`#id` `url()`) is blocked for security. Use a [background image](#background-image) for full-size images.
-- **Recovery**: If custom CSS hides something you need, run `t3 theme set t3-chat` on the server or press `Cmd+Option+A` / `Ctrl+Alt+A` to switch themes.
+- **Recovery**: If custom CSS hides something you need, run `hyakki theme set t3-chat` on the server or press `Cmd+Option+A` / `Ctrl+Alt+A` to switch themes.
 
 ### Ask an agent
 
@@ -59,7 +59,7 @@ t3 theme show            # List the default and all published themes
 
 ### Publish a theme
 
-Save an exported theme JSON into `~/.t3/userdata/themes/` on the server (or `themes/` under your custom state directory). The filename sets the theme ID (e.g. `nightfall.json` → `t3 theme set nightfall`). Avoid reserved IDs (`system`, `light`, `dark`, or built-in theme IDs).
+Save an exported theme JSON into `~/.hyakki/userdata/themes/` on the server (or `themes/` under your custom state directory). The filename sets the theme ID (e.g. `nightfall.json` → `hyakki theme set nightfall`). Avoid reserved IDs (`system`, `light`, `dark`, or built-in theme IDs).
 
 You can also use a minimal palette format—Hyakki generates the remaining tokens:
 

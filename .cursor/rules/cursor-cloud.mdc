@@ -29,7 +29,7 @@ Pre-installed and wired into login shells (`~/.bashrc`/`~/.profile`): Node 24 (v
 - Auth/pairing: the server is unauthenticated by default and prints a pairing URL to stdout on startup
   (e.g. `http://localhost:5733/pair#token=XXXX`). Open that URL in the browser to pair before the web
   UI can talk to the server. Server state (SQLite, auth, projects) lives under `~/.t3`
-  (`T3CODE_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
+  (`HYAKKI_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
 - Agent providers are external CLIs (`codex`, `claude`, `cursor-agent`, `opencode`) probed on `PATH`.
   Without one installed the UI loads but no agent can run. Claude Code
   (`npm i -g @anthropic-ai/claude-code`) works headlessly using `ANTHROPIC_API_KEY` from the

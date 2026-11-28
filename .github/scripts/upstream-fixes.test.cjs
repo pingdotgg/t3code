@@ -92,7 +92,7 @@ test("holds back a fix that brings upstream's name, hosts or telemetry back", ()
 test("keeps internal names and upstream test fixtures", () => {
   const added = (file, line) => [{ file, line }];
   assert.equal(guard(["a.ts"], added("apps/web/src/a.ts", 'from "@t3tools/shared"')), "");
-  assert.equal(guard(["a.ts"], added("apps/web/src/a.ts", "T3CODE_PORT t3code://")), "");
+  assert.equal(guard(["a.ts"], added("apps/web/src/a.ts", "HYAKKI_PORT t3code://")), "");
   assert.equal(guard(["a.ts"], added("apps/web/src/a.test.ts", 'repo: "pingdotgg/t3code"')), "");
 });
 

@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { TaggedVaultEntry } from "./localVault.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1853,6 +1854,7 @@ export type OrchestrationV2SecretRequestField = typeof OrchestrationV2SecretRequ
 const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
   label: TrimmedNonEmptyString,
+  taggedVault: Schema.optional(TaggedVaultEntry),
   reason: Schema.String,
   url: Schema.optional(Schema.String),
   placeholder: Schema.optional(Schema.String),
@@ -4047,6 +4049,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     nodeId: NodeId,
     turnItemId: TurnItemId,
     label: TrimmedNonEmptyString,
+    taggedVault: Schema.optional(TaggedVaultEntry),
     reason: Schema.String,
     url: Schema.optional(Schema.String),
     placeholder: Schema.optional(Schema.String),

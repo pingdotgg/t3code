@@ -20,6 +20,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { GmailReadOperation, VAULT_SERVICE_MAX_ITEMS, VaultServiceRead } from "./localVault.ts";
 import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
@@ -900,6 +901,51 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
+
+export const OrchestratorMcpGmailListRecentInput = Schema.Struct({
+  vaultTitle: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)).annotate({
+    description: "Exact title of the Gmail vault entry tagged in the current user message.",
+  }),
+  folder: Schema.optional(GmailReadOperation.fields.folder).annotate({
+    description: "Mailbox folder to read. Defaults to inbox.",
+  }),
+  limit: Schema.optional(GmailReadOperation.fields.limit).annotate({
+    description: "Maximum number of messages to read, from 1 to 20. Defaults to 5.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpGmailListRecentInput = typeof OrchestratorMcpGmailListRecentInput.Type;
+
+const privateDisplayReceipt = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("displayed"),
+    count: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: VAULT_SERVICE_MAX_ITEMS })),
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["declined", "cancelled", "timed_out"]),
+    note: Schema.optional(Schema.String),
+  }),
+]);
+export const OrchestratorMcpGmailListRecentResult = privateDisplayReceipt;
+export type OrchestratorMcpGmailListRecentResult = typeof OrchestratorMcpGmailListRecentResult.Type;
+
+export const OrchestratorMcpListConnectedItemsInput = Schema.Struct({
+  vaultTitle: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)).annotate({
+    description: "Exact title of the credential tagged in the current user message.",
+  }),
+  service: VaultServiceRead.fields.service.annotate({
+    description: "The tagged connection's service. Each service supports one fixed list operation.",
+  }),
+  limit: Schema.optional(VaultServiceRead.fields.limit).annotate({
+    description: "Maximum items to display privately, from 1 to 20. Defaults to 5.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpListConnectedItemsInput =
+  typeof OrchestratorMcpListConnectedItemsInput.Type;
+export const OrchestratorMcpListConnectedItemsResult = privateDisplayReceipt;
+export type OrchestratorMcpListConnectedItemsResult =
+  typeof OrchestratorMcpListConnectedItemsResult.Type;
 
 export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId).annotate({

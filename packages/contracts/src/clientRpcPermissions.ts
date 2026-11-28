@@ -31,6 +31,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
+  [WS_METHODS.serverManageLocalVault]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.
   [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
@@ -87,6 +88,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // An answer, a resume and a cancel each decide what a run's agents do next.
+  [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.workflowsAnswer]: AuthOrchestrationOperateScope,
   [WS_METHODS.workflowsResume]: AuthOrchestrationOperateScope,
   [WS_METHODS.workflowsCancel]: AuthOrchestrationOperateScope,
@@ -111,11 +113,22 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeLinkPairing = Schema.decodeUnknownSync(PeerLinkLinkPairingInput);
+const decodeAnswerKind = Schema.decodeUnknownSync(
+  Schema.Struct({ answer: Schema.Struct({ type: Schema.String }) }),
+);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.serverManageLocalVault)
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  if (method === WS_METHODS.secretsAnswerRequest && input !== undefined) {
+    const { type } = decodeAnswerKind(input).answer;
+    return type === "save" || type === "decline"
+      ? [AuthOrchestrationOperateScope]
+      : [AuthOrchestrationOperateScope, AuthProvidersManageScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

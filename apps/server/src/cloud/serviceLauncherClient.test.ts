@@ -264,7 +264,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
         yield* ServiceLauncherClient.repointLaunchers({ baseDir, targetVersion: "2.0.0" }).pipe(
           Effect.provideService(HostProcess.Environment, {
             HOME: root,
-            T3CODE_INSTALL_BIN_DIR: path.dirname(installed),
+            HYAKKI_INSTALL_BIN_DIR: path.dirname(installed),
             PATH: path.dirname(onPath),
           }),
         );
@@ -359,7 +359,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
   );
 
   it.effect.each([
-    // The working-directory t3 is checked by its execute bits, which Windows hosts do not set.
+    // The working-directory hyakki is checked by its execute bits, which Windows hosts do not set.
     ...(HostProcess.Platform.defaultValue() === "win32"
       ? []
       : [
@@ -413,7 +413,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "", { mode: 0o755 });
       }
-      // A directory named t3 in the working directory, which the shell skips.
+      // A directory named hyakki in the working directory, which the shell skips.
       yield* fs.makeDirectory(path.join(cwd, "t3"), { recursive: true });
       yield* fs.makeDirectory(path.dirname(onPath), { recursive: true });
       yield* fs.symlink(exe("1.0.0"), onPath);

@@ -2652,7 +2652,7 @@ it.layer(
   ] as const)("prefers the configured terminal shell on $platform: $shell", ({ platform, shell }) =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { T3CODE_TERMINAL_SHELL: ` ${shell} `, SHELL: "/bin/zsh" },
+        env: { HYAKKI_TERMINAL_SHELL: ` ${shell} `, SHELL: "/bin/zsh" },
       }).pipe(Effect.provide(layerWithHostPlatform(platform)));
 
       yield* manager.open(openInput());
@@ -2665,10 +2665,10 @@ it.layer(
     Effect.gen(function* () {
       const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
       const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { T3CODE_TERMINAL_SHELL: gitBash },
+        env: { HYAKKI_TERMINAL_SHELL: gitBash },
       }).pipe(Effect.provide(layerWithHostPlatform("win32")));
 
-      yield* manager.open(openInput({ env: { T3CODE_TERMINAL_SHELL: "" } }));
+      yield* manager.open(openInput({ env: { HYAKKI_TERMINAL_SHELL: "" } }));
       yield* manager.open(openInput({ terminalId: "interactive" }));
 
       expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["pwsh.exe", gitBash]);
@@ -2721,7 +2721,7 @@ it.layer(
               },
             },
             shellResolver: () => "/bin/sh",
-            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
+            env: { ...process.env, HYAKKI_TERMINAL_SHELL: shell, PATH: searchPath },
           });
           const snapshot = yield* manager.open(openInput({ cwd: cwd ?? baseDir }));
           expect(spawnedShells).toEqual([expectedShell]);
@@ -2801,7 +2801,7 @@ it.layer(
       const { manager } = yield* createManager(5, {
         ptyAdapter,
         env: {
-          T3CODE_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
+          HYAKKI_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
@@ -3003,8 +3003,8 @@ it.layer(
       const { manager, ptyAdapter } = yield* createManager(5, {
         env: {
           PORT: "5173",
-          T3CODE_PORT: "3773",
-          T3CODE_THREAD_ID: "server-thread",
+          HYAKKI_PORT: "3773",
+          HYAKKI_THREAD_ID: "server-thread",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
           TMUX: "/tmp/tmux-1000/default,1234,0",
@@ -3017,7 +3017,7 @@ it.layer(
       yield* manager.open(
         openInput({
           terminalId: "explicit",
-          env: { TMUX_PANE: "%9", T3CODE_THREAD_ID: "client-thread" },
+          env: { TMUX_PANE: "%9", HYAKKI_THREAD_ID: "client-thread" },
         }),
       );
       const spawnInput = ptyAdapter.spawnInputs[0];
@@ -3025,9 +3025,9 @@ it.layer(
       if (!spawnInput) return;
 
       expect(spawnInput.env.PORT).toBeUndefined();
-      expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
-      expect(spawnInput.env.T3CODE_THREAD_ID).toBe("thread-1");
-      expect(ptyAdapter.spawnInputs[1]?.env.T3CODE_THREAD_ID).toBe("thread-1");
+      expect(spawnInput.env.HYAKKI_PORT).toBeUndefined();
+      expect(spawnInput.env.HYAKKI_THREAD_ID).toBe("thread-1");
+      expect(ptyAdapter.spawnInputs[1]?.env.HYAKKI_THREAD_ID).toBe("thread-1");
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
       expect(spawnInput.env.TMUX).toBeUndefined();
@@ -3075,7 +3075,7 @@ it.layer(
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
       const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { T3CODE_SECRET: "server-only" },
+        env: { HYAKKI_SECRET: "server-only" },
         resolveProviderInstanceEnvironment: (requestedId, env) =>
           Effect.succeed({
             ...env,
@@ -3091,7 +3091,7 @@ it.layer(
       expect(ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe("secret-value");
       expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe("/accounts/codex-work");
       expect(ptyAdapter.spawnInputs[0]?.env.CLIENT_FLAG).toBe("1");
-      expect(ptyAdapter.spawnInputs[0]?.env.T3CODE_SECRET).toBeUndefined();
+      expect(ptyAdapter.spawnInputs[0]?.env.HYAKKI_SECRET).toBeUndefined();
       expect(snapshot).not.toHaveProperty("env");
       expect(snapshot).not.toHaveProperty("providerInstanceId");
     }),

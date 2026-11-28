@@ -52,7 +52,7 @@ export class ProviderHost extends Context.Service<
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     /**
      * Counts a running agent for local server discovery, so listeners carrying its
-     * T3CODE_THREAD_ID show under its thread. Call the returned function when it stops.
+     * HYAKKI_THREAD_ID show under its thread. Call the returned function when it stops.
      */
     readonly trackAgent?: () => () => void;
     readonly credentials: (

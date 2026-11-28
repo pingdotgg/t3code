@@ -208,7 +208,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
       const newExe = path.join(root, "runtime/versions/2.0.0/t3");
-      const launcher = path.join(root, "bin/t3");
+      const launcher = path.join(root, "bin/hyakki");
       for (const file of [oldExe, newExe]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "");
@@ -236,7 +236,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const root = yield* fs.makeTempDirectoryScoped();
       const baseDir = path.join(root, "home");
       const runtimeDir = path.join(baseDir, "runtime");
-      const launcher = path.join(root, "custom bin", "t3.cmd");
+      const launcher = path.join(root, "custom bin", "hyakki.cmd");
       const launchedAs = path.join(runtimeDir, "versions", "1.0.0", "t3.exe");
       const targetEntryPath = path.join(runtimeDir, "versions", "2.0.0", "t3.exe");
       yield* fs.makeDirectory(runtimeDir, { recursive: true });
@@ -274,7 +274,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
             mode: 0o755,
           });
         }
-        const launcher = path.join(root, "bin/t3");
+        const launcher = path.join(root, "bin/hyakki");
         const alias = path.join(root, "alias/t3");
         yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
         yield* fs.makeDirectory(path.dirname(alias), { recursive: true });
@@ -333,7 +333,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     { name: "Windows launcher records", recorded: "C:\\t3.cmd\r\n" },
     // An interrupted append cut this record short.
     { name: "an unterminated launcher record", recorded: "/opt/t" },
-    // Another process's append is cut short after t3 update reads the records.
+    // Another process's append is cut short after hyakki update reads the records.
     { name: "a record cut short after the read", recorded: "/opt/t3\n", cut: "/opt/t" },
   ])("keeps the runtime a repointed launcher off PATH points at with $name", ({ recorded, cut }) =>
     Effect.gen(function* () {
@@ -515,24 +515,24 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const path = yield* Path.Path;
       const delimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
-      const launcher = path.join(root, "bin/t3");
+      const launcher = path.join(root, "bin/hyakki");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.writeFileString(launcher, "", { mode: 0o755 });
 
       const bare = yield* resolveLauncherPath.pipe(
-        Effect.provideService(HostProcess.InvokedAs, "t3"),
+        Effect.provideService(HostProcess.InvokedAs, "hyakki"),
         Effect.provideService(HostProcess.Environment, {
           PATH: [path.join(root, "missing"), path.join(root, "bin")].join(delimiter),
         }),
         Effect.provideService(HostProcess.WorkingDirectory, root),
       );
       const relative = yield* resolveLauncherPath.pipe(
-        Effect.provideService(HostProcess.InvokedAs, "./bin/t3"),
+        Effect.provideService(HostProcess.InvokedAs, "./bin/hyakki"),
         Effect.provideService(HostProcess.Environment, { PATH: "" }),
         Effect.provideService(HostProcess.WorkingDirectory, root),
       );
       const absent = yield* resolveLauncherPath.pipe(
-        Effect.provideService(HostProcess.InvokedAs, "t3"),
+        Effect.provideService(HostProcess.InvokedAs, "hyakki"),
         Effect.provideService(HostProcess.Environment, { PATH: path.join(root, "missing") }),
         Effect.provideService(HostProcess.WorkingDirectory, root),
       );
@@ -576,7 +576,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
       const unitPath = path.join(baseDir, "t3code.service");
       const logPath = path.join(baseDir, "boot-service.log");
-      // An earlier `t3 update` pointed the service at this version without restarting it.
+      // An earlier `hyakki update` pointed the service at this version without restarting it.
       const service = Layer.mock(BootService.BootService, {
         status: Effect.succeed<BootService.BootServiceStatus>({
           supported: true,
@@ -635,7 +635,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       assert.include(
         output,
-        `Background service still running the version before ${version}. Run \`t3 service restart\` when you are ready to switch it to ${version}.`,
+        `Background service still running the version before ${version}. Run \`hyakki service restart\` when you are ready to switch it to ${version}.`,
       );
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -655,7 +655,7 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
     stdoutInvalidUtf8: false,
     stderrInvalidUtf8: false,
   });
-  const blockedReason = "This database has migrations that t3@0.1.8 does not know: 79_example.";
+  const blockedReason = "This database has migrations that hyakki@0.1.8 does not know: 79_example.";
 
   it.effect.each([
     {
@@ -682,7 +682,7 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
       launcherProtocol: 3,
       preflight: preflightOutput("", 1),
       failure:
-        "t3@0.1.8 could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.",
+        "hyakki@0.1.8 could not confirm it supports this database (its check exited with code 1), so Hyakki did not switch to it.",
     },
     {
       // Newer builds keep accepting the current launcher protocol, which may drop 3.

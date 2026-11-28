@@ -58,7 +58,7 @@ vi.mock("./connect.ts", async (importOriginal) => {
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
-  "t3 up with Hyakki Connect",
+  "hyakki up with Hyakki Connect",
   (it) => {
     it.effect.each([
       { label: "no link", prior: null, events: ["link", "restart", "unlink", "restart"] },
@@ -75,13 +75,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         link.mode = input.prior ?? "managed";
         const fs = yield* FileSystem.FileSystem;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
-        yield* fs.writeFileString(`${baseDir}/service.env`, "T3CODE_LAN=false\n");
+        yield* fs.writeFileString(`${baseDir}/service.env`, "HYAKKI_LAN=false\n");
         const status = {
           supported: true,
           installed: true,
           current: true,
           unitPath: "/home/me/.config/systemd/user/t3code.service",
-          logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+          logPath: "/home/me/.hyakki/userdata/logs/boot-service.log",
         };
         vi.spyOn(BootService, "layer").mockReturnValue(
           Layer.succeed(
@@ -123,7 +123,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
             ? { desired: false, mode: "managed" }
             : { desired: true, mode: input.prior },
         );
-        expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("T3CODE_LAN=false\n");
+        expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("HYAKKI_LAN=false\n");
       }),
     );
 
@@ -144,7 +144,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
                 current: false,
                 otherBaseDir: "/srv/t3",
                 unitPath: "/home/me/.config/systemd/user/t3code.service",
-                logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+                logPath: "/home/me/.hyakki/userdata/logs/boot-service.log",
               }),
               withStopped: (operation) => operation,
               restart: Effect.sync(() => events.push("restart")).pipe(

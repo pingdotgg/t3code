@@ -4,12 +4,12 @@
 
 ## What works
 
-- `vp run dev` (open the printed pairing URL through the forwarded web port; in browser Codespaces, pass the forwarded origin via `T3CODE_DEV_ALLOWED_ORIGINS` if rejected).
+- `vp run dev` (open the printed pairing URL through the forwarded web port; in browser Codespaces, pass the forwarded origin via `HYAKKI_DEV_ALLOWED_ORIGINS` if rejected).
 - Linux CI checks: focused `vp test run <files>`, `vp lint <files>`, package typechecks, `vp run build:desktop`, and the resource-monitor Cargo build and tests.
 
 ## State and caching
 
-`T3CODE_HOME` points at the workspace's gitignored `.t3`. Named Docker volumes hold the pnpm store and root `node_modules` so container rebuilds stay fast and off slow host bind mounts. The host sees an empty `node_modules`; run tooling inside the container.
+`HYAKKI_HOME` points at the workspace's gitignored `.t3`. Named Docker volumes hold the pnpm store and root `node_modules` so container rebuilds stay fast and off slow host bind mounts. The host sees an empty `node_modules`; run tooling inside the container.
 
 ## Out of scope
 

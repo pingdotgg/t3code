@@ -10,7 +10,7 @@ import type { SettingsTarget } from "../settings-environment-filter";
 import { ListActionRow as SettingsActionRow } from "../../../components/ui/ListActionRow";
 import { SettingsSection } from "./SettingsSection";
 
-/** Suggests `t3 doctor` on every machine whose database still holds at least 1 GiB of freed pages. */
+/** Suggests `hyakki doctor` on every machine whose database still holds at least 1 GiB of freed pages. */
 export function DatabaseStorageNotice({
   targets,
 }: {

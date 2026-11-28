@@ -414,7 +414,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 HOME: home,
                 ...(serviceInstallBinDir === undefined || serviceInstallBinDir === null
                   ? {}
-                  : { T3CODE_INSTALL_BIN_DIR: serviceInstallBinDir }),
+                  : { HYAKKI_INSTALL_BIN_DIR: serviceInstallBinDir }),
                 ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 USERPROFILE: home,
                 LOCALAPPDATA: path.join(home, "AppData", "Local"),
@@ -734,8 +734,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const unit = yield* fs.readFileString(plan.unitPath);
         expect(unit).toContain(
           platform === "linux"
-            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3\t& <100%%>/\\"quoted\\"\\\\bin"'
-            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3\t&amp; &lt;100%&gt;/"quoted"\\bin</string>',
+            ? 'Environment=HYAKKI_INSTALL_BIN_DIR="/custom/T3\t& <100%%>/\\"quoted\\"\\\\bin"'
+            : '<key>HYAKKI_INSTALL_BIN_DIR</key>\n    <string>/custom/T3\t&amp; &lt;100%&gt;/"quoted"\\bin</string>',
         );
         expect((yield* service.status).current).toBe(true);
 
@@ -833,7 +833,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
-      expect(yield* fs.readFileString(plan.unitPath)).not.toContain("T3CODE_INSTALL_BIN_DIR");
+      expect(yield* fs.readFileString(plan.unitPath)).not.toContain("HYAKKI_INSTALL_BIN_DIR");
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `ExecStart=${runtime.entryPath} __service-launcher`,
       );
@@ -996,7 +996,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const path = yield* Path.Path;
         const envPath = path.join(baseDir, SERVICE_ENV_FILE);
         const envBytes = new TextEncoder().encode(
-          '# user configuration\r\nT3CODE_TOKEN="literal $HOME # token"',
+          '# user configuration\r\nHYAKKI_TOKEN="literal $HOME # token"',
         );
         yield* fs.writeFile(envPath, envBytes);
         yield* service.install();

@@ -11,7 +11,7 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     return;
   }
   // Generating the cache runs the bundle, and a PR preview's bundle must never run next to signing secrets.
-  if (process.env.T3CODE_DESKTOP_UNTRUSTED_BUNDLE === "true") {
+  if (process.env.HYAKKI_DESKTOP_UNTRUSTED_BUNDLE === "true") {
     console.log("[server-compile-cache] Skipping untrusted bundle");
     return;
   }
@@ -49,10 +49,10 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
   );
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
   for (const name of Object.keys(env)) {
-    if (name.startsWith("NODE_") || name.startsWith("T3CODE_")) delete env[name];
+    if (name.startsWith("NODE_") || name.startsWith("HYAKKI_")) delete env[name];
   }
   const state = fs.mkdtempSync(path.join(os.tmpdir(), "t3-release-cache-"));
-  env.T3CODE_HOME = state;
+  env.HYAKKI_HOME = state;
   let result;
   try {
     // Run a script file, not -e: -e defines a global __filename of "[eval]", which

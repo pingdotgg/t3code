@@ -1,4 +1,4 @@
-// `t3 feedback list` reads the local table directly through a read-only connection, so the list
+// `hyakki feedback list` reads the local table directly through a read-only connection, so the list
 // needs no agent tool and never writes. SQLite allows this read beside a running server.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

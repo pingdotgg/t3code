@@ -47,7 +47,7 @@ type LimitsSummary = NonNullable<ManagedPolicySummary["limits"]>;
 
 const encodeDocumentJson = Schema.encodeEffect(Schema.fromJsonString(ManagedPolicyDocument));
 
-/** What `t3 policy show` compares to tell whether a running server loaded the installed policy. */
+/** What `hyakki policy show` compares to tell whether a running server loaded the installed policy. */
 export const loadedPolicy = Effect.fn("ManagedPolicy.loadedPolicy")(function* (
   policy: Pick<ManagedPolicy["Service"], "path" | "document">,
 ) {
@@ -181,7 +181,7 @@ const make = Effect.gen(function* () {
   // builds never do: any override a user can set is a way around the policy.
   const devPath =
     telemetryChannel === "dev"
-      ? yield* Config.option(Config.String("T3CODE_DEV_MANAGED_POLICY_PATH")).pipe(
+      ? yield* Config.option(Config.String("HYAKKI_DEV_MANAGED_POLICY_PATH")).pipe(
           Effect.orElseSucceed(() => Option.none<string>()),
         )
       : Option.none<string>();

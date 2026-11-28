@@ -200,7 +200,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(provider.stdout).toBe("linux-node-provider\n");
   });
 
-  it("stages the runtime under the login shell's T3CODE_HOME and reports it to the launcher", () => {
+  it("stages the runtime under the login shell's HYAKKI_HOME and reports it to the launcher", () => {
     const fixture = createFixture();
     const t3Home = `${fixture.work}/home/.config/t3 home`;
     const install = fixture.install(undefined, undefined, t3Home);
@@ -210,7 +210,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     const probe = runShell(
       [
-        `bash() { ( export T3CODE_HOME=${sh(t3Home)}; eval "$2" ); }`,
+        `bash() { ( export HYAKKI_HOME=${sh(t3Home)}; eval "$2" ); }`,
         buildWslRuntimeProbeScript(),
       ].join("\n"),
     );
@@ -316,9 +316,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         ': > "$work/tar-calls"',
         'PATH="$work/bin:$PATH"',
         "export PATH",
-        `cat > "$work/install.sh" <<'T3CODE_INSTALL_SCRIPT'`,
+        `cat > "$work/install.sh" <<'HYAKKI_INSTALL_SCRIPT'`,
         fixture.installScript(),
-        "T3CODE_INSTALL_SCRIPT",
+        "HYAKKI_INSTALL_SCRIPT",
         // Keep runtime roots out of both racers' argv so their /proc scans cannot match themselves.
         'sh "$work/install.sh" > "$work/first.out" 2>&1 &',
         "first=$!",
@@ -394,9 +394,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'printf ready > "$runtime_parent/sha256-previous/.t3code-wsl-runtime-ready"',
         `touch -d "10 minutes ago" ${sh(fixture.runtimeRoot)}`,
         'touch -d "1 minute ago" "$runtime_parent/sha256-previous"',
-        `cat > ${sh(`${fixture.work}/select.sh`)} <<'T3CODE_SELECT_SCRIPT'`,
+        `cat > ${sh(`${fixture.work}/select.sh`)} <<'HYAKKI_SELECT_SCRIPT'`,
         fixture.installScript(),
-        "T3CODE_SELECT_SCRIPT",
+        "HYAKKI_SELECT_SCRIPT",
         `sh ${sh(`${fixture.work}/select.sh`)}`,
         `HOME=${sh(`${fixture.work}/home`)}`,
         "export HOME",

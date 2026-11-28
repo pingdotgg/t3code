@@ -165,7 +165,7 @@ export const make = Effect.gen(function* () {
 
   const writeDesktopEntry = Effect.gen(function* () {
     // Distribution packages that run on a shared Electron set
-    // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
+    // HYAKKI_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
     const execTarget = environment.desktopLauncherPath.pipe(

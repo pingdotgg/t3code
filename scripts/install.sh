@@ -5,21 +5,21 @@
 #   curl -fsSL https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/install.sh | sh
 #
 # Environment:
-#   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
+#   HYAKKI_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
-#   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              Hyakki home directory (default: ~/.t3)
-#   T3CODE_INSTALL_BIN_DIR   where the `t3` command goes (default: ~/.local/bin)
-#   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   HYAKKI_VERSION           exact version to install (overrides HYAKKI_CHANNEL)
+#   HYAKKI_HOME              Hyakki home directory (default: ~/.hyakki)
+#   HYAKKI_INSTALL_BIN_DIR   where the `hyakki` command goes (default: ~/.local/bin)
+#   HYAKKI_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
-# same layout `t3 service install` uses, so the service reuses this download
+# The archive is unpacked into $HYAKKI_HOME/runtime/versions/<version>, the
+# same layout `hyakki service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
 repo="Ryoku-dev/hyakki"
-base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${T3CODE_HOME:-$HOME/.t3}"
+base_url="${HYAKKI_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
+t3_home="${HYAKKI_HOME:-$HOME/.t3}"
 case "$t3_home" in
   /*) ;;
   *)
@@ -28,8 +28,8 @@ case "$t3_home" in
     t3_home="${t3_cwd%??}/$t3_home"
     ;;
 esac
-bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
-# Trailing slashes would put `//` in the paths the t3 command guard compares.
+bin_dir="${HYAKKI_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+# Trailing slashes would put `//` in the paths the hyakki command guard compares.
 while [ "${t3_home%/}" != "$t3_home" ] && [ "$t3_home" != / ]; do t3_home="${t3_home%/}"; done
 while [ "${bin_dir%/}" != "$bin_dir" ] && [ "$bin_dir" != / ]; do bin_dir="${bin_dir%/}"; done
 # Absolute, so the PATH hint never adds a folder that changes with the working directory.
@@ -163,7 +163,7 @@ download() {
 case "$(uname -s)" in
   Darwin) platform="darwin" ;;
   Linux) platform="linux" ;;
-  *) fail "unsupported operating system $(uname -s); use the desktop app or npm" ;;
+  *) fail "unsupported operating system $(uname -s); use the desktop app or build Hyakki from source" ;;
 esac
 case "$(uname -m)" in
   arm64 | aarch64) arch="arm64" ;;
@@ -182,13 +182,13 @@ else
   fail "sha256sum or shasum is required"
 fi
 
-channel="${T3CODE_CHANNEL:-stable}"
-version="${T3CODE_VERSION:-}"
+channel="${HYAKKI_CHANNEL:-stable}"
+version="${HYAKKI_VERSION:-}"
 if [ -z "$version" ]; then
   case "$channel" in
     stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
     nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
-    *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
+    *) fail "HYAKKI_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
   if [ "$channel" = stable ]; then
@@ -206,7 +206,7 @@ if [ -z "$version" ]; then
     done
   fi
   rm -f "$tmp_index"
-  [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
+  [ -n "$version" ] || fail "could not find a ${channel} release; set HYAKKI_VERSION"
 fi
 case "$version" in
   *-preview.*)
@@ -214,8 +214,8 @@ case "$version" in
       "t3 ${version} is a preview build." \
       "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
       "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
-      "  Set T3CODE_CHANNEL=stable (the default) for a supported build." >&2
-    if [ "$channel" != "preview" ] && [ -z "${T3CODE_VERSION:-}" ]; then
+      "  Set HYAKKI_CHANNEL=stable (the default) for a supported build." >&2
+    if [ "$channel" != "preview" ] && [ -z "${HYAKKI_VERSION:-}" ]; then
       fail "refusing a preview build that was not explicitly requested"
     fi
     ;;
@@ -242,7 +242,7 @@ else
   fetch_status=0
   fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
   if [ "$fetch_status" -eq 44 ]; then
-    fail "t3 ${version} has no release archive for ${platform}-${arch}; releases before the self-contained CLI can only be installed with \`npm install -g t3@${version}\`"
+    fail "t3 ${version} has no release archive for ${platform}-${arch}; build Hyakki from source or use a Hyakki release mirror"
   elif [ "$fetch_status" -ne 0 ]; then
     fail "could not download the release checksums"
   fi
@@ -267,10 +267,10 @@ else
   trap - EXIT
 fi
 
-step "Setting up the t3 command..."
+step "Setting up the hyakki command..."
 mkdir -p "$bin_dir"
 # Exec by absolute path: through a symlink, argv0 is the link, and the Cursor SDK looks for its
-# helpers beside it. t3 update and t3 install write the same script.
+# helpers beside it. hyakki update and hyakki install write the same script.
 nl='
 '
 launcher_head="#!/bin/sh${nl}exec '"
@@ -292,7 +292,7 @@ script_t3() {
   [ -n "$unquoted" ] && [ "$(launcher_script "$unquoted"; printf x)" = "${contents}x" ] && printf '%s' "$unquoted"
   return 0
 }
-# Replace only this home's own t3 launchers: into its versions, or the desktop app's launcher.
+# Replace only this home's own hyakki launchers: into its versions, or the desktop app's launcher.
 # Anything else (a user's script, a copied binary) belongs to someone else.
 # Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
 version_t3() {
@@ -300,15 +300,15 @@ version_t3() {
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
 slot_empty=true
-if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
+if [ -e "${bin_dir}/hyakki" ] || [ -L "${bin_dir}/hyakki" ]; then
   slot_empty=false
   owned=false
   real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
-  if [ -L "${bin_dir}/t3" ]; then
-    existing="$(readlink "${bin_dir}/t3" 2>/dev/null || true)"
+  if [ -L "${bin_dir}/hyakki" ]; then
+    existing="$(readlink "${bin_dir}/hyakki" 2>/dev/null || true)"
     case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
   else
-    existing="$(script_t3 "${bin_dir}/t3")"
+    existing="$(script_t3 "${bin_dir}/hyakki")"
   fi
   if [ -n "$existing" ]; then
     # Through a symlinked Hyakki home the path names the alias; resolve its folder to compare.
@@ -325,7 +325,7 @@ if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
       owned=true
     fi
   fi
-  "$owned" || fail "another t3 is already at ${bin_dir}/t3. Remove it and run this again, or run ${target_dir}/t3 directly."
+  "$owned" || fail "another hyakki is already at ${bin_dir}/hyakki. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
 launcher_tmp="$(mktemp "${bin_dir}/.t3.XXXXXX")"
 trap 'rm -f "$launcher_tmp"' EXIT
@@ -335,16 +335,16 @@ launcher_script "${target_dir}/t3" > "$launcher_tmp"
 chmod 755 "$launcher_tmp"
 # An empty spot is hard-linked without -f, so a file that appears after the check above is kept.
 if "$slot_empty"; then
-  ln "$launcher_tmp" "${bin_dir}/t3" || fail "could not write ${bin_dir}/t3; something else was created there."
+  ln "$launcher_tmp" "${bin_dir}/hyakki" || fail "could not write ${bin_dir}/hyakki; something else was created there."
 else
   # Known race, accepted: a file written here after the ownership check above is overwritten.
   # mv replaces a legacy symlink rather than writing through it.
-  mv -f "$launcher_tmp" "${bin_dir}/t3"
+  mv -f "$launcher_tmp" "${bin_dir}/hyakki"
 fi
 rm -f "$launcher_tmp"
 trap - EXIT
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
-launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
+launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/hyakki"
 launchers="${t3_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
@@ -357,7 +357,7 @@ read_from() {
     /*) case "$1" in *[!A-Za-z0-9_./-]*) ;; *) printf '%s' "$1" ;; esac ;;
   esac
 }
-# A command to paste for zsh, Linux bash, or fish, like `t3 install` prints. macOS bash reads only
+# A command to paste for zsh, Linux bash, or fish, like `hyakki install` prints. macOS bash reads only
 # one of several startup files, so no single file is safe to change there.
 path_command=
 path_rest="$bin_dir"
@@ -381,20 +381,20 @@ if [ -n "$path_rest" ]; then
       [ -z "$config_dir" ] || path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
   esac
 fi
-# A t3 earlier on PATH runs instead; the PATH command adds this folder last.
+# A hyakki earlier on PATH runs instead; the PATH command adds this folder last.
 # A PATH entry with a trailing slash gives `dir//t3`.
-first_t3="$(command -v t3 2>/dev/null | tr -s / || true)"
-case "$first_t3" in "" | "${bin_dir}/t3") first_t3= ;; esac
+first_t3="$(command -v hyakki 2>/dev/null | tr -s / || true)"
+case "$first_t3" in "" | "${bin_dir}/hyakki") first_t3= ;; esac
 if [ -n "$first_t3" ]; then
-  printf '  Another t3 at %s runs first, so run %s%s/t3%s to use this one.\n\n' "$first_t3" "$bold" "$bin_dir" "$reset"
+  printf '  Another hyakki at %s runs first, so run %s%s/hyakki%s to use this one.\n\n' "$first_t3" "$bold" "$bin_dir" "$reset"
 else
   case ":${PATH}:" in
-    *":${bin_dir}:"* | *":${bin_dir}/:"*) printf '  Run %st3%s to use Hyakki here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
+    *":${bin_dir}:"* | *":${bin_dir}/:"*) printf '  Run %shyakki%s to use Hyakki here, or %shyakki up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
     *)
       if [ -n "$path_command" ]; then
-        printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %st3%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"
+        printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %shyakki%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"
       else
-        printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset"
+        printf '  Add %s to your PATH, then run %shyakki%s.\n\n' "$bin_dir" "$bold" "$reset"
       fi
       ;;
   esac

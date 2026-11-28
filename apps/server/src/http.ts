@@ -70,6 +70,7 @@ import {
   MCP_HTTP_PATH,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
+import { callbackPath as gmailCallbackPath } from "./secrets/GmailOAuth.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -486,15 +487,27 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   ),
 );
 
-const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
+  OTLP_TRACES_PROXY_PATH,
+  gmailCallbackPath,
+]);
+
+function requestPath(url: string): string {
+  const queryIndex = url.indexOf("?");
+  return queryIndex === -1 ? url : url.slice(0, queryIndex);
+}
 
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
-const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
-  const queryIndex = request.url.indexOf("?");
-  return UNTRACED_REQUEST_PATHS.has(
-    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
+const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) =>
+  UNTRACED_REQUEST_PATHS.has(requestPath(request.url)),
+);
+
+// The response logger omits query strings, but a failure cause can retain the whole request.
+// Silence it before routing, including when the callback handler never runs.
+export const withGmailCallbackLoggerDisabled = <A, E, R>(app: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+    requestPath(request.url) === gmailCallbackPath ? HttpMiddleware.withLoggerDisabled(app) : app,
   );
-});
 
 // Signed URLs carry their bearer token in the path; spans and request logs record it as REDACTED.
 const SIGNED_URL_ROUTE_OPTIONS = { redactedParams: ["*"] };

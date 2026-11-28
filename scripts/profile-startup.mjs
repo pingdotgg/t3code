@@ -1,4 +1,4 @@
-// Opt in with T3CODE_STARTUP_PROFILE_DIR=/absolute/path NODE_OPTIONS="--no-node-snapshot --import=/absolute/path/to/this/file".
+// Opt in with HYAKKI_STARTUP_PROFILE_DIR=/absolute/path NODE_OPTIONS="--no-node-snapshot --import=/absolute/path/to/this/file".
 import * as NodeFS from "node:fs";
 import * as NodeInspector from "node:inspector";
 import * as NodeChildProcess from "node:child_process";
@@ -10,7 +10,7 @@ import * as NodeURL from "node:url";
 
 import { profileStartupModules } from "./profile-startup-modules.mjs";
 
-const directory = process.env.T3CODE_STARTUP_PROFILE_DIR;
+const directory = process.env.HYAKKI_STARTUP_PROFILE_DIR;
 const isLauncher = process.argv[1] === NodeURL.fileURLToPath(import.meta.url);
 if (directory && !isLauncher) {
   NodeFS.mkdirSync(directory, { recursive: true });
@@ -146,7 +146,7 @@ if (isLauncher) {
       stdio: "inherit",
       env: {
         ...process.env,
-        T3CODE_STARTUP_PROFILE_DIR: output,
+        HYAKKI_STARTUP_PROFILE_DIR: output,
         // Node 26's snapshotted loader cannot accept the debugger breakpoint used by this profiler.
         NODE_OPTIONS:
           `${process.env.NODE_OPTIONS ?? ""} --no-node-snapshot --import=${import.meta.url}`.trim(),
