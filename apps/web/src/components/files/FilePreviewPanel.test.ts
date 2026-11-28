@@ -845,6 +845,16 @@ Third}`;
     );
   });
 
+  it("keeps ODT ruby readings apart from their base text", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+      '<text:p>Read <text:ruby text:style-name="Ru1"><text:ruby-base>漢字</text:ruby-base><text:ruby-text>かんじ</text:ruby-text></text:ruby> here.</text:p>' +
+      "</office:text></office:body></office:document-content>";
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe("<p>Read <ruby>漢字<rt>かんじ</rt></ruby> here.</p>");
+  });
+
   it("respects ODT hidden text and hidden paragraph fields", async () => {
     // Field markup as LibreOffice Writer 24.2 saves it: no text:is-hidden, and the field text only in
     // text:string-value.
