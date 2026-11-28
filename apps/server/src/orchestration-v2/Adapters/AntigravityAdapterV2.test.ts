@@ -1891,6 +1891,61 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
 });
 
 describe("AntigravityAdapterV2 work after the prompt ends", () => {
+  // agy rejects a prompt sent while ask_question waits with "Can't add this prompt to
+  // session ...: the running prompt is waiting for a permission or question answer".
+  it.effect("declines a steer while the agent waits on a question", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, {
+        agentVersion: "1.5.14",
+        holdsFirstPrompt: true,
+      });
+      const { session, providerThread, command, startTurn, until, requestPermission } = opened;
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      const answer = yield* requestPermission(
+        {
+          ...permissionRequest("interaction_1", [
+            { optionId: "red", name: "Red", kind: "allow_once" },
+            { optionId: "blue", name: "Blue", kind: "allow_once" },
+          ]),
+          sessionId: "mock-session-1",
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* until(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-1"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "Pick whichever you like",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(steer._tag, "ProviderAdapterSteerDeclinedError");
+      assert.lengthOf(opened.prompts, 1, "the steer must not reach the waiting agent");
+      assert.equal(opened.cancels(), 0, "a declined steer must not cancel the question");
+      assert.isUndefined(answer.pollUnsafe(), "the question stays open for the user");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // agy sets `IsDaemon` on a command it does not wait for. When it exits, the agent replies
   // with no prompt open.
   it.effect("continues in one run when a finished daemon wakes the agent", () =>
