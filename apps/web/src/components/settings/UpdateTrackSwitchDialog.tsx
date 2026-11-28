@@ -1,19 +1,19 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopUpdateChannel } from "@t3tools/contracts";
 import { acceptsTrackSwitchRelease, desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { AsyncResult } from "effect/reactivity";
 
 import { APP_VERSION } from "~/branding";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import { useEnvironments } from "~/state/environments";
-import { npmReleaseAtom, npmReleaseFailureMessage } from "~/state/npmRelease";
+import { npmReleaseAtom, npmReleaseFailureMessage, npmReleaseLookupAtom } from "~/state/npmRelease";
 import { downloadLocalUpdate, installLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { UpdateEverythingDialog } from "../sidebar/UpdateEverythingDialog";
 import {
@@ -50,6 +50,8 @@ export function UpdateTrackSwitchDialog({
   const gt = useGT();
   const m = useMessages();
   // npm dist-tags match the desktop channel names.
+  const registry = useContext(RegistryContext);
+  const { query } = useAtomValue(npmReleaseLookupAtom(channel));
   const release = useAtomValue(npmReleaseAtom(channel));
   if (AsyncResult.isSuccess(release) && release.value !== null) {
     return <SwitchPlan release={{ channel, ...release.value }} onClose={onClose} />;
@@ -65,22 +67,27 @@ export function UpdateTrackSwitchDialog({
             </T>
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {AsyncResult.isFailure(release)
-              ? npmReleaseFailureMessage(release.cause, m)
-              : AsyncResult.isSuccess(release)
-                ? gt(
+            {release.waiting || AsyncResult.isInitial(release)
+              ? gt("Checking releases…")
+              : AsyncResult.isFailure(release)
+                ? npmReleaseFailureMessage(release.cause, m)
+                : gt(
                     "Could not find the latest {label} release in this environment's npm registry.",
                     {
                       label,
                     },
-                  )
-                : gt("Checking releases…")}
+                  )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>
           </AlertDialogClose>
+          {AsyncResult.isFailure(release) && query !== undefined ? (
+            <Button disabled={release.waiting} onClick={() => registry.refresh(query)}>
+              <T>Retry</T>
+            </Button>
+          ) : null}
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
