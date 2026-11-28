@@ -319,7 +319,7 @@ export function ImageAnnotationOverlay({
         <g ref={liveLayerRef} />
       </svg>
       {/* Floats above the image and takes no layout space, so entering edit mode moves nothing. */}
-      <div className="absolute bottom-full left-1/2 z-10 mb-2 flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-1 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl">
+      <div className="absolute bottom-full left-1/2 z-10 mb-2 flex w-max max-w-[calc(100vw-7rem)] -translate-x-1/2 flex-col items-center gap-1 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl">
         <div className="flex flex-wrap items-center justify-center gap-1">
           <ToggleGroup
             variant="default"
@@ -333,11 +333,15 @@ export function ImageAnnotationOverlay({
           >
             <ToggleGroupItem value="draw" aria-label={gt("Draw freehand (D)")}>
               <PencilIcon />
-              {gt("Draw", { $context: "drawing tool, freehand pen" })}
+              <span className="max-sm:sr-only">
+                {gt("Draw", { $context: "drawing tool, freehand pen" })}
+              </span>
             </ToggleGroupItem>
             <ToggleGroupItem value="erase" aria-label={gt("Erase a stroke (E)")}>
               <EraserIcon />
-              {gt("Erase", { $context: "drawing tool, removes a stroke" })}
+              <span className="max-sm:sr-only">
+                {gt("Erase", { $context: "drawing tool, removes a stroke" })}
+              </span>
             </ToggleGroupItem>
           </ToggleGroup>
           <div role="radiogroup" aria-label={gt("Stroke color")} className="flex items-center px-1">
@@ -372,7 +376,7 @@ export function ImageAnnotationOverlay({
             aria-label={gt("Undo")}
           >
             <Undo2Icon />
-            {gt("Undo")}
+            <span className="max-sm:sr-only">{gt("Undo")}</span>
           </Button>
           <Button ref={doneButtonRef} size="sm" onClick={() => void done()} disabled={saving}>
             {gt("Done")}

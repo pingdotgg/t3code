@@ -351,11 +351,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                       ref={editButtonRef}
                       aria-label={gt("Draw on image")}
                       aria-pressed={editing}
-                      data-pressed={editing ? "" : undefined}
                       disabled={showingAccessibilityDetails || editStatus.saving}
                       onClick={() => (editing ? cancelEdit() : setEditing(true))}
                       size="icon-micro"
-                      variant="overlay"
+                      variant={editing ? "default" : "overlay"}
                     />
                   }
                   label={gt("Draw on image")}
