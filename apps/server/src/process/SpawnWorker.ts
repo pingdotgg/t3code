@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - worker threads and Node streams implement the platform spawner boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - worker threads, Node streams, and bounded close fallback implement the platform spawner boundary.
 import * as NodeEvents from "node:events";
-import type * as NodeChildProcess from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeStream from "node:stream";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
@@ -15,6 +15,7 @@ import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 // stalls. Workers own the children, so only the worker waits.
 const MAX_WORKERS = 4;
 const MAX_IDLE_WORKERS = 1;
+const CLOSE_REAP_TIMEOUT_MS = 5_000;
 
 type ToWorker =
   | {
@@ -225,6 +226,10 @@ class WorkerChild
       this.worker.post({ type: "write", id: this.id, fd, data }, [data.buffer]);
     };
     const final = (callback: (error?: Error | null) => void) => {
+      if (this.worker.closed) {
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        return;
+      }
       this.#finals.set(fd, callback);
       this.worker.post({ type: "end", id: this.id, fd });
     };
@@ -285,6 +290,21 @@ class WorkerChild
     this.worker.syncRef();
   }
 
+  #settlePendingStdin(): void {
+    const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    for (const stream of this.stdio) {
+      if (stream && !("push" in stream) && stream.listenerCount("error") === 0) {
+        stream.on("error", () => {});
+      }
+    }
+    for (const callbacks of this.#writes.values()) {
+      for (const callback of callbacks) callback(pipeError);
+    }
+    this.#writes.clear();
+    for (const callback of this.#finals.values()) callback(pipeError);
+    this.#finals.clear();
+  }
+
   exit(code: number | null, signal: NodeJS.Signals | null): void {
     if (this.exited) return;
     this.exited = true;
@@ -292,12 +312,14 @@ class WorkerChild
     this.signalCode = signal;
     // Node destroys stdin on exit; the Effect sink may already have removed its error listener.
     this.stdin?.on("error", () => {});
+    this.#settlePendingStdin();
     this.stdin?.destroy();
     this.emit("exit", code, signal);
   }
 
   /** The worker is gone: end output so readers finish, and let the exit report the kill. */
   abandon(): void {
+    this.#settlePendingStdin();
     // Not destroy(error): Effect leaves an unread stderr's pipe without an error listener.
     for (const stream of this.stdio) {
       if (stream && "push" in stream && !stream.readableEnded) stream.push(null);
@@ -315,6 +337,8 @@ class SpawnWorker {
   /** Launches sent but not yet answered; the worker is inside CreateProcess for one of them. */
   launching = 0;
   closed = false;
+  #terminated = false;
+  #closeTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(pool: SpawnWorkerPool) {
     this.pool = pool;
@@ -384,6 +408,7 @@ class SpawnWorker {
         child.spawned = true;
         child.pid = message.pid;
         child.emit("spawn");
+        if (this.closed) this.#killForClose(child);
         break;
       case "error":
         if (!child.spawned) {
@@ -410,6 +435,11 @@ class SpawnWorker {
         break;
       case "exit":
         child.exit(message.code, message.signal);
+        if (this.closed) {
+          child.abandon();
+          child.emit("close", child.exitCode, child.signalCode);
+          this.release(child);
+        }
         break;
       case "close":
         child.emit("close", child.exitCode, child.signalCode);
@@ -421,12 +451,24 @@ class SpawnWorker {
   release(child: WorkerChild): void {
     this.children.delete(child.id);
     this.syncRef();
+    if (this.closed) {
+      if (this.children.size === 0 && this.launching === 0) this.#terminate();
+      return;
+    }
     this.pool.release(this);
   }
 
-  fail(error: Error): void {
-    if (this.closed) return;
-    this.close();
+  #killForClose(child: WorkerChild): void {
+    if (child.exited || !child.spawned) return;
+    child.killed = true;
+    if (this.pool.platform === "win32" && child.pid !== undefined) {
+      this.pool.killTree(child.pid, () => {});
+    } else if (!this.#terminated) {
+      this.worker.postMessage({ type: "kill", id: child.id, signal: "SIGKILL" }, undefined);
+    }
+  }
+
+  #cleanupChildren(error: Error): void {
     for (const child of this.children.values()) {
       if (child.exited) {
         child.abandon();
@@ -435,6 +477,7 @@ class SpawnWorker {
       if (!child.spawned) {
         child.exited = true;
         child.emit("error", error);
+        child.abandon();
         continue;
       }
       // The worker owned the only handle, so try to end the whole tree before reporting the exit.
@@ -448,10 +491,49 @@ class SpawnWorker {
     this.children.clear();
   }
 
+  fail(error: Error): void {
+    if (this.#terminated) return;
+    this.#terminate();
+    this.#cleanupChildren(error);
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.pool.workers.delete(this);
+    for (const child of this.children.values()) {
+      if (child.exited) {
+        child.abandon();
+        child.emit("close", child.exitCode, child.signalCode);
+        this.release(child);
+      } else {
+        this.#killForClose(child);
+      }
+    }
+    if (this.children.size === 0 && this.launching === 0) {
+      this.#terminate();
+      return;
+    }
+    // Keep the worker referenced until live children exit and are reaped, bounded so an unkillable
+    // child cannot hang shutdown.
+    this.worker.ref();
+    this.#closeTimer = setTimeout(() => {
+      this.#terminate();
+      this.#cleanupChildren(new Error("The process launcher closed."));
+    }, CLOSE_REAP_TIMEOUT_MS);
+    this.#closeTimer.unref();
+  }
+
+  #terminate(): void {
+    if (this.#terminated) return;
+    this.#terminated = true;
+    this.closed = true;
+    if (this.#closeTimer !== undefined) {
+      clearTimeout(this.#closeTimer);
+      this.#closeTimer = undefined;
+    }
+    this.pool.workers.delete(this);
+    this.worker.unref();
     void this.worker.terminate().then(() => {
       // The thread may have died holding the lock, or between its unlock and notify, or after
       // a notify woke it: free the lock and wake every waiter so none sleeps on a free lock.
@@ -465,6 +547,7 @@ class SpawnWorkerPool {
   readonly workers = new Set<SpawnWorker>();
   readonly platform: NodeJS.Platform;
   #nextId = 0;
+  #closing = false;
 
   constructor(platform: NodeJS.Platform) {
     this.platform = platform;
@@ -506,14 +589,21 @@ class SpawnWorkerPool {
       if (!killed) killPid();
       done();
     };
-    this.spawn(
-      windowsSystem32Path(process.env, "taskkill.exe"),
-      ["/pid", String(pid), "/T", "/F"],
-      {
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    )
+    const taskkill = windowsSystem32Path(process.env, "taskkill.exe");
+    const taskkillArgs = ["/pid", String(pid), "/T", "/F"];
+    if (this.#closing) {
+      NodeChildProcess.execFile(
+        taskkill,
+        taskkillArgs,
+        { windowsHide: true, timeout: CLOSE_REAP_TIMEOUT_MS },
+        (error) => finish(error === null),
+      );
+      return;
+    }
+    this.spawn(taskkill, taskkillArgs, {
+      stdio: "ignore",
+      windowsHide: true,
+    })
       .on("error", () => finish(false))
       .on("exit", (code) => finish(code === 0));
   }
@@ -533,6 +623,7 @@ class SpawnWorkerPool {
   }
 
   close(): void {
+    this.#closing = true;
     for (const worker of this.workers) worker.close();
   }
 }

@@ -4,11 +4,15 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -27,6 +31,21 @@ const text = <E>(stream: Stream.Stream<Uint8Array, E>) =>
   stream.pipe(Stream.decodeText(), Stream.mkString);
 const node = (script: string, args: ReadonlyArray<string> = [], options = {}) =>
   ChildProcess.make(process.execPath, ["-e", script, ...args], options);
+
+const isPidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const killPidBestEffort = (pid: number): void => {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+};
 
 describe("SpawnWorker", () => {
   it.live("runs children on a launcher thread where the server thread would wait on them", () =>
@@ -230,5 +249,47 @@ describe("SpawnWorker", () => {
         expect(survived).toBe(false);
       }
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("kills live children and settles exit and stdin when the worker pool closes", () =>
+    Effect.gen(function* () {
+      const poolScope = yield* Scope.make();
+      const childScope = yield* Scope.make();
+      let pid = 0;
+      let childExited = false;
+      yield* Effect.gen(function* () {
+        const services = yield* Layer.buildWithScope(layer, poolScope);
+        const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
+        const child = yield* spawner
+          .spawn(node("process.stdout.write(String(process.pid));process.stdin.resume()"))
+          .pipe(Scope.provide(childScope));
+        pid = Number(yield* child.stdout.pipe(Stream.take(1), text));
+        expect(isPidAlive(pid)).toBe(true);
+
+        yield* Scope.close(poolScope, Exit.void);
+
+        const exitCode = yield* child.exitCode.pipe(
+          Effect.result,
+          Effect.timeoutOption("2 seconds"),
+        );
+        childExited = Option.isSome(exitCode);
+        expect(childExited).toBe(true);
+        expect(isPidAlive(pid)).toBe(false);
+        const stdinSettled = yield* Stream.empty.pipe(
+          Stream.run(child.stdin),
+          Effect.result,
+          Effect.timeoutOption("2 seconds"),
+        );
+        expect(Option.isSome(stdinSettled)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            if (pid > 0) killPidBestEffort(pid);
+            if (childExited) yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
+            yield* Scope.close(poolScope, Exit.void).pipe(Effect.ignore);
+          }),
+        ),
+      );
+    }),
   );
 });
