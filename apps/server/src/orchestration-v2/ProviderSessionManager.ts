@@ -279,6 +279,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
+    readonly handoffProviderThread?: OrchestrationV2ProviderThread;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases the session unless, at the moment of removal, a turn is busy on it other than one
@@ -820,6 +821,35 @@ export const layerWithOptions = (
           yield* eventSink.write({ events });
         }
       });
+
+      const writeIdleDetachEvent = Effect.fn("ProviderSessionManager.writeIdleDetachEvent")(
+        function* (input: {
+          readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          readonly threadId: ThreadId;
+        }) {
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({
+                  threadId: input.threadId,
+                  providerSessionId: input.runtime.providerSessionId,
+                }),
+                type: "provider-session.detached",
+                threadId: input.threadId,
+                driver: input.runtime.driver,
+                providerInstanceId: input.runtime.instanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: input.runtime.providerSessionId,
+                  detachedAt: now,
+                  reason: "Idle thread unloaded from the shared provider session.",
+                },
+              },
+            ],
+          });
+        },
+      );
 
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
@@ -2284,14 +2314,41 @@ export const layerWithOptions = (
                       }).pipe(Effect.andThen(unload(false)))
                     : Effect.fail(cause),
                 ),
-                Effect.tap(() =>
-                  Ref.update(sessions, (current) => {
+                Effect.andThen(() =>
+                  Ref.modify(sessions, (current) => {
                     const latest = current.get(key);
-                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) return current;
+                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) {
+                      return [false, current] as const;
+                    }
                     const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
                     linkedEnvironmentsByThread.delete(input.threadId);
-                    return new Map(current).set(key, { ...latest, linkedEnvironmentsByThread });
+                    // Session updates go to every attached thread, so a shared process that kept
+                    // its finished threads attached wrote each update once per thread ever run.
+                    const detach =
+                      latest.supportsMultipleProviderThreads &&
+                      !latest.loadedProviderThreadKeyByThread.has(input.threadId) &&
+                      ![...latest.idleThreadUnloads.values()].some(
+                        (other) => other.threadId === input.threadId,
+                      );
+                    const attachedThreadIds = new Set(latest.attachedThreadIds);
+                    if (detach) attachedThreadIds.delete(input.threadId);
+                    return [
+                      detach,
+                      new Map(current).set(key, {
+                        ...latest,
+                        attachedThreadIds,
+                        linkedEnvironmentsByThread,
+                      }),
+                    ] as const;
                   }),
+                ),
+                Effect.flatMap((detached) =>
+                  detached
+                    ? writeIdleDetachEvent({
+                        runtime: entry.runtime,
+                        threadId: input.threadId,
+                      })
+                    : Effect.void,
                 ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
@@ -3581,6 +3638,23 @@ export const layerWithOptions = (
                 );
               }
             }
+            const handoff = input.handoffProviderThread;
+            // Keep the source attached until it confirms release so a retry can still find it.
+            if (handoff?.nativeThreadRef != null) {
+              yield* threadAttachment.withLock(
+                threadAttachmentKey(input),
+                Effect.gen(function* () {
+                  const entry = (yield* Ref.get(sessions)).get(key);
+                  if (!entry?.supportsMultipleProviderThreads) return;
+                  const unloadThread = entry.exposedRuntime.unloadThread;
+                  if (unloadThread !== undefined) {
+                    yield* unloadThread({ providerThread: handoff, awaitClosed: true }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    );
+                  }
+                }),
+              );
+            }
             const detachResult = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
@@ -3638,17 +3712,17 @@ export const layerWithOptions = (
                 discard: true,
               });
             }
-            const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
             if (input.revokeMcpCredential === true) {
               yield* clearMcpSession(input.threadId);
             }
-            if (Option.isNone(detached)) {
+            if (Option.isNone(detachResult)) {
               return;
             }
+            const detached = detachResult.value.entry;
             if (
-              detached.value.attachedThreadIds.size === 0 &&
-              !detached.value.supportsMultipleProviderThreads
+              detached.attachedThreadIds.size === 0 &&
+              !detached.supportsMultipleProviderThreads
             ) {
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
@@ -3658,12 +3732,13 @@ export const layerWithOptions = (
               });
               return;
             }
-            const unloadThread = detached.value.exposedRuntime.unloadThread;
-            if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
+            const unloadThread = detached.exposedRuntime.unloadThread;
+            if (detached.supportsMultipleProviderThreads && unloadThread !== undefined) {
               // The projection includes native children owned by other app threads;
               // lock each owner so an attached child stays loaded and later attaches wait.
               for (const providerThread of detachedProviderThreads) {
-                if (providerThread.nativeThreadRef === null) continue;
+                if (providerThread.nativeThreadRef === null || providerThread.id === handoff?.id)
+                  continue;
                 const ownerThreadId = providerThread.appThreadId ?? input.threadId;
                 yield* threadAttachment.withLock(
                   threadAttachmentKey({
@@ -3673,8 +3748,18 @@ export const layerWithOptions = (
                   Effect.gen(function* () {
                     const entry = (yield* Ref.get(sessions)).get(key);
                     if (
-                      entry?.runtime !== detached.value.runtime ||
+                      entry?.runtime !== detached.runtime ||
                       entry.attachedThreadIds.has(ownerThreadId)
+                    ) {
+                      return;
+                    }
+                    if (
+                      handoff !== undefined &&
+                      (providerThread.ownerNodeId !== null || ownerThreadId !== input.threadId) &&
+                      entry.runtime.hasPendingBackgroundWorkForThread !== undefined &&
+                      (yield* entry.runtime
+                        .hasPendingBackgroundWorkForThread(providerThread)
+                        .pipe(Effect.orElseSucceed(() => true)))
                     ) {
                       return;
                     }

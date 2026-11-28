@@ -64,14 +64,17 @@ export function checkZipDirectory(bytes: ArrayBuffer, entryLimit = 2048) {
   if (directoryEnd < 0 || directorySize > directoryEnd)
     throw new ZipError({ code: "zip-unreadable" });
   let records = 0;
+  let encrypted = false;
   for (let offset = directoryEnd - directorySize; offset < directoryEnd;) {
     if (offset + 46 > directoryEnd || view.getUint32(offset, true) !== 0x02014b50)
       throw new ZipError({ code: "zip-directory-damaged" });
     if (++records > entryLimit) throw new ZipError({ code: "archive-too-many-entries" });
+    encrypted ||= (view.getUint16(offset + 8, true) & 1) !== 0;
     const nameLength = view.getUint16(offset + 28, true);
     if (nameLength > 1024) throw new ZipError({ code: "archive-path-too-long" });
     offset +=
       46 + nameLength + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
     if (offset > directoryEnd) throw new ZipError({ code: "zip-directory-damaged" });
   }
+  return { encrypted };
 }

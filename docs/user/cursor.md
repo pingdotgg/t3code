@@ -47,8 +47,7 @@ It must print only JSON of this shape to stdout (`headers` is optional):
 { "mcpServers": { "example": { "type": "http", "url": "https://example.com/mcp", "headers": {} } } }
 ```
 
-T3 Code runs it when a Cursor agent opens and before each message, so refreshed credentials take
-effect. If it fails, exits non-zero, takes longer than 30 seconds, or prints more than 1 MiB, the
+T3 Code runs it before each message, including the first, so refreshed credentials take effect. If it fails, exits non-zero, takes longer than 30 seconds, or prints more than 1 MiB, the
 message fails instead of running without those tools. T3 Code's own `t3-code` server always wins a
 name clash, and servers from your Cursor config stay available. Only configure a command you trust:
 its output can contain credentials. Restart T3 Code after changing its environment.

@@ -56,7 +56,7 @@ export function useForceStopThread(environmentId: EnvironmentId) {
         title: m(msg("Turn stopped; the agent process kept running")),
         description: m(
           msg(
-            "{others, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {others} working thread. Stop those to free it.} other {It is shared with {others} working threads. Stop those to free it.}}",
+            "{others, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {others} working thread. Stop that thread to free it.} other {It is shared with {others} working threads. Stop those to free it.}}",
             { others },
           ),
         ),

@@ -251,7 +251,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 text: input.message ?? "",
                 attachments: input.attachments,
               });
-        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message))
+        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message?.trim()))
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message: schemaProblem ?? "outputSchema needs a message that asks for the result.",
@@ -480,7 +480,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           runtimeMode: startedRuntimeMode,
           interactionMode,
           workspaceStrategy: strategy ?? { type: "root" },
-          ...(input.message === undefined && attachments.length === 0
+          // A blank message is no message: clients that fill every optional field send "".
+          ...(!input.message?.trim() && attachments.length === 0
             ? {}
             : {
                 initialMessage: {
@@ -567,10 +568,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         if (workspaceRoot === undefined) {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
-            input.scripts !== undefined ||
-            input.trackedFolders !== undefined ||
+            (input.scripts?.length ?? 0) > 0 ||
+            (input.trackedFolders?.length ?? 0) > 0 ||
             input.createWorkspaceRootIfMissing !== undefined ||
-            input.defaultModelSelection !== undefined
+            (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
           )
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -578,15 +579,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
             });
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-          const created = yield* folders.createNamedProject({ name: input.title }).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+          const created = yield* folders
+            .createNamedProject({
+              name: input.title,
+              ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
           const project = yield* projects
             .getById(created.projectId)
             .pipe(
