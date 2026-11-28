@@ -6,6 +6,7 @@ import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
+import { POPUP_SURFACE_CLASS } from "./popup-styles";
 import { Spinner } from "./spinner";
 
 const Menu = MenuPrimitive.Root;
@@ -55,7 +56,8 @@ function MenuPopup({
       >
         <MenuPrimitive.Popup
           className={cn(
-            "dropdown-glass relative flex origin-(--transform-origin) rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none focus:outline-none dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+            POPUP_SURFACE_CLASS,
+            "relative flex origin-(--transform-origin) rounded-lg outline-none focus:outline-none",
             // Electron drag hit-testing ignores z-index; opt portaled menus out to keep overlapping rows
             // hoverable.
             "[-webkit-app-region:no-drag]",
