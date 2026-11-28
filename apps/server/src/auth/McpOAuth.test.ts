@@ -218,6 +218,25 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
   ),
 );
 
+it.effect("reads the client-facing protocol from the first X-Forwarded-Proto value", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      for (const [forwardedProto, issuer] of [
+        ["https, http", ORIGIN],
+        ["HTTPS , http", ORIGIN],
+        ["http, https", "http://box.example.ts.net"],
+      ] as const) {
+        const response = yield* handler(
+          at("/.well-known/oauth-authorization-server", {
+            headers: { "x-forwarded-proto": forwardedProto },
+          }),
+        );
+        expect(yield* json<unknown>(response), forwardedProto).toMatchObject({ issuer });
+      }
+    }),
+  ),
+);
+
 it.effect("answers 413 to a body over the API limit", () =>
   withRoutes((handler) =>
     Effect.gen(function* () {
