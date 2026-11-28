@@ -1,5 +1,6 @@
 import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 
+const AT_IMPORT = /@import(?![-\w\u0080-\uffff\\])/i;
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 // Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
 const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
@@ -23,10 +24,14 @@ function withoutStrings(code: string, stylesheet: boolean): string {
       return /^[ \t\n\f\r]*["']?(?:data:|#)/i.test(url) ? "" : "url(";
     }
     if (token.startsWith("/*")) {
-      if (stylesheet) return "";
+      if (stylesheet) return " ";
       return token.includes("\\") ? token : " ";
     }
-    return /^["']/.test(token) ? "" : token;
+    if (/^["']/.test(token)) {
+      return stylesheet ? " " : "";
+    }
+    // An escaped @ is part of a name, not an at-rule.
+    return stylesheet && token === "\\@" ? "_" : token;
   });
 }
 
@@ -109,7 +114,7 @@ export function themeCssWithoutDeclarations(
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
   const code = withoutStrings(css, true);
-  return /@import/i.test(code) || fetchesOutsideStrings(code);
+  return AT_IMPORT.test(code) || fetchesOutsideStrings(code);
 }
 
 /**
