@@ -36,6 +36,44 @@ describe("Match", () => {
     strictEqual(formatTodo({ status: "Active", title: "Write tests" }), "Active: Write tests")
   })
 
+  it("fn passes its arguments to record handlers", () => {
+    const describe = Match.fn((_prefix: string, event: { readonly _tag: "Opened" } | { readonly _tag: "Closed" }) =>
+      event
+    ).pipe(
+      Match.tagsExhaustive({
+        Opened: (_event, prefix) => `${prefix} opened`,
+        Closed: (_event, prefix) => `${prefix} closed`
+      })
+    )
+    strictEqual(describe("door", { _tag: "Closed" }), "door closed")
+
+    const label = Match.fn((_suffix: string, value: "a" | "b") => value).pipe(
+      Match.literalsExhaustive({ a: (value, suffix) => value + suffix, b: (value, suffix) => value + suffix })
+    )
+    strictEqual(label("!", "b"), "b!")
+  })
+
+  it("type passes handlers the input alone", () => {
+    const argCount = (...args: Array<unknown>) => args.length
+
+    const single = Match.type<string | number>().pipe(
+      Match.when(Match.string, parseInt),
+      Match.orElse(argCount)
+    )
+    strictEqual(single("8"), 8)
+    strictEqual(single(1), 1)
+
+    const multi = Match.type<string | number>().pipe(
+      Match.when(Match.string, argCount),
+      Match.when(Match.number, argCount),
+      Match.exhaustive
+    )
+    strictEqual(multi(1), 1)
+
+    const tags = Match.typeTags<{ readonly _tag: "A" }>()({ A: argCount })
+    strictEqual(tags({ _tag: "A" }), 1)
+  })
+
   it("tag matches an exact _tag and falls through for null", () => {
     const match = pipe(
       Match.type<{ _tag: "A" } | null>(),

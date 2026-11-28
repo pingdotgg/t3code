@@ -3,6 +3,7 @@ import {
   issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
+  issueTrackerConnectFailure,
   issueTrackerScopeOptions,
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
@@ -31,6 +32,7 @@ import { useProjects } from "../../../state/entities";
 import { issueTrackerEnvironment } from "../../../state/issueTrackers";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { ConnectionFormField } from "../../connection/ConnectionFormField";
 import type { SettingsTarget } from "../settings-environment-filter";
 import { SettingsProviderRow } from "./SettingsProviderRow";
 import { SettingsRow } from "./SettingsRow";
@@ -41,9 +43,15 @@ const ThemedSvg = withUniwind(Svg);
 const ICON_SIZE = Platform.OS === "android" ? 20 : 18;
 
 /** Art per tracker kind; the server supplies everything else about a tracker. */
-const TRACKER_MARKS: Partial<Record<string, string>> = {
-  linear:
-    "M1.225 61.523c-.222-.949.908-1.546 1.597-.857l36.512 36.512c.69.69.092 1.82-.857 1.597C20.15 94.612 5.388 79.85 1.225 61.523ZM.002 46.889a.99.99 0 0 0 .29.76l52.062 52.061a.99.99 0 0 0 .76.29c2.765-.169 5.47-.559 8.1-1.152.75-.169 1.014-1.084.47-1.63L2.784 38.32c-.545-.545-1.46-.28-1.63.47A50.229 50.229 0 0 0 .002 46.89ZM4.472 29.34a.99.99 0 0 0 .208 1.104l64.878 64.877a.99.99 0 0 0 1.104.208 50.293 50.293 0 0 0 5.807-3.132.99.99 0 0 0 .154-1.53L9.135 23.38a.99.99 0 0 0-1.53.154 50.29 50.29 0 0 0-3.132 5.807ZM12.293 18.229c-.309-.309-.334-.803-.045-1.13C21.376 6.626 34.637 0 49.45 0 76.869 0 99.1 22.231 99.1 49.65c0 14.813-6.626 28.074-17.099 37.202-.327.29-.821.264-1.13-.045L12.293 18.23Z",
+const TRACKER_MARKS: Partial<Record<string, { readonly box: number; readonly path: string }>> = {
+  jira: {
+    box: 24,
+    path: "M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z",
+  },
+  linear: {
+    box: 100,
+    path: "M1.225 61.523c-.222-.949.908-1.546 1.597-.857l36.512 36.512c.69.69.092 1.82-.857 1.597C20.15 94.612 5.388 79.85 1.225 61.523ZM.002 46.889a.99.99 0 0 0 .29.76l52.062 52.061a.99.99 0 0 0 .76.29c2.765-.169 5.47-.559 8.1-1.152.75-.169 1.014-1.084.47-1.63L2.784 38.32c-.545-.545-1.46-.28-1.63.47A50.229 50.229 0 0 0 .002 46.89ZM4.472 29.34a.99.99 0 0 0 .208 1.104l64.878 64.877a.99.99 0 0 0 1.104.208 50.293 50.293 0 0 0 5.807-3.132.99.99 0 0 0 .154-1.53L9.135 23.38a.99.99 0 0 0-1.53.154 50.29 50.29 0 0 0-3.132 5.807ZM12.293 18.229c-.309-.309-.334-.803-.045-1.13C21.376 6.626 34.637 0 49.45 0 76.869 0 99.1 22.231 99.1 49.65c0 14.813-6.626 28.074-17.099 37.202-.327.29-.821.264-1.13-.045L12.293 18.23Z",
+  },
 };
 
 /**
@@ -129,10 +137,10 @@ export function IssueTrackerMark(props: { readonly tracker: string }) {
     <ThemedSvg
       width={ICON_SIZE}
       height={ICON_SIZE}
-      viewBox="0 0 100 100"
+      viewBox={`0 0 ${mark.box} ${mark.box}`}
       colorClassName="accent-icon"
     >
-      <Path fill="currentColor" d={mark} />
+      <Path fill="currentColor" d={mark.path} />
     </ThemedSvg>
   ) : (
     <SymbolView name="circle.dashed" size={ICON_SIZE} tintColorClassName="accent-icon" />
@@ -151,30 +159,58 @@ export function IssueTrackerCredentialForm(props: {
   const { environmentId, tracker } = props;
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
   const [draft, setDraft] = useState("");
+  const fields = tracker.credential.fields ?? [];
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(
+    props.addAccount ? {} : (tracker.fields ?? {}),
+  );
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const complete = fields.every((field) => drafts[field.key]?.trim());
   const submit = async (token: string | null) => {
+    if (token !== null && !complete) return;
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: props.addAccount
-        ? { tracker: tracker.tracker, token, addAccount: true }
-        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
+      input: {
+        tracker: tracker.tracker,
+        token,
+        ...(props.addAccount ? { addAccount: true } : { accountId: tracker.accountId }),
+        ...(token === null || fields.length === 0
+          ? {}
+          : {
+              fields: Object.fromEntries(
+                fields.map((field) => [field.key, drafts[field.key]!.trim()]),
+              ),
+            }),
+      },
     });
     setBusy(false);
     if (!AsyncResult.isFailure(result)) {
       setDraft("");
+      if (props.addAccount) setDrafts({});
       return;
     }
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure(issueTrackerConnectFailure(error) ?? gt("The request failed."));
   };
   const helpUrl = tracker.credential.helpUrl;
   const locked = props.disabled || busy;
   const replacing = tracker.connected && !props.addAccount;
   return (
     <View className="gap-3 p-4">
+      {fields.map((field) => (
+        <ConnectionFormField
+          key={field.key}
+          label={field.label}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder={field.placeholder ?? field.label}
+          editable={!locked}
+          value={drafts[field.key] ?? ""}
+          onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
+        />
+      ))}
       <SecretTextInput
         accessibilityLabel={tracker.credential.label}
         placeholder={
@@ -219,7 +255,7 @@ export function IssueTrackerCredentialForm(props: {
           tone="primary"
           size="compact"
           loading={busy}
-          disabled={locked || !draft.trim()}
+          disabled={locked || !draft.trim() || !complete}
           onPress={() => void submit(draft.trim())}
         />
       </View>

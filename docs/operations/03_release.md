@@ -47,7 +47,7 @@ Windows packages the bundled server and its unpacked native modules in `resource
 
 ### npm OIDC trusted publishing
 
-Configure `t3` on npm with GitHub Actions Trusted Publishing for `.github/workflows/release.yml` (the workflow publishes only the `t3` launcher tarball via `npm publish --provenance`).
+Configure `t3` on npm with GitHub Actions Trusted Publishing for `.github/workflows/release.yml` (the workflow publishes only the `t3` launcher tarball via `npm publish --provenance`). Set the publisher's environment to `production`, which `publish_cli` declares.
 
 ### Apple signing and notarization (macOS)
 

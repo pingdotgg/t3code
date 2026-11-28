@@ -158,8 +158,11 @@ export function truncateLongDiffLines(patch: string, maxLength: number): string 
     .map((line) => {
       if (line.startsWith(ENTRY)) inBody = false;
       else if (line.startsWith("@@")) inBody = true;
-      if (!inBody || line.length <= maxLength + 1) return line;
-      return `${line.slice(0, maxLength + 1)}${cutLineNote(line.length - 1 - maxLength)}`;
+      const contentEnd = line.endsWith("\r") ? line.length - 1 : line.length;
+      if (!inBody || contentEnd <= maxLength + 1) return line;
+      let end = maxLength + 1;
+      if ((line.codePointAt(end - 1) ?? 0) > 0xffff) end -= 1;
+      return `${line.slice(0, end)}${cutLineNote(contentEnd - end)}${line.slice(contentEnd)}`;
     })
     .join("\n");
 }

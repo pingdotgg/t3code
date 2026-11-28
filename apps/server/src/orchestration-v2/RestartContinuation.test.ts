@@ -624,6 +624,7 @@ const backgroundSubagent = {
     title: "Background reviewer",
     status: "running",
   },
+  pendingBackgroundTasks: [],
   work: {
     kind: "subagent" as const,
     label: "Background reviewer",
@@ -640,8 +641,41 @@ const devServer = {
     type: "command_execution",
     input: "vp run dev",
     status: "running",
+    nativeItemRef: { driver, nativeId: "sh_dev", strength: "strong" },
   },
+  pendingBackgroundTasks: [{ taskId: "sh_dev", kind: "command", description: "vp run dev" }],
   work: { kind: "shell" as const, label: "vp run dev", id: "turn-item:dev-server" },
+};
+const awaitedBuild = {
+  turnItem: {
+    ...devServer.turnItem,
+    id: "turn-item:awaited-build",
+    input: "cargo build",
+    nativeItemRef: { driver, nativeId: "sh_build", strength: "strong" },
+  },
+  pendingBackgroundTasks: [
+    { taskId: "sh_build", kind: "command", description: "cargo build", awaited: true },
+  ],
+  work: {
+    kind: "shell" as const,
+    label: "cargo build",
+    id: "turn-item:awaited-build",
+    awaited: true as const,
+  },
+};
+
+// Claude rosters key a shell by its SDK task id and point at the turn item through nativeItemId.
+const awaitedTaskBuild = {
+  ...awaitedBuild,
+  pendingBackgroundTasks: [
+    {
+      taskId: "task-build",
+      nativeItemId: "sh_build",
+      kind: "command",
+      description: "cargo build",
+      awaited: true,
+    },
+  ],
 };
 
 const unacceptedFollowUp = {
@@ -658,6 +692,8 @@ it.effect.each([
   ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true, ""],
   ["completed", ProjectId.make("restart-project"), devServer, false, ""],
   ["waiting", scratchProjectId, devServer, false, ""],
+  ["completed", ProjectId.make("restart-project"), awaitedBuild, true, ""],
+  ["completed", ProjectId.make("restart-project"), awaitedTaskBuild, true, ""],
   [
     "completed",
     ProjectId.make("restart-project"),
@@ -676,6 +712,12 @@ it.effect.each([
         runs: [
           { ...base.runs[0]!, status },
           ...(followUp === "" ? [] : [{ ...base.runs[0]!, ...unacceptedFollowUp }]),
+        ],
+        providerThreads: [
+          {
+            ...base.providerThreads[0]!,
+            pendingBackgroundTasks: background.pendingBackgroundTasks,
+          },
         ],
         providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
         turnItems: [background.turnItem],
@@ -1479,3 +1521,39 @@ it.effect("skips restart discovery when no project enables continuation", () =>
     yield* recovery.prepareForShutdown;
   }),
 );
+
+it("does not continue a settled run whose only open subagent is a remote delegated task", () => {
+  const base = makeProjection();
+  for (const status of ["completed", "waiting"] as const) {
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      turnItems: [
+        {
+          id: "item:remote-delegated",
+          threadId,
+          runId,
+          nodeId: NodeId.make("task:remote"),
+          providerThreadId,
+          type: "subagent",
+          subagentId: NodeId.make("task:remote"),
+          origin: "app_owned",
+          driver,
+          providerInstanceId: instanceId,
+          childThreadId: null,
+          remoteChild: {
+            environmentId: "env:box",
+            threadId: ThreadId.make("thread:remote-child"),
+            label: "Box",
+          },
+          status: "running",
+          title: "Remote task",
+          prompt: "Check remote tests",
+          result: null,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.isUndefined(restartContinuationRun(projection, now), status);
+  }
+});

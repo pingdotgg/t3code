@@ -123,20 +123,60 @@ const threadPreviewTabsAtom = Atom.family((threadKey: string) => {
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`mobile-preview-tabs:${threadKey}`));
 });
 
+interface ServerBrowserTabs {
+  readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
+  readonly loaded: boolean;
+}
+
+const sameServerBrowserTabs = (previous: ServerBrowserTabs, next: ServerBrowserTabs) =>
+  previous.loaded === next.loaded &&
+  previous.tabs.length === next.tabs.length &&
+  previous.tabs.every((tab, index) => tab === next.tabs[index]);
+
+// A list or event that leaves the thread's server tabs as they were notifies no one, so the
+// thread screen does not re-render each time it reads the list again.
+const serverBrowserTabsAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): ServerBrowserTabs => {
+    const tabs = get(threadPreviewTabsAtom(threadKey));
+    return {
+      tabs: tabs.sessions.filter((session) => session.runtime === "server"),
+      loaded: tabs.listed,
+    };
+  }).pipe(Atom.withEquality(sameServerBrowserTabs), Atom.setIdleTTL(1_000)),
+);
+const emptyServerBrowserTabsAtom = Atom.make<ServerBrowserTabs>({ tabs: [], loaded: false });
+const serverBrowserTabCountAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => get(serverBrowserTabsAtom(threadKey)).tabs.length),
+);
+const noServerBrowserTabsAtom = Atom.make(0);
+
 export function useThreadServerBrowserTabs(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly enabled: boolean;
-}) {
-  const tabs = useAtomValue(
+}): ServerBrowserTabs {
+  return useAtomValue(
     input.enabled
-      ? threadPreviewTabsAtom(
+      ? serverBrowserTabsAtom(
           scopedThreadKey({ environmentId: input.environmentId, threadId: input.threadId }),
         )
-      : emptyTabsAtom,
+      : emptyServerBrowserTabsAtom,
   );
-  const sessions = tabs.sessions.filter((session) => session.runtime === "server");
-  return { tabs: sessions, loaded: tabs.listed };
+}
+
+/** How many server browser tabs the thread has, for screens that only show the count. */
+export function useThreadServerBrowserTabCount(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly enabled: boolean;
+}): number {
+  return useAtomValue(
+    input.enabled
+      ? serverBrowserTabCountAtom(
+          scopedThreadKey({ environmentId: input.environmentId, threadId: input.threadId }),
+        )
+      : noServerBrowserTabsAtom,
+  );
 }
 
 // The earliest time the next access request may go out.

@@ -1,6 +1,7 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
 import { canonicalRepositoryPath, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as Cache from "effect/Cache";
@@ -88,7 +89,8 @@ function parseRemoteFetchUrls(
     ) {
       continue;
     }
-    remotes.set(remoteName, remoteUrl);
+    // The identity names the remote, not the login used to reach it.
+    remotes.set(remoteName, withoutRemoteUrlCredentials(remoteUrl));
   }
   return remotes;
 }

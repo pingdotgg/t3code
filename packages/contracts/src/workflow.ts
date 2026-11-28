@@ -15,6 +15,20 @@ export const WorkflowRunStatus = Schema.Literals([
 ]);
 export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
 
+/**
+ * The one thing a run is about, as the workflow declared it: an issue, a pull request, a thread
+ * or a web address. Its `kind`, `key` and `address` read as a `WorkflowRunReference`'s.
+ */
+export const WorkflowRunSubject = Schema.Struct({
+  kind: Schema.String,
+  key: Schema.String,
+  address: Schema.Json,
+  /** Empty until something that touched it knew its title. */
+  title: Schema.String,
+  url: Schema.NullOr(Schema.String),
+});
+export type WorkflowRunSubject = typeof WorkflowRunSubject.Type;
+
 export const WorkflowRun = Schema.Struct({
   runId: Schema.String,
   workflow: Schema.String,
@@ -34,6 +48,10 @@ export const WorkflowRun = Schema.Struct({
   parentRunId: Schema.NullOr(Schema.String),
   /** The step of that run this one was invoked as. */
   parentStep: Schema.NullOr(Schema.String),
+  /** What the workflow tagged the run with, for filtering. Absent for a run with no tags. */
+  tags: Schema.optional(Schema.Array(Schema.String)),
+  /** What the run is about. Absent for a run that declared nothing. */
+  subject: Schema.optional(WorkflowRunSubject),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
@@ -42,8 +60,8 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 export const WorkflowStep = Schema.Struct({
   name: Schema.String,
-  // A sleep's `detail` is when it wakes, as an ISO time.
-  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep"]),
+  // A sleep's `detail` is when it wakes, as an ISO time. A `queue` step waits for a place in a pool.
+  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep", "queue"]),
   status: Schema.Literals(["running", "completed", "failed"]),
   attempts: Schema.Number,
   detail: Schema.NullOr(Schema.String),
@@ -55,6 +73,8 @@ export const WorkflowStep = Schema.Struct({
   result: Schema.NullOr(Schema.Json),
   /** What an agent said in closing, when its result is data and not that reply. */
   said: Schema.NullOr(Schema.String),
+  /** For a `queue` step still waiting, how many asked for a place in its pool before it. */
+  ahead: Schema.optional(Schema.Number),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });
@@ -66,6 +86,8 @@ export const WorkflowQuestion = Schema.Struct({
   name: Schema.String,
   /** What `ask` was given: a title, the choices, and data to lay out. */
   request: Schema.Json,
+  /** The kind of question its workflow declared for it. Absent for a question asked without one. */
+  kind: Schema.optional(Schema.String),
   askedAt: Schema.String,
   /** The run's latest agent thread, for talking it through before answering. */
   thread: Schema.NullOr(
@@ -89,6 +111,8 @@ export const WorkflowSummary = Schema.Struct({
   version: Schema.Number,
   /** In words: "every 1h", "daily at 09:00", "webhook issues". Empty when only started by hand. */
   triggers: Schema.Array(Schema.String),
+  /** The kinds of question it declares, in that order, each with its label. Absent when none. */
+  asks: Schema.optional(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String }))),
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
@@ -165,9 +189,94 @@ export const WorkflowCounts = Schema.Struct({
 export type WorkflowCounts = typeof WorkflowCounts.Type;
 export type WorkflowRunsSnapshot = typeof WorkflowRunsSnapshot.Type;
 
-export const WorkflowRunsSubscribeInput = Schema.Struct({});
+/** What changed in the runs list since the last frame a watcher was sent. */
+export const WorkflowRunsChange = Schema.TaggedStruct("changed", {
+  /** Runs new to the list or different from what was last sent. */
+  runs: Schema.Array(WorkflowRun),
+  /** Runs that left the list. */
+  removed: Schema.Array(Schema.String),
+  /** Questions newly asked or different from what was last sent. */
+  questions: Schema.Array(WorkflowQuestion),
+  /** Questions no longer open, by run and question name. */
+  closed: Schema.Array(Schema.Struct({ runId: Schema.String, name: Schema.String })),
+});
+
+/**
+ * A frame of `workflows.subscribe`: the whole list, or with `changes` asked for, what changed
+ * since the last frame. A server older than `changes` ignores it and sends whole lists.
+ */
+export const WorkflowRunsUpdate = Schema.Union([WorkflowRunsSnapshot, WorkflowRunsChange]);
+export type WorkflowRunsUpdate = typeof WorkflowRunsUpdate.Type;
+
+/** The list once `update` is applied, in the order the server lists runs: newest first. */
+export function applyWorkflowRunsUpdate(
+  snapshot: WorkflowRunsSnapshot | undefined,
+  update: WorkflowRunsUpdate,
+): WorkflowRunsSnapshot {
+  if (!("_tag" in update)) return update;
+  const base = snapshot ?? { workflows: [], runs: [], questions: [] };
+  // Stable sorts, so entries of the same moment keep the order they were sent in.
+  const runs = merged(base.runs, update.runs, update.removed, (run) => run.runId).sort(
+    (left, right) =>
+      left.startedAt === right.startedAt ? 0 : left.startedAt < right.startedAt ? 1 : -1,
+  );
+  const questions = merged(
+    base.questions,
+    update.questions,
+    update.closed.map(workflowQuestionKey),
+    workflowQuestionKey,
+  ).sort((left, right) =>
+    left.askedAt === right.askedAt ? 0 : left.askedAt < right.askedAt ? -1 : 1,
+  );
+  return { ...base, runs, questions };
+}
+
+/** What names an open question: one run asks one question of a name at a time. */
+export const workflowQuestionKey = (question: { readonly runId: string; readonly name: string }) =>
+  JSON.stringify([question.runId, question.name]);
+
+/** `held` with `changed` put in place of their earlier versions and `gone` left out. */
+function merged<A>(
+  held: ReadonlyArray<A>,
+  changed: ReadonlyArray<A>,
+  gone: ReadonlyArray<string>,
+  key: (entry: A) => string,
+): Array<A> {
+  const fresh = new Map(changed.map((entry) => [key(entry), entry]));
+  const left = new Set(gone);
+  const kept = held.flatMap((entry) => {
+    const id = key(entry);
+    if (left.has(id)) return [];
+    const next = fresh.get(id);
+    fresh.delete(id);
+    return [next ?? entry];
+  });
+  return [...fresh.values(), ...kept];
+}
+
+export const WorkflowRunsSubscribeInput = Schema.Struct({
+  /** Send what changed after the first list instead of the whole list every time. */
+  changes: Schema.optionalKey(Schema.Boolean),
+});
 
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
+
+/**
+ * Runs whose subject is at the web address `subject`, or is the `issue` or `pullRequest` given:
+ * a listing and an item's own view do not always write one item's address the same way.
+ */
+export const WorkflowRunsAboutInput = Schema.Struct({
+  subject: Schema.String,
+  issue: Schema.optionalKey(IssueRef),
+  pullRequest: Schema.optionalKey(PullRequestRef),
+});
+export type WorkflowRunsAboutInput = typeof WorkflowRunsAboutInput.Type;
+/** Those runs, newest first and 500 at most, with the questions they have open. */
+export const WorkflowRunsAbout = Schema.Struct({
+  runs: Schema.Array(WorkflowRun),
+  questions: Schema.Array(WorkflowQuestion),
+});
+export type WorkflowRunsAbout = typeof WorkflowRunsAbout.Type;
 
 /**
  * Something a run touched: an issue, a pull request, or a kind added later. `kind` is open, so a
@@ -175,12 +284,7 @@ export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
  * its kind; `address` is whatever that kind needs to open it.
  */
 export const WorkflowRunReference = Schema.Struct({
-  kind: Schema.String,
-  key: Schema.String,
-  address: Schema.Json,
-  /** Empty until something that touched it knew its title. */
-  title: Schema.String,
-  url: Schema.NullOr(Schema.String),
+  ...WorkflowRunSubject.fields,
   /** A word for where it stands, such as `open`, `merged` or `closed`. */
   state: Schema.NullOr(Schema.String),
   /** The steps that touched it, in the order they first did. */
@@ -189,8 +293,16 @@ export const WorkflowRunReference = Schema.Struct({
 });
 export type WorkflowRunReference = typeof WorkflowRunReference.Type;
 
-/** The kinds of reference runs record today; `address` is an `IssueRef` or a `PullRequestRef`. */
-export const WorkflowReferenceKind = { issue: "issue", pullRequest: "pullRequest" } as const;
+/**
+ * The kinds of reference runs record today. `address` is an `IssueRef`, a `PullRequestRef`,
+ * `{ threadId }` or `{ url }`.
+ */
+export const WorkflowReferenceKind = {
+  issue: "issue",
+  pullRequest: "pullRequest",
+  thread: "thread",
+  url: "url",
+} as const;
 export const WorkflowIssueAddress = IssueRef;
 export const WorkflowPullRequestAddress = PullRequestRef;
 

@@ -270,6 +270,9 @@ const openFactory = (method: string): FileSystem.FileSystem["open"] => {
 }
 const open = openFactory("open")
 
+const isEspipe = (error: Error.PlatformError) =>
+  (error.reason.cause as NodeJS.ErrnoException | undefined)?.code === "ESPIPE"
+
 const negativePosition = (method: string) =>
   Error.badArgument({
     module: "FileSystem",
@@ -322,6 +325,7 @@ const makeFile = (() => {
     private readonly append: boolean
 
     private position: bigint = BigInt(0)
+    private sequential = false
 
     constructor(
       fd: number,
@@ -338,6 +342,41 @@ const makeFile = (() => {
 
     get sync() {
       return nodeSync(this.fd)
+    }
+
+    // Runs one read or write at the cursor, then advances it. If the descriptor
+    // rejects positioned I/O with ESPIPE (pipes, sockets, terminals), retry
+    // sequentially and stay sequential for this handle.
+    private atCursor(
+      f: (position: bigint | null) => Effect.Effect<number, Error.PlatformError>
+    ): Effect.Effect<number, Error.PlatformError> {
+      return Effect.suspend(() => {
+        if (this.sequential) {
+          return f(null)
+        }
+        const position = this.position
+        return Effect.catchIf(
+          Effect.map(f(position), (bytes) => {
+            this.position = position + BigInt(bytes)
+            return bytes
+          }),
+          isEspipe,
+          () => {
+            this.sequential = true
+            return f(null)
+          }
+        )
+      })
+    }
+
+    private writeOnce(method: string, write: typeof nodeWrite, buffer: Uint8Array) {
+      return this.append ?
+        Effect.suspend(() => write(this.fd, buffer, undefined)) :
+        this.atCursor((position) =>
+          position === null
+            ? write(this.fd, buffer, undefined)
+            : Effect.flatMap(positionToNumber(position, method), (position) => write(this.fd, buffer, position))
+        )
     }
 
     seek(offset: bigint, from: FileSystem.SeekMode) {
@@ -358,19 +397,12 @@ const makeFile = (() => {
     read(buffer: Uint8Array, options?: FileSystem.File.ReadOptions) {
       return Effect.suspend(() => {
         const explicit = options?.position
-        if (explicit !== undefined) {
-          return explicit < BigInt(0)
-            ? Effect.fail(negativePosition("read"))
-            : nodeRead(this.fd, { buffer, position: explicit })
+        if (explicit === undefined) {
+          return this.atCursor((position) => nodeRead(this.fd, { buffer, position }))
         }
-        const position = this.position
-        return Effect.map(
-          nodeRead(this.fd, { buffer, position }),
-          (bytesRead) => {
-            this.position = position + BigInt(bytesRead)
-            return bytesRead
-          }
-        )
+        return explicit < BigInt(0)
+          ? Effect.fail(negativePosition("read"))
+          : nodeRead(this.fd, { buffer, position: explicit })
       })
     }
 
@@ -385,16 +417,12 @@ const makeFile = (() => {
             return Effect.fail(negativePosition("readAlloc"))
           }
           const buffer = Buffer.allocUnsafeSlow(size)
-          const position = explicit ?? this.position
+          const read = (position: bigint | null) => nodeReadAlloc(this.fd, { buffer, position })
           return Effect.map(
-            nodeReadAlloc(this.fd, { buffer, position }),
+            explicit === undefined ? this.atCursor(read) : read(explicit),
             (bytesRead): Option.Option<Buffer> => {
               if (bytesRead === 0) {
                 return Option.none()
-              }
-
-              if (explicit === undefined) {
-                this.position = position + BigInt(bytesRead)
               }
               if (bytesRead === size) {
                 return Option.some(buffer)
@@ -423,53 +451,24 @@ const makeFile = (() => {
     }
 
     write(buffer: Uint8Array) {
-      return Effect.suspend(() => {
-        const position = this.position
-        return Effect.flatMap(
-          this.append ? Effect.succeed(undefined) : positionToNumber(position, "write"),
-          (nodePosition) =>
-            Effect.map(
-              nodeWrite(this.fd, buffer, nodePosition),
-              (bytesWritten) => {
-                if (!this.append) {
-                  this.position = position + BigInt(bytesWritten)
-                }
-                return bytesWritten
-              }
-            )
-        )
-      })
+      return this.writeOnce("write", nodeWrite, buffer)
     }
 
     private writeAllChunk(buffer: Uint8Array): Effect.Effect<void, Error.PlatformError> {
-      return Effect.suspend(() => {
-        const position = this.position
-        return Effect.flatMap(
-          this.append ? Effect.succeed(undefined) : positionToNumber(position, "writeAll"),
-          (nodePosition) =>
-            Effect.flatMap(
-              nodeWriteAll(this.fd, buffer, nodePosition),
-              (bytesWritten) => {
-                if (bytesWritten === 0) {
-                  return Effect.fail(
-                    Error.systemError({
-                      module: "FileSystem",
-                      method: "writeAll",
-                      _tag: "WriteZero",
-                      pathOrDescriptor: this.fd,
-                      description: "write returned 0 bytes written"
-                    })
-                  )
-                }
-
-                if (!this.append) {
-                  this.position = position + BigInt(bytesWritten)
-                }
-
-                return bytesWritten < buffer.length ? this.writeAllChunk(buffer.subarray(bytesWritten)) : Effect.void
-              }
-            )
-        )
+      // Recurse outside `writeOnce` so an ESPIPE retry only repeats the failed chunk.
+      return Effect.flatMap(this.writeOnce("writeAll", nodeWriteAll, buffer), (bytesWritten) => {
+        if (bytesWritten === 0) {
+          return Effect.fail(
+            Error.systemError({
+              module: "FileSystem",
+              method: "writeAll",
+              _tag: "WriteZero",
+              pathOrDescriptor: this.fd,
+              description: "write returned 0 bytes written"
+            })
+          )
+        }
+        return bytesWritten < buffer.length ? this.writeAllChunk(buffer.subarray(bytesWritten)) : Effect.void
       })
     }
 

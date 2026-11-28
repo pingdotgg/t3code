@@ -24,6 +24,7 @@ import WorkflowThreadPane, {
   useOpenThreadPage,
   WorkflowThreadTabLabel,
 } from "./WorkflowThreadPane";
+import { useWorkflowThreadOpen } from "./useWorkflowThreadOpen";
 
 /**
  * The pane beside a run: a tab per transcript or reference opened from it. Only the tab that
@@ -34,11 +35,13 @@ export default function WorkflowPane({
   runId,
   state,
   onChange,
+  electron = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly runId: string | null;
   readonly state: WorkflowPaneState;
   readonly onChange: (next: WorkflowPaneState) => void;
+  readonly electron?: boolean;
 }) {
   const gt = useGT();
   const detail = useEnvironmentQuery(
@@ -59,22 +62,42 @@ export default function WorkflowPane({
       (reference) => reference.kind === tab.kind && reference.key === tab.key,
     ) ?? null;
   const activeReference = active === undefined || "thread" in active ? null : referenceOf(active);
+  const activeThread = active !== undefined && "thread" in active ? threadOf(active) : null;
+  const activeThreadOpen = useWorkflowThreadOpen(
+    environmentId,
+    activeThread?.environmentId ?? environmentId,
+  ).open;
   const openFull =
     active === undefined
       ? null
       : "thread" in active
-        ? () => openThreadPage(threadOf(active))
+        ? // Nowhere to go while this client neither knows the environment nor reads it through the run's.
+          activeThreadOpen === "unavailable"
+          ? null
+          : () =>
+              openThreadPage(
+                threadOf(active),
+                activeThreadOpen === "linked" ? environmentId : undefined,
+              )
         : activeReference === null
           ? null
           : openReferencePage(activeReference);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2">
+      <div
+        className={cn(
+          "flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2",
+          electron && "drag-region wco:pr-(--workspace-native-controls-inset)",
+        )}
+      >
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}
-          className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto"
+          className={cn(
+            "me-auto flex min-w-0 gap-0.5 overflow-x-auto",
+            electron && "[-webkit-app-region:no-drag]",
+          )}
         >
           {tabs.map((tab, index) => (
             <div
@@ -144,6 +167,7 @@ export default function WorkflowPane({
         {active === undefined ? null : "thread" in active ? (
           <WorkflowThreadPane
             key={`${active.env ?? ""}:${active.thread}`}
+            viaEnvironmentId={environmentId}
             threadRef={threadOf(active)}
           />
         ) : activeReference !== null ? (

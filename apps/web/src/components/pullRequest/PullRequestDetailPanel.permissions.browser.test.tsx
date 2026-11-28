@@ -7,12 +7,13 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { permissions, reads, shown } = vi.hoisted(() => ({
+const { command, permissions, reads, shown } = vi.hoisted(() => ({
+  command: vi.fn(),
   permissions: { checkout: true, operate: true },
   reads: { diff: [] as unknown[] },
   shown: { detail: null as PullRequestDetailView | null },
@@ -70,7 +71,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 });
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: (() => command) as never,
 }));
 
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
@@ -153,6 +154,7 @@ function setup() {
   permissions.operate = true;
   reads.diff = [];
   shown.detail = detail;
+  command.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -183,6 +185,62 @@ it("can still add conflict resolution to an existing composer without checkout s
   expect(draft?.prompt).toContain(detail.url);
 });
 
+it("keeps a merge and a review on the head the reader was shown until they load new commits", async () => {
+  setup();
+  command.mockResolvedValue({ _tag: "Success", value: undefined });
+  const at = (headSha: string): PullRequestDetailView => ({
+    ...detail,
+    headSha,
+    mergeability: "mergeable",
+    mergeCapabilities: { merge: false, squash: true, rebase: false },
+    capabilities: {
+      ...detail.capabilities,
+      actions: ["merge"],
+      mergeMethods: ["squash"],
+      review: { ...detail.capabilities.review, verdicts: ["approve"] },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, actions: ["merge"], verdicts: ["approve"] },
+  });
+  const sent = (key: "action" | "verdict") =>
+    command.mock.calls.flatMap(([call]) =>
+      call?.input?.[key] === undefined ? [] : [call.input.expectedHeadSha],
+    );
+  const merge = async () => {
+    await screen.getByRole("button", { name: "Squash and merge" }).click();
+    await screen.getByRole("button", { name: "Confirm merge?" }).click();
+  };
+  shown.detail = at("shown-head");
+  await using screen = await render(panel());
+  await expect.element(screen.getByRole("button", { name: "Squash and merge" })).toBeVisible();
+  // A background refresh brings a push the reader has not looked at.
+  shown.detail = at("pushed-head");
+  await screen.rerender(panel());
+  await expect.element(screen.getByText(/still applies to shown-h/)).toBeVisible();
+  await merge();
+  await screen.getByRole("button", { name: "Review pull request" }).click();
+  // The composer popup is portalled outside the rendered tree.
+  await page.getByRole("button", { name: "Submit review" }).click();
+  await vi.waitFor(() => expect(sent("verdict")).toEqual(["shown-head"]));
+  expect(sent("action")).toEqual(["shown-head"]);
+
+  // The pin moves once the reload has been asked of the host, not at the click.
+  const reload = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
+  command.mockImplementation((call) =>
+    call?.input?.reference === undefined
+      ? Promise.resolve({ _tag: "Success", value: undefined })
+      : reload.promise,
+  );
+  await screen.getByRole("button", { name: "Load new commits" }).click();
+  await merge();
+  await vi.waitFor(() => expect(sent("action")).toEqual(["shown-head", "shown-head"]));
+  reload.resolve({ _tag: "Success", value: undefined });
+  await expect.element(screen.getByText(/still applies to/)).not.toBeInTheDocument();
+  await merge();
+  await vi.waitFor(() =>
+    expect(sent("action")).toEqual(["shown-head", "shown-head", "pushed-head"]),
+  );
+});
+
 it("reads the first diff page once the pointer rests on the Code tab", async () => {
   setup();
   await using screen = await render(panel());
@@ -190,7 +248,8 @@ it("reads the first diff page once the pointer rests on the Code tab", async () 
   const code = screen.getByRole("button", { name: "Code", exact: true });
   await expect.element(code).toBeVisible();
 
-  await userEvent.hover(code);
+  // userEvent advances fake timers while it runs (vitest#11242), blurring the 150 ms boundary.
+  await act(() => code.element().dispatchEvent(new PointerEvent("pointerover", { bubbles: true })));
   await act(() => vi.advanceTimersByTime(149));
   expect(reads.diff).toEqual([]);
   await act(() => vi.advanceTimersByTime(1));

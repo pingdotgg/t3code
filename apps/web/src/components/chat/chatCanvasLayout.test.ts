@@ -326,6 +326,53 @@ describe("chat canvas layout", () => {
   });
 });
 
+describe("html preview lane", () => {
+  const wide = (
+    width: number,
+    options: Partial<Parameters<typeof resolveChatCanvasLayout>[0]> = {},
+    maxHtmlPreviewWidth = 1152,
+  ) =>
+    resolveChatCanvasLayout({
+      container: { width, height: 900 },
+      preview: null,
+      maxChatWidth: 736,
+      maxHtmlPreviewWidth,
+      composerHeight: 180,
+      ...options,
+    });
+  it("matches the chat column unless the setting allows more", () => {
+    const result = wide(1600, {}, 736);
+    expect(result.htmlPreview).toEqual({ left: result.chat.left, width: result.chat.width });
+  });
+  it("widens around a chat column that stays where it was", () => {
+    const result = wide(1600);
+    expect(result.chat).toEqual(wide(1600, {}, 736).chat);
+    expect(result.htmlPreview).toEqual({ left: 224, width: 1152 });
+    expect(wide(1200).htmlPreview).toEqual({ left: 48, width: 1104 });
+    expect(wide(1600, {}, 1600).htmlPreview).toEqual({ left: 48, width: 1504 });
+  });
+  it("is never narrower than the chat column", () => {
+    const result = wide(1600, { maxChatWidth: 1600 }, 1152);
+    expect(result.htmlPreview).toEqual({ left: result.chat.left, width: result.chat.width });
+  });
+  it("stops short of the details card", () => {
+    const detailsCard = { left: 1308, right: 1588, bottom: 400 };
+    const result = wide(1600, { detailsCard });
+    expect(result.chat).toEqual(wide(1600, { detailsCard }, 736).chat);
+    expect(result.htmlPreview).toEqual({ left: 124, width: 1152 });
+    expect(wide(1600, { detailsCard }, 1600).htmlPreview).toEqual({ left: 48, width: 1228 });
+  });
+  it("stops short of a mini player beside the chat and matches chat under one over it", () => {
+    const beside = wide(1900, { preview: { ...preview, position: { x: 1500, y: 600 } } });
+    expect(beside.overlapsChat).toBe(false);
+    expect(beside.htmlPreview.left + beside.htmlPreview.width).toBe(beside.frame!.x - 12);
+    expect(beside.htmlPreview.width).toBeGreaterThan(beside.chat.width);
+    const over = wide(1000, { preview: { ...preview, position: { x: 12, y: 700 } } });
+    expect(over.overlapsChat).toBe(true);
+    expect(over.htmlPreview).toEqual({ left: over.chat.left, width: over.chat.width });
+  });
+});
+
 describe("workspace card beside chat", () => {
   const withCard = (width: number, player: ChatCanvasPreview | null = null, maxChatWidth = 736) =>
     resolveChatCanvasLayout({

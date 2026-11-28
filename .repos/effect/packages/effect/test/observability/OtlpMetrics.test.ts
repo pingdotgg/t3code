@@ -61,7 +61,7 @@ describe("OtlpMetrics", () => {
       )
     }))
 
-  it.effect("does not regress delta checkpoints when exports complete out of order", () =>
+  it.effect("serializes overlapping flushes and sends a fresh delta snapshot", () =>
     Effect.scoped(Effect.gen(function*() {
       const bodies = yield* Ref.make<ReadonlyArray<OtlpExportRequest>>([])
       const started = yield* Effect.forEach([0, 1], () => Deferred.make<void>())
@@ -102,18 +102,22 @@ describe("OtlpMetrics", () => {
         yield* TestClock.adjust("1 second")
         yield* Metric.update(counter, 1)
         const second = yield* Effect.forkChild(flusher.flush)
-        yield* Deferred.await(started[1])
+        yield* Effect.yieldNow
+        assert.isFalse(yield* Deferred.isDone(started[1]))
 
-        yield* Deferred.succeed(releases[1], undefined)
-        yield* Fiber.join(second)
         yield* Deferred.succeed(releases[0], undefined)
         yield* Fiber.join(first)
+        yield* Deferred.await(started[1])
+        yield* Deferred.succeed(releases[1], undefined)
+        yield* Fiber.join(second)
 
         yield* TestClock.adjust("1 second")
         yield* flusher.flush
       }).pipe(Effect.provide(layer), Effect.provideService(Metric.MetricRegistry, new Map()))
 
       const requests = yield* Ref.get(bodies)
+      assert.strictEqual(findMetric(requests[0], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 1)
+      assert.strictEqual(findMetric(requests[1], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 1)
       assert.strictEqual(findMetric(requests[2], "concurrent_delta")?.sum?.dataPoints[0].asDouble, 0)
     })))
 

@@ -9,11 +9,23 @@ const GENERATED_FILE_NAMES = new Set([
   "pnpm-lock.yaml",
   "yarn.lock",
   "package-lock.json",
+  "npm-shrinkwrap.json",
+  "bun.lock",
   "bun.lockb",
+  "deno.lock",
   "Cargo.lock",
   "go.sum",
+  "gradle.lockfile",
   "composer.lock",
   "Gemfile.lock",
+  "packages.lock.json",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "flake.lock",
+  "Podfile.lock",
+  "pubspec.lock",
+  "mix.lock",
 ]);
 const GENERATED_DIRECTORIES = new Set([
   "__snapshots__",
@@ -84,6 +96,7 @@ const IMPORT_SPECIFIER = /(?:\bfrom|\bimport|\brequire\s*\()\s*\(?\s*["']([^"']+
 function importedPaths(
   path: string,
   lines: ReadonlyArray<string>,
+  exactPaths: ReadonlySet<string>,
   byModulePath: ReadonlyMap<string, string>,
   byModuleName: ReadonlyMap<string, string>,
 ): ReadonlySet<string> {
@@ -94,13 +107,14 @@ function importedPaths(
     while (match !== null) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
-      const resolved = stripModuleExtension(
-        specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier,
-      );
+      const isRelative = specifier.startsWith(".");
+      const resolvedPath = isRelative ? resolveRelative(path, specifier) : specifier;
+      const resolved = stripModuleExtension(resolvedPath);
       const target =
+        (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
-        byModuleName.get(moduleName(resolved));
+        (isRelative ? undefined : byModuleName.get(moduleName(resolved)));
       if (target !== undefined && target !== path) imported.add(target);
       match = IMPORT_SPECIFIER.exec(line);
     }
@@ -108,21 +122,90 @@ function importedPaths(
   return imported;
 }
 
+function pushMinHeap(heap: Array<number>, value: number): void {
+  heap.push(value);
+  let child = heap.length - 1;
+  while (child > 0) {
+    const parent = (child - 1) >> 1;
+    const parentValue = heap[parent]!;
+    if (parentValue <= value) break;
+    heap[child] = parentValue;
+    child = parent;
+  }
+  heap[child] = value;
+}
+
+function popMinHeap(heap: Array<number>): number {
+  const root = heap[0]!;
+  const last = heap.pop()!;
+  if (heap.length === 0) return root;
+  let parent = 0;
+  const half = heap.length >> 1;
+  while (parent < half) {
+    let child = (parent << 1) + 1;
+    let childValue = heap[child]!;
+    const right = child + 1;
+    if (right < heap.length && heap[right]! < childValue) {
+      child = right;
+      childValue = heap[right]!;
+    }
+    if (last <= childValue) break;
+    heap[parent] = childValue;
+    parent = child;
+  }
+  heap[parent] = last;
+  return root;
+}
+
 function orderByImports(
   paths: ReadonlyArray<string>,
   imports: ReadonlyMap<string, ReadonlySet<string>>,
 ): Array<string> {
-  const remaining = new Set(paths);
-  const ordered: Array<string> = [];
   const sorted = [...paths].sort((left, right) => left.localeCompare(right));
-  while (remaining.size > 0) {
-    const candidates = sorted.filter((path) => remaining.has(path));
-    const next =
-      candidates.find((path) =>
-        [...(imports.get(path) ?? [])].every((dependency) => !remaining.has(dependency)),
-      ) ?? candidates[0]!;
-    remaining.delete(next);
-    ordered.push(next);
+  const count = sorted.length;
+  const indexByPath = new Map<string, number>();
+  for (let index = 0; index < count; index++) {
+    indexByPath.set(sorted[index]!, index);
+  }
+
+  const inDegree = new Int32Array(count);
+  const emitted = new Uint8Array(count);
+  const dependents: Array<Array<number>> = Array.from({ length: count }, () => []);
+  for (let index = 0; index < count; index++) {
+    const dependencies = imports.get(sorted[index]!);
+    if (dependencies === undefined) continue;
+    for (const dependency of dependencies) {
+      const dependencyIndex = indexByPath.get(dependency);
+      if (dependencyIndex === undefined) continue;
+      inDegree[index] = inDegree[index]! + 1;
+      dependents[dependencyIndex]!.push(index);
+    }
+  }
+
+  const ready: Array<number> = [];
+  for (let index = 0; index < count; index++) {
+    if (inDegree[index] === 0) ready.push(index);
+  }
+
+  const ordered: Array<string> = [];
+  let nextRemaining = 0;
+  for (let step = 0; step < count; step++) {
+    let nextIndex: number;
+    if (ready.length > 0) {
+      nextIndex = popMinHeap(ready);
+    } else {
+      while (emitted[nextRemaining] === 1) nextRemaining++;
+      nextIndex = nextRemaining++;
+    }
+    emitted[nextIndex] = 1;
+    ordered.push(sorted[nextIndex]!);
+
+    for (const dependent of dependents[nextIndex]!) {
+      if (emitted[dependent] === 1) continue;
+      const remainingDependencies = inDegree[dependent]! - 1;
+      inDegree[dependent] = remainingDependencies;
+      if (remainingDependencies === 0) pushMinHeap(ready, dependent);
+    }
   }
   return ordered;
 }
@@ -154,6 +237,7 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
   for (const path of byPath.keys()) tiers.set(path, diffFileTier(path));
 
   const sourcePaths = [...byPath.keys()].filter((path) => tiers.get(path) === "source");
+  const exactPaths = new Set(sourcePaths);
   const byModulePath = new Map<string, string>();
   const ambiguousModuleNames = new Set<string>();
   const byModuleName = new Map<string, string>();
@@ -170,7 +254,7 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
     const lines = byPath
       .get(path)!
       .flatMap((file) => [...file.additionLines, ...file.deletionLines]);
-    imports.set(path, importedPaths(path, lines, byModulePath, byModuleName));
+    imports.set(path, importedPaths(path, lines, exactPaths, byModulePath, byModuleName));
   }
   const orderedSource = orderByImports(sourcePaths, imports);
 

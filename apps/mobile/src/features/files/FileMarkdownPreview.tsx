@@ -16,8 +16,7 @@ import {
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
+import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -41,7 +40,11 @@ import {
   type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
-import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import {
+  fileRoutePathSegments,
+  resolveMarkdownFileLinkPath,
+  resolveWorkspaceFilePath,
+} from "./filePath";
 import { SourceFileSurface } from "./SourceFileSurface";
 
 interface MarkdownPreviewStyles {
@@ -49,7 +52,7 @@ interface MarkdownPreviewStyles {
 }
 
 export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fontFamilies, monoFontFamily } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
   const body = theme["--color-md-body"];
@@ -59,8 +62,8 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fontFamilies.regular;
+  const boldFontFamily = fontFamilies.bold;
 
   return {
     nativeTextStyle: {
@@ -81,6 +84,7 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       fontFamily: regularFontFamily,
       headingFontFamily: boldFontFamily,
       boldFontFamily,
+      monoFontFamily,
     },
   };
 }
@@ -208,9 +212,11 @@ export function FileMarkdownPreview(props: {
     if (!media || media.kind === "file") {
       const fileLink = resolveMarkdownLinkPresentation(href);
       if (props.captured || fileLink.kind !== "file") return false;
+      const target = resolveMarkdownFileLinkPath(props.cwd, markdownDirectory, fileLink.path);
+      if (target === null) return false;
       const params = {
         environmentId: String(props.environmentId),
-        path: fileRoutePathSegments(resolveWorkspaceFilePath(markdownDirectory, fileLink.path)),
+        path: fileRoutePathSegments(target),
         ...(fileLink.line ? { line: String(fileLink.line) } : {}),
       };
       if (props.threadId) {
@@ -228,7 +234,7 @@ export function FileMarkdownPreview(props: {
     openMedia(href, true);
   };
   const onLinkPress = (href: string) => {
-    if (!openMedia(href)) void tryOpenExternalUrl(href, "markdown-link");
+    if (!openMedia(href)) void tryOpenWebLink(href, "markdown-link");
   };
 
   const refreshControl = props.onRefresh ? (

@@ -1,16 +1,19 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, IssueRef } from "@t3tools/contracts";
+import type { EnvironmentId, IssueCommentAudience, IssueRef } from "@t3tools/contracts";
 import { msg, useGT } from "gt-react";
-import { ArrowUpIcon } from "lucide-react";
+import { ArrowUpIcon, ChevronDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { m } from "~/i18n/messages";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { cn } from "~/lib/utils";
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
+import { Button } from "../ui/button";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 
@@ -19,13 +22,24 @@ export function IssueCommentComposer({
   environmentId,
   reference,
   blocked,
+  audiences,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   /** Why the viewer cannot comment here; null when they can. */
   blocked: string | null;
+  /** Each comment is an internal note unless the viewer picks a reply to the customer. */
+  audiences: boolean;
 }) {
   const gt = useGT();
+  // Internal by default: a customer reply is always an explicit choice.
+  const [audience, setAudience] = useState<IssueCommentAudience>("internal");
+  // Read at send: a send queued behind dictation goes out with the audience shown then.
+  const latestAudience = useRef(audience);
+  const changeAudience = (value: IssueCommentAudience) => {
+    latestAudience.current = value;
+    setAudience(value);
+  };
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -44,7 +58,14 @@ export function IssueCommentComposer({
   const submit = async (text: string) => {
     if (text.trim().length === 0 || locked) return;
     setSubmitting(true);
-    const result = await comment({ environmentId, input: { ...reference, body: text } });
+    const result = await comment({
+      environmentId,
+      input: {
+        ...reference,
+        body: text,
+        ...(audiences ? { audience: latestAudience.current } : {}),
+      },
+    });
     setSubmitting(false);
     if (result._tag === "Failure") {
       toastManager.add({
@@ -66,7 +87,9 @@ export function IssueCommentComposer({
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
       <ComposerSurface.Shell className="pointer-events-auto">
-        <ComposerSurface.Host>
+        <ComposerSurface.Host
+          className={audiences && audience === "internal" ? "bg-warning-surface" : undefined}
+        >
           <form
             className="relative z-10 flex flex-col"
             onSubmit={(event) => {
@@ -77,7 +100,11 @@ export function IssueCommentComposer({
             <textarea
               ref={textareaRef}
               rows={2}
-              className="field-sizing-content max-h-64 min-h-[2lh] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-base text-foreground outline-none wrap-anywhere placeholder:text-muted-foreground/70 disabled:opacity-64 sm:text-sm"
+              className={cn(
+                "field-sizing-content max-h-64 w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-base text-foreground outline-none wrap-anywhere placeholder:text-muted-foreground/70 disabled:opacity-64 sm:text-sm",
+                // Two full lines above the audience row; the padding counts against min-height.
+                audiences ? "min-h-[calc(2lh+1rem)]" : "min-h-[2lh]",
+              )}
               aria-label={gt("Add a comment")}
               placeholder={blocked ?? gt("Leave a comment")}
               value={body}
@@ -94,6 +121,37 @@ export function IssueCommentComposer({
               }}
             />
             <div className="flex flex-wrap items-center justify-end gap-2 px-2.5 pb-2.5">
+              {audiences ? (
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        className="mr-auto"
+                        disabled={locked}
+                      />
+                    }
+                  >
+                    {audience === "internal" ? gt("Internal note") : gt("Reply to customer")}
+                    <ChevronDownIcon aria-hidden className="size-3" />
+                  </MenuTrigger>
+                  <MenuPopup align="start">
+                    <MenuRadioGroup
+                      value={audience}
+                      onValueChange={(value: IssueCommentAudience) => changeAudience(value)}
+                    >
+                      <MenuRadioItem value="internal" closeOnClick>
+                        {gt("Internal note")}
+                      </MenuRadioItem>
+                      <MenuRadioItem value="public" closeOnClick>
+                        {gt("Reply to customer")}
+                      </MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuPopup>
+                </Menu>
+              ) : null}
               <TextFieldSpeechControls speech={speech} disabled={locked} />
               <button
                 type="submit"

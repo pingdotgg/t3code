@@ -29,7 +29,11 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
-import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
+import {
+  autoConnectReport,
+  devAutoConnectAttemptAtom,
+  pairingLinksAllowed,
+} from "./devAutoConnect";
 import { linkedEnvironmentPrefillAtom } from "./linkedEnvironmentPrefill";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
@@ -49,8 +53,8 @@ export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
   const params = route.params ?? {};
-  // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
-  const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
+  // Store builds ignore the prefill so a link can never supply an attacker-chosen host and token.
+  const routePairingUrl = pairingLinksAllowed() ? (params.pairingUrl?.trim() ?? "") : "";
   const known = useAtomValue(linkedEnvironmentPrefillAtom);
   const linked = known !== null && known.environmentId === params.linked ? known : null;
   // A new prefill link replaces whatever the form held.
@@ -443,6 +447,7 @@ function PairingInputRow({
         accessibilityLabel={label}
         autoCapitalize="none"
         autoCorrect={false}
+        lineBreakModeIOS="middle"
         textAlignVertical="center"
         className="min-h-[48px] flex-1 self-stretch rounded-none border-0 bg-transparent p-0 text-base leading-[23px]"
       />

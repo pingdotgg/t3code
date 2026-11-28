@@ -26,6 +26,10 @@ import { claudeCompactAfterResumeWakeInput } from "./claude_compact_after_resume
 import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after_resume_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
+import { claudeAutoModeInput } from "./claude_auto_mode/input.ts";
+import { assertClaudeAutoModeOutput } from "./claude_auto_mode/output.ts";
+import { claudeAutoModeUnavailableInput } from "./claude_auto_mode_unavailable/input.ts";
+import { assertClaudeAutoModeUnavailableOutput } from "./claude_auto_mode_unavailable/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeNestedBackgroundSubagentWakeInput } from "./claude_nested_background_subagent_wake/input.ts";
@@ -438,6 +442,33 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CLAUDE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertClaudeBackgroundTaskWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_auto_mode",
+    buildInput: claudeAutoModeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./claude_auto_mode/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_auto_mode_unavailable",
+    buildInput: claudeAutoModeUnavailableInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_auto_mode_unavailable/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeUnavailableOutput,
       },
     ],
   },

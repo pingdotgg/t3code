@@ -53,7 +53,7 @@ export const suite = (name: string, layer: Layer.Layer<KeyValueStore.KeyValueSto
       Effect.gen(function*() {
         const kv = yield* KeyValueStore.KeyValueStore
         yield* kv.clear
-        const value = "héllo 👋"
+        const value = "\uFEFFhéllo 👋"
 
         yield* kv.set("utf8", value)
 

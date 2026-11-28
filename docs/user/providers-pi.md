@@ -1,94 +1,33 @@
 # Pi
 
-T3 Code can use your existing Pi coding agent installation while keeping Pi's models, auth,
-extensions, skills, context files, and native session history.
+Run your existing [Pi](https://pi.dev) (**0.84.3+**, Node.js **22.19+**) installation in T3 Code while keeping Pi's models, auth, extensions, skills, and native session history.
 
-## Set Up Pi
+## Set up Pi
 
-1. Install [Pi](https://pi.dev) on the machine running the T3 Code server. Pi requires Node.js
-   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Pi
-   0.84.3 or newer.
-2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
-3. Open T3 Code Settings, enable Pi, and refresh the provider.
+1. Install Pi on the server machine (via Pi's installer or `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`).
+2. Run `pi` and `/login` in a terminal on the server (over SSH for remote hosts, or set your model provider's API key in the Pi instance's environment variables).
+3. Open **Settings → Providers**, enable **Pi**, and refresh. Set **Binary path** if `pi` isn't on `PATH`.
 
-For an npm installation, use:
+- In **Launch arguments**, `--provider` must be paired with `--model`. Flags that alter Pi's execution mode or session selection are rejected because T3 Code manages them.
+- Update installer-managed Pi with `pi update`, or via your package manager (e.g. `nix profile upgrade pi`).
 
-```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-```
+## Features and extensions
 
-If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
-variables and launch arguments are also available for installations that need a custom agent
-directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
-rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
-parts of the process lifecycle.
+- **Models, thinking & speed**: Discovers Pi models, thinking levels, and `serviceTiers` (exposed as a speed picker).
+- **Native sessions**: Resume, rollback, and same-instance forks use Pi's native session files; switching providers uses a [portable handoff](./portable-handoffs.md).
+- **Skills & extensions**: Pi user and trusted project skills appear in `$`. Extension `select`, `confirm`, `input`, and `editor` dialogs render in the composer, notifications appear in the activity log, and status text appears near the composer.
+- **Subagents**: T3 Code's `delegate_task` creates full child threads; Pi's example `subagent` extension also displays task progress/results (read-only).
 
-On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
-Open the authorization URL on your own computer. If the callback cannot reach the server,
-paste the final redirect URL or authorization code back into Pi when prompted. You can also
-set your model provider's API-key environment variable in the Pi instance's settings; mark
-secret values as sensitive.
+## Permission modes
 
-Update installer-managed Pi with `pi update`. If another package manager owns the installation,
-update it through that manager instead. For example, a Nix profile installation uses
-`nix profile upgrade pi`.
+- **Supervised**: Asks before commands, file edits, and extension tools (reads proceed).
+- **Auto-accept edits**: Allows Pi's edit/write tools; asks for commands and extension tools.
+- **Full access**: Allows all tool calls without prompts.
 
-## What Carries Over
-
-T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
-thinking picker marks the discovered active model's configured level as its default without
-overriding it. Other models keep their Pi defaults when no level is selected. A model that lists
-`serviceTiers` (for example `[{ "id": "priority", "name": "Fast" }]`) in its Pi definition gets
-a speed picker with Standard plus those tiers. A chosen tier is sent as the request's
-`service_tier`; Standard sends none and leaves the endpoint's default. Threads
-use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
-preserve the native conversation through the selected turn in the destination workspace.
-Switching providers uses portable conversation context. Extension
-dialogs appear in the T3 Code composer, and the thread details context window follows Pi's own usage
-reporting while a response streams and after it settles.
-
-Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
-loads for the current workspace; selecting one uses Pi's native skill expansion.
-
-Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi.
-Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Notifications appear in
-the work log. Extensions can publish status text near the composer. Terminal titles and generic
-widgets do not have a T3 Code equivalent.
-
-## Permission Modes
-
-T3 Code applies the composer permission mode through Pi's blocking tool hook:
-
-- **Supervised** asks before commands, file changes, and extension tools. Read-only tools continue.
-- **Auto-accept edits** allows Pi's edit and write tools, but asks before commands and extension
-  tools.
-- **Full access** allows tools without T3 Code approval prompts.
-
-The **Auto** option is not shown for Pi because Pi does not expose an AI approval reviewer.
-Threads that already stored Auto before Pi support was added behave and display as Supervised.
-
-Changing the mode restarts the Pi provider session and resumes the same native conversation. The
-policy covers Pi tool calls; it is not an operating-system sandbox, and code that a trusted Pi
-extension runs outside a tool call remains governed by Pi's own extension trust model.
-
-T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
-installs Pi's example `subagent` extension, T3 Code also shows its task progress and results in that
-UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
-threads.
+**Auto** is not supported (behaves as Supervised). Changing modes restarts the Pi session and resumes the same conversation. Note that permissions govern Pi tool calls—not an OS sandbox.
 
 ## Troubleshooting
 
-- If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh
-  the provider in Settings.
-- If no models appear, open Pi directly and confirm its authentication and model configuration.
-- If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
-  thread to let the interactive Pi session handle any startup prompt.
-- If Pi skips project settings, extensions, skills, prompts, MCP servers, or system prompt files
-  because the folder is not trusted, the thread shows a notice on the first turn of the Pi session.
-  Run the configured Pi binary in that folder on the server machine, using the same provider
-  environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
-  then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
-  project files off without the notice.
-- To see context usage on web and desktop, turn on **Context window** in **Settings → Appearance →
-  Thread details**. It appears once Pi reports usage for the thread. Some model providers only
-  report usage when a response completes, so it can wait for the first reply.
+- **Untrusted project folder**: If Pi skips project extensions/skills/MCP, run `pi` in that folder on the server (with the same `PI_CODING_AGENT_DIR` if set), run `/trust`, and start a new thread in that worktree. Add `--no-approve` to launch arguments to keep project files disabled without the notice.
+- **Discovery fails**: T3 Code keeps Pi usable with `Pi default` so an interactive session can handle startup prompts.
+- **Context window**: Enable **Settings → Appearance → Thread details → Context window** (some model providers report usage only after the first reply completes).

@@ -65,9 +65,6 @@ import {
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -87,7 +84,12 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { hasThreadLinks, hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  hasThreadLinks,
+  hostedThreadLink,
+  parseThreadLinkHref,
+  threadLinkRefs,
+} from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -111,6 +113,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
+  viewedImageMarkdownSource,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
@@ -150,6 +153,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
+  Share,
   StyleSheet,
   type ColorValue,
   useWindowDimensions,
@@ -185,7 +189,6 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -211,13 +214,14 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
-import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
-import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
-import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+import {
+  parseReviewCommentMessageSegments,
+  reviewCommentChipLabel,
+} from "../review/reviewCommentSelection";
 import {
   ReviewCommentCard,
   useReviewCommentColors,
@@ -343,6 +347,12 @@ import {
   THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD,
 } from "./threadFeedEndFollow";
 import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
+import { perfProbe, type PerfProbe } from "../development/perf-probe-hooks";
+
+const linkedThreadEnvironmentIds = (markdown: string, environmentId: EnvironmentId) =>
+  hasThreadLinks(markdown)
+    ? threadLinkRefs(markdown, environmentId).map((ref) => ref.environmentId)
+    : [];
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -543,6 +553,42 @@ function AssistantForkButton(props: {
           type="monochrome"
         />
       )}
+    </Pressable>
+  );
+}
+
+function AssistantShareButton(props: {
+  readonly text: string;
+  readonly iconColor: ColorValue;
+  readonly buttonSize: number;
+  readonly iconSize: number;
+}) {
+  const gt = useGT();
+  if (props.text.trim().length === 0) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Share response")}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        Share.share({ message: props.text }).catch((cause: unknown) =>
+          console.error("Failed to share response.", cause),
+        );
+      }}
+      className="h-7 w-7 items-center justify-center"
+      style={
+        Platform.OS === "android"
+          ? { width: props.buttonSize, height: props.buttonSize }
+          : undefined
+      }
+    >
+      <SymbolView
+        name="square.and.arrow.up"
+        size={props.iconSize}
+        tintColor={props.iconColor}
+        type="monochrome"
+      />
     </Pressable>
   );
 }
@@ -1316,7 +1362,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const liveMarkdown = useLiveThreadLinkLabels(
     props.markdown,
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.markdown) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.markdown, props.environmentId),
+    ),
   );
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
@@ -1533,7 +1582,7 @@ function MarkdownDetailsFold(props: {
 }
 
 function useMarkdownStyles(): MarkdownStyleSets {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fontFamilies, monoFontFamily } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
   const markdownBodyColor = theme["--color-md-body"];
@@ -1554,8 +1603,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fontFamilies.regular;
+  const boldFontFamily = fontFamilies.bold;
 
   return {
     user: {
@@ -1578,6 +1627,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         fontFamily: regularFontFamily,
         headingFontFamily: boldFontFamily,
         boldFontFamily,
+        monoFontFamily,
       },
     },
     assistant: {
@@ -1600,6 +1650,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         fontFamily: regularFontFamily,
         headingFontFamily: boldFontFamily,
         boldFontFamily,
+        monoFontFamily,
       },
     },
   };
@@ -1984,7 +2035,6 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -2079,12 +2129,6 @@ function renderFeedEntry(
             onOpenDetails={props.onOpenSetupDetails}
           />
         ) : null}
-        {entry.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={entry.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
       </View>
     );
   }
@@ -2135,9 +2179,20 @@ function renderFeedEntry(
     const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
     return (
       <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
-        {entry.paths.map((path) => (
+        {entry.images.map(({ path, pending }) => (
           <View key={path} style={{ width: thumbnailWidth }}>
-            {props.renderViewedImage({ href: path, alt: null, title: null })}
+            {pending ? (
+              // The running Read may not have written the file yet, so hold its frame unrequested.
+              <ThreadMarkdownImageView
+                uri={null}
+                sourceKey={path}
+                unavailable={false}
+                alt={null}
+                onPressPreview={props.onPressPreview}
+              />
+            ) : (
+              props.renderViewedImage({ href: path, alt: null, title: null })
+            )}
           </View>
         ))}
       </View>
@@ -2176,14 +2231,6 @@ function renderFeedEntry(
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
-        trailing={
-          entry.checkpointSummary ? (
-            <TurnDiffStat
-              checkpoint={entry.checkpointSummary}
-              onOpenTurnDiff={props.onOpenTurnDiff}
-            />
-          ) : null
-        }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -2695,18 +2742,18 @@ function renderFeedEntry(
           onPressPreview={props.onPressPreview}
           onPlaybackStart={props.onPlaybackStart}
         />
-        {showAssistantMeta && message.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={message.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel={m(msg("Copy message"))}
               text={renderedText}
               tintColor={iconSubtleColor}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
+            <AssistantShareButton
+              text={renderedText}
+              iconColor={iconSubtleColor}
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
@@ -2752,60 +2799,6 @@ function renderFeedEntry(
   );
 }
 
-function TurnDiffStat(props: {
-  readonly checkpoint: ThreadCheckpointSummary;
-  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
-}) {
-  const gt = useGT();
-  const { repositories, rootFiles, totals } = turnChanges(props.checkpoint);
-  const { additions, deletions } = totals;
-  const folderCount = repositories.length + (rootFiles.length > 0 ? 1 : 0);
-  const repositoriesLabel =
-    repositories.length === 0
-      ? null
-      : folderCount === 1
-        ? repositories[0]!.name
-        : gt("{count} repos", { count: folderCount });
-  const changedIn =
-    repositories.length === 0
-      ? null
-      : [
-          ...(rootFiles.length > 0 ? [gt("this folder")] : []),
-          ...repositories.map((repository) => repository.name),
-        ].join(", ");
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        changedIn === null
-          ? gt(
-              "{files, plural, one {Review {files} file changed, {additions} additions, {deletions} deletions} other {Review {files} files changed, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, additions, deletions },
-            )
-          : gt(
-              "{files, plural, one {Review {files} file changed in {folders}, {additions} additions, {deletions} deletions} other {Review {files} files changed in {folders}, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, folders: changedIn, additions, deletions },
-            )
-      }
-      onPress={() => props.onOpenTurnDiff(props.checkpoint)}
-      className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
-    >
-      {repositoriesLabel ? (
-        <Text className="max-w-28 text-xs text-foreground-muted" numberOfLines={1}>
-          {repositoriesLabel}
-        </Text>
-      ) : null}
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
-        +{formatDiffCount(additions)}
-      </Text>
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
-        −{formatDiffCount(deletions)}
-      </Text>
-      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
-    </Pressable>
-  );
-}
-
 type UserMessageContentProps = {
   readonly text: string;
   readonly environmentId: EnvironmentId;
@@ -2819,6 +2812,7 @@ type UserMessageContentProps = {
 
 function UserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
+  const messages = useMessages();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const openThreadLink = useOpenThreadLink(props.environmentId);
@@ -2826,12 +2820,23 @@ function UserMessageContent(props: UserMessageContentProps) {
   const liveText = useLiveThreadLinkLabels(
     props.text,
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.text) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.text, props.environmentId),
+    ),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
+  const displayLabel = (label: string, contextId: string) => {
+    const record = props.context?.records.find((item) => item.contextId === contextId);
+    return record?.kind === "review-comment" && "rangeLabel" in record
+      ? reviewCommentChipLabel(label, record.rangeLabel, messages)
+      : label;
+  };
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
+    const label = available
+      ? displayLabel(ref.label, ref.contextId)
+      : gt("{label} (unavailable)", { label: ref.label });
     return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
@@ -2862,7 +2867,7 @@ function UserMessageContent(props: UserMessageContentProps) {
     }
     setSelected({
       contextId: reference.contextId,
-      label: record?.label ?? gt("Context unavailable"),
+      label: record ? displayLabel(record.label, record.contextId) : gt("Context unavailable"),
     });
   };
   return (
@@ -2914,7 +2919,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           },
           linkCustomization: (href) =>
             withChipIcon(
-              enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+              enrichedContextLinkCustomization(href, props.context?.records ?? [], messages) ??
                 props.linkHandlers.linkCustomization?.(href),
               threadIcons.get(href),
             ),
@@ -3148,6 +3153,14 @@ function DisclosureRow(props: {
 // instead of at width 0 and again when the new feed's own layout reports the same width.
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
 
+/** Tells mobile:metrics' probe the commit that first showed this thread's rows. */
+function PerfContentMark(props: { readonly probe: PerfProbe; readonly thread: string }) {
+  const { probe, thread } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the visible commit to the dev-only perf probe
+  useLayoutEffect(() => probe.contentShown(thread), [probe, thread]);
+  return null;
+}
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const gt = useGT();
   const m = useMessages();
@@ -3169,19 +3182,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
   if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
-  const onOpenTurnDiff = useCallback(
-    (checkpoint: ThreadCheckpointSummary) => {
-      setReviewSelectedSectionId(
-        scopedThreadKey(props.environmentId, props.threadId),
-        getReviewSectionIdForCheckpoint(checkpoint),
-      );
-      navigation.navigate("ThreadReview", {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-      });
-    },
-    [navigation, props.environmentId, props.threadId],
-  );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -3756,7 +3756,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workspaceRoot: props.workspaceRoot,
     });
     const media = viewedImage
-      ? resolveMarkdownMediaPreview(image.href, {
+      ? resolveMarkdownMediaPreview(viewedImageMarkdownSource(image.href), {
           environmentId: props.environmentId,
           threadId: props.threadId,
           workspaceRoot: props.workspaceRoot,
@@ -4199,7 +4199,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
-    if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
+    if (workRowSizing.fixedRowHeight === undefined) {
       return undefined;
     }
     switch (entry.type) {
@@ -4309,7 +4309,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkRow,
             onToggleUserMessage,
             onToggleTurnFold,
-            onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
             markdownLinkHandlers,
@@ -4372,6 +4371,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           className="flex-1"
           style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
         >
+          {perfProbe && !settling && props.feed.length > 0 ? (
+            <PerfContentMark key={feedThreadKey} probe={perfProbe} thread={feedThreadKey} />
+          ) : null}
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={attachList}

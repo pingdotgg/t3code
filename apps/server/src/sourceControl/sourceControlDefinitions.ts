@@ -32,10 +32,15 @@ export const isChangeRequestCloseCommand = (command: string) =>
   );
 
 // A quoted or bare shell word. An unclosed quote, as Codex's `/bin/zsh -lc "gh pr merge 19"`
-// leaves after the match, runs to the end.
-const SHELL_WORD = /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+)/gu;
-// A whole word that names one, so a number inside `--subject "Release 20"` does not.
-const NAMED_CHANGE_REQUEST = /^(?:--?[\w-]+=)?#?(\d+)$|^\S*\/(?:pulls?|merge_requests)\/(\d+)\/?$/u;
+// leaves after the match, runs to the end. A closed one right after `=` stays in that word and is
+// unquoted before matching, so `--id="19"` names 19 and `--subject="20"` names none, while the
+// wrapper's closing quote in `-lc "gh pr merge 19" > "log"` still ends the word `19`.
+const SHELL_WORD =
+  /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+(?:(?<==)(?:"(?:\\[\s\S]|[^"\\])*"|'[^']*'))?)/gu;
+// A whole word that names one, so a number inside `--subject "Release 20"` does not. Of the
+// hosts' close commands only Azure's selects one with a flag, so `--subject=2026` and
+// `--body=<pull request URL>` are option text.
+const NAMED_CHANGE_REQUEST = /^(?:--id=)?#?(\d+)$|^(?!-)\S*\/(?:pulls?|merge_requests)\/(\d+)\/?$/u;
 
 /**
  * The change request numbers a merge or close command names, or "any" when one names none, as a
@@ -53,7 +58,8 @@ export function changeRequestsClosedBy(command: string): ReadonlySet<number> | "
       for (const [, double, single, bare] of args.matchAll(SHELL_WORD)) {
         // A comment ends the command.
         if (bare !== undefined && /^#(?!\d+$)/u.test(bare)) break;
-        const [, number, url] = NAMED_CHANGE_REQUEST.exec(double ?? single ?? bare ?? "") ?? [];
+        const word = double ?? single ?? bare?.replace(/\\([\s\S])|["']/gu, "$1") ?? "";
+        const [, number, url] = NAMED_CHANGE_REQUEST.exec(word) ?? [];
         target = number ?? url;
         if (target !== undefined) break;
       }

@@ -67,6 +67,12 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   }
 }
 
+/** Links that open in the browser, for callers such as popups that carry no identity. */
+export const parseWebExternalUrl = (rawUrl: unknown): Option.Option<string> =>
+  Option.filter(parseSafeExternalUrl(rawUrl), (url) =>
+    SAFE_WEB_PROTOCOLS.has(new URL(url).protocol),
+  );
+
 export class ElectronShell extends Context.Service<
   ElectronShell,
   {

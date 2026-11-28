@@ -131,20 +131,33 @@ export const make = Effect.gen(function* () {
     environment: string,
   ) {
     let last: OrchestratorMcpThreadReadResult["items"][number] | undefined;
-    let afterPosition: number | undefined;
+    let cursor: { beforePosition?: number; afterPosition?: number } = {};
     while (true) {
       const read = yield* call(environment, "t3_thread_read", OrchestratorMcpThreadReadResult, {
         threadId: turn.threadId,
         view: "messages",
         limit: 100,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        ...cursor,
       });
       last =
         read.items.findLast(
           (item) => item.type === "assistant_message" && item.runId === turn.turnId,
         ) ?? last;
-      if (!read.hasMore || read.nextPosition === null) break;
-      afterPosition = read.nextPosition;
+      const { earlierPosition, nextPosition, hasMore } = read;
+      // Backward pages are chronological too, and hasMore points toward newer items.
+      if (cursor.afterPosition === undefined && earlierPosition != null) {
+        if (last !== undefined || earlierPosition >= (cursor.beforePosition ?? Infinity)) break;
+        cursor = { beforePosition: earlierPosition };
+        continue;
+      }
+      if (
+        cursor.beforePosition !== undefined ||
+        !hasMore ||
+        nextPosition === null ||
+        nextPosition <= (cursor.afterPosition ?? -1)
+      )
+        break;
+      cursor = { afterPosition: nextPosition };
     }
     if (last === undefined) return "";
     let text = last.text ?? "";

@@ -280,10 +280,11 @@ describe("usage pricing", () => {
         input_cost_per_token_above_272k_tokens: 4e-6,
       },
     });
-    const cost = (prompt: number, speed: UsageSpeed = "standard") =>
+    const cost = (prompt: number, speed: UsageSpeed = "standard", modelCalls?: number) =>
       priceUsage(table, {
         model: "gpt-6-sol",
         speed,
+        ...(modelCalls === undefined ? {} : { modelCalls }),
         reportedCostUsd: null,
         totals: {
           uncachedInputTokens: prompt - 200_000,
@@ -299,6 +300,15 @@ describe("usage pricing", () => {
     expect(cost(272_001)).toBeCloseTo(72_001 * 4e-6 + 200_000 * 4e-7 + 1_000 * 1e-5, 12);
     // Without a priority long-context rate, priority requests keep the priority rate.
     expect(cost(272_001, "fast")).toBeCloseTo(72_001 * 4e-6 + 200_000 * 4e-7 + 1_000 * 2e-5, 12);
+    // A turn summing several calls compares the average prompt per call to the threshold.
+    expect(cost(544_000, "standard", 2)).toBeCloseTo(
+      344_000 * 2e-6 + 200_000 * 2e-7 + 1_000 * 1e-5,
+      12,
+    );
+    expect(cost(544_002, "standard", 2)).toBeCloseTo(
+      344_002 * 4e-6 + 200_000 * 4e-7 + 1_000 * 1e-5,
+      12,
+    );
   });
 
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {

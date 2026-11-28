@@ -9,6 +9,7 @@ import {
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -41,7 +42,9 @@ export function agentDeviceQuickStart(
   const platformNotes =
     host?.kind === "simlock"
       ? [
-          "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
+          device.physical
+            ? "This is a real device leased from a Simlock pool (alpha in T3 Code). It is not wiped when the lease ends: Simlock removes apps that were not on it when it was enrolled (on an iPhone, not App Store or TestFlight apps) and leaves all other data, including keychain items, so call device_close with shutdown: true when you are done."
+            : "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
           host.installDirectory
             ? `agent-device accepts install for this lease only when run from ${host.installDirectory}.`
             : "",
@@ -94,6 +97,9 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
   ),
 );
 
+const slicePrefix = (text: string, max: number) =>
+  text.slice(0, splitsSurrogatePair(text, max) ? max - 1 : max);
+
 export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
   hosts: ReadonlyArray<DeviceHostSummary>,
   hostId: string | undefined,
@@ -105,10 +111,10 @@ export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
   if (labelMatches.length === 1) return labelMatches[0]!.id;
   const candidates = labelMatches.length > 1 ? labelMatches : hosts;
   const listed = [
-    ...candidates.slice(0, 10).map((host) => `${host.label.slice(0, 64)} (${host.id})`),
+    ...candidates.slice(0, 10).map((host) => `${slicePrefix(host.label, 64)} (${host.id})`),
     ...(candidates.length > 10 ? [`${candidates.length - 10} more`] : []),
   ].join(", ");
-  const selector = hostId.slice(0, 128);
+  const selector = slicePrefix(hostId, 128);
   return yield* new DeviceToolUnavailableError({
     reason:
       labelMatches.length > 1
@@ -227,7 +233,11 @@ const handlers = {
       }
       const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
-        .filter((session) => session.threadId === scope.thread.threadId)
+        .filter(
+          (session) =>
+            session.threadId === scope.thread.threadId &&
+            (hostId === undefined || session.hostId === hostId),
+        )
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
         hostStatuses: Object.fromEntries(

@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ProcessLauncher from "./ProcessLauncher.ts";
 
 const ProcessIdentity = Schema.Struct({
   pid: Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER })),
@@ -45,6 +46,8 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   if (platform !== "linux") return { hasOtherLiveOwner: false };
   const { stateDir } = yield* ServerConfig.ServerConfig;
+  const processLauncher = yield* ProcessLauncher.ProcessLauncher;
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
   const directory = NodePath.join(stateDir, "provider-processes");
   const hostname = NodeOS.hostname();
   const boot = NodeFS.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
@@ -123,11 +126,16 @@ const make = Effect.gen(function* () {
     NodeFS.rmSync(recordPath, { force: true });
   }
 
+  // The launcher's own parent is checked so a reused PID of a dead launcher is not trusted.
+  const isOwnedParent = (ppid: number) =>
+    ppid === process.pid ||
+    (ppid === runSync(processLauncher.currentPid) && identity(ppid)?.ppid === process.pid);
+
   return {
     hasOtherLiveOwner,
     register: (pid: number) => {
       const provider = identity(pid);
-      if (provider === undefined || provider.ppid !== process.pid) {
+      if (provider === undefined || !isOwnedParent(provider.ppid)) {
         throw new Error("Cannot identify spawned provider");
       }
       // A rename keeps startup from seeing a partial write. The child is gated
