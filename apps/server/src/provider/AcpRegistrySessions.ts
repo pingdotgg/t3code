@@ -177,7 +177,8 @@ const make = Effect.gen(function* () {
       ),
     );
     if (existing !== null) {
-      if (existing.projectId !== input.projectId) return { threadId, imported: false } as const;
+      if (owner === null && existing.projectId !== input.projectId)
+        return { threadId, imported: false } as const;
       const repairing = AgentSessionImporter.isNativeHistoryPending({
         historyOrigin: existing.historyOrigin,
         hasRun: existing.latestRunId !== null,
