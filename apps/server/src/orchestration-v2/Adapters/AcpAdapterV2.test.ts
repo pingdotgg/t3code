@@ -3954,22 +3954,6 @@ describe("AcpAdapterV2", () => {
       expectedAssistants: ["First sentence done. Second sentence continues cleanly. Final tail."],
     },
     {
-      label: "a brand-new tool call arrives mid-word before an uppercase continuation",
-      steps: [
-        answer(undefined, "Use Open"),
-        {
-          sessionUpdate: "tool_call",
-          toolCallId: "interleaved-cmd-2",
-          title: "ls",
-          kind: "execute",
-          status: "in_progress",
-          rawInput: { command: "ls" },
-        },
-        answer(undefined, "AI here."),
-      ],
-      expectedAssistants: ["Use OpenAI here."],
-    },
-    {
       label: "a preamble with trailing whitespace precedes a sequential tool call and reply",
       steps: [
         answer(undefined, "Let me check the config file. "),
@@ -4068,6 +4052,65 @@ describe("AcpAdapterV2", () => {
         answer("reply-1", "Found the issue."),
       ],
       expectedAssistants: ["Checking", "Found the issue."],
+    },
+    {
+      label: "a terse preamble precedes a tool call and a lowercase reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-lower",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-lower",
+          status: "completed",
+        },
+        answer(undefined, "found the issue."),
+      ],
+      expectedAssistants: ["Checking", "found the issue."],
+    },
+    {
+      label: "a preamble without punctuation precedes a tool call and a digit-led reply",
+      steps: [
+        answer(undefined, "Running the tests"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-digit",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-digit",
+          status: "completed",
+        },
+        answer(undefined, "2 tests failed."),
+      ],
+      expectedAssistants: ["Running the tests", "2 tests failed."],
+    },
+    {
+      label: "a preamble without punctuation precedes a still-running tool and a reply",
+      steps: [
+        answer(undefined, "Let me start the dev server with `vp run dev`"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-running",
+          title: "vp run dev",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "vp run dev" },
+        },
+        answer(undefined, "The server is starting in the background."),
+      ],
+      expectedAssistants: [
+        "Let me start the dev server with `vp run dev`",
+        "The server is starting in the background.",
+      ],
     },
   ] satisfies ReadonlyArray<{
     readonly label: string;
