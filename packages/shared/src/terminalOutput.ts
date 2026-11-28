@@ -1034,10 +1034,11 @@ export function terminalOutputSpans(
   return spans;
 }
 
-const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;:]*m`, "gu");
+// Colours and the cursor, erase and mode controls a saved transcript cannot replay.
+const CSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
-  return text.replace(SGR_PATTERN, "");
+  return text.replace(CSI_PATTERN, "");
 }
 
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
