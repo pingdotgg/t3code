@@ -3464,14 +3464,7 @@
   "c1c9ebabaa960f8c": "Revertir y conservar los cambios",
   "359e36da660f2c59": "Aprobación de {title}",
   "8d9617edf6eee5b9": "No se pudo enviar la decisión de aprobación.",
-  "160ead9e70889628": [
-    "Se necesita la aprobación de ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Se necesita tu aprobación",
   "1b1131295f62c44c": "El proceso del proveedor ya no existe. Interrumpe o reinicia el hilo secundario para responder.",
   "da66023072c473d1": [
     "No se pudo cargar la salida: ",

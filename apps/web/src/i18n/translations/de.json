@@ -3465,14 +3465,7 @@
   "c1c9ebabaa960f8c": "Zurücksetzen und Änderungen behalten",
   "359e36da660f2c59": "Genehmigung von {title}",
   "8d9617edf6eee5b9": "Die Genehmigungsentscheidung konnte nicht übermittelt werden.",
-  "160ead9e70889628": [
-    "Genehmigung nötig für ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Deine Zustimmung ist erforderlich",
   "1b1131295f62c44c": "Der Anbieterprozess ist beendet. Unterbrich den untergeordneten Thread oder starte ihn neu, um zu antworten.",
   "da66023072c473d1": [
     "Ausgabe konnte nicht geladen werden: ",

@@ -3464,14 +3464,7 @@
   "c1c9ebabaa960f8c": "Återställ och behåll ändringar",
   "359e36da660f2c59": "Godkännande från {title}",
   "8d9617edf6eee5b9": "Det gick inte att skicka godkännandebeslutet.",
-  "160ead9e70889628": [
-    "Godkännande behövs från ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Ditt godkännande behövs",
   "1b1131295f62c44c": "Leverantörsprocessen finns inte längre. Avbryt eller starta om undertråden för att svara.",
   "da66023072c473d1": [
     "Kunde inte läsa in utdata: ",
