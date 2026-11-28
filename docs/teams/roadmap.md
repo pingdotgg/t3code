@@ -4,20 +4,22 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ## Progress Overview
 
-| Milestone          | Scope                                                                               | Status              |
-| ------------------ | ----------------------------------------------------------------------------------- | ------------------- |
-| **Milestone 1**    | Team Foundation, Member Identity & Pseudo Attribution                               | Merged (PR #1)      |
-| **Milestone 2**    | Notifications & Thread Following                                                    | Merged (PR #2)      |
-| **Milestone 3**    | RBAC, Views, Posting Rules & Thread Locking                                         | Merged (PR #3)      |
-| **Milestone 4**    | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls            | Merged (PR #4)      |
-| **Milestone 5**    | Team Projects, Remote Environments, Local Sync & Thread Notes                       | Merged (PR #5)      |
-| **Milestone 6**    | Zero-Config Team Providers, Team Skills & Pre-Prompts                               | Merged (PR #6)      |
-| **Milestone 7**    | Per-Turn GitHub Identity Forwarding                                                 | Merged (PR #7)      |
-| **Milestone 8**    | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership)            | Merged (PR #10)     |
-| **Milestone 9a**   | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)                    | Merged (PR #8)      |
-| **Milestone 9b**   | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook            | Merged (PR #9)      |
-| **Post-M8 Polish** | `modo` Interrupt + Queued-Msg Notif, Per-Team Sounds, `v0.1.13` + `harnessProfiles` | Merged (PR #11–#13) |
-| **Phase 7b**       | GitHub OAuth / GitHub App User-to-Server Tokens & Device Flow                       | Merged (PR #14)     |
+| Milestone            | Scope                                                                               | Status              |
+| -------------------- | ----------------------------------------------------------------------------------- | ------------------- |
+| **Milestone 1**      | Team Foundation, Member Identity & Pseudo Attribution                               | Merged (PR #1)      |
+| **Milestone 2**      | Notifications & Thread Following                                                    | Merged (PR #2)      |
+| **Milestone 3**      | RBAC, Views, Posting Rules & Thread Locking                                         | Merged (PR #3)      |
+| **Milestone 4**      | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls            | Merged (PR #4)      |
+| **Milestone 5**      | Team Projects, Remote Environments, Local Sync & Thread Notes                       | Merged (PR #5)      |
+| **Milestone 6**      | Zero-Config Team Providers, Team Skills & Pre-Prompts                               | Merged (PR #6)      |
+| **Milestone 7**      | Per-Turn GitHub Identity Forwarding                                                 | Merged (PR #7)      |
+| **Milestone 8**      | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership)            | Merged (PR #10)     |
+| **Milestone 9a**     | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)                    | Merged (PR #8)      |
+| **Milestone 9b**     | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook            | Merged (PR #9)      |
+| **Post-M8 Polish**   | `modo` Interrupt + Queued-Msg Notif, Per-Team Sounds, `v0.1.13` + `harnessProfiles` | Merged (PR #11–#13) |
+| **Phase 7b**         | GitHub OAuth / GitHub App User-to-Server Tokens & Device Flow                       | Merged (PR #14)     |
+| **Audit Follow-ups** | Security/Multi-Env Hardening & Settings UX / Reverse States Polish                  | Merged (PR #15–#16) |
+| **Post-Audit UX**    | Remove `displayName` (`scheduled: ` Prefix), Universal Follow & Per-Member Snooze   | Planned             |
 
 ---
 
@@ -237,13 +239,12 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ## Milestone 8 — Team Scheduled Tasks (`(team, env)` Scoping, Team Automation Ownership & Final Integration) _(Merged — PR #10)_
 
-**Goal:** Deliver `(team, environment)` scheduled tasks with full team RBAC, mandatory-default team `displayName`, team-owned threads (`ownerKind: "team"`), safe `team-automation` MCP & GitHub isolation, and complete cross-feature integration across M1–M9b (including upstream mobile compatibility, team providers, session recycle, and full E2E verification) while keeping personal scheduled tasks 100% upstream-identical.
+**Goal:** Deliver `(team, environment)` scheduled tasks with full team RBAC, `scheduled: ` team-owned threads (`ownerKind: "team"`), safe `team-automation` MCP & GitHub isolation, and complete cross-feature integration across M1–M9b (including upstream mobile compatibility, team providers, session recycle, and full E2E verification) while keeping personal scheduled tasks 100% upstream-identical.
 
 ### Scope
 
-- **Team `displayName` (`team_workspaces.display_name`):**
-  - Add `display_name` to `team_workspaces` via `apps/server/src/team/migrations.ts` (backfilling existing teams by copying `name`).
-  - Expose `displayName` on `TeamWorkspace` and `TeamInitializeInput` (when omitted or blank at creation time, the server automatically copies `name` into `displayName`), plus an `owner`/`admin`-only RPC & **Settings → Teams** control to edit `displayName` later.
+- **Scheduled thread prefix (`scheduled: `):**
+  - Team-owned scheduled-task threads render everywhere with the fixed prefix **`scheduled: <title>`** (the earlier `team_workspaces.display_name` / `team.updateDisplayName` field is superseded and removed in Post-Audit UX).
 - **`(team, env)` scheduled-task scoping & hidden virtual `"personal"` team (`team_scheduled_task_meta`):**
   - Scope scheduled tasks internally by `(teamScope, environmentId)` where non-team environments resolve to a virtual `"personal"` team scope in code that is **completely hidden in the UI** (personal scheduled tasks remain 100% upstream-identical).
   - Store team task metadata (`task_id PRIMARY KEY`, `team_id`, `environment_id`, `view_id`, `locked`, `mcp_access_level`, `created_by_member_id`, `updated_by_member_id`, `created_at`, `updated_at`) in sidecar `team_scheduled_task_meta` without altering upstream `scheduled_tasks`.
@@ -256,7 +257,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Apply the same RBAC consistently across WS RPCs, MCP scheduled-task tools, `ScheduledTasksSettings.tsx`, and `ThreadAutomationsPanel.tsx`.
 - **Team-owned thread attribution (`ownerKind: "team"`), sidebar, notifications, posting & mobile compat:**
   - Extend `team_thread_meta` (`owner_kind: "member" | "team"`, nullable `creator_member_id` for `owner_kind = "team"`), `team_turn_meta` (`author_kind: "member" | "team_automation"`, nullable `author_member_id`), and `packages/contracts/src/team/schemas.ts` (`TeamThreadAttribution`, `TeamTurnAttribution`).
-  - Threads created by team scheduled tasks stamp `ownerKind = "team"`, `creatorMemberId = null`, `viewId = taskMeta.viewId`, `locked = taskMeta.locked`, `executionEnvironmentId = taskMeta.environmentId`, and render everywhere as **`<team.displayName>: <title>`** (web/desktop sidebar, header, hover card, command palette, and Milestone 9a's `upstreamMobileCompat.ts` — including `<team.displayName>: ` prefix stripping on mobile rename and hiding unfollowed `ownerKind = "team"` threads in `owned_and_followed` mobile mode).
+  - Threads created by team scheduled tasks stamp `ownerKind = "team"`, `creatorMemberId = null`, `viewId = taskMeta.viewId`, `locked = taskMeta.locked`, `executionEnvironmentId = taskMeta.environmentId`, and render everywhere as **`scheduled: <title>`** (web/desktop sidebar, header, hover card, command palette, and Milestone 9a's `upstreamMobileCompat.ts` — including `scheduled: ` prefix stripping on mobile rename and hiding unfollowed `ownerKind = "team"` threads in `owned_and_followed` mobile mode).
   - **Sidebar & notifications:** Hidden by default in the sidebar like colleagues' threads (revealed via "All team threads" toggle or `Follow`), producing **zero** notifications by default until explicitly followed (or when a member's own follow-up turn finishes).
   - **Posting, `Send now`, and `Interrupt`:**
     - If `locked === true`: only `owner` and `admin` may post.
@@ -275,7 +276,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ### Definition of Done
 
-- Creating a team sets `displayName` (copying `name` automatically when omitted) and allows `owner`/`admin` to update it; a team scheduled task creates a thread prefixed `<displayName>: <title>` with `ownerKind = "team"` (no human `creatorMemberId`), hidden by default in the sidebar and in `owned_and_followed` upstream mobile mode until toggled or followed, with zero default notifications.
+- A team scheduled task creates a thread prefixed `scheduled: <title>` with `ownerKind = "team"` (no human `creatorMemberId`), hidden by default in the sidebar and in `owned_and_followed` upstream mobile mode until toggled or followed, with zero default notifications.
 - Personal environments without a team display standard upstream Scheduled Tasks UI with zero mention of the virtual `"personal"` team.
 - A `modo` can create/edit/`Run now` a `minimal` unlocked team scheduled task and post in its unlocked threads (queued dashed mid-turn with no `Send now`, with `Interrupt` on unlocked threads per PR #11), cannot create/edit/delete an `elevated` or `locked` task, and a `regular` member sees team tasks read-only (without webhook secrets).
 - A `minimal` `team-automation` agent (and its delegates/subagents) cannot read `admin`-only Views or escalate privileges, while an `owner`/`admin`-configured `elevated` task works as expected.
@@ -291,7 +292,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 ### Scope
 
 - **Milestone 9a — Server-Side Upstream Mobile Compatibility Layer _(Merged — PR #8)_:**
-  - Member-bound standard pairing QR/codes (`team_pairing_meta`), non-team-aware client detection (`X-T3-Teams-Client`), on-the-fly title prefixing (`<creatorPseudo>: <title>` / `<teamDisplayName>: <title>`) + rename prefix-stripping, per-member mobile visibility preference (`owned_and_followed` default vs. `all_accessible`), clear server-side errors, and `upstream-mobile-compatibility.e2e.ts` with zero modifications in `apps/mobile/`.
+  - Member-bound standard pairing QR/codes (`team_pairing_meta`), non-team-aware client detection (`X-T3-Teams-Client`), on-the-fly title prefixing (`<creatorPseudo>: <title>` / `scheduled: <title>`) + rename prefix-stripping, per-member mobile visibility preference (`owned_and_followed` default vs. `all_accessible`), clear server-side errors, and `upstream-mobile-compatibility.e2e.ts` with zero modifications in `apps/mobile/`.
 - **Milestone 9b — Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Hardening _(Merged — PR #9)_:**
   - Opt-in fail-closed `--team-bwrap-sandbox` / `T3CODE_TEAM_BWRAP_SANDBOX=1` (`apps/server/src/team/bwrapSandbox.ts`) isolating per-worktree, provider-profile, and per-turn broker/MCP socket binds (including M7's `TeamGitHubBroker` sockets/helpers), `capabilities.teamBwrapSandbox`, and the full Linux hardening runbook in [hub-runner-deployment.md](./hub-runner-deployment.md).
 
@@ -301,6 +302,14 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 > - **Per-team notification sounds _(Merged — PR #12)_:** `ClientSettings.teamNotificationSounds` keyed by `TeamId`, defaulting team threads to a distinct Web Audio `chime` preset (`chime`, `bell`, `marimba`, `pulse`, `classic`, `off`) with inline Preview in Settings → Notifications & Settings → Teams.
 > - **Upstream `v0.1.13` sync + Antigravity plugins & `harnessProfiles.ts` _(Merged — PR #13)_:** Merged stable `v0.1.13` (`bc0f04da94`), preserved enabled personal Antigravity plugins in isolated `team:<teamId>:antigravity` profiles with Team Skill precedence, added `ProviderSetupError` non-retry regression coverage, and unified driver descriptors in `apps/server/src/team/harnessProfiles.ts`.
 > - **Phase 7b — GitHub OAuth / GitHub App user-to-server tokens _(Merged — PR #14)_:** Added team GitHub App & OAuth App configuration (`owner`/`admin`), one-click browser OAuth with PKCE + cross-origin confirmation code, RFC 8628 Device Flow for LAN/Tailscale servers, automatic server-side token refresh with `needsReconnect` banners, and PAT fallback.
+> - **Deep Audit Follow-ups _(Merged — PR #15 & PR #16)_:** Hardened local-sync View/Lock enforcement, remote GitHub lease attribution/session-revocation/TTL bounds, per-thread monotonic local-sync watermarks, `--team-hub-only` / `t3runner` seams, fork `remote-only` provider isolation, local-thread deduplication, `team.leave` / `team.delete` reverse states, tabbed `TeamsSettings`, personal-mode Settings Search isolation, and `<SelectValue>` localization.
+>
+> **Active follow-up specification:**
+>
+> - **Scheduled Thread Prefix (`scheduled: `), Universal Teammate Follow & Per-Member Snooze _(Planned)_:**
+>   1. **Remove team `displayName` & prefix scheduled threads with `"scheduled: "`:** Remove `displayName` / `teamDisplayName` / `team.updateDisplayName` from contracts, server RPCs/queries, `TeamsSettings`, Settings Search, and unused i18n keys (ignoring legacy `team_workspaces.display_name` column safely on upgrade); prefix all `ownerKind = "team"` scheduled threads with **`scheduled: <title>`** across web/desktop, notifications, and `upstreamMobileCompat.ts` (including stripping leading `scheduled:` on upstream mobile renames).
+>   2. **Universal follow/unfollow across teammates & environments:** Ensure every active team member (`owner`, `admin`, `modo`, `regular`) can follow and unfollow any readable teammate or scheduled thread—including locked threads, read-only Views, local-synced threads, and threads hosted on attached remote environments (`t3runner` / remote `t3server`)—by resolving the owning Team Server via correlated thread location across `TeamThreadFollowButton`, sidebar context menu, `useThreadActionMenu`, and command palette.
+>   3. **Per-member thread snoozing (`team_thread_snoozes`):** Allow every active member to snooze and unsnooze threads they created or follow (regardless of `postRule`, lock state, or execution access), including directly from in-app notification toasts as well as sidebar/header/command palette. Persist snooze strictly per `(threadId, memberId)` in sidecar `team_thread_snoozes` (never mutating upstream's shared `threads.snoozed_until`), intercept `thread.snooze` / `thread.unsnooze` on Team Servers + add `team.snoozeThread` / `team.unsnoozeThread` for attached remote environments, overlay `snoozedUntil`/`snoozedAt`/`lastSnoozeWakeAt` per session on all read/stream/MCP paths (transparently supporting unmodified upstream mobile), clear own snooze on unfollow, and filter both server relay/push notifications and client `ThreadNotificationCoordinator` independently per member so Alice snoozing Charlie's followed thread never affects Bob or Charlie.
 >
 > **Remaining optional future follow-ups (explicitly deferred):**
 >
