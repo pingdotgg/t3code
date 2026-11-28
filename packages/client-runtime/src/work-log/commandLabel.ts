@@ -50,6 +50,11 @@ const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
   "workingdirectory",
 ]);
 
+// pwsh prints its version and exits at -Version; Windows PowerShell reads a version value and runs.
+function isPwshVersion(shell: string, parameter: string | null): boolean {
+  return parameter === "version" && shell.startsWith("pwsh");
+}
+
 function powerShellParameter(token: string): string | null {
   if (!token.startsWith("-")) return null;
   const key = token.slice(1).toLowerCase();
@@ -971,7 +976,7 @@ function windowsShellPayloadProgramName(
     if (parameter === "file") {
       return { matched: true, program: staticProgramName(tokens[index + 1] ?? "") };
     }
-    if (parameter === "encodedcommand") {
+    if (parameter === "encodedcommand" || isPwshVersion(shell, parameter)) {
       return { matched: true, program: null };
     }
     if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
@@ -1523,6 +1528,7 @@ function windowsShellScriptIndex(shell: string, tokens: ReadonlyArray<string>): 
     }
     const parameter = powerShellParameter(option);
     if (parameter === "command") return index + 1;
+    if (isPwshVersion(shell, parameter)) return null;
     if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
       index += 1;
       continue;

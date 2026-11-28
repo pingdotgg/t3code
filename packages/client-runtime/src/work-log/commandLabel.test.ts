@@ -215,6 +215,8 @@ describe("commandDisplayText with Windows shell wrappers", () => {
       'powershell.exe -NoProf -NonI -ep Bypass -ExecutionPol Bypass -wd C:\\repo -Comm "git status"',
       "git status",
     ],
+    ['pwsh -v ignored -c "git status"', 'pwsh -v ignored -c "git status"'],
+    ['powershell -v 5.1 -c "git status"', "git status"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
