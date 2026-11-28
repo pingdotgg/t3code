@@ -46,9 +46,8 @@ export function createScratchProjectActions(input: {
   readonly primaryEnvironmentId: () => EnvironmentId | null;
   readonly registry: AtomRegistry.AtomRegistry;
   readonly handleNewThread: NewThreadHandler;
-  readonly startInFlight?: { current: boolean };
 }) {
-  const startInFlight = input.startInFlight ?? { current: false };
+  let startInFlight = false;
   const scratchWorkspaceRootFor = (environmentId: EnvironmentId | null): string | null => {
     let environment: ScratchEnvironment | undefined;
     for (const entry of input.environments()) {
@@ -112,23 +111,21 @@ export function createScratchProjectActions(input: {
     environmentId: EnvironmentId,
     options?: { sendCarriedDraft?: boolean },
   ): Promise<void> => {
-    if (startInFlight.current) return Promise.resolve();
-    startInFlight.current = true;
+    if (startInFlight) return Promise.resolve();
+    startInFlight = true;
     return (async () => {
       // Armed before the project exists, so the draft's move sends however it opens.
       if (options?.sendCarriedDraft) useDraftSendOnOpenStore.setState({ armed: true });
       const project = await openScratchProject(environmentId);
-      if (!project) {
-        useDraftSendOnOpenStore.setState({ armed: false });
-        return;
-      }
+      if (!project) return;
       await input
         .handleNewThread(scopeProjectRef(project.environmentId, project.id))
         .catch((error: unknown) =>
           reportScratchFailure(m(msg("Could not start without a project")), error),
         );
     })().finally(() => {
-      startInFlight.current = false;
+      if (options?.sendCarriedDraft) useDraftSendOnOpenStore.setState({ armed: false });
+      startInFlight = false;
     });
   };
 
@@ -147,11 +144,23 @@ export function useScratchProject() {
   const registry = useContext(RegistryContext);
   const handleNewThread = useNewThreadHandler();
   const startInFlightRef = useRef(false);
-  return createScratchProjectActions({
+  const actions = createScratchProjectActions({
     environments: () => environments,
     primaryEnvironmentId: () => primaryEnvironmentId,
     registry,
     handleNewThread,
-    startInFlight: startInFlightRef,
   });
+  return {
+    ...actions,
+    startScratchThread: (
+      environmentId: EnvironmentId,
+      options?: { sendCarriedDraft?: boolean },
+    ): Promise<void> => {
+      if (startInFlightRef.current) return Promise.resolve();
+      startInFlightRef.current = true;
+      return actions.startScratchThread(environmentId, options).finally(() => {
+        startInFlightRef.current = false;
+      });
+    },
+  };
 }

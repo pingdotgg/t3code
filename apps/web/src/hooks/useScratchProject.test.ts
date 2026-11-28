@@ -9,6 +9,7 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
   runAtomCommand: runAtomCommandMock,
 }));
 
+import { useDraftSendOnOpenStore } from "~/draftSendOnOpenStore";
 import { createScratchProjectActions } from "./useScratchProject";
 
 const local = "local" as EnvironmentId;
@@ -66,9 +67,7 @@ describe("startScratchThread", () => {
             resolveOpen = resolve;
           }),
       )
-      .mockResolvedValueOnce(
-        Exit.succeed({ environmentId: local, id: "scratch-1" as ProjectId }),
-      );
+      .mockResolvedValueOnce(Exit.succeed({ environmentId: local, id: "scratch-1" as ProjectId }));
     const handleNewThread = vi.fn(async () => null);
     const scratch = createScratchProjectActions({
       environments: () => [scratchEnvironment(local, "/local/scratch")],
@@ -82,12 +81,32 @@ describe("startScratchThread", () => {
     await duplicate;
     expect(runAtomCommandMock).toHaveBeenCalledTimes(1);
 
-    resolveOpen(Exit.fail(new Error("boom")));
+    resolveOpen(Exit.fail("boom"));
     await first;
     expect(handleNewThread).not.toHaveBeenCalled();
 
     await scratch.startScratchThread(local, { sendCarriedDraft: true });
     expect(runAtomCommandMock).toHaveBeenCalledTimes(2);
     expect(handleNewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("disarms send-on-open when creating the scratch thread fails", async () => {
+    runAtomCommandMock.mockReset();
+    useDraftSendOnOpenStore.setState({ armed: false, draftId: null });
+    runAtomCommandMock.mockResolvedValueOnce(
+      Exit.succeed({ environmentId: local, id: "scratch-2" as ProjectId }),
+    );
+    const scratch = createScratchProjectActions({
+      environments: () => [scratchEnvironment(local, "/local/scratch")],
+      primaryEnvironmentId: () => local,
+      registry: AtomRegistry.make(),
+      handleNewThread: async () => {
+        throw new Error("thread creation failed");
+      },
+    });
+
+    await scratch.startScratchThread(local, { sendCarriedDraft: true });
+    expect(useDraftSendOnOpenStore.getState().armed).toBe(false);
+    expect(useDraftSendOnOpenStore.getState().draftId).toBeNull();
   });
 });
