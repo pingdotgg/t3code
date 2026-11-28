@@ -165,6 +165,9 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
               routeThreadKey,
               target.selection.instanceId,
               target.selection.model,
+              sendSnapshot.messageText,
+              // Context IDs survive draft restoration and attachment re-uploads.
+              context?.records.map((record) => record.contextId) ?? [],
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,

@@ -2,7 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import {
   Combobox,
   ComboboxItem,
@@ -278,8 +278,18 @@ it("restores an enclosing shared tooltip when moving off a nested trigger back o
   await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
   await expect.element(page.getByText("Settle thread")).toBeVisible();
 
-  await userEvent.hover(screen.getByText("Thread title"));
-  await expect.element(page.getByText("Thread details")).toBeVisible();
+  const title = screen.getByText("Thread title");
+  await userEvent.hover(title);
+  const details = page.getByText("Thread details");
+  await expect.element(details).toBeVisible();
+
+  // The moving popup can cross the pointer and uncover the title after the row has regained hover.
+  using _timers = fakeTimers();
+  details
+    .element()
+    .dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: title.element() }));
+  await act(() => vi.runOnlyPendingTimersAsync());
+  expect(title.element().parentElement!.hasAttribute("aria-describedby")).toBe(true);
 });
 
 it("keeps a pending parent restore when leaving a disabled nested sibling", async () => {

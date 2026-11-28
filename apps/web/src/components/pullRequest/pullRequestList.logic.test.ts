@@ -15,6 +15,7 @@ import {
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
+  matchesPullRequestFilters,
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestListAnsweredEmpty,
@@ -107,8 +108,32 @@ describe("visible pull request line-count targets", () => {
     );
     expect([...keys]).toEqual([secondKey]);
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
-      { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
+      { projectId: "project-1", host: "github.com", repository: "pingdotgg/t3code", number: 2 },
     ]);
+  });
+
+  it("keeps diff stats apart by host, and lets an older server's host-less stat stand in", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = {
+      environmentId: ENV_1,
+      projectId: "project-1",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      deletions: 0,
+    };
+    const mirrored = mergePullRequestDiffStats(new Map(), [
+      { ...stat, host: "gitlab.com", additions: 20 },
+    ]);
+    expect(withDiffStat(own, mirrored)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(mirrored, [{ ...stat, host: "github.com", additions: 10 }]),
+      ),
+    ).toMatchObject({ additions: 10 });
+    expect(
+      withDiffStat(own, mergePullRequestDiffStats(new Map(), [{ ...stat, additions: 5 }])),
+    ).toMatchObject({ additions: 5 });
   });
 
   it("matches diff stats by repository, ignoring case", () => {
@@ -180,6 +205,23 @@ describe("pull request involvement filtering", () => {
     expect(
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
+  });
+});
+
+describe("matchesPullRequestFilters", () => {
+  it.each([
+    ["passing", [1, 4]],
+    ["failing", [2, 4]],
+  ] as const)("narrows rows by checks:%s and keeps unknown check state", (checks, kept) => {
+    const rows = [
+      entry({ number: 1, checksState: "passing" }),
+      entry({ number: 2, checksState: "failing" }),
+      entry({ number: 3, checksState: "pending" }),
+      entry({ number: 4 }),
+    ];
+    expect(
+      rows.filter((row) => matchesPullRequestFilters(row, { checks })).map((row) => row.number),
+    ).toEqual(kept);
   });
 });
 

@@ -35,6 +35,7 @@ export function FilePasswordPrompt(props: {
             aria-label={gt("File password")}
             aria-describedby={status}
             autoComplete="off"
+            autoFocus={props.incorrect}
             required
           />
         </div>

@@ -955,12 +955,19 @@ const make = Effect.gen(function* () {
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
       if (reused === undefined) {
+        // An existing worktree launched without a branch records its checkout's. Kept out of
+        // `branch` so a checkout on a temporary branch is not renamed below.
+        const recordedBranch =
+          branch ??
+          (worktreePath === null
+            ? null
+            : yield* git.currentBranch(worktreePath).pipe(Effect.orElseSucceed(() => null)));
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make(`${input.commandId}:workspace`),
             threadId,
-            branch,
+            branch: recordedBranch,
             worktreePath,
           })
           .pipe(
@@ -1396,14 +1403,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
   ) {
+    // Hold before forking, so a message sent once the launch returns sees the pending worktree.
+    const releaseWorkspace =
+      input.workspaceStrategy.type === "worktree"
+        ? yield* setupTracker.holdWorkspace(threadId)
+        : Effect.void;
     const preparation = Effect.gen(function* () {
-      const prepare = Effect.acquireUseRelease(
-        input.workspaceStrategy.type === "worktree"
-          ? setupTracker.holdWorkspace(threadId)
-          : Effect.succeed(Effect.void),
-        (release) => prepareInBackground(input, threadId, runId, release),
-        (release) => release,
-      );
+      const prepare = prepareInBackground(input, threadId, runId, releaseWorkspace);
       if (
         runId === null ||
         (input.workspaceStrategy.type !== "worktree" && input.reusedWorktree === undefined)
@@ -1438,7 +1444,7 @@ const make = Effect.gen(function* () {
         ),
       ),
       Effect.ignoreCause,
-      Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.ensuring(Effect.andThen(releaseWorkspace, releasePreparation(input.commandId))),
       Effect.forkIn(preparationScope),
     );
   });

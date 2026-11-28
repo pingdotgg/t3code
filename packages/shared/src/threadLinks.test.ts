@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   formatHostedThreadLink,
@@ -136,6 +138,28 @@ describe("thread links", () => {
       );
       expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
     }
+    for (const threadId of ["mcp:launch:qa(1)", "feature(a(b))"]) {
+      const thread = ref("there", threadId);
+      const unbracketed = `[Original](t3-thread://v2/there/${threadId})`;
+      expect(threadLinkRefs(unbracketed, local)).toEqual([thread]);
+      expect(relabelThreadLinks(unbracketed, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(unbracketed, local, () => undefined)).toBe("Original");
+    }
+    expect(threadLinkRefs("[Original](t3-thread://v2/there/feature\\(test\\))", local)).toEqual([
+      ref("there", "feature(test)"),
+    ]);
+    expect(
+      relabelThreadLinks(
+        "[Original](t3-thread://v2/there/feature\\(test\\))",
+        local,
+        () => undefined,
+      ),
+    ).toBe("Original");
+    const unbalanced = "[Original](t3-thread://v2/there/feature(test)";
+    expect(threadLinkRefs(unbalanced, local)).toEqual([]);
+    expect(relabelThreadLinks(unbalanced, local, () => "Renamed")).toBe(unbalanced);
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -184,6 +208,102 @@ describe("thread links", () => {
     },
   );
 
+  it.each([
+    ["a blank line", "Intro\n\n", "    ", "~~~", ""],
+    ["an indented heading", "Intro\n  # Example\n", "    ", "~~~", ""],
+    ["a closed fence", "Intro\n```\nexample\n```\n", "    ", "~~~", ""],
+    ["a literal list marker", "# Example\n", "    ", "- ```md", ""],
+    ["a heading in a quote", "> # Example\n", ">     ", "~~~", "> "],
+  ])(
+    "keeps indented code literal and rewrites prose after %s",
+    (_name, before, indent, fence, quote) => {
+      const inside = "<t3-thread://v2/local/code>";
+      const outside = "<t3-thread://v2/local/prose>";
+      const example = `${before}${indent}${fence}\n${indent}${inside}\n${quote.trimEnd()}\n${quote}See `;
+      expect(replaceThreadLinks(`${example}${outside}`, () => "linked")).toBe(`${example}linked`);
+    },
+  );
+
+  it.each([
+    ["a paragraph with four spaces", "Intro\n    ~~~"],
+    ["a paragraph with a tab", "Intro\n\t```"],
+    ["a list paragraph", "- Intro\n      ~~~"],
+    ["an HTML block", "<div>\n    ~~~\n</div>"],
+    ["deeply nested quotes", ">".repeat(6000) + " text\n\n    ~~~"],
+  ])("rewrites the prose link after %s", (_name, before) => {
+    const prose = `${before}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it("rewrites a link in footnote prose before an indented fence", () => {
+    const footnote = "Note[^n].\n\n[^n]: note\n\n    See ";
+    expect(
+      replaceThreadLinks(`${footnote}<t3-thread://v2/local/prose>\n\n    ~~~`, () => "linked"),
+    ).toBe(`${footnote}linked\n\n    ~~~`);
+  });
+
+  it.each([
+    ["a paragraph code span", "Intro\n    ```\n    <t3-thread://v2/local/code>\n    ```"],
+    [
+      "a fence with over-indented markers",
+      "~~~\n    ~~~\n    ~~~\n<t3-thread://v2/local/code>\n~~~",
+    ],
+    [
+      "a fence in a footnote",
+      "Note[^n].\n\n[^n]: note\n\n    ~~~\n    <t3-thread://v2/local/code>\n    ~~~",
+    ],
+  ])("keeps links literal inside %s and rewrites the link after it", (_name, code) => {
+    const prose = `${code}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it.each([
+    ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
+    ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
+    ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
+    ["nested list", "- a\n  -     ```md\n        <t3-thread://v1/abc>\n        ```", ""],
+    ["nested list with tab", "-\t-     ~~~\n          <t3-thread://v1/abc>", ""],
+    ["quote + 5 spaces", ">     ```md\n>     <t3-thread://v1/abc>\n>     ```", "> "],
+    [
+      "spaced nested quote + 5 spaces",
+      ">    >     ```md\n>    >     <t3-thread://v1/abc>",
+      ">    > ",
+    ],
+    ["quote + list + 5 spaces", "> -     ```md\n>       <t3-thread://v1/abc>\n>       ```", "> "],
+    ["quote + space + tab + list", "> \t-     ```md\n>         <t3-thread://v1/abc>", "> "],
+    [
+      "quote + list after para",
+      "> para\n> -     ```md\n>       <t3-thread://v1/abc>\n>       ```",
+      "> ",
+    ],
+    ["1. after paragraph", "Intro\n1.     ```md\n       <t3-thread://v1/abc>\n       ```", ""],
+    ["ordered list >= 2 after blank", "Intro\n\n2.     ```md\n       <t3-thread://v1/abc>", ""],
+    [
+      "quote after blank line past closer",
+      "Example\n\n>       ~~~\n>       ~~~\n>       <t3-thread://v1/abc>",
+      "> ",
+    ],
+    ["quote after autolink", "<https://example.com>\n>     ~~~\n>     <t3-thread://v1/abc>", "> "],
+    ["blank line inside indented code", "    ```md\n\n    <t3-thread://v1/abc>", ""],
+    ["quote after indented code", "    ```md\n>     ```\n>     <t3-thread://v1/abc>", "> "],
+    ["4 spaces after closer", "    ```md\n    a\n    ```\n    <t3-thread://v1/abc>", ""],
+    ["4 spaces with U+2028", "    ```\u2028<t3-thread://v1/t1>```", ""],
+    ["hosted link", "    ```\n    https://app.t3.codes/threads/env/thr\n    ```", ""],
+  ])(
+    "keeps links inside fence-looking indented code blocks literal (%s)",
+    (_name, block, prose) => {
+      expect(replaceThreadLinks(block, () => "linked")).toBe(block);
+      const after = `${block}\n${prose.trimEnd()}\n${prose}See `;
+      expect(replaceThreadLinks(`${after}<t3-thread://v2/local/t>`, () => "linked")).toBe(
+        `${after}linked`,
+      );
+    },
+  );
+
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",
@@ -210,6 +330,8 @@ describe("thread links", () => {
     expect(relabelThreadLinks(nested.join("\n"), local, () => "New")).toBe(
       [...nested.slice(0, 3), "> > [New](t3-thread://v2/local/t1)"].join("\n"),
     );
+    const deepNested = "> > > > > ```\n> > > > > <t3-thread://v2/local/t1> ```";
+    expect(relabelThreadLinks(deepNested, local, () => "New")).toBe(deepNested);
     const labels: Array<string | undefined> = [];
     const separated = "[Label\u2028> > example](t3-thread://v1/t1)";
     expect(replaceThreadLinks(separated, (_link, label) => void labels.push(label))).toBe(
@@ -219,6 +341,20 @@ describe("thread links", () => {
     for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
       expect(threadLinkRefs(escaped, local)).toEqual([]);
     }
+    const indented = "    <t3-thread://v2/local/demo>\n\nSee <t3-thread://v2/local/prose>";
+    expect(threadLinkRefs(indented, local)).toEqual([ref("local", "prose")]);
+    expect(relabelThreadLinks(indented, local, () => "New")).toBe(
+      "    <t3-thread://v2/local/demo>\n\nSee [New](t3-thread://v2/local/prose)",
+    );
+    expect(relabelThreadLinks("\t<t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      "\t<t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks(">     <t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      ">     <t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks("Intro\n    <t3-thread://v2/local/prose>", local, () => "New")).toBe(
+      "Intro\n    [New](t3-thread://v2/local/prose)",
+    );
   });
 
   it("ends code where CommonMark does, so a link after it stays live", () => {
@@ -229,12 +365,45 @@ describe("thread links", () => {
       ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
       ["> ```", ` > ${hidden}`, "> ```", after],
       ["- ```bash", "  echo hi", "  ```", "", after],
+      ["- ```text", `  ${hidden}`, "", after],
+      ["- item", "", "  ```text", `  ${hidden}`, "", after],
+      ["[^note]: - ```text", "      https://app.t3.codes/threads/local/in-code", "", after],
+      [
+        "[^outer]: [^inner]: - ```text",
+        "          https://app.t3.codes/threads/local/in-code",
+        "",
+        after,
+      ],
       ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
       [">> ```md", `> > ${hidden}`, ">> ```", `> ${after}`],
       ["> > ~~~", `>> ${hidden}`, ">> ~~~", after],
       ["1. Run:", "", "    ```bash", '    echo "```"', `    ${hidden}`, "    ```", "", after],
       ["````md", "```", hidden, "````", after],
       ["Use ~~~ to mark it.", after],
+      ["> para", ">     ~~~", `>     ${after}`],
+      ["> para", `>     ~~~ ${after}`],
+      ["- > para", "  >     ```md", `  >     ${after}`],
+      [`Intro\u2028-     ~~~ ${after}`],
+      ["Intro", `2.     ~~~ ${after}`],
+      ["Intro", `2. -     ~~~ ${after}`],
+      [">\t-     ```md", `>       ${after}`],
+      ["> para", "lazy", ">     ~~~", `>     ${after}`],
+      ["> para", "> 2. >", `> 2.     ~~~ ${after}`],
+      ["> para\r", ">     ~~~\r", `>     ${after}`],
+      [`> para\r\r>     ~~~\r>     ${hidden}\r> ${after}`],
+      ["para", "    -     ```", `    ${after}`],
+      ["para", "    -     ```", `          ${after}`],
+      ["    ~~~", `-   ${after}`],
+      ["    ~~~md", "    ~~~", "    ~~~", after],
+      ["- item", "  >     ~~~", `  >     ${hidden}`, `    ${after}`],
+      ["10. >     ```md", `    >     ${hidden} \`\`\``, "", after],
+      ["  - >     ```md", `    >     ${hidden} \`\`\``, "", after],
+      ["> - Run this:", ">", ">     ```bash", ">   echo hi", ">", ">     ```", `>     ${after}`],
+      ["Example", "", ">     ~~~", ">\t\t~~~", `>     ${hidden}`, ">\t\t~~~", `> ${after}`],
+      [after, ">     ~~~", `>     ${hidden}`],
+      [`1.       \`\`\`md ${hidden}`, `   \t${after}`],
+      [">      ```md", `> \t${after}`],
+      [">     ```md", `>\t ${after}`],
       ["```" + hidden + "``` then", after],
       ["Use ```example", hidden, "end``` then", after],
       ["Stray ` tick", "", after, "and `code`"],
@@ -330,16 +499,38 @@ describe("hosted thread links", () => {
     const thread = ref("env.1", "thread:delegated/mcp%3A1.");
     const link = hostedThreadLink(thread);
     expect(link).toBe("https://app.t3.codes/threads/env%2E1/thread%3Adelegated%2Fmcp%253A1%2E");
-    expect(parseThreadLinkHref(link)).toEqual(thread);
+    expect(parseThreadLinkHref(link)).toEqual({ ...thread, hosted: true });
     expect(hostedThreadLink(thread, "https://preview.t3.codes/")).toMatch(
       /^https:\/\/preview\.t3\.codes\/threads\//,
     );
+
+    const literal = ref("local", "task%3A1");
+    const literalUrl = hostedThreadLink(literal);
+    expect(literalUrl).toBe("https://app.t3.codes/threads/local/task%253A1");
+    expect(threadLinkCandidates(parseThreadLinkHref(literalUrl)!, local)).toEqual([literal]);
+    expect(threadLinkRefs(literalUrl, local)).toEqual([literal]);
+    expect(relabelThreadLinks(literalUrl, local, titlesIn({ local: { "task:1": "Other" } }))).toBe(
+      "Thread no longer available",
+    );
+    expect(
+      relabelThreadLinks(
+        literalUrl,
+        local,
+        titlesIn({ local: { "task%3A1": "Literal", "task:1": "Other" } }),
+      ),
+    ).toBe("[Literal](t3-thread://v2/local/task%3A1)");
   });
 
   it("reads only a bare thread path on the hosted app", () => {
-    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1")).toEqual(
-      ref("env-1", "thread-1"),
-    );
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1")).toEqual({
+      ...ref("env-1", "thread-1"),
+      hosted: true,
+    });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env.1/task.foo")).toEqual({
+      ...ref("env.1", "task.foo"),
+      hosted: true,
+    });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/local/task.")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
@@ -355,15 +546,18 @@ describe("hosted thread links", () => {
   });
 
   it("titles hosted links in every Markdown form and writes them as v2 links", () => {
-    const title = titlesIn({ there: { t1: "There" } });
+    const title = titlesIn({ there: { t1: "There" }, local: { "task.foo": "Dotted" } });
     expect(
       relabelThreadLinks(
         [
           "See https://app.t3.codes/threads/there/t1.",
+          "See https://app.t3.codes/threads/local/task.foo.",
           "[old](https://app.t3.codes/threads/there/t1)",
           "<https://app.t3.codes/threads/there/t1>",
           "`https://app.t3.codes/threads/there/t1`",
           "https://app.t3.codes/threads/there/t1?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo/extra",
         ].join("\n"),
         local,
         title,
@@ -371,10 +565,13 @@ describe("hosted thread links", () => {
     ).toBe(
       [
         "See [There](t3-thread://v2/there/t1).",
+        "See [Dotted](t3-thread://v2/local/task.foo).",
         "[There](t3-thread://v2/there/t1)",
         "[There](t3-thread://v2/there/t1)",
         "`https://app.t3.codes/threads/there/t1`",
         "https://app.t3.codes/threads/there/t1?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo/extra",
       ].join("\n"),
     );
     expect(
@@ -383,6 +580,12 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo", local)).toEqual([
+      ref("local", "task.foo"),
+    ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo?prompt=go", local)).toEqual(
+      [],
+    );
   });
 
   it("leaves a hosted link that is part of another link as written", () => {
@@ -394,6 +597,7 @@ describe("hosted thread links", () => {
       [`[Example](https://example.com/?next=${hosted})`],
       [`[ ${hosted} ](https://example.com)`],
       [`[${hosted}](<https://example.com/a b> "Title")`],
+      [`[${hosted}](t3-thread://v2/local/id "Title")`],
       [`[a](https://example.com/x_(y)) ${hosted}`, `[a](https://example.com/x_(y)) ${relabeled}`],
       [`(${hosted}) **${hosted}**`, `(${relabeled}) **${relabeled}**`],
       [`[[[ [old](${hosted})`, `[[[ ${relabeled}`],
@@ -408,5 +612,50 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+
+  it("keeps Markdown reference link definitions intact when relabeling", () => {
+    const hosted = "https://app.t3.codes/threads/local/demo";
+    for (const markdown of [
+      `[Review][thread]\n\n[thread]: ${hosted}`,
+      `[Review][thread]\n\n[thread]:${hosted}`,
+      `[Review][thread]\n\n[thread]: <${hosted}>`,
+      `[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`,
+      `[Review][thread]\n\n[thread]:\n  ${hosted}`,
+      `[Review][thread]\n\n  [thread]: ${hosted} "Demo"`,
+      `> [Review][thread]\n>\n> [thread]: ${hosted}`,
+    ]) {
+      for (const title of [() => "Demo", () => undefined]) {
+        expect(relabelThreadLinks(markdown, local, title)).toBe(markdown);
+      }
+    }
+
+    const withLiveAfter = `[Review][thread]\n\n[thread]: ${hosted}\n\nSee ${hosted}`;
+    expect(relabelThreadLinks(withLiveAfter, local, () => "Demo")).toBe(
+      `[Review][thread]\n\n[thread]: ${hosted}\n\nSee [Demo](t3-thread://v2/local/demo)`,
+    );
+
+    const paragraphContinuation = `Intro\n[thread]: ${hosted}`;
+    expect(relabelThreadLinks(paragraphContinuation, local, () => "Demo")).toBe(
+      `Intro\n[thread]: [Demo](t3-thread://v2/local/demo)`,
+    );
+  });
+
+  it("keeps relabeled links navigable when the thread id contains a space", () => {
+    const linkUrl = (markdown: string) => {
+      const paragraph = unified().use(remarkParse).parse(markdown).children[0];
+      const node = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+      return node?.type === "link" ? node.url : undefined;
+    };
+    const thread = ref("local", "work item");
+    const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
+
+    const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual({ ...thread, hosted: true });
+    expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
+
+    const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
+    expect(linkUrl(v1Relabeled)).toBe("t3-thread://v1/work%20item");
+    expect(formatThreadLink(v1("work item"))).toBe("<t3-thread://v1/work%20item>");
   });
 });

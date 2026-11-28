@@ -74,6 +74,19 @@ export function serializeCodeBlockToMarkdown(source: string, language: string | 
 // Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
 // copied as shown, without fences; DOM text from rendered markdown carries no NUL.
 const CODE_BOUNDARY = "\u0000";
+// An empty code part before a marker the serializer writes keeps escapeBlockStarts off it.
+const BLOCK_GUARD = `${CODE_BOUNDARY}${CODE_BOUNDARY}`;
+// CommonMark/GFM block starts: headings, quotes, lists, rules, setext, fences, table delimiters.
+// Deeper indentation is indented code or a continuation line, where a backslash would show.
+const BLOCK_START =
+  /\u0000[\s\S]*?\u0000|^( {0,3})(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
+const escapeBlockStart = (match: string, indent?: string, rule?: string) => {
+  if (indent === undefined) return match;
+  return rule ? `${indent}${rule.replace(/[*_~]/g, "\\$&")}` : `${match}\\`;
+};
+const escapeBlockStarts = (text: string) => text.replace(BLOCK_START, escapeBlockStart);
+const protectVerbatim = (text: string) =>
+  text ? CODE_BOUNDARY + text.replace(/(?<!\n)\n*$/, `${CODE_BOUNDARY}$&`) : "";
 
 function verbatimBlock(code: string): string {
   return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
@@ -107,8 +120,16 @@ function tableSeparatorFor(headerCells: Element[]): string {
   return `| ${markers.join(" | ")} |`;
 }
 
+// Footers render after the body even when the source puts them first.
+function tableRows(table: Element): Element[] {
+  return [
+    ...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr"),
+    ...table.querySelectorAll(":scope > tfoot > tr"),
+  ];
+}
+
 function serializeTable(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  const rows = tableRows(table);
   if (rows.length === 0) return "";
   const lines: string[] = [];
   let emittedSeparator = false;
@@ -123,7 +144,7 @@ function serializeTable(table: Element): string {
       emittedSeparator = true;
     }
   }
-  return `${lines.join("\n")}\n\n`;
+  return `${BLOCK_GUARD}${lines.join(`\n${BLOCK_GUARD}`)}\n\n`;
 }
 
 function serializeListItem(
@@ -139,6 +160,7 @@ function serializeListItem(
   let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
+  if (!inTableCell) content = escapeBlockStarts(content);
   if (!item.querySelector(":scope > p")) {
     content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
@@ -146,7 +168,7 @@ function serializeListItem(
   const continuationIndent = " ".repeat(bullet.length);
   const [first = "", ...rest] = content.split("\n");
   return [
-    `${marker}${first}`,
+    `${BLOCK_GUARD}${marker}${first}`,
     ...rest.map((line) => (line.length > 0 ? `${continuationIndent}${line}` : line)),
   ].join("\n");
 }
@@ -181,6 +203,7 @@ function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
     }
     content += serializeNode(child, inTableCell);
   }
+  if (!inTableCell) content = escapeBlockStarts(content);
   return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
 }
 
@@ -190,7 +213,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
   if (!content) return "";
   const quoted = content
     .split("\n")
-    .map((line) => (line.length > 0 ? `> ${line}` : ">"))
+    .map((line) => (line.length > 0 ? `${BLOCK_GUARD}> ${line}` : `${BLOCK_GUARD}>`))
     .join("\n");
   return `${quoted}\n\n`;
 }
@@ -212,16 +235,22 @@ function serializeDetails(details: Element): string {
 }
 
 // Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
-// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
-const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
+// backticks, opening brackets, and emphasis or strikethrough runs (user remark-gfm sets
+// singleTilde: false). A closing bracket stays bare: `\[…\]` would read as display math.
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
 const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
+
+/** Where a word's unfinished drive path starts, after which backslashes and brackets read literally. */
+function driveStartOf(word: string): number {
+  // Check each word once; testing every escape's growing prefix would be quadratic.
+  const drive = UNFINISHED_DRIVE_PATH.exec(word);
+  return drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+}
 
 /** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
 function escapeProse(text: string): string {
   return text.replace(/\S+/g, (word, wordOffset: number) => {
-    // Check each word once; testing every escape's growing prefix would be quadratic.
-    const drive = UNFINISHED_DRIVE_PATH.exec(word);
-    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    const driveStart = driveStartOf(word);
     return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
       if (offset >= driveStart) return match;
       const before = text[wordOffset + offset - 1];
@@ -322,7 +351,16 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
 
 function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  // Prose leaves `]` bare, but inside a label it would end the label. Drive paths stay literal.
+  const text = outsideCode(label, (prose) =>
+    prose.replace(/\S+/g, (word) => {
+      const driveStart = driveStartOf(word);
+      return word.replace(/(?<!\\)(?:\\\\)*\]/g, (match: string, offset: number) =>
+        offset + match.length > driveStart ? match : `${match.slice(0, -1)}\\]`,
+      );
+    }),
+  );
+  return `[${text}](${destination})`;
 }
 
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
@@ -360,7 +398,9 @@ function serializeChildren(node: Node, inTableCell = false): string {
 
 function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? "";
+    let text = node.textContent ?? "";
+    // A <br> already wrote the line ending that follows it.
+    if (node.previousSibling?.nodeName === "BR") text = text.replace(/^\n/, "");
     if (text.includes("\n") && text.trim().length === 0) return "\n";
     return escapeTablePipes(escapeProse(text), inTableCell);
   }
@@ -375,9 +415,10 @@ function serializeNode(node: Node, inTableCell = false): string {
     if (element.hasAttribute("data-markdown-mermaid")) {
       return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
     }
-    return element.hasAttribute("data-markdown-math")
+    const copy = element.hasAttribute("data-markdown-math")
       ? markdownCopy
       : escapeTablePipes(markdownCopy, inTableCell);
+    return protectVerbatim(copy);
   }
   if (isSkippedElement(element)) return "";
   const alert = element.getAttribute(ALERT_ATTRIBUTE);
@@ -386,21 +427,22 @@ function serializeNode(node: Node, inTableCell = false): string {
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
-    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
+    return `${BLOCK_GUARD}${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
   }
 
   switch (element.tagName) {
     case "BR":
       return "\n";
     case "HR":
-      return "---\n\n";
+      return `${BLOCK_GUARD}---\n\n`;
     case "P":
       return `${serializeChildren(element, inTableCell).trim()}\n\n`;
     case "PRE":
       return escapeTablePipes(serializeCodeBlock(element), inTableCell);
     case "CODE": {
       const content = escapeTablePipes(element.textContent ?? "", inTableCell);
-      return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      const code = isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      return protectVerbatim(code);
     }
     case "STRONG":
     case "B":
@@ -491,7 +533,7 @@ function soleCodeBlock(container: Node): Element | null {
 function tidyMarkdown(markdown: string): string {
   // Odd parts are code, kept verbatim, so a selection that starts or ends inside
   // code keeps that code's leading and trailing whitespace.
-  const parts = markdown.split(CODE_BOUNDARY);
+  const parts = escapeBlockStarts(markdown).split(CODE_BOUNDARY);
   const last = parts.length - 1;
   return parts
     .map((part, index) => {
@@ -536,16 +578,124 @@ function csvCell(value: string): string {
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row.children].filter(
-      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
-    );
-    if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
+  // Spanned slots stay as empty fields, so values after a span stay under their headers.
+  return tableGrid(table)
+    .map((row) => Array.from(row, (slot) => csvCell(slot?.text ?? "")).join(","))
+    .join("\n");
+}
+
+// CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+// The ranges skip nonspacing marks that would make a narrow base look wide.
+// Symbols such as ™, © and ↔ show as text, one column, unless a variation selector makes them emoji.
+const WIDE_GRAPHEME =
+  /\p{Emoji_Presentation}|\ufe0f|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\u3029\u302e-\u3098\u309b-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{16fe0}-\u{16fe3}\u{16ff0}-\u{191d2}\u{1aff0}-\u{1b2fb}\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}]/u;
+let graphemes: Intl.Segmenter | undefined;
+
+function monospaceWidth(text: string): number {
+  graphemes ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  let width = 0;
+  for (const { segment } of graphemes.segment(text)) width += WIDE_GRAPHEME.test(segment) ? 2 : 1;
+  return width;
+}
+
+function padToWidth(text: string, width: number, align: string): string {
+  const gap = width - monospaceWidth(text);
+  if (align === "right") return " ".repeat(gap) + text;
+  if (align === "center") {
+    const left = Math.floor(gap / 2);
+    return " ".repeat(left) + text + " ".repeat(gap - left);
   }
-  return lines.join("\n");
+  return text + " ".repeat(gap);
+}
+
+/** Each rendered row's cells by column; a spanned slot repeats its cell with empty text. */
+function tableGrid(table: Element): Array<Array<{ text: string; cell: Element }>> {
+  // Lay cells onto the grid the table renders, so values after a span stay under their headers.
+  // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
+  // Row groups in document order, with footers last as rendered; consecutive rows directly in
+  // the table form one group.
+  const groups: Element[][] = [];
+  const footers: Element[][] = [];
+  let looseRows: Element[] | undefined;
+  for (const child of table.children) {
+    if (child.tagName === "TR") {
+      if (!looseRows) groups.push((looseRows = []));
+      looseRows.push(child);
+      continue;
+    }
+    looseRows = undefined;
+    if (TABLE_SECTION_TAGS.has(child.tagName)) {
+      const rows = [...child.children].filter((row) => row.tagName === "TR");
+      (child.tagName === "TFOOT" ? footers : groups).push(rows);
+    }
+  }
+  groups.push(...footers);
+  const grid: Array<{ slots: Array<{ text: string; cell: Element }>; hasCells: boolean }> = [];
+  for (const groupRows of groups) {
+    const start = grid.length;
+    for (const _ of groupRows) grid.push({ slots: [], hasCells: false });
+    groupRows.forEach((row, offset) => {
+      const gridRow = grid[start + offset]!;
+      let column = 0;
+      for (const cell of row.children) {
+        if (cell.tagName !== "TH" && cell.tagName !== "TD") continue;
+        gridRow.hasCells = true;
+        while (gridRow.slots[column]) column++;
+        const text = csvCellText(cell).replace(/\s+/g, " ").trim();
+        const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
+        const remaining = groupRows.length - offset;
+        // rowspan="0" runs to the end of its row group.
+        const rowSpan = Math.min(tableCellSpan(cell, "rowSpan", "rowspan") || remaining, remaining);
+        for (let down = 0; down < rowSpan; down++) {
+          for (let across = 0; across < colSpan; across++) {
+            grid[start + offset + down]!.slots[column + across] = {
+              text: down === 0 && across === 0 ? text : "",
+              cell,
+            };
+          }
+        }
+        column += colSpan;
+      }
+    });
+  }
+  return grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  const rows = tableGrid(table);
+  if (rows.length === 0) return { text: "", html: "" };
+  const columns = Math.max(...rows.map((gridRow) => gridRow.length));
+  const texts = rows.map((gridRow) =>
+    Array.from({ length: columns }, (_, column) => gridRow[column]?.text ?? ""),
+  );
+  const widths = Array.from({ length: columns }, (_, column) =>
+    Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
+  );
+  const aligns = widths.map((_, column) => {
+    const header = rows[0]?.[column]?.cell as HTMLElement | undefined;
+    return header?.style?.textAlign || header?.getAttribute("align") || "";
+  });
+  const line = (cells: string[]) =>
+    widths
+      .map((width, column) => padToWidth(cells[column] ?? "", width, aligns[column] ?? ""))
+      .join("  ")
+      .trimEnd();
+  const [header = [], ...body] = texts;
+  const lines = [
+    line(header),
+    widths.map((width) => "-".repeat(width)).join("  "),
+    ...body.map(line),
+  ];
+  const aligned = lines.join("\n");
+  const fence = codeFenceFor(aligned);
+  return {
+    text: `${fence}\n${aligned}\n${fence}`,
+    html: `<meta charset="utf-8"><pre>${escapeHtml(aligned)}</pre>`,
+  };
 }
 
 const TABLE_SECTION_TAGS = new Set(["THEAD", "TBODY", "TFOOT"]);
@@ -692,12 +842,19 @@ function parseTableSpan(value: string | null): number {
   return Number.isNaN(span) || span < 0 ? 1 : span;
 }
 
+// The DOM normalizes spans; the attribute fallback covers non-DOM callers.
+function tableCellSpan(
+  cell: Element,
+  property: "colSpan" | "rowSpan",
+  attribute: "colspan" | "rowspan",
+): number {
+  const span = (cell as Partial<HTMLTableCellElement>)[property];
+  return typeof span === "number" ? span : parseTableSpan(cell.getAttribute(attribute));
+}
+
 function htmlSpanAttributes(cell: Element): string {
-  // The DOM normalizes spans; the attribute fallback covers non-DOM callers.
-  const { colSpan, rowSpan } = cell as Partial<HTMLTableCellElement>;
-  const columns =
-    typeof colSpan === "number" ? colSpan : parseTableSpan(cell.getAttribute("colspan"));
-  const rows = typeof rowSpan === "number" ? rowSpan : parseTableSpan(cell.getAttribute("rowspan"));
+  const columns = tableCellSpan(cell, "colSpan", "colspan");
+  const rows = tableCellSpan(cell, "rowSpan", "rowspan");
   let attributes = columns > 1 ? ` colspan="${columns}"` : "";
   // rowspan="0" runs to the end of its section.
   if (rows !== 1) attributes += ` rowspan="${rows}"`;
@@ -800,11 +957,29 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+const TABLE_CONTAINERS = new Set(["TABLE", "THEAD", "TBODY", "TFOOT", "TR"]);
+
 function isList(node: Node): node is HTMLOListElement | HTMLUListElement {
   return node instanceof Element && (node.tagName === "OL" || node.tagName === "UL");
 }
 
-// An endpoint can clone empty item wrappers at any nesting depth.
+function enclosingWrappers(node: Node): Element[] {
+  if (isList(node)) return [node];
+  if (!(node instanceof Element) || !TABLE_CONTAINERS.has(node.tagName)) return [];
+  const wrappers: Element[] = [];
+  for (let current: Element | null = node; current; current = current.parentElement) {
+    if (!TABLE_CONTAINERS.has(current.tagName)) return [];
+    wrappers.push(current);
+    if (current.tagName === "TABLE") return wrappers;
+  }
+  return [];
+}
+
+const hasTableContent = (element: Element): boolean =>
+  Boolean(element.textContent?.trim()) ||
+  element.querySelector("img, [data-markdown-copy], input") !== null;
+
+// An endpoint can clone empty item or table wrappers at any nesting depth.
 function emptyListBoundary(
   ancestor: Node,
   node: Node,
@@ -833,6 +1008,13 @@ function emptyListBoundary(
       boundary = node;
     } else if (boundary && isList(node)) {
       boundary = node;
+    } else if (
+      node instanceof Element &&
+      ((node.tagName === "TD" || node.tagName === "TH") && node.parentElement?.tagName === "TR"
+        ? hasTableContent(node)
+        : TABLE_CONTAINERS.has(node.tagName) && (boundary !== null || hasTableContent(node)))
+    ) {
+      boundary = node;
     }
     remaining = next(node);
     node = node.parentNode;
@@ -840,7 +1022,7 @@ function emptyListBoundary(
   return boundary;
 }
 
-/** Clones the selection and restores the markers shown for its copied list items. */
+/** Clones the selection and restores enclosing list markers and table wrappers. */
 function cloneWithListMarkers(range: Range, container: Element): void {
   const originalAncestor = range.commonAncestorContainer;
   const start = emptyListBoundary(
@@ -856,16 +1038,16 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (end) range.setEndBefore(end);
   }
   const ancestor = range.commonAncestorContainer;
-  const withinList = isList(ancestor);
+  const wrappers = enclosingWrappers(ancestor);
   container.appendChild(range.cloneContents());
-  if (withinList) {
-    // Items copied within one list clone without the list around them.
-    const list = ancestor.cloneNode(false) as Element;
-    list.append(...container.childNodes);
-    container.replaceChildren(list);
+  // Items or table rows copied within one container clone without their enclosing wrapper tags.
+  for (const wrapper of wrappers) {
+    const copy = wrapper.cloneNode(false) as Element;
+    copy.append(...container.childNodes);
+    container.replaceChildren(copy);
   }
   // The start's ancestors below the cloned top clone as the fragment's first-child chain.
-  const top = withinList ? ancestor.parentNode : ancestor;
+  const top = wrappers.at(-1)?.parentNode ?? ancestor;
   const chain: Node[] = [];
   for (let node: Node | null = range.startContainer; node && node !== top; node = node.parentNode) {
     chain.unshift(node);
@@ -894,6 +1076,10 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (shown && cloned && shown.number !== cloned.number) {
       clone.setAttribute("start", String(shown.number));
     }
+  }
+  if (wrappers.at(-1)?.tagName === "TABLE") {
+    const cells = container.querySelectorAll("th, td");
+    if (cells.length === 1) container.replaceChildren(...cells[0]!.childNodes);
   }
 }
 

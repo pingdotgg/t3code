@@ -82,6 +82,12 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as AcpRegistrySessions from "../provider/AcpRegistrySessions.ts";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
+import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -291,7 +297,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerLaunchThreads,
         layerReceipts,
         layerOrchestrator,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
         NodeServices.layer,
         IdAllocator.layer,
         options.getLaunchSettings === undefined
@@ -1447,6 +1453,49 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
     });
     assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-1");
     assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  {
+    name: "an existing worktree",
+    workspace: { type: "existing_worktree", worktreePath: "/wt/task" },
+    expected: "task-branch",
+  },
+  {
+    name: "a worktree whose branch lookup fails",
+    workspace: { type: "existing_worktree", worktreePath: "/wt/broken" },
+    expected: null,
+  },
+] as const)("a launch in $name that names no branch records branch $expected", (testCase) => {
+  const harness = makeHarness({
+    git: {
+      currentBranch: (cwd) =>
+        testCase.expected === null
+          ? Effect.fail(
+              new GitCommandError({
+                operation: "GitWorkflowService.currentBranch",
+                command: "git symbolic-ref",
+                cwd,
+                detail: "Failed to read the checked-out branch.",
+              }),
+            )
+          : Effect.succeed(cwd === "/wt/task" ? "task-branch" : null),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:checkout-branch",
+        thread: "thread:launch:checkout-branch",
+        message: "Adopt the task",
+        workspace: testCase.workspace,
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.equal(projection.thread.branch, testCase.expected);
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -2745,6 +2794,62 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
       launched.projection.providerThreads[0]?.id,
     );
   }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("imports a native ACP session again after its T3 thread is deleted", () => {
+  const instanceId = ProviderInstanceId.make("acpRegistry");
+  const driver = ProviderDriverKind.make("acpRegistry");
+  const harness = makeHarness({
+    adapters: [{ ...adapter, instanceId, driver }],
+    serverSettings: { providerInstances: { [instanceId]: { driver, enabled: true } } },
+  });
+  const instance = {
+    driverKind: driver,
+    snapshot: { getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true } }) },
+    acpSessionManagement: {},
+  } as unknown as ProviderInstance;
+  const importLayer = AcpRegistrySessions.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        harness.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(instance),
+        }),
+        Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+          withSessionMutation: (effect) => effect,
+        }),
+        Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
+          enqueueCommand: (effect) => effect,
+        }),
+        Layer.mock(AgentSessionImporter.AgentSessionImporter)({
+          importNativeHistory: () => Effect.succeed(1),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const sessions = yield* AcpRegistrySessions.AcpRegistrySessions;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = { projectId, instanceId, sessionId: "native-session-kept-after-delete" };
+    const first = yield* sessions.importSession(input);
+    yield* threads.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("command:delete-imported-session"),
+      threadId: first.threadId,
+    });
+    assert.isNull(yield* threads.getThreadShell(first.threadId));
+    assert.isNull(yield* sessions.findOwner({ driver, instanceId, sessionId: input.sessionId }));
+
+    const second = yield* sessions.importSession(input).pipe(
+      Effect.match({
+        onFailure: (error) => error.message,
+        onSuccess: (result) => result.imported,
+      }),
+    );
+    assert.strictEqual(second, true);
+  }).pipe(Effect.provide(importLayer));
 });
 
 it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {

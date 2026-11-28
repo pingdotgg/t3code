@@ -1,3 +1,5 @@
+import { splitsSurrogatePair } from "./assistantCitations.ts";
+
 export interface GrepOutputResult {
   readonly fileName: string;
   readonly line?: number;
@@ -18,6 +20,7 @@ const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
+const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -32,13 +35,20 @@ export function parseGrepOutput(
   const matches: Array<{ fileName: string; line: number; text: string }> = [];
   const notes: string[] = [];
   let file: string | undefined;
+  let ripgrepFormat: "heading" | "inline" | undefined;
   const lines = output.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
+    if (!trimmed) {
+      // ripgrep separates file groups with a blank line. OpenCode also uses blanks within a group.
+      if (ripgrepFormat === "heading") file = undefined;
+      continue;
+    }
+    if (trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
     if (heading) {
       file = heading[1];
+      ripgrepFormat = undefined;
       continue;
     }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
@@ -49,27 +59,42 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
+    const nextLine = lines[index + 1] ?? "";
     // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
-      colonHeading && OPENCODE_NUMBERED_LINE.test(lines[index + 1] ?? "")
-        ? null
-        : PATH_LINE_TEXT.exec(line);
+      colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
+    if (ripgrepFormat !== "inline" && RIPGREP_NUMBERED_LINE.test(nextLine)) {
+      // Two inline rows can also look like a bare heading and its numbered match.
+      if (
+        ripgrepFormat === undefined &&
+        PATH_LINE_TEXT.test(nextLine) &&
+        PATH_LINE_TEXT.test(trimmed)
+      ) {
+        return undefined;
+      }
+      file = line;
+      ripgrepFormat = "heading";
+      continue;
+    }
     if (inline) {
+      ripgrepFormat = "inline";
       matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
       continue;
     }
     if (colonHeading) {
       file = colonHeading[1];
+      ripgrepFormat = undefined;
       continue;
     }
     if (NOTE_LINE.test(trimmed)) {
       notes.push(trimmed);
       continue;
     }
-    // ripgrep --heading prints the bare path above its numbered lines.
+    // With no numbered match after it, only a space-free bare path can be a heading.
     if (!/\s/.test(line.trimEnd())) {
-      file = line.trimEnd();
+      file = line;
+      ripgrepFormat = undefined;
       continue;
     }
     return undefined;
@@ -77,7 +102,11 @@ export function parseGrepOutput(
   if (matches.length === 0 || matches.some((match) => match.line < 1 || !match.fileName.trim())) {
     return undefined;
   }
-  const note = notes.join("\n").slice(0, NOTE_MAX_CHARS);
+  const joinedNotes = notes.join("\n");
+  const note = joinedNotes.slice(
+    0,
+    splitsSurrogatePair(joinedNotes, NOTE_MAX_CHARS) ? NOTE_MAX_CHARS - 1 : NOTE_MAX_CHARS,
+  );
   let budget = PREVIEW_BUDGET_CHARS - note.length;
   const results: GrepOutputResult[] = matches.map((match) => {
     const fits = match.text.length <= budget;

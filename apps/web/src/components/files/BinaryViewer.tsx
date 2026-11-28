@@ -59,7 +59,7 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
   const [url, setUrl] = useState<string | null>(null);
   const kind = filePreviewKind({ name: props.path });
   const text = (() => {
-    if (!["text", "markdown", "html", "mermaid"].includes(kind)) return null;
+    if (!["text", "markdown", "html", "mermaid", "unsupported"].includes(kind)) return null;
     try {
       return decodeFilePreviewText(props.bytes);
     } catch {
@@ -202,8 +202,9 @@ export default function BinaryViewer(props: {
     { path: string; entryPath: string; directory: boolean; size: number; modified: string | null }
   >();
   for (const item of archive?.entries ?? []) {
-    // `tar cf x.tar .` names members "./src/a.txt"; list them from the archive root.
-    const name = item.path.replace(/^(?:\.?\/)+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    // Give directories a trailing slash so the root marker "." normalizes like "./".
+    const memberPath = item.directory ? `${item.path}/` : item.path;
+    const name = memberPath.replace(/^(?:\.?\/)+|\/+$/g, "").replace(/\/{2,}/g, "/");
     if (!name.startsWith(folder)) continue;
     const rest = name.slice(folder.length);
     if (!rest) continue;

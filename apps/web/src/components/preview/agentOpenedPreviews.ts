@@ -225,6 +225,24 @@ export function floatBrowserSurface(
   usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
 }
 
+/** Floats a panel's browser or device as the panel closes, when Auto-show floating preview is on. */
+export function floatPanelSurfaceOnClose(
+  threadRef: ScopedThreadRef,
+  source: PreviewMiniPlayerSource,
+  options: {
+    readonly autoShowFloatingPreview: boolean;
+    readonly previewState: ThreadPreviewState;
+    readonly deviceState: DeviceServiceState | null;
+  },
+): void {
+  if (!options.autoShowFloatingPreview) return;
+  if (source.kind === "browser") {
+    floatBrowserSurface(threadRef, source.tabId, options.previewState);
+  } else {
+    floatDeviceSurface(threadRef, source, options.deviceState);
+  }
+}
+
 export function resetDeviceSessionBaselinesForTests(): void {
   deviceSessionBaselines.clear();
 }

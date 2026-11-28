@@ -91,7 +91,7 @@ import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
@@ -1059,7 +1059,7 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   return (
-    <>
+    <TooltipProvider>
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
@@ -1157,6 +1157,6 @@ export function ThreadRelationshipsPanel(props: {
           </ThreadLineageGroup>
         </ThreadDetailsSection>
       ) : null}
-    </>
+    </TooltipProvider>
   );
 }

@@ -371,6 +371,7 @@ const TranscriptLine = Schema.Struct({
   thinking: Schema.optional(Schema.String),
   content: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
   tool_calls: Schema.optional(
     Schema.Array(Schema.Struct({ name: Schema.String, args: Schema.optional(Schema.Unknown) })),
   ),
@@ -1502,6 +1503,59 @@ async function readLastTranscriptLine(
     await handle.close();
   }
 }
+
+/**
+ * The model named on the latest `PLANNER_RESPONSE` since the last user prompt in the session's
+ * `transcript.jsonl` tail. agy reports the model it ran only there, not over ACP.
+ */
+export const readAntigravityExecutedModel = Effect.fn("readAntigravityExecutedModel")(
+  function* (input: { readonly profileDirectory: string; readonly sessionId: string }) {
+    if (!NATIVE_ID.test(input.sessionId)) return undefined;
+    const read = async (): Promise<string | undefined> => {
+      const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+      if (profileRoot === undefined) return undefined;
+      const transcript = await antigravityManagedPath(
+        profileRoot,
+        [
+          "antigravity-acp",
+          "brain",
+          input.sessionId,
+          ".system_generated",
+          "logs",
+          "transcript.jsonl",
+        ],
+        "file",
+      );
+      if (transcript === undefined) return undefined;
+      const handle = await NodeFSP.open(
+        transcript.path,
+        NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+      );
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) return undefined;
+        const start = Math.max(0, stat.size - TRANSCRIPT_BYTE_CAP);
+        const buffer = Buffer.alloc(stat.size - start);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+        const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          const step = Option.getOrUndefined(decodeTranscriptLine(lines[index]!));
+          if (step === undefined) continue;
+          if (step.type === "USER_INPUT") return undefined;
+          const model = step.type === "PLANNER_RESPONSE" ? step.model?.trim() : undefined;
+          if (model) return model;
+        }
+        return undefined;
+      } finally {
+        await handle.close();
+      }
+    };
+    return yield* Effect.tryPromise({
+      try: read,
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    }).pipe(Effect.orElseSucceed(() => undefined));
+  },
+);
 
 /**
  * True when `agy` has a high-priority wake queued in the session's inbox or already dequeued as

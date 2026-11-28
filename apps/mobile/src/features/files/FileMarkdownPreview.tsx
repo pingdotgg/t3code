@@ -40,7 +40,11 @@ import {
   type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
-import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import {
+  fileRoutePathSegments,
+  resolveMarkdownFileLinkPath,
+  resolveWorkspaceFilePath,
+} from "./filePath";
 import { SourceFileSurface } from "./SourceFileSurface";
 
 interface MarkdownPreviewStyles {
@@ -208,9 +212,11 @@ export function FileMarkdownPreview(props: {
     if (!media || media.kind === "file") {
       const fileLink = resolveMarkdownLinkPresentation(href);
       if (props.captured || fileLink.kind !== "file") return false;
+      const target = resolveMarkdownFileLinkPath(props.cwd, markdownDirectory, fileLink.path);
+      if (target === null) return false;
       const params = {
         environmentId: String(props.environmentId),
-        path: fileRoutePathSegments(resolveWorkspaceFilePath(markdownDirectory, fileLink.path)),
+        path: fileRoutePathSegments(target),
         ...(fileLink.line ? { line: String(fileLink.line) } : {}),
       };
       if (props.threadId) {

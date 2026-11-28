@@ -9,8 +9,15 @@ export interface ComposerListEdit {
 }
 
 type ListMarker =
-  | { kind: "ordered"; indent: string; numberText: string; delimiter: "." | ")"; space: string }
-  | { kind: "task"; indent: string; space: string }
+  | {
+      kind: "ordered";
+      indent: string;
+      numberText: string;
+      delimiter: "." | ")";
+      space: string;
+      task: boolean;
+    }
+  | { kind: "task"; indent: string; bullet: string; space: string }
   | { kind: "bullet"; indent: string; bullet: string; space: string };
 
 interface ParsedListMarker {
@@ -20,31 +27,35 @@ interface ParsedListMarker {
   contentColumn: number;
 }
 
+const TASK_CHECKBOX = /^\[[ xX]\]((?:[ \t]+)|\s*$)/;
+
 function parseListMarker(line: string): ParsedListMarker | null {
   const indent = line.match(/^[ \t]*/)?.[0] ?? "";
   const rest = line.slice(indent.length);
   const ordered = rest.match(/^(\d+)([.)])((?:[ \t]+)|\s*$)/);
   if (ordered && ordered[1] !== undefined && ordered[2] !== undefined) {
     const space = ordered[3] ?? "";
+    const checkbox = space === "" ? null : rest.slice(ordered[0].length).match(TASK_CHECKBOX);
     return {
       marker: {
         kind: "ordered",
         indent,
         numberText: ordered[1],
         delimiter: ordered[2] === ")" ? ")" : ".",
-        space,
+        space: checkbox ? (checkbox[1] ?? "") : space,
+        task: checkbox !== null,
       },
-      markerEnd: indent.length + ordered[0].length,
+      markerEnd: indent.length + ordered[0].length + (checkbox?.[0].length ?? 0),
       contentColumn: contentColumn(indent, ordered[1].length + 1, space),
     };
   }
-  // The checkbox is item content, so a task's content starts after "- ".
-  const task = rest.match(/^-(\s)\[[ xX]\]((?:[ \t]+)|\s*$)/);
-  if (task && task[1] !== undefined) {
+  // The checkbox is item content, so a task's content starts after its bullet.
+  const task = rest.match(/^([-*+])(\s)\[[ xX]\]((?:[ \t]+)|\s*$)/);
+  if (task && task[1] !== undefined && task[2] !== undefined) {
     return {
-      marker: { kind: "task", indent, space: task[2] ?? "" },
+      marker: { kind: "task", indent, bullet: task[1], space: task[3] ?? "" },
       markerEnd: indent.length + task[0].length,
-      contentColumn: contentColumn(indent, 1, task[1]),
+      contentColumn: contentColumn(indent, 1, task[2]),
     };
   }
   const bullet = rest.match(/^([-*+])((?:[ \t]+)|\s*$)/);
@@ -79,10 +90,11 @@ export function nextOrderedMarkerText(marker: string): string {
 
 function nextMarkerText(marker: ListMarker): string {
   if (marker.kind === "ordered") {
-    return `${marker.indent}${nextOrderedMarkerText(`${marker.numberText}${marker.delimiter}`)} `;
+    const next = nextOrderedMarkerText(`${marker.numberText}${marker.delimiter}`);
+    return `${marker.indent}${next} ${marker.task ? "[ ] " : ""}`;
   }
   if (marker.kind === "task") {
-    return `${marker.indent}- [ ] `;
+    return `${marker.indent}${marker.bullet} [ ] `;
   }
   return `${marker.indent}${marker.bullet} `;
 }

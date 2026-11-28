@@ -180,11 +180,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(root.entries.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
           { path: "link.txt", kind: "file" },
           { path: "linkdir", kind: "directory" },
+          { path: "outside-link", kind: "directory" },
           { path: "real.txt", kind: "file" },
           { path: "realdir", kind: "directory" },
         ]);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "linkdir" })).toEqual({
           entries: [{ path: "linkdir/nested.txt", kind: "file" }],
+          truncated: false,
+        });
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "outside-link" })).toEqual({
+          entries: [{ path: "outside-link/outside.txt", kind: "file" }],
           truncated: false,
         });
       }),
@@ -351,29 +356,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect(
-      "rejects directory traversal, git internals, and symlinks outside the workspace",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir();
-          const outside = yield* makeTempDir();
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* writeTextFile(cwd, ".git/HEAD");
-          const platform = yield* HostProcess.Platform;
-          if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          for (const directoryPath of [
-            "../",
-            outside,
-            ".git",
-            "missing",
-            ...(platform !== "win32" ? ["external"] : []),
-          ]) {
-            const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
-            expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
-          }
-        }),
+    it.effect("rejects directory traversal and git internals", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const outside = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".git/HEAD");
+        yield* writeTextFile(outside, "repo/.git/HEAD");
+        const platform = yield* HostProcess.Platform;
+        if (platform !== "win32") {
+          yield* fileSystem.symlink(path.join(outside, "repo/.git"), path.join(cwd, "external"));
+        }
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const directoryPath of [
+          "../",
+          outside,
+          ".git",
+          "missing",
+          ...(platform !== "win32" ? ["external"] : []),
+        ]) {
+          const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
+          expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
+        }
+      }),
     );
 
     it.effect("includes images and other binary files in non-git workspace indexes", () =>
@@ -1163,6 +1169,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           parentPath: cwd,
           entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
         });
+      }),
+    );
+
+    it.effect("lists numbered folders in natural order", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-natural-" });
+        for (const name of ["app10", "app2", "app1"]) {
+          yield* writeTextFile(cwd, `${name}/README.md`, "");
+        }
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries.map((entry) => entry.name)).toEqual(["app1", "app2", "app10"]);
       }),
     );
 

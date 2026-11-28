@@ -3,7 +3,7 @@ import {
   type ManagedPolicySummary,
   ProviderDriverKind,
   ProviderInstanceId,
-  type TextGeneratorConfig,
+  TextGeneratorConfig,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
@@ -14,9 +14,11 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
+import { TEXT_GENERATOR_DRIVERS } from "./textGeneratorDrivers.ts";
 import * as TextGenerators from "./TextGenerators.ts";
 
 const ID = ProviderInstanceId.make("router");
+const decodeTextGeneratorConfig = Schema.decodeUnknownEffect(TextGeneratorConfig);
 
 const layer = (generator: Partial<TextGeneratorConfig>, policy?: ManagedPolicySummary) =>
   Layer.effect(TextGenerators.TextGenerators, TextGenerators.make).pipe(
@@ -84,6 +86,23 @@ it.effect.each([
       run!(request).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
     );
     expect(failure.detail).toMatch(/rejected the API key: Incorrect API key provided$/);
+  }),
+);
+
+it.effect("HTTP error detail does not split an emoji at the cutoff", () =>
+  Effect.gen(function* () {
+    const prefix = "a".repeat(299);
+    const upstream: typeof fetch = async () =>
+      Response.json({ error: { message: `${prefix}🚀` } }, { status: 400 });
+    const failure = yield* TEXT_GENERATOR_DRIVERS.openaiCompatible
+      .listModels({ baseUrl: "https://api.test/v1", apiKey: "", label: "Test API" })
+      .pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, upstream),
+        Effect.flip,
+      );
+
+    expect(failure.detail).toBe(`Test API returned HTTP 400: ${prefix}`);
   }),
 );
 
@@ -235,4 +254,52 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     expect(refused.detail).toContain("policy");
     expect(seen).toHaveLength(requestsBefore);
   }),
+);
+
+it.effect.each([
+  {
+    kind: "openaiCompatible",
+    generatePath: "/v1/chat/completions",
+    modelsSearch: "",
+    reply: { choices: [{ message: { content: "OK" } }] },
+  },
+  {
+    kind: "anthropic",
+    generatePath: "/v1/messages",
+    modelsSearch: "?limit=1000",
+    reply: { content: [{ type: "text", text: "OK" }] },
+  },
+] as const)(
+  "$kind keeps endpoints in the pathname when baseUrl ends with empty query or fragment",
+  (api) =>
+    Effect.gen(function* () {
+      const generators = yield* TextGenerators.TextGenerators.pipe(Effect.provide(layer({})));
+      for (const baseUrl of [
+        "https://api.test/v1?",
+        "https://api.test/v1#",
+        "https://api.test/v1/?#",
+      ]) {
+        const seen: Array<{ pathname: string; search: string; hash: string }> = [];
+        const upstream = vi.fn<typeof fetch>(async (url, init) => {
+          const parsed = new URL(String(url));
+          seen.push({ pathname: parsed.pathname, search: parsed.search, hash: parsed.hash });
+          return (init?.method ?? "GET") === "GET"
+            ? Response.json({ data: [{ id: "some/model" }] })
+            : Response.json(api.reply);
+        });
+        const config = yield* decodeTextGeneratorConfig({
+          kind: api.kind,
+          baseUrl,
+          apiKey: "secret",
+          enabled: true,
+        });
+        yield* generators
+          .listModels({ id: ID, config, test: true, model: "some/model" })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+        expect(seen).toEqual([
+          { pathname: "/v1/models", search: api.modelsSearch, hash: "" },
+          { pathname: api.generatePath, search: "", hash: "" },
+        ]);
+      }
+    }),
 );

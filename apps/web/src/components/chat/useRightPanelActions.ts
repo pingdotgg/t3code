@@ -30,7 +30,9 @@ import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
-import { floatBrowserSurface, floatDeviceSurface } from "../preview/agentOpenedPreviews";
+import { floatPanelSurfaceOnClose } from "../preview/agentOpenedPreviews";
+import { getClientSettings } from "../../hooks/useSettings";
+import { browserMiniPlayerSource } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -172,18 +174,18 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {
     if (activeThreadRef) {
-      if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
-        floatBrowserSurface(
-          activeThreadRef,
-          activeRightPanelSurface.resourceId,
-          activePreviewState,
-        );
-      } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
-        floatDeviceSurface(
-          activeThreadRef,
-          { kind: "device", ...activeRightPanelSurface.target },
-          deviceStateLoaded ? deviceState : null,
-        );
+      const source =
+        activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId
+          ? browserMiniPlayerSource(activeRightPanelSurface.resourceId)
+          : activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target
+            ? ({ kind: "device", ...activeRightPanelSurface.target } as const)
+            : null;
+      if (source) {
+        floatPanelSurfaceOnClose(activeThreadRef, source, {
+          autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
+          previewState: activePreviewState,
+          deviceState: deviceStateLoaded ? deviceState : null,
+        });
       }
       useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
@@ -260,7 +262,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   const toggleRightPanelMaximized = () => {
-    if (!canMaximizeRightPanel || !activeThreadRef) return;
+    if (!activeThreadRef) return;
+    if (!rightPanelOpen) {
+      // A closed panel opens straight into maximized.
+      requestWorkspaceFocus({ area: "panel" });
+      useRightPanelStore.getState().requestMaximize(activeThreadRef);
+      toggleRightPanel();
+      return;
+    }
+    if (!canMaximizeRightPanel) return;
     if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };

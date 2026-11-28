@@ -13,6 +13,8 @@ describe("classifyChangedFile", () => {
     ["src/Stubborn.ts", "code"],
     ["pnpm-lock.yaml", "generated"],
     ["convex/_generated/api.d.ts", "generated"],
+    ["src/Client.Generated.cs", "generated"],
+    ["dist/app.MIN.JS", "generated"],
     ["src/agent.eval.ts", "tests"],
     ["evals/title-generation.ts", "tests"],
     ["src/Button.stories.tsx", "tests"],

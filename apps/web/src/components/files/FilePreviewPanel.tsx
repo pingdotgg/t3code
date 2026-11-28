@@ -52,12 +52,12 @@ import * as Schema from "effect/Schema";
 import {
   lazy,
   Suspense,
+  useContext,
   useEffect,
   useEffectEvent,
   useRef,
   useState,
   type ComponentProps,
-  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 
@@ -74,7 +74,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
@@ -84,6 +84,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { useFileDownload } from "./useFileDownload";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
@@ -103,6 +104,7 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
+import { createPositionMemory, PreviewPositionKey, previewPositionKey } from "./previewPosition";
 import { splitMarkdown } from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
@@ -205,7 +207,8 @@ function WorkspaceImagePreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // A linked image outside the root gets a grant pinned to its inode, so a replacement needs a new one.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
   const revisionSuffix =
     props.workspaceMutationId === null
       ? ""
@@ -269,6 +272,16 @@ const htmlPreviewFrame = (
   ),
 });
 
+function withRefreshRevision(
+  workspaceMutationId: string | null,
+  refreshRevision: number,
+): string | null {
+  if (refreshRevision === 0) return workspaceMutationId;
+  return workspaceMutationId === null
+    ? `refresh:${refreshRevision}`
+    : `${workspaceMutationId}:refresh:${refreshRevision}`;
+}
+
 export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -277,6 +290,7 @@ export function WorkspaceBrowserPreview(props: {
   readonly workspaceRoot: string;
   readonly title: string;
   readonly workspaceMutationId: string | null;
+  readonly refreshRevision?: number;
 }) {
   const pdf = isPdfPreviewFile(props.absolutePath);
   const resource = workspaceAssetResource({
@@ -286,14 +300,15 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
-  // inode, which an atomic replace changes.
-  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  const assetRevision = withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0);
+  // Each workspace mutation or manual refresh re-mints the URL: a file outside the workspace is
+  // signed by its inode, which an atomic replace changes.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, assetRevision);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   // Servers that report the file's revision let an unchanged page stay loaded; older ones only
   // offer the workspace mutation, which changes after every command.
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
-  const latestRevision = fileRevision ?? props.workspaceMutationId;
+  const latestRevision = fileRevision ?? assetRevision;
   // The HTML frame keeps the URL it loaded, so it moves only once a re-minted URL has arrived.
   const [frame, setFrame] = useState<HtmlPreviewFrame | null>(null);
   const [endingGrant, setEndingGrant] = useState<string | null>(null);
@@ -624,8 +639,11 @@ interface FileRevealState {
   revealedScrollTop: number | null;
 }
 
+const codeScrollPositions = createPositionMemory<number>();
+
 function useFileLineReveal(
   relativePath: string | null,
+  positionKey: string | null,
   revealLine: number | null,
   revealRequestId: number,
 ): (scroller: "virtualizer" | "codeView") => FilePostRender {
@@ -634,18 +652,19 @@ function useFileLineReveal(
   return (scroller) => (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
-    const existingState = revealStatesByPath.get(relativePath);
+    const stateKey = positionKey ?? relativePath;
+    const existingState = revealStatesByPath.get(stateKey);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
-      scrollTop: 0,
+      scrollTop: codeScrollPositions.get(positionKey) ?? 0,
       scrollContainer: null,
       restoreFrameId: null,
       revealedScrollTop: null,
     };
-    if (!existingState) revealStatesByPath.set(relativePath, state);
+    if (!existingState) revealStatesByPath.set(stateKey, state);
 
     const cancelPendingReveal = () => {
       if (state.frameId !== null) {
@@ -666,6 +685,7 @@ function useFileLineReveal(
       const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
       if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      codeScrollPositions.set(positionKey, state.scrollTop);
       // A rebuilt CodeView estimates its line heights again, so a saved offset no longer points at
       // the line. Starting the worker pool rebuilds the viewer right after its first render.
       if (state.revealedScrollTop !== null && state.revealedScrollTop === state.scrollTop) {
@@ -1169,25 +1189,6 @@ function EditableFileSurface({
   );
 }
 
-function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
-  const mac = isMacPlatform(navigator.platform);
-  const selectAll =
-    event.key.toLowerCase() === "a" &&
-    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
-    !event.shiftKey &&
-    !event.altKey;
-  // React bubbles keys from portaled children (the image dialog) through this surface.
-  if (
-    !selectAll ||
-    !(event.target instanceof Node) ||
-    !event.currentTarget.contains(event.target)
-  ) {
-    return;
-  }
-  event.preventDefault();
-  window.getSelection()?.selectAllChildren(event.currentTarget);
-}
-
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -1231,7 +1232,6 @@ function RenderedMarkdownSurface({
       relativePath={relativePath}
       threadRef={threadRef}
       workspaceMutationId={workspaceMutationId}
-      onKeyDown={selectRenderedContentOnSelectAll}
       onTaskListChange={onTaskListChange}
     />
   );
@@ -1259,7 +1259,23 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
+  const relativePath =
+    props.attachment === undefined
+      ? resolveFilePreviewPath(props.relativePath, props.cwd)
+      : props.relativePath;
+  const positionKey =
+    props.attachment === undefined && relativePath !== null
+      ? previewPositionKey(props.environmentId, props.threadRef.threadId, props.cwd, relativePath)
+      : null;
+  return (
+    <PreviewPositionKey value={positionKey}>
+      <FilePreviewPanelContent {...props} />
+    </PreviewPositionKey>
+  );
+}
+
+function FilePreviewPanelContent({
   environmentId,
   cwd,
   projectName,
@@ -1407,6 +1423,7 @@ export default function FilePreviewPanel({
     (!isMarkdown || markdownRenderable);
   const showsRawText =
     previewPath !== null &&
+    !isMedia &&
     file.data !== null &&
     !(isMarkdown && renderMarkdown) &&
     !renderMermaid &&
@@ -1525,7 +1542,18 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const fileLineReveal = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const downloadFile = useFileDownload(environmentId);
+  // PDFs, large text, and binary or document files render their own Save button.
+  const rendersOwnSave =
+    isPdf ||
+    showsLargeText ||
+    (!isMedia && !renderBrowserFile && (isDocument || file.readError?.failure === "binary_file"));
+  const handleSave =
+    downloadFile && previewPath !== null && absolutePath !== null && !rendersOwnSave
+      ? () => downloadFile(cwd, absolutePath)
+      : null;
+  const positionKey = useContext(PreviewPositionKey);
+  const fileLineReveal = useFileLineReveal(relativePath, positionKey, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
@@ -1703,6 +1731,11 @@ export default function FilePreviewPanel({
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
+          {handleSave ? (
+            <FileSurfaceAction label={gt("Save file")} onPress={handleSave}>
+              <DownloadIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
               label={explorerOpen ? gt("Hide file explorer") : gt("Show file explorer")}
@@ -1803,10 +1836,11 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && absolutePath && showsLargeText ? (
             <WorkspaceLargeTextPreview
-              key={`${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
+              key={`${threadRef.threadId}:${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
@@ -1819,6 +1853,7 @@ export default function FilePreviewPanel({
               sizeBytes={file.data?.byteLength ?? 0}
               onPostRender={fileLineReveal("codeView")}
               workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
               wordWrap={wordWrap}
@@ -1827,7 +1862,7 @@ export default function FilePreviewPanel({
             absolutePath &&
             (isDocument || file.readError?.failure === "binary_file") ? (
             <WorkspaceDocumentPreview
-              key={`${environmentId}:${absolutePath}`}
+              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
               draft={draft}
@@ -1887,19 +1922,26 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
-                workspaceMutationId={workspaceMutationId}
-                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
+                // A refresh re-mints embedded images too; their cached URLs keep the old bytes.
+                workspaceMutationId={withRefreshRevision(workspaceMutationId, fileRefreshRevision)}
+                readOnly={
+                  file.data.truncated || file.data.readOnly === true || isHostFile || !canWriteFiles
+                }
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
               <DelimitedTablePreview
-                key={relativePath}
+                key={`${threadRef.threadId}:${relativePath}`}
                 name={relativePath}
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : file.data.truncated ||
+              file.data.readOnly === true ||
+              isHostFile ||
+              !canWriteFiles ? (
               <SourceFilePreview
+                key={`${threadRef.threadId}:${relativePath}`}
                 name={relativePath}
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
@@ -1909,7 +1951,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${threadRef.threadId}:${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   projectId={projectId}
                   cwd={cwd}
@@ -1949,6 +1991,10 @@ export default function FilePreviewPanel({
                 }
                 selectedPathRevealId={revealRequestId}
                 onOpenFile={onOpenFile}
+                onOpenFilePreview={(path) => {
+                  setRenderMarkdownPreferred(true);
+                  onOpenFile(path);
+                }}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
                 {...(previewPath && !isMedia && !isPdf
@@ -2071,6 +2117,7 @@ export function WorkspaceLargeTextPreview(props: {
   sizeBytes: number;
   onPostRender?: ComponentProps<typeof LargeFilePreview>["onPostRender"];
   workspaceMutationId: string | null;
+  refreshRevision?: number;
   revealLine: number | null;
   revealRequestId: number;
   wordWrap: boolean;
@@ -2085,11 +2132,11 @@ export function WorkspaceLargeTextPreview(props: {
       description: thrownErrorMessage(cause, m) ?? gt("Try again."),
     });
   };
-  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  // Each workspace mutation or manual refresh re-mints the URL, so an edited file loads its new bytes.
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.workspaceMutationId ?? undefined,
+    withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0),
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([
@@ -2097,9 +2144,10 @@ export function WorkspaceLargeTextPreview(props: {
     resource,
     assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : null,
     revision,
+    props.refreshRevision ?? 0,
   ]);
   const [loaded, setLoaded] = useState<{ revision: string; url: string } | null>(null);
-  if (assetUrl._tag === "Success" && loaded?.revision !== contentRevision) {
+  if (assetUrl._tag === "Success" && !assetUrl.waiting && loaded?.revision !== contentRevision) {
     setLoaded({ revision: contentRevision, url: assetUrl.url });
   }
   if (assetUrl._tag === "Failure")

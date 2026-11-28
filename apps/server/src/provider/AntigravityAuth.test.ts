@@ -519,7 +519,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* Deferred.succeed(deliveryGate, undefined);
       const failed = yield* phase(harness.auth, "failed");
       assert.include(failed.message ?? "", "Could not deliver");
-      assert.isTrue(harness.events.includes("process-close"));
+      yield* Deferred.await(harness.closed);
     }),
   );
 

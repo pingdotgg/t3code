@@ -647,7 +647,7 @@ it.effect("marks the default branch of a primary remote that is not named origin
 );
 
 it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
-  "discovers only the common directory during worktree creation from %s",
+  "refuses worktrees from folders the repository does not track, checked from %s",
   (location) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -675,13 +675,26 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
         if (isAliased) NodeFS.symlinkSync(physicalCwd, creationCwd, "junction");
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cold");
 
-        yield* driver.createWorktree({
-          cwd: creationCwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/cold",
-        });
+        const created = yield* driver
+          .createWorktree({
+            cwd: creationCwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/cold",
+          })
+          .pipe(Effect.result);
 
+        if (isNested) {
+          assert.isTrue(Result.isFailure(created));
+          if (Result.isFailure(created)) {
+            assert.include(created.failure.message, creationCwd);
+            assert.include(created.failure.message, NodeFS.realpathSync.native(cwd));
+          }
+          assert.isFalse(yield* fs.exists(worktreePath));
+          assert.isEmpty(yield* git(cwd, ["branch", "--list", "feature/cold"]));
+          return;
+        }
+        assert.isTrue(Result.isSuccess(created));
         assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
         assert.isFalse(spawnedArgs.some((args) => args.includes("--show-toplevel")));
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
@@ -3759,23 +3772,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("cuts long commit subjects without splitting an emoji", () =>
+    it.effect("keeps selected commit subjects equal to the branch list", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["checkout", "-b", "feature/emoji-subject"]);
-        yield* git(cwd, ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`]);
-        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const shas: Array<string> = [];
+        for (const args of [
+          ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`],
+          ["commit", "--allow-empty", "--cleanup=verbatim", "-m", "\n\nAdd widget\n\nBody"],
+          ["commit", "--allow-empty", "-m", "Line one\nline two\n\nBody"],
+        ]) {
+          yield* git(cwd, args);
+          shas.unshift(yield* git(cwd, ["rev-parse", "HEAD"]));
+        }
 
         const branch = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
-        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: sha });
-        const commitSubject = preview.sources.find(
-          (candidate) => candidate.kind === "commit",
-        )?.commitSubject;
+        const previewSubjects = yield* Effect.forEach(shas, (commitSha) =>
+          driver
+            .getReviewDiffPreview({ cwd, commitSha })
+            .pipe(
+              Effect.map(
+                (preview) =>
+                  preview.sources.find((candidate) => candidate.kind === "commit")?.commitSubject,
+              ),
+            ),
+        );
+        const expected = ["Line one line two", "Add widget", "a".repeat(299)];
         assert.deepStrictEqual(
-          [branch.commits[0]?.subject, commitSubject],
-          ["a".repeat(299), "a".repeat(299)],
+          [branch.commits.map((commit) => commit.subject), previewSubjects],
+          [expected, expected],
         );
       }),
     );
@@ -5718,7 +5745,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
 
           yield* driver.createWorktree({
-            cwd: link,
+            cwd: repo,
             path: pathService.join(yield* makeTmpDir("git-worktrees-"), "real"),
             refName: "real-only",
             newRefName: "feature/real-created",
@@ -8959,6 +8986,115 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(NodeFS.lstatSync(link).isSymbolicLink());
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), ["linked"]);
       }),
+    );
+
+    // A read-only folder stops the delete partway, as a process still writing into it does.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+      "keeps a worktree Git can remove again when its folder cannot be fully deleted",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "stuck");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/stuck",
+          });
+          const locked = pathService.join(worktreePath, "build");
+          yield* writeTextFile(worktreePath, "build/out.txt", "output\n");
+          NodeFS.chmodSync(locked, 0o555);
+
+          const result = yield* Effect.result(
+            driver.removeWorktree({ cwd, path: worktreePath, force: true }),
+          );
+          NodeFS.chmodSync(locked, 0o755);
+
+          assert.isTrue(Result.isFailure(result));
+          assert.include(yield* git(cwd, ["worktree", "list", "--porcelain"]), worktreePath);
+          yield* git(worktreePath, ["rev-parse", "--git-dir"]);
+          yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+          assert.isFalse(NodeFS.existsSync(worktreePath));
+        }),
+    );
+
+    it.effect("removes a worktree when called from inside it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "self");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/self",
+        });
+
+        yield* driver.removeWorktree({ cwd: worktreePath, path: worktreePath, force: true });
+
+        assert.isFalse(NodeFS.existsSync(worktreePath));
+        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), worktreePath);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("removes a worktree given through a symlink to it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const root = yield* makeTmpDir("git-worktrees-");
+        const worktreePath = pathService.join(root, "actual");
+        const alias = pathService.join(root, "alias");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/aliased",
+        });
+        NodeFS.symlinkSync(worktreePath, alias, "junction");
+
+        yield* driver.removeWorktree({ cwd, path: alias, force: true });
+
+        assert.isFalse(NodeFS.existsSync(worktreePath));
+        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "actual");
+      }),
+    );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps a hard-linked copy of a worktree that Git does not list",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const root = yield* makeTmpDir("git-worktrees-");
+          const worktreePath = pathService.join(root, "original");
+          const copy = pathService.join(root, "copy");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/copied",
+          });
+          NodeFS.mkdirSync(copy);
+          for (const name of NodeFS.readdirSync(worktreePath))
+            NodeFS.linkSync(pathService.join(worktreePath, name), pathService.join(copy, name));
+
+          const result = yield* Effect.result(
+            driver.removeWorktree({ cwd, path: copy, force: true }),
+          );
+
+          assert.isTrue(Result.isFailure(result));
+          assert.isTrue(NodeFS.existsSync(pathService.join(copy, ".git")));
+          assert.include(yield* git(cwd, ["worktree", "list", "--porcelain"]), "original");
+        }),
     );
 
     it.effect("prunes stale registrations when removing an already-gone worktree", () =>

@@ -210,9 +210,10 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
     .pipe(Effect.flatMap(decodeCodeWorkspace), Effect.option);
   if (Option.isNone(document)) return null;
   return (document.value.folders ?? []).flatMap((folder) => {
-    const folderPath = folder.path?.trim();
+    const folderPath = folder.path;
     if (folderPath === undefined || folderPath === "") return [];
     const resolved = path.resolve(root, folderPath);
+    if (resolved !== resolved.trim()) return [];
     return [
       {
         path: resolved,

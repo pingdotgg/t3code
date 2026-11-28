@@ -915,6 +915,37 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
   ),
 );
 
+it.effect("runsWhere keyPrefix matches keys whose next character is the highest code point", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const start = (runId: string, idempotencyKey: string) =>
+        store.runStarted({
+          runId,
+          workflow: "intake",
+          version: 1,
+          engineTag: "intake@1",
+          idempotencyKey,
+          input: {},
+        });
+      const maxScalar = String.fromCodePoint(0x10ffff);
+      yield* start("a", "case/abc");
+      yield* start("b", `case/${maxScalar}tail`);
+      yield* start("c", "case0");
+      yield* start("max-hit", `${maxScalar}x`);
+      yield* start("bmp-hit", `a\uD7FF${maxScalar}`);
+      yield* start("bmp-next", "a\uE000");
+
+      const ids = (keyPrefix: string) =>
+        Effect.map(store.runsWhere({ keyPrefix }), (rows) => rows.map((row) => row.run_id));
+
+      assert.deepStrictEqual(yield* ids("case/"), ["b", "a"]);
+      assert.deepStrictEqual(yield* ids(maxScalar), ["max-hit"]);
+      assert.deepStrictEqual(yield* ids("a\uD7FF"), ["bmp-hit"]);
+    }),
+  ),
+);
+
 it.effect("a run waiting on you is listed however many runs started after it", () =>
   withStore(
     Effect.gen(function* () {
@@ -1035,6 +1066,37 @@ const pools = Effect.fnUntraced(function* (runIds: ReadonlyArray<string>) {
   };
 });
 
+it.effect("queue positions count older sibling steps but skip paused runs", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const { ask, pause, leave } = yield* pools(["holder", "queued", "later"]);
+      assert.isTrue(yield* ask("holder", "slot", 1, "builders"));
+      for (const [runId, name] of [
+        ["queued", "left"],
+        ["queued", "right"],
+        ["later", "slot"],
+      ] as const) {
+        yield* store.stepStarted(runId, name, "queue");
+        assert.isFalse(yield* ask(runId, name, 1, "builders"));
+      }
+
+      const siblings = yield* store.steps("queued");
+      yield* pause("queued");
+      const later = yield* store.steps("later");
+      assert.deepStrictEqual(yield* leave("holder", "slot"), ["later/slot"]);
+      assert.deepStrictEqual(
+        [...siblings, ...later].map((step) => [step.name, Number(step.ahead)]),
+        [
+          ["left", 0],
+          ["right", 1],
+          ["slot", 0],
+        ],
+      );
+    }),
+  ),
+);
+
 it.effect("two paused runs that asked for different limits both get back in", () =>
   withStore(
     Effect.gen(function* () {
@@ -1057,9 +1119,13 @@ it.effect("two paused runs that asked for different limits both get back in", ()
 it.effect("resumed the other way round, the lock goes first and the other run after it", () =>
   withStore(
     Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
       const { ask, pause, resume, leave, held } = yield* pools(["a", "b"]);
-      yield* ask("a", "one", 2);
-      yield* ask("a", "two", 2);
+      for (const name of ["one", "two"]) {
+        yield* store.stepStarted("a", name, "queue");
+        yield* ask("a", name, 2);
+        yield* store.stepEnded("a", name, "completed", null);
+      }
       yield* pause("a");
       yield* ask("b", "lock", 1);
       yield* pause("b");
@@ -1067,6 +1133,10 @@ it.effect("resumed the other way round, the lock goes first and the other run af
       // Not one of its two beside the lock: all of them, once the lock is out.
       assert.deepStrictEqual(yield* resume("a"), []);
       assert.deepStrictEqual(yield* held, ["b/lock"]);
+      assert.deepStrictEqual(
+        (yield* store.steps("a")).map((step) => step.ahead),
+        [0, 0],
+      );
       assert.deepStrictEqual(yield* leave("b", "lock"), ["a/one", "a/two"]);
     }),
   ),

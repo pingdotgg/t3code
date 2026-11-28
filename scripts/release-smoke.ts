@@ -42,6 +42,7 @@ const workspaceFiles = [
   "packages/provider-kiro/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/issue-tracker-jira/package.json",
   "packages/issue-tracker-linear/package.json",
   "packages/secret-provider-core/package.json",
   "packages/secret-provider-definitions/package.json",

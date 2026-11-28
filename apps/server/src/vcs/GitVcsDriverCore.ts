@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -51,7 +52,7 @@ import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEm
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import { gitConfigEnv, serverGitConfigEnv, unsetInheritedRepositoryEnv } from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
-import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import { removeLinkedWorktree, WORKTREE_REMOVE_TIMEOUT_MS } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -80,7 +81,6 @@ const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // the last fetch; on busy repositories that alone outlasts the 30s default.
 const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
-const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const REF_SNAPSHOT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -1098,6 +1098,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
+  // Keyed by worktree path: a refresh writes beside the index, so removal stops it first.
+  const indexRefreshes = yield* FiberMap.make<string>();
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
@@ -5348,7 +5350,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const result = yield* executeGit(
       "GitVcsDriver.readReviewCommitMessage",
       cwd,
-      ["show", "-s", "--no-notes", "--no-show-signature", "--format=%B", sha],
+      ["show", "-s", "--no-notes", "--no-show-signature", "--format=%s", sha],
       { maxOutputBytes: 8_192, appendTruncationMarker: true },
     );
     const endOfSubject = result.stdout.indexOf("\n");
@@ -6557,7 +6559,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }).pipe(
       Effect.ensuring(fileSystem.remove(copyPath).pipe(Effect.ignore)),
       Effect.ignore({ log: "Debug" }),
-      Effect.forkIn(serviceScope),
+      FiberMap.run(indexRefreshes, path.resolve(worktreePath)),
     );
   });
 
@@ -6600,6 +6602,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
+    // Git reports the prefix from its physical cwd, so aliases and 8.3 names need no comparison.
+    const prefix = yield* executeGit(
+      "GitVcsDriver.createWorktree.checkRoot",
+      input.cwd,
+      ["rev-parse", "--show-prefix"],
+      { timeoutMs: 5_000 },
+    );
+    // A tracked subfolder is a monorepo package; an untracked one only sits inside the repository.
+    if (
+      prefix.stdout.trim() !== "" &&
+      (yield* executeGit(
+        "GitVcsDriver.createWorktree.checkTracked",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", "HEAD:./"],
+        { timeoutMs: 5_000, allowNonZeroExit: true },
+      )).exitCode !== 0
+    ) {
+      const repositoryRoot = yield* readWorktreeRoot(input.cwd);
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        cwd: input.cwd,
+        detail: `Cannot create a worktree from "${input.cwd}" because it is not tracked by the Git repository at "${repositoryRoot ?? "an ancestor folder"}" that contains it. Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
+      });
+    }
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
@@ -7397,17 +7424,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "removeWorktree",
   )(function* (input) {
     // Git also matches a worktree by its short name, which can name a different
-    // folder than this path. Resolving it once keeps Git, the Windows deletion
+    // folder than this path. Resolving it once keeps Git, the folder deletion
     // in removeLinkedWorktree, and the leftover cleanup below on one directory.
     const target = path.resolve(input.cwd, input.path);
+    yield* FiberMap.remove(indexRefreshes, target);
     const result = yield* removeLinkedWorktree({
       operation: "GitVcsDriver.removeWorktree",
       cwd: input.cwd,
       worktreePath: target,
       force: input.force === true,
       execute,
-      run: (args) =>
-        executeGitWithStableDiagnostics("GitVcsDriver.removeWorktree", input.cwd, args, {
+      run: (args, cwd) =>
+        executeGitWithStableDiagnostics("GitVcsDriver.removeWorktree", cwd, args, {
           timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,
           allowNonZeroExit: true,
         }).pipe(Effect.map((result) => ({ ...result, args }))),

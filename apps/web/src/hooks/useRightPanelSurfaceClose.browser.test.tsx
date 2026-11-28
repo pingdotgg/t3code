@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   sessions: new Map<string, string>(),
   failClose: false,
   previewSessions: {} as Record<string, unknown>,
+  shells: new Map<string, unknown>(),
 }));
 vi.mock("../lib/terminalCloseConfirm", () => ({
   confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
@@ -38,7 +39,8 @@ vi.mock("../state/session", () => ({
 vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
-  readThreadShell: () => null,
+  readThreadShell: (ref: ScopedThreadRef) => fixture.shells.get(ref.threadId) ?? null,
+  waitForThreadShellRemoval: async () => true,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
@@ -188,4 +190,41 @@ it("reopens the active browser first after closing every browser tab", async () 
       .getState()
       .entries.map((entry) => (entry.kind === "browser" ? entry.snapshot.tabId : null)),
   ).toEqual(["tab-a", "tab-b"]);
+});
+
+it("does not offer a side chat for reopen once closing it deleted it", async () => {
+  fixture.allowed = new Set(["environment-a"]);
+  const ref: ScopedThreadRef = {
+    environmentId: EnvironmentId.make("environment-a"),
+    threadId: ThreadId.make("thread-parent"),
+  };
+  const sideChatId = ThreadId.make("thread-side-chat");
+  fixture.shells = new Map([
+    [
+      sideChatId,
+      {
+        id: sideChatId,
+        lineage: { sideChat: true, parentThreadId: ref.threadId },
+      },
+    ],
+  ]);
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useClosedViewStore.setState({ entries: [] });
+  useRightPanelStore.getState().openThread(ref, sideChatId);
+  const surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref)
+    .surfaces[0]!;
+  function Harness() {
+    const { closeSurface } = useRightPanelSurfaceClose({
+      threadRef: ref,
+      terminalLabelsById: new Map(),
+    });
+    return <button onClick={() => closeSurface(surface)}>Close side chat</button>;
+  }
+  try {
+    await using screen = await render(<Harness />);
+    await screen.getByRole("button").click();
+    await vi.waitFor(() => expect(useClosedViewStore.getState().entries).toEqual([]));
+  } finally {
+    fixture.shells = new Map();
+  }
 });

@@ -5,6 +5,7 @@ import {
   ChatAttachmentId,
   CommandId,
   EventId,
+  GUEST_SHARE_TTL_MS,
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
@@ -757,27 +758,70 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("ends a running command's output once the owner stops sharing", () =>
+it.effect.each(["thread.guest-share.close", "thread.archive", "thread.delete"] as const)(
+  "ends a running command's output on %s",
+  (type) =>
+    Effect.gen(function* () {
+      const { orchestrator, guestShares, credential } = yield* shareThread;
+      const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
+      const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+      const command = yield* writeItem("item:running", {
+        type: "command_execution",
+        status: "running",
+        input: "ls /work/src",
+        output: "before-close\n",
+      });
+      const opened = yield* Deferred.make<void>();
+      const collecting = yield* (yield* guestShares.commandOutput(session, command)).pipe(
+        Stream.tap(() => Deferred.succeed(opened, undefined)),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(opened);
+      // Let the periodic revocation fiber finish its initial open-share check and enter its 30s wait.
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type,
+        commandId: CommandId.make(`${type}-during-command`),
+        threadId,
+      });
+      yield* commandOutputs.append({ threadId, itemId: command, chunk: "SECRET_AFTER_CLOSE\n" });
+      yield* TestClock.adjust("1 second");
+      const endedBeforeRecheck = collecting.pollUnsafe() !== undefined;
+      // Advance past the fallback poll so an unpatched server finishes cleanly and fails on the leak assertion.
+      yield* TestClock.adjust("30 seconds");
+      const frames = Array.from(yield* Fiber.join(collecting));
+      assert.isFalse(frames.some((frame) => frame.text.includes("SECRET_AFTER_CLOSE")));
+      assert.isTrue(endedBeforeRecheck);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(guestShares.commandOutput(session, command))),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ends a running command's output when the link expires, before the next recheck", () =>
   Effect.gen(function* () {
-    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
     const command = yield* writeItem("item:running", {
       type: "command_execution",
       status: "running",
       input: "ls /work/src",
+      output: "before-expiry\n",
     });
-    const collecting = yield* Stream.runCollect(
-      yield* guestShares.commandOutput(session, command),
-    ).pipe(Effect.forkChild);
-    yield* orchestrator.dispatch({
-      type: "thread.guest-share.close",
-      commandId: CommandId.make("close-during-command"),
-      threadId,
-    });
-    yield* TestClock.adjust("30 seconds");
-    const frames = Array.from(yield* Fiber.join(collecting));
-    assert.isTrue(frames.every((frame) => frame.running));
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.commandOutput(session, command))));
+    // Opening 10s after the share puts the 30s rechecks at 10s past each half minute, off the expiry.
+    yield* TestClock.adjust("10 seconds");
+    const opened = yield* Deferred.make<void>();
+    const collecting = yield* (yield* guestShares.commandOutput(session, command)).pipe(
+      Stream.tap(() => Deferred.succeed(opened, undefined)),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Deferred.await(opened);
+    yield* TestClock.adjust(GUEST_SHARE_TTL_MS - 10_000 - 1);
+    assert.isUndefined(collecting.pollUnsafe());
+    yield* TestClock.adjust(2);
+    assert.isDefined(collecting.pollUnsafe());
   }).pipe(Effect.provide(layerTest)),
 );
 

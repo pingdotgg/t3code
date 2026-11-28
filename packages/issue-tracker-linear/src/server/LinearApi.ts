@@ -261,15 +261,14 @@ export const make = Effect.gen(function* () {
   );
 
   const storedToken = (operation: string) =>
-    host.credentials
-      .get(KIND)
-      .pipe(
-        Effect.flatMap(
-          Effect.fromOption(() =>
-            fail(operation, "unauthenticated", "Linear is not connected on this server."),
-          ),
+    host.credentials.get(KIND).pipe(
+      Effect.flatMap(
+        Effect.fromOption(() =>
+          fail(operation, "unauthenticated", "Linear is not connected on this server."),
         ),
-      );
+      ),
+      Effect.map((credential) => credential.token),
+    );
 
   const call = Effect.fn("LinearApi.call")(function* <A>(
     operation: string,

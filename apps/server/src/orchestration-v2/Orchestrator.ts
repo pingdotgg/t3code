@@ -76,6 +76,8 @@ import {
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
+  type ProviderThreadId,
+  type ProviderDriverKind,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -1550,7 +1552,10 @@ function conversationProviderThread(
   );
 }
 
-/** Wakes and fresh starts act on the active session; a message continues the conversation. */
+/**
+ * Wakes and fresh starts act on the active session; a message continues the conversation. A
+ * delegated task's completion goes back to the session its dispatching run ran on.
+ */
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1559,12 +1564,22 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
-  return freshContext ||
-    message.notification !== undefined ||
-    message.delegatedCompletion !== undefined
-    ? projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      )
+  if (freshContext || message.notification !== undefined) {
+    return projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    );
+  }
+  const parentRunId = message.delegatedCompletion?.parentRunId;
+  const parentProviderThreadId =
+    parentRunId === undefined
+      ? undefined
+      : projection.runs.find((run) => run.id === parentRunId)?.providerThreadId;
+  const parentProviderThread = projection.providerThreads.find(
+    (candidate) => candidate.id === parentProviderThreadId,
+  );
+  return parentProviderThread !== undefined &&
+    !providerThreadPredatesBoundary(parentProviderThread, contextBoundaryOrdinal(projection))
+    ? parentProviderThread
     : conversationProviderThread(projection);
 }
 
@@ -1712,6 +1727,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
+  const nativeImportLocks = yield* KeyedLock.make<ProviderThreadId>();
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -3595,6 +3611,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     (effect) => Effect.ignore(effect),
   );
 
+  // A launch without a message prepares its worktree with no run to queue behind. A message
+  // waits for it, outside the thread lock the bind needs, rather than start in the checkout.
+  const awaitLaunchWorktree = Effect.fn("Orchestrator.awaitLaunchWorktree")(
+    function* (threadId: ThreadId) {
+      if (!(yield* worktreeSetupTracker.workspaceIsHeld(threadId))) return;
+      const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      if (thread.worktreePath !== null || runs.some(isActiveRun)) return;
+      yield* worktreeSetupTracker.awaitWorkspaceRelease(threadId);
+    },
+    (effect) => Effect.ignore(effect),
+  );
+
   const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
@@ -4126,6 +4154,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { concurrency: 1, discard: true },
     );
 
+  const nativeImportProviderThreadId = (
+    instanceId: ProviderInstanceId,
+    ref: { readonly driver: ProviderDriverKind; readonly nativeId: string },
+  ) =>
+    idAllocator.derive.providerThread({
+      driver: ref.driver,
+      providerInstanceId: instanceId,
+      nativeThreadId: ref.nativeId,
+    });
+
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -4195,6 +4233,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: thread,
     });
     if (command.importedNativeThread !== undefined) {
+      const providerThreadId = nativeImportProviderThreadId(
+        command.modelSelection.instanceId,
+        command.importedNativeThread.ref,
+      );
+      // Deleted threads retain provider records referenced by their runs.
+      const retained = yield* projectionStore
+        .hasProviderThread(command.threadId, providerThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
       yield* emitEvent({
         type: "provider-thread.updated",
         threadId: command.threadId,
@@ -4202,11 +4252,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: command.modelSelection.instanceId,
         occurredAt: now,
         payload: {
-          id: idAllocator.derive.providerThread({
-            driver: command.importedNativeThread.ref.driver,
-            providerInstanceId: command.modelSelection.instanceId,
-            nativeThreadId: command.importedNativeThread.ref.nativeId,
-          }),
+          id: retained
+            ? IdAllocator.deriveReimportedProviderThread(providerThreadId, command.threadId)
+            : providerThreadId,
           driver: command.importedNativeThread.ref.driver,
           providerInstanceId: command.modelSelection.instanceId,
           providerSessionId: null,
@@ -4917,6 +4965,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type !== "thread.settle" &&
       liveSessions.length > 0
     ) {
+      // Detaching ends a started turn, which may never report completion. Only a workspace
+      // handoff (compare-and-set or continuation) ends its own caller's turn on purpose.
+      if (
+        command.type === "thread.metadata.update" &&
+        command.expectedWorktreePath === undefined &&
+        command.continuation === undefined &&
+        (yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] })).runs.some(
+          (run) => run.status === "starting" || run.status === "running",
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has an active turn. Stop the current turn to switch worktrees.`,
+        });
+      }
       // The provider context holds only the active and target provider threads; a session kept
       // busy by an earlier queued hand-off owns neither, so probe every thread of this one.
       const { providerThreads } = yield* projectionStore
@@ -5029,7 +5093,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuedMessages
           .filter(
             (message) =>
-              message.notification !== undefined || message.delegatedCompletion !== undefined,
+              message.notification !== undefined ||
+              message.delegatedCompletion !== undefined ||
+              message.scheduledTaskId !== undefined,
           )
           .map((message) => message.id),
       );
@@ -8107,6 +8173,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
+    // A launch without a message prepares its worktree with no run to queue behind; a message
+    // now would start in the project checkout and lose its turn when the worktree is bound.
+    if (
+      activeRun === undefined &&
+      worktreeMissingRun === undefined &&
+      (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
+      projection.thread.worktreePath === null &&
+      (yield* worktreeSetupTracker.workspaceIsHeld(command.threadId))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is still preparing its worktree. Send the message once its worktree is set up.`,
+      });
+    }
     // A steer whose run already ended still keeps its place in the queue.
     const steerFollowUpSource =
       command.steerFollowUpOfRunId === undefined
@@ -9698,7 +9779,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
     // A side chat's "Context from" divider already marks its copied context.
     const activeHandoff =
-      (sideChatFork ? null : portableForkHandoff) ?? mergeBackHandoff ?? providerSwitchHandoff;
+      (sideChatFork ? null : portableForkHandoff) ??
+      providerSwitchHandoff ??
+      mergeBackHandoff ??
+      legacyImportRecoveryHandoff;
     const handoffSourceRuns =
       portableForkHandoff !== null
         ? sourceRun === null
@@ -9739,7 +9823,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? "Fork context"
                 : providerSwitchHandoff !== null
                   ? "Provider handoff"
-                  : "Merge-back context",
+                  : mergeBackHandoff !== null
+                    ? "Merge-back context"
+                    : "Imported context",
             startedAt: now,
             completedAt: now,
             updatedAt: now,
@@ -16910,10 +16996,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       yield* awaitLatestRunCapture(command.sourceThreadId);
     }
+    if (
+      command.type === "message.dispatch" &&
+      (command.dispatchMode.type === "start_immediately" ||
+        command.dispatchMode.type === "queue_after_active")
+    ) {
+      yield* awaitLaunchWorktree(command.threadId);
+    }
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
+    if (command.type === "thread.create" && command.importedNativeThread !== undefined) {
+      // Separate app thread locks cannot serialize the check and write of a shared provider ID.
+      return yield* nativeImportLocks.withLock(
+        nativeImportProviderThreadId(
+          command.modelSelection.instanceId,
+          command.importedNativeThread.ref,
+        ),
+        dispatch,
+      );
+    }
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
     // parent's lock comes before its side chats' locks. A side chat fork from a side chat or a
     // fork onto an existing thread would invert that order; dispatch rejects both, so they skip it.

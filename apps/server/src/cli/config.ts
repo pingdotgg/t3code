@@ -263,6 +263,16 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   return parsePersistedServerObservabilitySettings(raw);
 });
 
+export const normalizeServerCwdArgument = Effect.fn("config.normalizeServerCwdArgument")(function* (
+  argument: string,
+) {
+  const cwd = argument.trimEnd();
+  const trimmed = cwd.trimStart();
+  if (cwd === trimmed || trimmed === "." || trimmed === "..") return trimmed;
+  const path = yield* Path.Path;
+  return path.parse(yield* expandHomePath(trimmed)).root === "" ? cwd : trimmed;
+});
+
 export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(function* (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
@@ -328,8 +338,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
     ),
   );
-  const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
-  const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
+  const rawCwd = Option.isSome(normalizedFlags.cwd)
+    ? yield* normalizeServerCwdArgument(normalizedFlags.cwd.value)
+    : process.cwd().trim();
+  const cwd = path.resolve(yield* expandHomePath(rawCwd));
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
     baseDirIsExplicit: Option.isSome(explicitBaseDir),
   });

@@ -339,6 +339,9 @@ export function matchesPullRequestFilters(
       (filters.review === "none"
         ? entry.reviewDecision === undefined
         : entry.reviewDecision === filters.review)) &&
+    (filters.checks === undefined ||
+      entry.checksState === undefined ||
+      entry.checksState === filters.checks) &&
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||
@@ -380,6 +383,7 @@ export interface PullRequestStatsTarget {
   readonly input: {
     readonly refs: ReadonlyArray<{
       readonly projectId: ProjectId;
+      readonly host: string;
       readonly repository: string;
       readonly number: number;
     }>;
@@ -414,7 +418,7 @@ export function pullRequestStatsKeysToRequest(
         entry.additions === 0 &&
         entry.deletions === 0 &&
         !requested.has(key) &&
-        !statsByRow.has(pullRequestDiffStatKey(entry))
+        readPullRequestDiffStat(statsByRow, entry) === undefined
       );
     }),
   );
@@ -439,6 +443,7 @@ export function pullRequestStatsBatches(
       key,
       ref: {
         projectId: entry.projectId,
+        host: entry.host,
         repository: entry.repository,
         number: entry.number,
       },
@@ -572,6 +577,7 @@ export function mergePullRequestDiffStats(
   stats: ReadonlyArray<{
     readonly environmentId: string;
     readonly projectId: string;
+    readonly host?: string | undefined;
     readonly repository: string;
     readonly number: number;
     readonly additions: number;
@@ -592,9 +598,19 @@ export function mergePullRequestDiffStats(
 export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
+  readonly host?: string | undefined;
   readonly repository: string;
   readonly number: number;
-}) => `${row.environmentId} ${row.projectId} ${row.repository.toLowerCase()} ${row.number}`;
+}) =>
+  `${row.environmentId} ${row.projectId} ${row.host?.toLowerCase() ?? ""} ${row.repository.toLowerCase()} ${row.number}`;
+
+/** Older servers send counts without a host; those stand for the repository on any host. */
+export const readPullRequestDiffStat = <Stat>(
+  statsByRow: ReadonlyMap<string, Stat>,
+  row: Parameters<typeof pullRequestDiffStatKey>[0],
+) =>
+  statsByRow.get(pullRequestDiffStatKey(row)) ??
+  statsByRow.get(pullRequestDiffStatKey({ ...row, host: undefined }));
 
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
@@ -887,7 +903,7 @@ export function withDiffStat<
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
-  const stat = statsByRow.get(pullRequestDiffStatKey(entry));
+  const stat = readPullRequestDiffStat(statsByRow, entry);
   return stat === undefined ? entry : { ...entry, ...stat };
 }
 

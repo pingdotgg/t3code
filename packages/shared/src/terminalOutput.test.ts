@@ -32,6 +32,24 @@ describe("terminalOutputCollapseRedraws", () => {
 });
 
 describe("appendTerminalOutput", () => {
+  const red = "\u001b[0;31mX\u001b[0m";
+  it.each([
+    ["abc\u001b[\r31mX", red + "bc"],
+    ["abc\u001b\r[31mX", red + "bc"],
+    ["abc\u001b[\u0007\r31mX", red + "bc"],
+    ["abc\u001b\n[31mX", "abc\n" + red],
+    ["abcde\u001b\b\b[31mX", "abc" + red + "e"],
+    ["abc\u001b\r\u001b[31mX", red + "bc"],
+    ["abc\u001b\rXhidden\u001b\\Z", "Zbc"],
+  ])("applies line controls inside an escape across every split: %j", (input, expected) => {
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, input.slice(0, cut));
+      const resumed = feed([terminalOutputResumeText(state)]);
+      expect(appendTerminalOutput(state, input.slice(cut)).text).toBe(expected);
+      expect(appendTerminalOutput(resumed, input.slice(cut)).text).toBe(expected);
+    }
+  });
+
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
@@ -97,6 +115,17 @@ describe("appendTerminalOutput", () => {
     },
   );
 
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
+  });
+
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines], 1_000);
@@ -107,6 +136,24 @@ describe("appendTerminalOutput", () => {
     // A newline a quarter of the budget past the cut is too far to start on.
     expect(feed(["abcdefgh\nij\nklmnop"], 8).text).toBe("klmnop");
     expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
+  });
+
+  it("keeps the first complete line when output exactly fills the tail", () => {
+    const exactDefault = `ok\n${"x".repeat(TERMINAL_OUTPUT_TAIL_CHARS - 3)}`;
+    expect(normalizeTerminalOutput(`junk\n${exactDefault}`)).toEqual({
+      text: exactDefault,
+      truncated: true,
+    });
+
+    // Cut landing right between a settled part ending in "\n", an empty settledTail, and the window.
+    const seeded = feed([`${"old\n".repeat(70)}`], 20);
+    const nextWindow =
+      seeded.screen.lines.map((line) => line.map((run) => run.text).join("")).join("\n") + "z";
+    const exactWindow = appendTerminalOutput(seeded, "z", nextWindow.length);
+    expect(seeded.screen.settled[0].endsWith("\n")).toBe(true);
+    expect(seeded.screen.settled[1]).toBe("");
+    expect(exactWindow.text).toBe(nextWindow);
+    expect(exactWindow.truncated).toBe(true);
   });
 
   it("keeps Unicode tails bounded without shifting saved cursor columns", () => {
@@ -146,6 +193,15 @@ describe("appendTerminalOutput", () => {
     expect(feed([input]).text).toBe("ab");
     expect(feed(["a\u001b]0;", "t".repeat(100), "\u0007b"]).text).toBe("ab");
     expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
+  });
+
+  it("keeps a DCS payload hidden past a BEL until ST, wherever the chunk splits", () => {
+    const dcs = "\u001bPqA\u0007BBB\u001b\\OK";
+    for (let cut = 0; cut <= dcs.length; cut += 1) {
+      const state = feed([dcs.slice(0, cut)]);
+      expect(appendTerminalOutput(state, dcs.slice(cut)).text).toBe("OK");
+      expect(feed([terminalOutputResumeText(state), dcs.slice(cut)]).text).toBe("OK");
+    }
   });
 
   it("drops an escape sequence that never terminates and resumes after it", () => {
@@ -324,6 +380,49 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     expect(viewer.text).toBe("界e\u0301Xef");
   });
 
+  it("restores the saved text color with the DEC cursor, including after resync", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const green = { color: TERMINAL_PALETTES.dark[2] };
+
+    const direct = feed(["\u001b[31mR\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(direct.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const source = feed(["\u001b[31mR\u001b7\u001b[32mG"]);
+    const resumed = feed([terminalOutputResumeText(source), "\u001b8X"]);
+    expect(terminalOutputSpans(resumed.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const resetActive = feed(["\u001b[31mR\u001b7\u001b[0m"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(resetActive), "P"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "P", style: null },
+    ]);
+
+    const savedDefault = feed(["\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(savedDefault.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "X", style: null },
+    ]);
+
+    const sco = feed(["\u001b[31mR\u001b[s\u001b[32mG"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(sco), "\u001b[uX"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "X", style: green },
+    ]);
+  });
+
   it("restores a cursor saved on a row erased before the resync", () => {
     for (const [prefix, next, expected] of [
       ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
@@ -377,10 +476,54 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
 });
 
 describe("terminalOutputTail", () => {
+  it("drops a detached emoji skin tone at the start of a command tail", () => {
+    const output = normalizeTerminalOutput("before👍🏽done", 6);
+    expect(terminalOutputPlainText(output.text)).toBe("done");
+  });
+
+  it("drops a detached skin tone from serialized output and keeps its active style", () => {
+    const tail = terminalOutputTail("before👍\u001b[0;31m🏽done\u001b[0m", 10);
+    expect(tail).toEqual({ text: "\u001b[0;31mdone\u001b[0m", truncated: true });
+  });
+
+  it.each([
+    ["tone: 🏽", 2, 2, "🏽"],
+    ["\u001b[31m🖐️\u001b[0m🏽X", 3, 3, "X"],
+    ["✌️🏽X", 4, 4, "X"],
+    ["✌️🏽X", 3, 3, "X"],
+    ["✌\u001b[0;31m️\u001b[0m🏽X", 3, 8, "X"],
+    ["xx\u001b[0;31m🇺\u001b[0m🇸🇫🇷", 6, 6, "🇫🇷"],
+    ["xx🇺🇸🇫🇷", 4, 4, "🇫🇷"],
+  ] as const)("keeps complete glyphs in %j", (text, live, saved, expected) => {
+    expect(terminalOutputPlainText(normalizeTerminalOutput(text, live).text)).toBe(expected);
+    expect(terminalOutputPlainText(terminalOutputTail(text, saved).text)).toBe(expected);
+  });
+
   it("never begins on a lone low surrogate", () => {
     const text = `${"a".repeat(10)}😀${"b".repeat(4)}`;
     const tail = terminalOutputTail(text, 5);
     expect(tail.text).toBe("bbbb");
+  });
+
+  it("never begins a styled tail on a detached combining mark", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const output = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
+    expect(terminalOutputSpans(output.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: `${"e\u0301".repeat(5)}A`, style: red },
+    ]);
+
+    const crossStyle = terminalOutputTail("\u001b[0;32me\u001b[0;31m\u0301A\u001b[0m", 13);
+    expect(terminalOutputSpans(crossStyle.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "A", style: red },
+    ]);
+  });
+
+  it("keeps the first complete line when the cut falls immediately after a newline", () => {
+    const expected = `abc\n${"x".repeat(30)}`;
+    expect(terminalOutputTail(`junk\n${expected}`, 34)).toEqual({
+      text: expected,
+      truncated: true,
+    });
   });
 });
 

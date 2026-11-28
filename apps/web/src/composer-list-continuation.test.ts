@@ -23,6 +23,20 @@ describe("composer list continuation", () => {
     );
   });
 
+  it.each([
+    ["* [x] done", "* [x] done\n* [ ] "],
+    ["1. [x] done", "1. [x] done\n2. [ ] "],
+  ])("continues %j as an unchecked task with the same marker", (value, expected) => {
+    expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(expected);
+  });
+
+  it("renumbers following items after a numbered task", () => {
+    const value = "1. [x] a\n2. [ ] b";
+    expect(applyEdit(value, listContinuationForEnter(value, "1. [x] a".length)!)).toBe(
+      "1. [x] a\n2. [ ] \n3. [ ] b",
+    );
+  });
+
   it("splits mid-line items", () => {
     expect(applyEdit("1. foobar", listContinuationForEnter("1. foobar", 5)!)).toBe(
       "1. fo\n2. obar",
@@ -34,6 +48,10 @@ describe("composer list continuation", () => {
     expect(applyEdit("- ", listContinuationForEnter("- ", 2)!)).toBe("");
     expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
     expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
+    expect(applyEdit("* [ ] ", listContinuationForEnter("* [ ] ", 6)!)).toBe("");
+    expect(applyEdit("1. [x] a\n2. [ ] ", listContinuationForEnter("1. [x] a\n2. [ ] ", 16)!)).toBe(
+      "1. [x] a\n",
+    );
   });
 
   it("lifts an empty nested item one level per press before leaving the list", () => {
