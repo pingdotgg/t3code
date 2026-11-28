@@ -472,6 +472,25 @@ describe("HostResources pressure on Linux", () => {
     }).pipe(Effect.provide(pressured({}))),
   );
 
+  // An io_uring waiter (Ghostty's default backend) counts as iowait in PSI while no disk is busy.
+  it.effect("does not report io pressure while every disk is idle", () =>
+    Effect.gen(function* () {
+      setup();
+      const pressure = yield* (yield* HostResources.HostResources).readPressure;
+      expect(pressure.io).toBe("none");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+          "/proc/pressure/io": ["some avg10=77.00 avg60=77.00\nfull avg10=76.00 avg60=76.00\n"],
+          "/proc/diskstats": [
+            " 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6300000 41000 0 68000 50000 0 0 0 0 0 0\n",
+          ],
+        }),
+      ),
+    ),
+  );
+
   it.effect("reports a nearly full disk with its free space", () =>
     Effect.gen(function* () {
       setup();
