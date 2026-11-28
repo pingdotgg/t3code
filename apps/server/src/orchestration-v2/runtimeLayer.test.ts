@@ -12909,12 +12909,16 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "scheduled-task", "user"] as const)(
-    "a %s message on a snoozed thread keeps the snooze only when automatic",
-    (kind) =>
+  it.effect.each(
+    (["notification", "scheduled-task", "local-agent", "linked-agent", "user"] as const).flatMap(
+      (kind) => (["idle", "active"] as const).map((state) => ({ kind, state })),
+    ),
+  )(
+    "a $kind message on a snoozed $state thread keeps the snooze only when automatic",
+    ({ kind, state }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make(`snooze-wake:${kind}`);
+        const threadId = ThreadId.make(`snooze-wake:${kind}:${state}`);
         const snoozedUntil = "2099-07-25T09:00:00.000Z";
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -12930,23 +12934,55 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           createdBy: "user",
           creationSource: "web",
         });
+        if (state === "active") {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`active:${threadId}`),
+            threadId,
+            messageId: MessageId.make(`active:${threadId}`),
+            text: "Work in progress",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         yield* orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`snooze:${threadId}`),
           threadId,
           snoozedUntil,
         });
-        yield* orchestrator.dispatch({
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const messageId = MessageId.make(`wake:${threadId}`);
+        const sent = yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(`wake:${threadId}`),
           threadId,
-          messageId: MessageId.make(`wake:${threadId}`),
+          messageId,
           text: "Continue",
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "notification" ? "agent" : "user",
-          creationSource: kind === "notification" ? "provider" : "web",
+          createdBy: kind === "user" || kind === "scheduled-task" ? "user" : "agent",
+          creationSource:
+            kind === "local-agent" || kind === "linked-agent"
+              ? "mcp"
+              : kind === "notification"
+                ? "provider"
+                : "web",
+          ...(kind === "local-agent"
+            ? { senderThreadId: ThreadId.make("sending-agent") }
+            : kind === "linked-agent"
+              ? {
+                  linkedSender: {
+                    environmentId: EnvironmentId.make("sending-environment"),
+                    threadId: ThreadId.make("sending-agent"),
+                    title: "Sending agent",
+                  },
+                }
+              : {}),
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12960,12 +12996,22 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             ? { scheduledTaskId: ScheduledTaskId.make(`scheduled-task:${threadId}`) }
             : {}),
         });
-        const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const message = after.messages.find((candidate) => candidate.id === messageId);
+        assert.equal(message?.text, "Continue");
+        assert.equal(
+          after.runs.find((run) => run.id === message?.runId)?.status,
+          state === "active" ? "queued" : "starting",
+        );
+        const unsnoozed = sent.storedEvents.some(({ event }) => event.type === "thread.unsnoozed");
         if (kind === "user") {
-          assert.isNull(thread.snoozedUntil);
+          assert.isTrue(unsnoozed);
+          assert.isNull(after.thread.snoozedUntil);
+          assert.isNull(after.thread.snoozedAt);
         } else {
-          assert.isNotNull(thread.snoozedUntil);
-          assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
+          assert.isFalse(unsnoozed);
+          assert.deepEqual(after.thread.snoozedUntil, before.thread.snoozedUntil);
+          assert.deepEqual(after.thread.snoozedAt, before.thread.snoozedAt);
         }
       }),
   );

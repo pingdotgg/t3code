@@ -7633,12 +7633,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
-    // Background wakes, delegated completions and scheduled-task runs continue work the user
-    // already snoozed, so only a message someone actually sent ends the snooze.
+    // Inter-agent MCP messages and background wakes continue work the user already snoozed.
     const automaticWake =
       command.notification !== undefined ||
       command.delegatedCompletion !== undefined ||
-      command.scheduledTaskId !== undefined;
+      command.scheduledTaskId !== undefined ||
+      (command.createdBy === "agent" && command.creationSource === "mcp");
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {

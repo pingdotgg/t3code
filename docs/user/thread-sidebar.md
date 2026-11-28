@@ -44,7 +44,7 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 | Action      | When to use          | Effect                                                                                                                                         |
 | ----------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Settle**  | Task is done for now | Moves to **Settled**; stays searchable; any new message reactivates it. Closes idle terminals (and stops actions with `stopOnSettle: true`).   |
-| **Snooze**  | Defer until later    | Hides until wake time (thread keeps working in the background). Wakes early on approvals, questions, errors, or new messages.                  |
+| **Snooze**  | Defer until later    | Hides until wake time (thread keeps working in the background). Wakes early on approvals, questions, errors, or messages you send.             |
 | **Archive** | Out of the way       | Leaves sidebar and search; lives in **Settings → Archive**. Refuses new messages (including from agents and scheduled tasks) until unarchived. |
 
 > Tip: If a scheduled task targets a thread, settle it instead of archiving—archiving causes scheduled runs to fail.
@@ -59,7 +59,7 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 ### Snooze options
 
-Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. **Snooze → Indefinitely** keeps a thread snoozed until you wake it (it still wakes early on approvals, questions, errors, or new messages). Choose **Wake thread** to bring a thread back early.
+Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. **Snooze → Indefinitely** keeps a thread snoozed until you wake it (it still wakes early on approvals, questions, errors, or messages you send). Messages between agents and scheduled runs do not end snooze. Choose **Wake thread** to bring a thread back early.
 
 ## Link a pull request
 
