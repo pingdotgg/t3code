@@ -762,6 +762,19 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("####### Seven hashes.\nok.")).toBe("####### Seven hashes.");
   });
 
+  it("keeps asterisk globs literal, and still reads emphasis inside words", () => {
+    expect(workflowOneLine("Updated src/**/*.ts files.")).toBe("Updated src/**/*.ts files.");
+    expect(workflowOneLine("Matches **/*.test.ts files.")).toBe("Matches **/*.test.ts files.");
+    expect(workflowOneLine("Compare a*.ts with b*.ts now.")).toBe("Compare a*.ts with b*.ts now.");
+    expect(workflowOneLine("Fixed foo*bar* now.")).toBe("Fixed foo*bar* now.");
+    expect(workflowOneLine("Updated src/foo*bar*.ts files.")).toBe(
+      "Updated src/foo*bar*.ts files.",
+    );
+    expect(workflowOneLine("Edit src/*/test/*.ts now.")).toBe("Edit src/*/test/*.ts now.");
+    expect(workflowOneLine("***important*** now.")).toBe("important now.");
+    expect(workflowOneLine("(*aside*) now.")).toBe("(aside) now.");
+  });
+
   it("keeps underscores inside identifiers, paths and code", () => {
     expect(workflowOneLine("Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.")).toBe(
       "Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.",
