@@ -607,6 +607,8 @@ export interface AcpAdapterV2Flavor {
     cwd: string,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  /** Native children can emit more output after their task and parent have settled. */
+  readonly retainSubagentOutputRouting?: boolean;
   /**
    * Subagents the agent goes on running after its prompt, with no update when one ends. Asked
    * when the prompt ends and whenever a reply ends, including mid-prompt and in a steered prompt
@@ -2683,6 +2685,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let rootForegroundWork: "running" | "idle" | undefined;
         const agentRequests = new Set<object>();
         const nativeChildren = new Map<string, AcpNativeChildSession>();
+        const retainedSubagentRoutes =
+          flavor.retainSubagentOutputRouting === true
+            ? new Map<string, ActiveAcpSubagent>()
+            : undefined;
         const extractSubagentUpdate = (tool: AcpToolCallState) =>
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
             ? undefined
@@ -2764,6 +2770,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
+          retainedSubagentRoutes?.clear();
           yield* Ref.set(activeSessionSetup, setup);
           yield* resetPublishedCatalogKey;
         });
@@ -2843,6 +2850,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           (generation) => generation + 1,
         );
         const advanceRuntimeCallbackGeneration = allocateRuntimeCallbackGeneration.pipe(
+          Effect.tap(() => Effect.sync(() => retainedSubagentRoutes?.clear())),
           Effect.tap((generation) => Ref.set(runtimeCallbackGeneration, generation)),
         );
         const runtimeCallbackPermit = yield* Semaphore.make(1);
@@ -4115,7 +4123,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           notification: EffectAcpSchema.SessionNotification,
-          owner: ActiveAcpTurn,
+          owner?: ActiveAcpTurn,
         ) {
           const update = notification.update;
           if (update.sessionUpdate === "agent_message_chunk") {
@@ -4851,6 +4859,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (childSessionId !== null && subagent.childSessionId === null) {
             subagent.childSessionId = childSessionId;
             context.subagentsBySessionId.set(childSessionId, subagent);
+            retainedSubagentRoutes?.set(childSessionId, subagent);
             const providerThread = makeProviderThread({
               driver,
               providerInstanceId: context.input.modelSelection.instanceId,
@@ -6812,6 +6821,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          const retained = retainedSubagentRoutes?.get(notification.sessionId);
+          if (
+            retained !== undefined &&
+            (context === null ||
+              context.finalized ||
+              !context.subagentsBySessionId.has(notification.sessionId)) &&
+            retained.rootSessionId === (yield* Ref.get(activeSessionId))
+          ) {
+            if (yield* Ref.get(stoppedRunQuarantine)) return;
+            if (
+              update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "tool_call_update"
+            ) {
+              for (const event of parseSessionUpdateEvent(notification).events) {
+                if (event._tag === "ToolCallUpdated") {
+                  const tool = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                  yield* projectSubagentTool(retained, notification.sessionId, tool);
+                }
+              }
+            } else {
+              yield* projectSubagentNotification(retained, notification);
+            }
+            return;
+          }
           if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
@@ -7921,6 +7954,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly result: string | null;
         }) {
           const context = yield* Ref.get(activeTurn);
+          const retained = retainedSubagentRoutes?.get(notice.childSessionId);
+          if (retained !== undefined && acpSubagentStatusIsTerminal(retained.task.status)) {
+            yield* flushSubagentAssistant(retained);
+          }
           const subagent =
             context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
           const known =
@@ -9656,6 +9693,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
               yield* Ref.set(stoppedRunQuarantine, true);
+              retainedSubagentRoutes?.clear();
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);

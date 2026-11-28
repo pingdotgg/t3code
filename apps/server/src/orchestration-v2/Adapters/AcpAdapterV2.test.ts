@@ -4856,15 +4856,25 @@ describe("AcpAdapterV2", () => {
         | undefined;
       const routing = makeCopilotSubagentRouting();
       const instanceId = ProviderInstanceId.make("copilot-replay");
+      const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+        [];
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
           registerExtensions: routing.registerExtensions,
           normalizeSessionUpdate: routing.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
+          retainSubagentOutputRouting: true,
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5048,6 +5058,55 @@ describe("AcpAdapterV2", () => {
       assert.isFalse(
         items.some((item) => item.threadId === threadId && item.type === "dynamic_tool"),
       );
+
+      const sessionId = "mock-session-1";
+      const agentId = "agent-bg";
+      const raw = (type: string, data: object) => sessionEvent!({ sessionId, type, agentId, data });
+      yield* raw("assistant.turn_start", { parentToolCallId: "task-bg" });
+      const _meta = { "github.com/copilot": { agentId } };
+      yield* handler!({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "follow-up-read",
+          title: "Viewing c.txt",
+          kind: "read",
+          status: "completed",
+          rawInput: { path: "c.txt" },
+          _meta,
+        },
+      });
+      for (const text of ["Follow-up", " result."]) {
+        yield* raw("assistant.message_delta", { deltaContent: text });
+        yield* handler!({
+          sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text }, _meta },
+        });
+      }
+      yield* raw("subagent.completed", { toolCallId: "task-bg" });
+      assert.lengthOf(continuationRequests, 0, "a resumed child must not wake the settled parent");
+      const marker = "after the resumed child finished";
+      yield* handler!({
+        sessionId,
+        update: { sessionUpdate: "session_info_update", title: marker },
+      });
+      const followUp = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === marker,
+        ),
+        Stream.runCollect,
+      );
+      const childThreadId = tasks.get("task-bg")?.childThreadId;
+      const resumedItems = Array.from(followUp).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      assert.isTrue(resumedItems.every((item) => item.threadId === childThreadId));
+      assert.equal(resumedItems[0]?.title, "Read c.txt");
+      const reply = resumedItems.at(-1);
+      assert.equal(reply?.type === "assistant_message" ? reply.text : null, "Follow-up result.");
+      assert.isFalse(items.some((item) => item.id === reply?.id));
     }).pipe(Effect.provide(layerTest)),
   );
 

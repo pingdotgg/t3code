@@ -71,9 +71,16 @@ type CopilotToolIdentity =
 
 const COPILOT_SEARCH_TOOLS = new Set(["glob", "grep", "rg"]);
 
+interface CopilotTaskRoute {
+  readonly task: string;
+  readonly resumedTurn?: number;
+}
+
 interface CopilotSessionAttribution {
-  delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;
-  readonly taskByAgentId: Map<string, string>;
+  delta:
+    | { readonly kind: string; readonly text: string; readonly route: CopilotTaskRoute | undefined }
+    | undefined;
+  readonly taskByAgentId: Map<string, CopilotTaskRoute>;
   readonly toolIdentityByCallId: Map<string, CopilotToolIdentity>;
 }
 
@@ -88,6 +95,7 @@ function copilotToolIdentity(data: Record<string, unknown>): CopilotToolIdentity
 
 export function makeCopilotSubagentRouting() {
   const sessions = new Map<string, CopilotSessionAttribution>();
+  let resumedTurns = 0;
   const session = (sessionId: string) => {
     let current = sessions.get(sessionId);
     if (current === undefined) {
@@ -115,22 +123,22 @@ export function makeCopilotSubagentRouting() {
           if (typeof data.deltaContent !== "string") return Effect.void;
           const current = session(event.sessionId);
           // Copilot 1.0.114+ names a subagent's deltas only by agentId, without parentToolCallId.
-          const task =
-            typeof data.parentToolCallId === "string"
-              ? data.parentToolCallId
-              : event.agentId === undefined
-                ? undefined
-                : current.taskByAgentId.get(event.agentId);
+          const known =
+            event.agentId === undefined ? undefined : current.taskByAgentId.get(event.agentId);
+          const route =
+            typeof data.parentToolCallId === "string" && known?.task !== data.parentToolCallId
+              ? { task: data.parentToolCallId }
+              : known;
           current.delta = {
             kind: event.type,
             text: data.deltaContent,
-            ...(task === undefined ? {} : { task }),
+            route,
           };
           return Effect.void;
         }
         case "subagent.started": {
           if (event.agentId !== undefined && typeof data.toolCallId === "string") {
-            session(event.sessionId).taskByAgentId.set(event.agentId, data.toolCallId);
+            session(event.sessionId).taskByAgentId.set(event.agentId, { task: data.toolCallId });
           }
           return Effect.void;
         }
@@ -172,7 +180,23 @@ export function makeCopilotSubagentRouting() {
         // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293).
         case "assistant.turn_start":
         case "assistant.idle": {
-          if (event.agentId !== undefined || data.aborted === true) return Effect.void;
+          if (data.aborted === true) return Effect.void;
+          if (event.agentId !== undefined) {
+            if (
+              event.type === "assistant.turn_start" &&
+              typeof data.parentToolCallId === "string"
+            ) {
+              const current = session(event.sessionId);
+              // Resuming with write_agent skips subagent.started and names the original task here.
+              if (!current.taskByAgentId.has(event.agentId)) {
+                current.taskByAgentId.set(event.agentId, {
+                  task: data.parentToolCallId,
+                  resumedTurn: ++resumedTurns,
+                });
+              }
+            }
+            return Effect.void;
+          }
           return context.reportForegroundWork({
             sessionId: event.sessionId,
             state: event.type === "assistant.idle" ? "idle" : "running",
@@ -189,6 +213,10 @@ export function makeCopilotSubagentRouting() {
     const update = notification.update;
     const current = sessions.get(notification.sessionId);
     if (current === undefined) return notification;
+    const agentId =
+      "_meta" in update ? record(record(update._meta)?.[COPILOT_META_KEY])?.agentId : undefined;
+    const attribution =
+      typeof agentId === "string" ? current.taskByAgentId.get(agentId) : undefined;
     let task: string | undefined;
     let normalized = notification;
     if (
@@ -202,19 +230,26 @@ export function makeCopilotSubagentRouting() {
         update.sessionUpdate === "agent_message_chunk"
           ? "assistant.message_delta"
           : "assistant.reasoning_delta";
-      if (
+      const matchingDelta =
         delta?.kind === kind &&
         update.content.type === "text" &&
-        update.content.text === delta.text
-      ) {
-        task = delta.task;
+        update.content.text === delta.text;
+      const route = attribution ?? (matchingDelta ? delta.route : undefined);
+      task = route?.task;
+      if (route?.resumedTurn !== undefined && update.sessionUpdate === "agent_message_chunk") {
+        normalized = {
+          ...notification,
+          update: {
+            ...update,
+            messageId: `copilot-resume:${route.resumedTurn}:${update.messageId ?? "reply"}`,
+          },
+        };
       }
     } else if (
       update.sessionUpdate === "tool_call" ||
       update.sessionUpdate === "tool_call_update"
     ) {
-      const agentId = record(record(update._meta)?.[COPILOT_META_KEY])?.agentId;
-      task = typeof agentId === "string" ? current.taskByAgentId.get(agentId) : undefined;
+      task = attribution?.task;
       const identity = current.toolIdentityByCallId.get(update.toolCallId);
       if (identity !== undefined) {
         if (update.status === "completed" || update.status === "failed") {
