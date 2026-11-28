@@ -3,8 +3,15 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { useQuietThreadShell } from "~/state/entities";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
+import { closeLayoutTabOrSelectionByUser } from "../layout/layoutActions";
 import { beginLayoutTabDrag } from "../layout/layoutDrag";
+import {
+  handlePaneTabClick,
+  isLayoutTabSelected,
+  useIsLayoutTabSelected,
+} from "../layout/paneTabSelection";
 import { useLayoutStore } from "../layout/layoutStore";
+import { selectTabRange } from "../lib/tabSelection";
 import {
   finishLayoutTabRename,
   LayoutNewTabButton,
@@ -509,7 +516,7 @@ function SortableTabList(props: {
 }
 
 interface RightPanelTabHandlers {
-  onActivate: (surface: RightPanelSurface, extendSelection: boolean) => void;
+  onActivate: (surface: RightPanelSurface, event: ReactMouseEvent) => void;
   onClose: (surface: RightPanelSurface) => void;
   onAuxClick: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onContextMenu: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
@@ -633,7 +640,7 @@ function RightPanelTab(
         layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
       }
       onClick={(event) => {
-        if (event.target === event.currentTarget) onActivate(surface, event.shiftKey);
+        if (event.target === event.currentTarget) onActivate(surface, event);
       }}
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
@@ -655,7 +662,7 @@ function RightPanelTab(
         !active && !notched && "max-w-36",
         ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         active && !notched && "font-medium",
-        props.selected
+        props.selected && layoutTabId === null
           ? "surface-tint [--surface-tint:var(--primary)] text-strong-foreground"
           : active
             ? "text-strong-foreground"
@@ -755,7 +762,7 @@ function RightPanelTab(
                     ? `${title}, ${threadTitle}`
                     : undefined
                 }
-                onClick={(event) => onActivate(surface, event.shiftKey)}
+                onClick={(event) => onActivate(surface, event)}
               >
                 <span
                   className={
@@ -810,8 +817,12 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   // Embedded, this is one surface's tab in the layout: it drags like any tab
   // and its pane's other tabs sit around it in the notch.
-  const { tabId: layoutPaneTabId, leadingEdge } = useLayoutPane();
+  const { tabId: layoutPaneTabId, paneId: layoutPaneId, leadingEdge } = useLayoutPane();
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
+  const paneTabSelected = useIsLayoutTabSelected(
+    layoutTabId !== null ? layoutPaneId : null,
+    layoutTabId,
+  );
   const paneTabs = useLayoutPaneTabs();
   const siblingTabs = useLayoutPaneSiblingTabs();
   const pageTab = useLayoutStore((state) =>
@@ -850,23 +861,16 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
-  const anchorIndex = selection
-    ? props.surfaces.findIndex((surface) => surface.id === selection.anchorId)
-    : -1;
-  const endIndex = selection
-    ? props.surfaces.findIndex((surface) => surface.id === selection.endId)
-    : -1;
-  const hasSelection =
+  const rangeSurfaces =
     selection !== null &&
     props.open !== false &&
     selection.scope === props.selectionScope &&
-    selection.anchorId === props.activeSurfaceId &&
-    anchorIndex >= 0 &&
-    endIndex >= 0;
+    selection.anchorId === props.activeSurfaceId
+      ? selectTabRange(props.surfaces, (surface) => surface.id, selection.anchorId, selection.endId)
+      : [];
+  const hasSelection = rangeSurfaces.length > 0;
   if (selection !== null && !hasSelection) setSelection(null);
-  const selectedSurfaces = hasSelection
-    ? props.surfaces.slice(Math.min(anchorIndex, endIndex), Math.max(anchorIndex, endIndex) + 1)
-    : [];
+  const selectedSurfaces = rangeSurfaces;
   const selectedIds = selectedSurfaces.map((surface) => surface.id);
   const clearSelection = useStableCallback(() => setSelection(null));
   useImperativeHandle(ref, () => ({
@@ -1097,21 +1101,30 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     event.stopPropagation();
     props.onCloseSurface(surface);
   };
-  const onActivateTab = useStableCallback(
-    (surface: RightPanelSurface, extendSelection: boolean) => {
-      if (extendSelection && focusedSurface) {
-        setSelection(
-          surface.id === focusedSurface.id
-            ? null
-            : { scope: props.selectionScope, anchorId: focusedSurface.id, endId: surface.id },
-        );
-        return;
-      }
-      setSelection(null);
+  const onActivateTab = useStableCallback((surface: RightPanelSurface, event: ReactMouseEvent) => {
+    if (layoutTabId !== null) {
+      if (handlePaneTabClick(event, layoutTabId, { active: true })) return;
       props.onActivate(surface);
-    },
-  );
-  const onCloseTab = useStableCallback(props.onCloseSurface);
+      return;
+    }
+    if (event.shiftKey && focusedSurface) {
+      setSelection(
+        surface.id === focusedSurface.id
+          ? null
+          : { scope: props.selectionScope, anchorId: focusedSurface.id, endId: surface.id },
+      );
+      return;
+    }
+    setSelection(null);
+    props.onActivate(surface);
+  });
+  const onCloseTab = useStableCallback((surface: RightPanelSurface) => {
+    if (layoutTabId !== null && isLayoutTabSelected(layoutTabId)) {
+      closeLayoutTabOrSelectionByUser(layoutTabId);
+      return;
+    }
+    props.onCloseSurface(surface);
+  });
   const onTabAuxClick = useStableCallback(handleTabAuxClick);
   const onTabContextMenu = useStableCallback(
     (event: ReactMouseEvent, surface: RightPanelSurface) => {
@@ -1236,7 +1249,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
                 !props.onMoveSurfaces || renamingDeviceId === surface.id || layoutTabId !== null
               }
               active={surface.id === props.activeSurfaceId}
-              selected={selectedIds.includes(surface.id)}
+              selected={layoutTabId !== null ? paneTabSelected : selectedIds.includes(surface.id)}
               tabListRef={tabListRef}
               pending={props.pendingSurfaceIds.has(surface.id)}
               title={surfaceTitle(

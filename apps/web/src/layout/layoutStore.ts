@@ -12,6 +12,7 @@ import {
   fitLayoutColumns,
   LAYOUT_READABLE_COLUMN_PX,
   closeLayoutTab,
+  closeLayoutTabs,
   closeLayoutTabsWhere,
   createLayoutState,
   cycleLayoutColumnWidth,
@@ -31,6 +32,7 @@ import {
   focusLayoutWorkspaceStep,
   moveLayoutFocused,
   moveLayoutTab,
+  moveLayoutTabs,
   moveLayoutChatToColumn,
   moveLayoutTabToNewWorkspace,
   moveLayoutTabToWorkspace,
@@ -342,6 +344,7 @@ interface LayoutStoreState {
   showChatInNewWorkspace: (target: ThreadRouteTarget, name: string | null) => void;
   /** A user's close notifies subscribeLayoutThreadsClosedByUser for draft surface cleanup. */
   closeTabByUser: (tabId: string) => void;
+  closeTabsByUser: (tabIds: readonly string[]) => void;
   /**
    * Focus the tab showing this chat, in any workspace, if one does. A
    * sidebar click on the thread already behind the URL (seen from the empty
@@ -365,6 +368,7 @@ interface LayoutStoreState {
     drawnUnitWidth?: number,
   ) => void;
   moveTab: (tabId: string, destination: LayoutTabDestination) => void;
+  moveTabs: (tabIds: readonly string[], destination: LayoutTabDestination) => void;
   /** Move the tab showing this content to the destination, or open one there. */
   placeContent: (content: LayoutTabContent, destination: LayoutTabDestination) => void;
   focusTab: (tabId: string) => void;
@@ -510,6 +514,7 @@ export const useLayoutStore = create<LayoutStoreState>()(
         showChatInNewWorkspace: (target, name) =>
           apply((layout) => showLayoutChatInNewWorkspace(layout, { kind: "chat", target }, name)),
         closeTabByUser: (tabId) => closeByUser((layout) => closeLayoutTab(layout, tabId)),
+        closeTabsByUser: (tabIds) => closeByUser((layout) => closeLayoutTabs(layout, tabIds)),
         focusChat: (target) =>
           apply((layout) => {
             const existing = findLayoutTabByContent(layout, { kind: "chat", target });
@@ -588,6 +593,8 @@ export const useLayoutStore = create<LayoutStoreState>()(
           ),
         moveTab: (tabId, destination) =>
           apply((layout) => moveLayoutTab(layout, tabId, destination)),
+        moveTabs: (tabIds, destination) =>
+          apply((layout) => moveLayoutTabs(layout, tabIds, destination)),
         placeContent: (content, destination) =>
           apply((layout) => placeLayoutContent(layout, content, destination)),
         focusTab: (tabId) => apply((layout) => focusLayoutTab(layout, tabId)),

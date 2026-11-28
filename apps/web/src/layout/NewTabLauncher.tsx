@@ -61,6 +61,7 @@ import { requestLayoutSurfacePlacement } from "./surfaceSync";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
+import { handlePaneTabClick, useIsLayoutTabSelected } from "./paneTabSelection";
 import { canCloseLayoutTab, selectLayoutWayBack, type LayoutPageContent } from "./layoutModel";
 import { useOpenLayoutPage } from "./pageNavigation";
 import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
@@ -474,6 +475,8 @@ function WorkspaceWayBackHint() {
 function LauncherTabNotch({ tabId }: { tabId: string | null }) {
   const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const { paneId } = useLayoutPane();
+  const selected = useIsLayoutTabSelected(paneId, tabId);
   const siblingTabs = useLayoutPaneSiblingTabs();
   const closable = useLayoutStore(
     (state) => tabId !== null && canCloseLayoutTab(state.layout, tabId),
@@ -490,6 +493,10 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
             className={PANE_TAB_CLASS}
             data-layout-launcher-tab=""
             data-layout-pane-tab={tabId ?? undefined}
+            data-selected-tab={selected ? "" : undefined}
+            onClick={(event) => {
+              if (tabId !== null) handlePaneTabClick(event, tabId, { active: true });
+            }}
             onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
             onContextMenu={(event) => {
               if (tabId === null) return;

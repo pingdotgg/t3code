@@ -49,6 +49,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { useLayoutPane } from "../../layout/layoutPaneContext";
+import { handlePaneTabClick, useIsLayoutTabSelected } from "../../layout/paneTabSelection";
 import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
@@ -128,7 +129,8 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const gt = useGT();
   const messages = useMessages();
-  const { tabId: layoutTabId } = useLayoutPane();
+  const { tabId: layoutTabId, paneId: layoutPaneId } = useLayoutPane();
+  const layoutTabSelected = useIsLayoutTabSelected(layoutPaneId, layoutTabId);
   // Drag the tab out of its notch to split (pen T5Hy0Q).
   const handleTabPointerDown = (event: React.PointerEvent) => {
     if (layoutTabId !== null) beginLayoutTabDrag(event, layoutTabId);
@@ -403,10 +405,19 @@ export const ChatHeader = memo(function ChatHeader({
                   isServerThread ? (
                     <PaneTabButton
                       data-layout-pane-tab={layoutTabId ?? undefined}
+                      data-selected-tab={layoutTabSelected ? "" : undefined}
                       type="button"
                       aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                       aria-haspopup="menu"
-                      onClick={openMenuFromTitle}
+                      onClick={(event) => {
+                        if (
+                          layoutTabId !== null &&
+                          handlePaneTabClick(event, layoutTabId, { active: true })
+                        ) {
+                          return;
+                        }
+                        openMenuFromTitle(event);
+                      }}
                       onAuxClick={handleTabAuxClick}
                       onPointerDown={handleTabPointerDown}
                       onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
@@ -415,6 +426,12 @@ export const ChatHeader = memo(function ChatHeader({
                     <div
                       className={PANE_TAB_CLASS}
                       data-layout-pane-tab={layoutTabId ?? undefined}
+                      data-selected-tab={layoutTabSelected ? "" : undefined}
+                      onClick={(event) => {
+                        if (layoutTabId !== null) {
+                          handlePaneTabClick(event, layoutTabId, { active: true });
+                        }
+                      }}
                       onAuxClick={handleTabAuxClick}
                       onPointerDown={handleTabPointerDown}
                     />

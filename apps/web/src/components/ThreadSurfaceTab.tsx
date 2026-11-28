@@ -1191,6 +1191,45 @@ export function terminalTitlesForThreadSurface(
   return titles.length > 0 ? titles : [m(msg("Terminal"))];
 }
 
+/** Close a batch of surfaces belonging to one thread atomically via `rightPanelStore.closeSurfaces`. */
+export async function closeThreadSurfaces(
+  threadRef: ScopedThreadRef,
+  surfaceIds: readonly string[],
+  options: { bulk?: boolean } = {},
+): Promise<void> {
+  if (surfaceIds.length === 0) return;
+  if (surfaceIds.length === 1) {
+    await closeThreadSurface(threadRef, surfaceIds[0]!, options);
+    return;
+  }
+  const hasThreadTerminal = surfaceIds.includes(THREAD_TERMINAL_SURFACE_ID);
+  const panelIds = new Set(surfaceIds.filter((id) => id !== THREAD_TERMINAL_SURFACE_ID));
+  const surfaces = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  ).surfaces.filter((candidate) => panelIds.has(candidate.id));
+  if (surfaces.length > 0) {
+    const message = agentControlledBrowserCloseConfirmation(
+      surfaces,
+      readThreadPreviewState(threadRef).desktopByTabId,
+    );
+    if (message) {
+      const confirmed = await readLocalApi()
+        ?.dialogs.confirm(message, { variant: "destructive" })
+        .catch(() => false);
+      if (!confirmed) return;
+    }
+    surfaceServices?.cleanup(threadRef, surfaces);
+    useRightPanelStore.getState().closeSurfaces(
+      threadRef,
+      surfaces.map((surface) => surface.id),
+    );
+  }
+  if (hasThreadTerminal) {
+    await closeThreadSurface(threadRef, THREAD_TERMINAL_SURFACE_ID, { ...options, bulk: true });
+  }
+}
+
 /** Closing a surface ends its resources; cmd+J preserves the thread terminal's shells. */
 export async function closeThreadSurface(
   threadRef: ScopedThreadRef,

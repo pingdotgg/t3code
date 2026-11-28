@@ -40,7 +40,13 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
+import { reorderTabGroup } from "../lib/tabSelection";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
+import {
+  clearPaneTabSelection,
+  isLayoutTabSelected,
+  readSelectedLayoutTabIds,
+} from "./paneTabSelection";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
 
 export type LayoutDragSurface =
@@ -49,7 +55,7 @@ export type LayoutDragSurface =
   | { id: typeof THREAD_TERMINAL_SURFACE_ID; kind: "thread-terminal" };
 
 export type LayoutDragSource =
-  | { kind: "tab"; tabId: string }
+  | { kind: "tab"; tabId: string; tabIds?: readonly string[] }
   | { kind: "thread"; threadRef: ScopedThreadRef }
   | { kind: "pull-requests" }
   | { kind: "issues" }
@@ -88,6 +94,7 @@ export interface LayoutDragPane {
 export interface LayoutDragState {
   source: LayoutDragSource;
   sourceTabId: string | null;
+  sourceTabIds: ReadonlySet<string>;
   point: { x: number; y: number };
   panes: readonly LayoutDragPane[];
   strip: LayoutDragRect;
@@ -257,6 +264,11 @@ function layoutDropDestination(
  * when it is that pane's only tab, into the pane it already sits in, or out
  * to an edge when it is already alone there.
  */
+function dragSourceTabIds(source: LayoutDragSource): readonly string[] {
+  if (source.kind !== "tab") return [];
+  return source.tabIds && source.tabIds.length > 0 ? source.tabIds : [source.tabId];
+}
+
 export function isLayoutDropUseful(
   layout: LayoutState,
   source: LayoutDragSource,
@@ -267,12 +279,18 @@ export function isLayoutDropUseful(
   if (source.kind === "thread") return true;
   const location = layoutDragSourceTab(layout, source);
   if (!location) return source.kind !== "tab";
-  const alone = location.pane.tabs.length === 1;
+  const movingIds = new Set(
+    source.kind === "tab"
+      ? dragSourceTabIds(source).filter((id) => location.pane.tabs.some((tab) => tab.id === id))
+      : [location.tab.id],
+  );
+  const movingCount = Math.max(1, movingIds.size);
+  const alone = location.pane.tabs.length <= movingCount;
   if (target.kind === "into") {
-    return (
-      target.paneId !== location.pane.id ||
-      (target.index !== undefined && target.index !== location.tabIndex)
-    );
+    if (target.paneId !== location.pane.id) return true;
+    if (target.index === undefined) return false;
+    const reordered = reorderTabGroup(location.pane.tabs, (tab) => tab.id, movingIds, target.index);
+    return reordered.some((tab, index) => tab.id !== location.pane.tabs[index]?.id);
   }
   if (target.kind === "side") return !(alone && target.paneId === location.pane.id);
   if (target.edge === "bottom") {
@@ -280,7 +298,7 @@ export function isLayoutDropUseful(
       (sum, column) => sum + column.panes.reduce((inner, pane) => inner + pane.tabs.length, 0),
       0,
     );
-    return tabCount > 1;
+    return tabCount > movingCount;
   }
   const workspace = layout.workspaces.find((candidate) => candidate.id === workspaceId);
   if (!workspace || location.workspace.id !== workspace.id) return true;
@@ -363,11 +381,10 @@ function layoutTabThreadRef(layout: LayoutState, tabId: string): ScopedThreadRef
 
 /** A thread goes into any composer except its own dragged tab's. */
 function composerTakesDrag(source: LayoutDragSource, composer: HTMLElement): boolean {
-  return (
-    source.kind === "thread" ||
-    (source.kind === "tab" &&
-      composer.closest<HTMLElement>("[data-layout-tab-id]")?.dataset.layoutTabId !== source.tabId)
-  );
+  if (source.kind === "thread") return true;
+  if (source.kind !== "tab") return false;
+  const hostTabId = composer.closest<HTMLElement>("[data-layout-tab-id]")?.dataset.layoutTabId;
+  return hostTabId === undefined || !dragSourceTabIds(source).includes(hostTabId);
 }
 
 /**
@@ -388,6 +405,9 @@ export function moveLayoutDrag(
   const layout = useLayoutStore.getState().layout;
   const sourceTabId =
     source.kind === "thread" ? null : (layoutDragSourceTab(layout, source)?.tab.id ?? null);
+  const sourceTabIds = new Set(
+    source.kind === "tab" ? dragSourceTabIds(source) : sourceTabId !== null ? [sourceTabId] : [],
+  );
   const composers =
     options.composer === undefined
       ? []
@@ -400,7 +420,7 @@ export function moveLayoutDrag(
     const paneId = raw.paneId;
     const tabs = measured.panes
       .find((pane) => pane.paneId === paneId)
-      ?.tabs?.filter((tab) => tab.id !== sourceTabId);
+      ?.tabs?.filter((tab) => !sourceTabIds.has(tab.id));
     if (tabs) {
       const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
       raw = { ...raw, index: before === -1 ? tabs.length : before };
@@ -421,6 +441,7 @@ export function moveLayoutDrag(
   setDragState({
     source,
     sourceTabId,
+    sourceTabIds,
     point,
     panes: measured.panes,
     strip: measured.strip,
@@ -432,7 +453,10 @@ export function moveLayoutDrag(
 
 function sameSource(a: LayoutDragSource, b: LayoutDragSource): boolean {
   if (a.kind === "tab" || b.kind === "tab") {
-    return a.kind === "tab" && b.kind === "tab" && a.tabId === b.tabId;
+    if (a.kind !== "tab" || b.kind !== "tab" || a.tabId !== b.tabId) return false;
+    const aIds = dragSourceTabIds(a);
+    const bIds = dragSourceTabIds(b);
+    return aIds.length === bIds.length && aIds.every((id, index) => id === bIds[index]);
   }
   return layoutTabContentKey(layoutDragContent(a)) === layoutTabContentKey(layoutDragContent(b));
 }
@@ -493,7 +517,9 @@ export function commitLayoutDrop(
     return true;
   }
   if (source.kind === "tab") {
-    store.moveTab(source.tabId, destination);
+    const tabIds = dragSourceTabIds(source);
+    if (tabIds.length > 1) store.moveTabs(tabIds, destination);
+    else store.moveTab(source.tabId, destination);
   } else if (
     source.kind === "new-tab" &&
     destination.kind === "column" &&
@@ -621,23 +647,31 @@ export function openThreadToTheSide(threadRef: ScopedThreadRef): void {
  * click that ends the gesture is swallowed and Escape cancels.
  */
 export function beginLayoutTabDrag(event: ReactPointerEvent, tabId: string): void {
+  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+  const layout = useLayoutStore.getState().layout;
   // A lone tab has nowhere to go.
-  if (countLayoutTabs(useLayoutStore.getState().layout) < 2) return;
-  const threadRef = layoutTabThreadRef(useLayoutStore.getState().layout, tabId);
-  beginLayoutDrag(event, { kind: "tab", tabId }, threadRef);
+  if (countLayoutTabs(layout) < 2) return;
+  const selected = isLayoutTabSelected(tabId) ? readSelectedLayoutTabIds() : [];
+  const source: LayoutDragSource =
+    selected.length > 1 ? { kind: "tab", tabId, tabIds: selected } : { kind: "tab", tabId };
+  const threadRefs = dragSourceTabIds(source).flatMap((id) => {
+    const ref = layoutTabThreadRef(layout, id);
+    return ref ? [ref] : [];
+  });
+  beginLayoutDrag(event, source, threadRefs);
 }
 
 export function beginLayoutContentDrag(
   event: ReactPointerEvent,
   source: LayoutDragContentSource,
 ): void {
-  beginLayoutDrag(event, source, source.kind === "thread" ? source.threadRef : null);
+  beginLayoutDrag(event, source, source.kind === "thread" ? [source.threadRef] : []);
 }
 
 function beginLayoutDrag(
   event: ReactPointerEvent,
   source: LayoutDragSource,
-  threadRef: ScopedThreadRef | null,
+  threadRefs: readonly ScopedThreadRef[],
 ): void {
   if (event.button !== 0 || event.pointerType === "touch") return;
   const start = { x: event.clientX, y: event.clientY };
@@ -653,6 +687,7 @@ function beginLayoutDrag(
         return;
       }
       started = true;
+      if (source.kind !== "tab" || !source.tabIds) clearPaneTabSelection();
       clearSelection();
       document.addEventListener("selectionchange", clearSelection);
     }
@@ -661,7 +696,7 @@ function beginLayoutDrag(
     moveLayoutDrag(
       source,
       point,
-      threadRef ? { composer: hoverThreadContextDrop(point, takesDrag) } : {},
+      threadRefs.length > 0 ? { composer: hoverThreadContextDrop(point, takesDrag) } : {},
     );
   };
   const finish = (drop: { x: number; y: number } | null, awaitRelease = false) => {
@@ -673,8 +708,9 @@ function beginLayoutDrag(
     document.removeEventListener("selectionchange", clearSelection);
     if (!started) return;
     endThreadContextDrag();
-    if (drop && !(threadRef && dropThreadContext(drop, [threadRef], takesDrag))) dropLayoutDrag();
-    else cancelLayoutDrag();
+    if (drop && !(threadRefs.length > 0 && dropThreadContext(drop, threadRefs, takesDrag))) {
+      dropLayoutDrag();
+    } else cancelLayoutDrag();
     // The release that ends a drag must not also click what was pressed.
     const swallow = (clickEvent: MouseEvent) => {
       clickEvent.preventDefault();

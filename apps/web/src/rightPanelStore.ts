@@ -14,6 +14,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { useClosedViewStore } from "./closedViewStore";
 import { m } from "./i18n/messages";
 import { resolveStorage } from "./lib/storage";
+import { nextActiveIdAfterBulkClose, reorderTabGroup } from "./lib/tabSelection";
 import type { LinkedThreadTarget } from "@t3tools/client-runtime/linked-thread";
 import {
   decodeLinkedThreadSurface,
@@ -1310,16 +1311,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           closeAction(state, scopedThreadKey(ref), (current) => {
             const surfaces = current.surfaces.filter((surface) => !closing.has(surface.id));
             if (surfaces.length === current.surfaces.length) return current;
-            let activeSurfaceId = current.activeSurfaceId;
-            if (activeSurfaceId !== null && closing.has(activeSurfaceId)) {
-              const activeIndex = current.surfaces.findIndex(
-                (surface) => surface.id === activeSurfaceId,
-              );
-              const fallbackIndex = current.surfaces
-                .slice(0, activeIndex)
-                .filter((surface) => !closing.has(surface.id)).length;
-              activeSurfaceId = surfaces[Math.min(fallbackIndex, surfaces.length - 1)]?.id ?? null;
-            }
+            const activeSurfaceId = nextActiveIdAfterBulkClose(
+              current.surfaces,
+              (surface) => surface.id,
+              current.activeSurfaceId,
+              closing,
+            );
             return {
               ...current,
               isOpen: surfaces.length > 0 && current.isOpen,
@@ -1384,12 +1381,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const firstIndex = current.surfaces.findIndex((surface) => movingIds.has(surface.id));
             const targetIndex = current.surfaces.findIndex((surface) => surface.id === targetId);
             if (firstIndex < 0 || targetIndex < 0) return current;
-            const moving = current.surfaces.filter((surface) => movingIds.has(surface.id));
-            const surfaces = current.surfaces.filter((surface) => !movingIds.has(surface.id));
-            const insertIndex =
-              surfaces.findIndex((surface) => surface.id === targetId) +
-              Number(firstIndex < targetIndex);
-            surfaces.splice(insertIndex, 0, ...moving);
+            const remainingTargetIndex = current.surfaces
+              .filter((surface) => !movingIds.has(surface.id))
+              .findIndex((surface) => surface.id === targetId);
+            const surfaces = reorderTabGroup(
+              current.surfaces,
+              (surface) => surface.id,
+              movingIds,
+              remainingTargetIndex + Number(firstIndex < targetIndex),
+            );
             return { ...current, surfaces };
           }),
         ),

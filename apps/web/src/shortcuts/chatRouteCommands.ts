@@ -36,12 +36,14 @@ import { type CommandHandler, registerCommands } from "./dispatcher";
 
 import {
   closeLayoutTabByUser,
+  closeLayoutTabsByUser,
   focusAdjacentLayoutTab,
   openLayoutNewTab,
   toggleFocusedLayoutFill,
 } from "../layout/layoutActions";
+import { readSelectedLayoutTabIds } from "../layout/paneTabSelection";
 import { useLayoutStore } from "../layout/layoutStore";
-import { selectFocusedTab } from "../layout/layoutModel";
+import { selectFocusedPane, selectFocusedTab } from "../layout/layoutModel";
 import { isModalDialogOpen } from "../lib/modalDialog";
 
 const CHAT_ROUTE_ID = "/_chat";
@@ -182,7 +184,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "layout.fill": layoutCommand(toggleFocusedLayoutFill),
       "tab.close": (event) => {
         if (router.state.location.search.pane !== 1 || event.repeat) return false;
-        const focused = selectFocusedTab(useLayoutStore.getState().layout);
+        const layout = useLayoutStore.getState().layout;
+        const focusedPane = selectFocusedPane(layout);
+        const selected = focusedPane ? readSelectedLayoutTabIds(focusedPane.id) : [];
+        if (selected.length >= 2) {
+          claim(event);
+          closeLayoutTabsByUser(selected);
+          return;
+        }
+        const focused = selectFocusedTab(layout);
         if (!focused) return false;
         claim(event);
         closeLayoutTabByUser(focused.id);

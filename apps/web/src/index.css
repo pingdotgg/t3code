@@ -7214,6 +7214,14 @@ body {
   display: none;
 }
 
+/* Multi-selected inactive tabs reuse the strip's surface-selected tokens across
+   every Appearance style, dark and light, black chrome, and mobile. */
+[data-layout-tab-strip] [data-layout-pane-tab][data-selected-tab]:not([data-joined]) {
+  background: var(--selected-fill);
+  box-shadow: var(--selected-shadow, none);
+  color: var(--pane-bar-fg, var(--foreground));
+}
+
 @media (width >= 48rem) {
   :root:not(.black-chrome)
     [data-slot="sidebar"][data-variant="inset"]
@@ -7412,13 +7420,25 @@ body {
     }
 
     & [data-pane-notch=""]:not([data-pane-notch-unfocused]) [data-layout-tab-strip] {
-      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *),
-      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *) {
+      &
+        [data-layout-pane-tab]:not([data-joined], [data-selected-tab]):is(
+          :hover,
+          .group\/tab:hover > *
+        ),
+      & [data-tab-key]:not([data-joined], [data-selected-tab]):is(:hover, .group\/tab:hover > *) {
         background: none;
       }
 
-      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before,
-      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before {
+      &
+        [data-layout-pane-tab]:not([data-joined], [data-selected-tab]):is(
+          :hover,
+          .group\/tab:hover > *
+        )::before,
+      &
+        [data-tab-key]:not([data-joined], [data-selected-tab]):is(
+          :hover,
+          .group\/tab:hover > *
+        )::before {
         visibility: visible;
       }
     }

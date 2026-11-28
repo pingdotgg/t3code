@@ -28,7 +28,12 @@ import { renderWaitingChatNow } from "./chatRenderGate";
 import { isScrollingWorkspaceCommand, isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { isLayoutDragActive } from "./layoutDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
-import { closeLayoutTabByUser } from "./layoutActions";
+import { closeLayoutTabByUser, closeLayoutTabsByUser } from "./layoutActions";
+import {
+  clearPaneTabSelection,
+  hasPaneTabSelection,
+  readSelectedLayoutTabIds,
+} from "./paneTabSelection";
 import { toggleThreadSidePane, toggleThreadTerminalPane } from "./openRules";
 import { findThreadChat } from "./surfaceSync";
 import {
@@ -281,24 +286,59 @@ export function useLayoutKeyboardCommands(): void {
       // Any other key lands queued keyboard focus first, so it reaches the
       // pane focus is going to; layout moves keep queueing onto it.
       if (!isLayoutCommand(command) && !MODIFIER_KEYS.has(event.key)) landPendingLayoutFocus();
-      // cmd+W closes the focused tab, whichever element holds DOM focus and
-      // whether or not a chat has rendered: the layout answers it, no pane.
-      // rightPanel.close (a retired default some keep) closes surfaces only.
-      if (command === "tab.close" || command === "rightPanel.close") {
-        const layout = useLayoutStore.getState().layout;
-        const focused = selectFocusedTab(layout);
-        // Nothing to close (the window's last blank tab): the key keeps its native meaning.
-        if (
-          !focused ||
-          !canCloseLayoutTab(layout, focused.id) ||
-          (command === "rightPanel.close" && focused.content.kind !== "surface")
-        ) {
-          return;
-        }
+      if (
+        event.key === "Escape" &&
+        hasPaneTabSelection() &&
+        !isLayoutDragActive() &&
+        !isEditableFocused(event.target) &&
+        !(event.target instanceof Element && event.target.closest('[data-slot="menu-popup"]'))
+      ) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (!event.repeat) closeLayoutTabByUser(focused.id);
+        clearPaneTabSelection();
         return;
+      }
+      // cmd+W closes the selected tabs in the focused pane, or the focused tab
+      // when none are selected, whichever element holds DOM focus.
+      // rightPanel.close (a retired default some keep) closes surfaces only.
+      if (
+        command === "tab.close" ||
+        command === "rightPanel.close" ||
+        command === "terminal.close"
+      ) {
+        const layout = useLayoutStore.getState().layout;
+        const focusedPane = selectFocusedPane(layout);
+        const selectedTabIds = focusedPane ? readSelectedLayoutTabIds(focusedPane.id) : [];
+        if (selectedTabIds.length >= 2) {
+          const closable =
+            command === "rightPanel.close"
+              ? selectedTabIds.filter(
+                  (id) =>
+                    focusedPane?.tabs.find((tab) => tab.id === id)?.content.kind === "surface",
+                )
+              : selectedTabIds;
+          if (closable.length > 0) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (!event.repeat) closeLayoutTabsByUser(closable);
+            return;
+          }
+        }
+        if (command !== "terminal.close") {
+          const focused = selectFocusedTab(layout);
+          // Nothing to close (the window's last blank tab): the key keeps its native meaning.
+          if (
+            !focused ||
+            !canCloseLayoutTab(layout, focused.id) ||
+            (command === "rightPanel.close" && focused.content.kind !== "surface")
+          ) {
+            return;
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!event.repeat) closeLayoutTabByUser(focused.id);
+          return;
+        }
       }
       // A focused chat waiting for its first render must mount before replaying its shortcuts or
       // typed text; the overview retains its own keyboard ownership.

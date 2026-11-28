@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { PANE_TAB_SHAPE_CLASS } from "../components/PaneNotch";
+import { Badge } from "../components/ui/badge";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { useThreadContextDragGhost } from "../components/chat/threadContextDrag";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
@@ -103,8 +104,8 @@ function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
   const pane = state.panes.find((candidate) => candidate.paneId === target.paneId);
   const tabs = pane?.tabs ?? [];
   return {
-    tabs: tabs.filter((tab) => tab.id !== state.sourceTabId),
-    reorder: tabs.some((tab) => tab.id === state.sourceTabId),
+    tabs: tabs.filter((tab) => !state.sourceTabIds.has(tab.id)),
+    reorder: tabs.some((tab) => state.sourceTabIds.has(tab.id)),
     index: target.index,
     clip: pane ? (pane.tabStrip ?? pane.rect) : null,
   };
@@ -245,7 +246,15 @@ function ExtendBars({ state }: { state: LayoutDragState }) {
 }
 
 /** The lifted, tilted tab under the pointer (pen G1JJK). */
-function DraggedTabGhost({ tabId, point }: { tabId: string; point: { x: number; y: number } }) {
+function DraggedTabGhost({
+  tabId,
+  count,
+  point,
+}: {
+  tabId: string;
+  count: number;
+  point: { x: number; y: number };
+}) {
   const tab = useLayoutStore(
     (state) => findLayoutTab(state.layout, (candidate) => candidate.id === tabId)?.tab ?? null,
   );
@@ -253,6 +262,11 @@ function DraggedTabGhost({ tabId, point }: { tabId: string; point: { x: number; 
   return (
     <DraggedTabGhostBody point={point}>
       <LayoutTabGhostLabel tab={tab} />
+      {count > 1 ? (
+        <Badge variant="secondary" size="sm" className="shrink-0">
+          {count}
+        </Badge>
+      ) : null}
     </DraggedTabGhostBody>
   );
 }
@@ -361,7 +375,11 @@ export function LayoutDropZones() {
           ))}
         </div>
         {state.source.kind === "tab" ? (
-          <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
+          <DraggedTabGhost
+            tabId={state.source.tabId}
+            count={state.source.tabIds?.length ?? 1}
+            point={state.point}
+          />
         ) : state.source.kind === "thread" && threadGhost ? null : (
           <DraggedTabGhostBody point={state.point}>
             <DraggedContentLabel source={state.source} />

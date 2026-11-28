@@ -21,6 +21,7 @@ import {
 } from "./layoutModel";
 import { useLayoutBehavior, type LayoutNewTabPosition } from "./layoutBehavior";
 import { arrangeLayoutChange, useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
+import { clearPaneTabSelection } from "./paneTabSelection";
 import { followLayoutCompanions } from "./openRules";
 import { layoutChatRoute } from "./useLayoutSettingsSync";
 import { layoutPageHref, layoutRoutePage } from "./pageNavigation";
@@ -185,11 +186,19 @@ export function useLayoutRouteSync(
     documentRouteShown = true;
   }, []);
   const committedRequest = useRef<typeof request | null>(null);
+  const lastLocationHrefRef = useRef(location.href);
   // Commit before paint, including commitDerived's fallback if queued focus or
   // another store update changed the base after this route was rendered.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Commit the rendered route request to the external layout store before pane DOM paints.
   useLayoutEffect(() => {
-    if (appModalPaused) return;
+    if (lastLocationHrefRef.current !== location.href) {
+      lastLocationHrefRef.current = location.href;
+      clearPaneTabSelection();
+    }
+    if (appModalPaused) {
+      clearPaneTabSelection();
+      return;
+    }
     routeKeyRef.current = routeKey;
     if (committedRequest.current === request) return;
     committedRequest.current = request;
@@ -205,7 +214,7 @@ export function useLayoutRouteSync(
       );
     }
     if (newTab && content) useLayoutStore.getState().clearNewTabRequest();
-  }, [appModalPaused, request, routeKey]);
+  }, [appModalPaused, location.href, request, routeKey]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to layout focus changes and keeps the router URL aligned with the focused tab
   useEffect(() => {

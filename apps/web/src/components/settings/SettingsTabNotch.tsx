@@ -16,6 +16,7 @@ import {
 } from "../../layout/PaneTabs";
 import { beginLayoutTabDrag } from "../../layout/layoutDrag";
 import { useLayoutPane } from "../../layout/layoutPaneContext";
+import { handlePaneTabClick, useIsLayoutTabSelected } from "../../layout/paneTabSelection";
 import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { PANE_TAB_CLASS, PaneNotch } from "../PaneNotch";
@@ -33,7 +34,8 @@ export function SettingsTabNotch({
 }) {
   const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { tabId } = useLayoutPane();
+  const { tabId, paneId } = useLayoutPane();
+  const selected = useIsLayoutTabSelected(paneId, tabId);
   const siblingTabs = useLayoutPaneSiblingTabs();
   return (
     <PaneNotch>
@@ -46,7 +48,11 @@ export function SettingsTabNotch({
           <div
             className={cn(PANE_TAB_CLASS, "max-w-none")}
             data-layout-pane-tab={tabId ?? undefined}
+            data-selected-tab={selected ? "" : undefined}
             data-layout-settings-tab=""
+            onClick={(event) => {
+              if (tabId !== null) handlePaneTabClick(event, tabId, { active: true });
+            }}
             onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
             onContextMenu={(event) => {
               if (tabId === null) return;
