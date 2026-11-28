@@ -596,7 +596,6 @@ function OpenCommandPaletteDialog(props: {
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
   const captureProjectOpen = () => {
-    const pathname = router.latestLocation.pathname;
     const draftId = addProjectDraftId;
     let draftProjectChanged = false;
     const assignment =
@@ -607,16 +606,12 @@ function OpenCommandPaletteDialog(props: {
         ? undefined
         : useComposerDraftStore.subscribe((state) => {
             const draft = state.getDraftSession(draftId);
-            if (
+            draftProjectChanged ||=
               draft?.environmentId !== assignment?.environmentId ||
-              draft?.projectId !== assignment?.projectId
-            ) {
-              draftProjectChanged = true;
-              unsubscribe?.();
-            }
+              draft?.projectId !== assignment?.projectId;
           });
     return {
-      pathname,
+      pathname: router.latestLocation.pathname,
       draftProjectChanged: () => draftProjectChanged,
       [Symbol.dispose]: () => unsubscribe?.(),
     };
