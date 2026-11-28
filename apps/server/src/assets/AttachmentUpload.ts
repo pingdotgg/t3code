@@ -32,6 +32,7 @@ import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { fileHeaderMimeType } from "../workspace/fileHeaderMimeType.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
@@ -200,6 +201,24 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         status: 400,
         detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
+    }
+    if (claims.type === "image") {
+      // Providers reject the whole turn on undecodable images, which strands the thread.
+      const header = yield* fileSystem.stream(partPath, { bytesToRead: 16 }).pipe(
+        Stream.runFold(
+          () => new Uint8Array(0),
+          (head, chunk) => Buffer.concat([head, chunk]),
+        ),
+      );
+      // Only a body that is no image at all; browsers derive the declared type from the extension.
+      if (!fileHeaderMimeType(header)?.startsWith("image/")) {
+        return {
+          ok: false,
+          status: 400,
+          detail:
+            "Body is not a GIF, JPEG, PNG or WebP image. Send the raw file bytes, not base64 or a data URL.",
+        } satisfies StoreAttachmentUploadResult;
+      }
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
     const published = yield* fileSystem.link(partPath, finalPath).pipe(

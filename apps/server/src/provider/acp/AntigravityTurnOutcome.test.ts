@@ -76,6 +76,9 @@ const MISSING_SIGNATURE_ERROR = errorPayload(
 const INVALID_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
 );
+const MALFORMED_MEDIA_ERROR = errorPayload(
+  "INVALID_ARGUMENT (code 400): Unable to process input: the file or media data is empty, corrupted, or malformed.",
+);
 const NOT_FOUND_ERROR = errorPayload(
   "Error 404, Message: Requested entity was not found., Status: NOT_FOUND, Details: []",
 );
@@ -301,6 +304,15 @@ describe("watchAntigravityPromptOutcome", () => {
         assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
         assert.equal(outcome?.threadDisposition, "broken");
       }
+      // Undecodable media read into the native history fails every later text-only prompt.
+      const malformedMedia = yield* turn([
+        [USER_INPUT, input],
+        [PLANNER_RESPONSE, reply],
+        [TOOL, reply],
+        [ERROR_MESSAGE, MALFORMED_MEDIA_ERROR],
+      ]);
+      assert.equal(malformedMedia?.failure.code, "MALFORMED_MEDIA");
+      assert.equal(malformedMedia?.threadDisposition, "broken");
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(

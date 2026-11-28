@@ -56,6 +56,8 @@ const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
+// Gemini rejects media it cannot decode. A tool read keeps it in the native history too.
+const MALFORMED_MEDIA = /\bfile or media data is empty, corrupted, or malformed\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -243,6 +245,18 @@ function turnFailure(
         message:
           "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
         code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
+  }
+  if (MALFORMED_MEDIA.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity's conversation holds an image or file the model can't read. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "MALFORMED_MEDIA",
         retryable: true,
       }),
       threadDisposition: "broken",

@@ -42,10 +42,13 @@ const layerTest = AssetSigner.layer.pipe(
   ),
 );
 
+const VALID_PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const VALID_JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+
 const uploadInput = {
   name: "screenshot.png",
   mimeType: "image/png",
-  sizeBytes: 6,
+  sizeBytes: VALID_PNG_BYTES.byteLength,
 } as const;
 
 const LegacyAttachmentUploadClaims = Schema.Struct({
@@ -189,13 +192,50 @@ describe("AttachmentUpload", () => {
         ok: false,
         status: 400,
       });
-      expect(yield* storeAttachmentUpload(claims, new Uint8Array(6))).toEqual({ ok: true });
+      expect(yield* storeAttachmentUpload(claims, VALID_PNG_BYTES)).toEqual({ ok: true });
       expect(
         NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.png`)),
       ).toBe(true);
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
       ).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects image bodies that are not an image", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const base64Png = Buffer.from(VALID_PNG_BYTES).toString("base64");
+      for (const body of [
+        new TextEncoder().encode(base64Png),
+        new TextEncoder().encode(`data:image/png;base64,${base64Png}`),
+        new TextEncoder().encode("not a png"),
+      ]) {
+        const issued = yield* issueAttachmentUploadUrl({
+          ...uploadInput,
+          sizeBytes: body.byteLength,
+        });
+        const claims = yield* validateAttachmentUploadToken(
+          issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+        );
+        if (!claims) throw new Error("Expected valid upload claims.");
+        expect(yield* storeAttachmentUpload(claims, body)).toMatchObject({
+          ok: false,
+          status: 400,
+        });
+      }
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+
+      // A real image whose extension implied another type is still stored.
+      const renamed = yield* issueAttachmentUploadUrl({
+        ...uploadInput,
+        sizeBytes: VALID_JPEG_BYTES.byteLength,
+      });
+      const renamedClaims = yield* validateAttachmentUploadToken(
+        renamed.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!renamedClaims) throw new Error("Expected valid upload claims.");
+      expect(yield* storeAttachmentUpload(renamedClaims, VALID_JPEG_BYTES)).toEqual({ ok: true });
     }).pipe(Effect.provide(layerTest)),
   );
 
