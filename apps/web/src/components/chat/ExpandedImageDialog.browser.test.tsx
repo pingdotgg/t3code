@@ -228,10 +228,13 @@ describe("ExpandedImageDialog", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
     await expect.element(screen.getByRole("button", { name: "Done" })).toHaveFocus();
-    expect(rects()).toEqual(before);
+    expect(image.element().getBoundingClientRect().toJSON()).toEqual(before[0]);
+    // The drawing tools take the toolbar's place: one toolbar, Back stays.
+    await expect.element(caption).not.toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: "Draw on image" }))
-      .toHaveAttribute("aria-pressed", "true");
+      .not.toBeInTheDocument();
+    expect(document.querySelectorAll("[role=toolbar]")).toHaveLength(1);
     // The redesign moves between media with its thumbnail strip.
     await expect.element(screen.getByRole("option", { name: "other.png (2/2)" })).toBeEnabled();
 

@@ -9,12 +9,14 @@ import type { PreviewAnnotationRect } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { EraserIcon, PencilIcon, Undo2Icon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { createCanvas, readImageColorSpace } from "../../lib/imageCanvas";
 import { encodeCanvas } from "../../lib/imageCompression";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { Button } from "../ui/button";
-import { FloatingToolbar } from "../ui/floating-toolbar";
+import { ScrollArea } from "../ui/scroll-area";
+import { toastManager } from "../ui/toast";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { ZoomableImageNaturalSize } from "./ZoomableImage";
 
@@ -116,16 +118,19 @@ async function flattenAnnotatedImage(
 }
 
 /**
- * Draws over an image in place: the surface covers the image exactly and the toolbar floats
- * above it, so nothing around the image moves while editing.
+ * Draws over an image in place: the surface covers the image exactly and the drawing tools
+ * render into the preview's own toolbar, so nothing floats over its header.
  */
 export function ImageAnnotationOverlay({
   target,
+  toolbar,
   onStatusChange,
   onSaved,
   onExit,
 }: {
   readonly target: ImageAnnotationTarget;
+  /** The preview toolbar's slot that holds the drawing tools while drawing. */
+  readonly toolbar: HTMLElement | null;
   readonly onStatusChange: (status: ImageAnnotationStatus) => void;
   readonly onSaved: (edited: EditedImage) => void;
   /** Leaves edit mode without changing the image. */
@@ -138,7 +143,6 @@ export function ImageAnnotationOverlay({
   const [strokes, setStrokes] = useState<ReadonlyArray<DrawnStroke>>([]);
   const [history, setHistory] = useState<ReadonlyArray<ReadonlyArray<DrawnStroke>>>([]);
   const [saving, setSaving] = useState(false);
-  const [failed, setFailed] = useState(false);
   const liveLayerRef = useRef<SVGGElement>(null);
   const activeStrokeRef = useRef<ActiveStroke | null>(null);
   const nextStrokeIdRef = useRef(0);
@@ -168,7 +172,6 @@ export function ImageAnnotationOverlay({
       return;
     }
     setSaving(true);
-    setFailed(false);
     onStatusChange({ dirty: true, saving: true });
     const file = await flattenAnnotatedImage(target, strokes, naturalSize).catch(() => null);
     const edited = file ? await target.save(file).catch(() => null) : null;
@@ -177,7 +180,10 @@ export function ImageAnnotationOverlay({
       return;
     }
     setSaving(false);
-    setFailed(true);
+    toastManager.add({
+      type: "error",
+      title: gt("The drawing could not be saved. Try again or cancel."),
+    });
     onStatusChange({ dirty: true, saving: false });
   };
 
@@ -199,13 +205,13 @@ export function ImageAnnotationOverlay({
     if (event.key === "d") setTool("draw");
     else if (event.key === "e") setTool("erase");
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for drawing keys anywhere in the preview and moves focus to Done so Enter saves
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for drawing keys anywhere in the preview and moves focus to Done once the toolbar slot shows it, so Enter saves
   useEffect(() => {
-    doneButtonRef.current?.focus({ preventScroll: true });
+    if (toolbar) doneButtonRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: globalThis.KeyboardEvent) => handleKey(event);
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [toolbar]);
 
   const toViewPoint = (event: PointerEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -319,78 +325,97 @@ export function ImageAnnotationOverlay({
         ))}
         <g ref={liveLayerRef} />
       </svg>
-      {/* Floats above the image and takes no layout space, so entering edit mode moves nothing. */}
-      <FloatingToolbar
-        orientation="vertical"
-        className="absolute bottom-full left-1/2 z-10 mb-2 w-max max-w-[calc(100vw-7rem)] -translate-x-1/2"
-      >
-        <div className="flex flex-wrap items-center justify-center gap-1">
-          <ToggleGroup
-            variant="default"
-            size="sm"
-            aria-label={gt("Drawing tool")}
-            value={[tool]}
-            onValueChange={(values) => {
-              const next = values[0];
-              if (next === "draw" || next === "erase") setTool(next);
-            }}
-          >
-            <ToggleGroupItem value="draw" aria-label={gt("Draw freehand (D)")}>
-              <PencilIcon />
-              <span className="max-sm:sr-only">
-                {gt("Draw", { $context: "drawing tool, freehand pen" })}
-              </span>
-            </ToggleGroupItem>
-            <ToggleGroupItem value="erase" aria-label={gt("Erase a stroke (E)")}>
-              <EraserIcon />
-              <span className="max-sm:sr-only">
-                {gt("Erase", { $context: "drawing tool, removes a stroke" })}
-              </span>
-            </ToggleGroupItem>
-          </ToggleGroup>
-          <div role="radiogroup" aria-label={gt("Stroke color")} className="flex items-center px-1">
-            {STROKE_COLORS.map((swatch) => (
-              <Button
-                key={swatch}
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                role="radio"
-                aria-checked={color === swatch}
-                data-pressed={color === swatch ? "" : undefined}
-                aria-label={colorLabels[swatch]}
-                onClick={() => {
-                  setColor(swatch);
-                  setTool("draw");
-                }}
+      {toolbar
+        ? createPortal(
+            <>
+              {/* A narrow window scrolls the tools sideways, so the toolbar stays one row and the image never moves. */}
+              <ScrollArea
+                orientation="horizontal"
+                scrollFade
+                hideScrollbars
+                className="min-w-0 flex-1"
               >
-                <span
-                  className="size-4 rounded-full ring-1 ring-foreground/20 ring-inset"
-                  style={{ background: swatch }}
-                />
+                <div className="flex w-max items-center gap-1 p-0.5">
+                  <ToggleGroup
+                    variant="default"
+                    size="sm"
+                    aria-label={gt("Drawing tool")}
+                    value={[tool]}
+                    onValueChange={(values) => {
+                      const next = values[0];
+                      if (next === "draw" || next === "erase") setTool(next);
+                    }}
+                  >
+                    <ToggleGroupItem value="draw" aria-label={gt("Draw freehand (D)")}>
+                      <PencilIcon />
+                      <span className="max-sm:sr-only">
+                        {gt("Draw", { $context: "drawing tool, freehand pen" })}
+                      </span>
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="erase" aria-label={gt("Erase a stroke (E)")}>
+                      <EraserIcon />
+                      <span className="max-sm:sr-only">
+                        {gt("Erase", { $context: "drawing tool, removes a stroke" })}
+                      </span>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={undo}
+                    disabled={history.length === 0 || saving}
+                    aria-label={gt("Undo")}
+                  >
+                    <Undo2Icon />
+                    <span className="max-sm:sr-only">{gt("Undo")}</span>
+                  </Button>
+                  <div
+                    role="radiogroup"
+                    aria-label={gt("Stroke color")}
+                    className="flex items-center"
+                  >
+                    {STROKE_COLORS.map((swatch) => (
+                      <Button
+                        key={swatch}
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        role="radio"
+                        aria-checked={color === swatch}
+                        data-pressed={color === swatch ? "" : undefined}
+                        aria-label={colorLabels[swatch]}
+                        onClick={() => {
+                          setColor(swatch);
+                          setTool("draw");
+                        }}
+                      >
+                        <span
+                          className="size-4 rounded-full ring-1 ring-foreground/20 ring-inset"
+                          style={{ background: swatch }}
+                        />
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </ScrollArea>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="max-sm:hidden"
+                onClick={() => {
+                  if (!saving) onExit();
+                }}
+                disabled={saving}
+              >
+                {gt("Cancel")}
               </Button>
-            ))}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={undo}
-            disabled={history.length === 0 || saving}
-            aria-label={gt("Undo")}
-          >
-            <Undo2Icon />
-            <span className="max-sm:sr-only">{gt("Undo")}</span>
-          </Button>
-          <Button ref={doneButtonRef} size="sm" onClick={() => void done()} disabled={saving}>
-            {gt("Done")}
-          </Button>
-        </div>
-        {failed ? (
-          <p role="alert" className="px-2 pb-1 text-caption text-destructive">
-            {gt("The drawing could not be saved. Try again or cancel.")}
-          </p>
-        ) : null}
-      </FloatingToolbar>
+              <Button ref={doneButtonRef} size="sm" onClick={() => void done()} disabled={saving}>
+                {gt("Done")}
+              </Button>
+            </>,
+            toolbar,
+          )
+        : null}
     </>
   );
 }
