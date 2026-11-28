@@ -21,6 +21,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { isTerminalCopyShortcut, isTerminalPasteShortcut } from "../../keybindings";
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
 import { subscribeI18n } from "../../i18n/runtime";
@@ -332,18 +333,6 @@ export function terminalLinkAtPositionWithRange(
   return null;
 }
 
-export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const keys = resolveEventKeys(event);
-  if (keys.has("insert") && !isMacPlatform(platform)) {
-    return event.ctrlKey && !event.shiftKey && !event.metaKey;
-  }
-  if (!keys.has("c")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
-}
-
 /** Primes native and Electron menu copy from the focused textarea; canvas has no DOM selection. */
 export function primeTerminalCopyInput(
   input: Pick<HTMLTextAreaElement, "value" | "select">,
@@ -372,18 +361,6 @@ export function applyTerminalCopyEvent(
   }
   clipboardData.setData("text/plain", selection);
   return { preventDefault: true, claimWriteFallback: true };
-}
-
-function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const keys = resolveEventKeys(event);
-  if (keys.has("insert") && !isMacPlatform(platform)) {
-    return event.shiftKey && !event.ctrlKey && !event.metaKey;
-  }
-  if (!keys.has("v")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
 // X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.
@@ -1150,12 +1127,12 @@ export class GhosttyTerminalSurface {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     // A consumed repeat still owes the original encoded press a release.
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     // IME candidates belong to the textarea, even if the key also resembles
     // a local shortcut. Safari signals the initial composition with code 229.
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
+    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     const mac = isMacPlatform(navigator.platform);
     const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     const selectAllShortcut =

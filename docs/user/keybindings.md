@@ -84,6 +84,7 @@ The last matching rule in `keybindings.json` wins, even across different command
 - `thread.regenerateTitle`: Regenerates the focused thread's title (unbound by default).
 - `thread.undo` (`mod+z`): Undoes recent sidebar actions (unpin, settle, snooze, archive, discard draft) within 5 seconds, including consecutive actions of the same kind.
 - `navigation.back` (`mod+[`) / `navigation.forward` (`mod+]`): Moves through visited pages.
+- `terminal.copy` / `terminal.paste`: Copy the terminal selection or paste into the terminal (unbound by default). Bind them with `when: terminalFocus`, for example `meta+c` / `meta+v`; your window manager must pass the keys through. Copy without a selection leaves the clipboard alone, paste requires terminal write permission, and built-in terminal shortcuts are unchanged.
 - `chat.new` / `chat.newLocal` / `chat.newWithoutProject` (`mod+alt+n`): Start new threads using your [new-thread defaults](./thread-sidebar.md#start-a-thread) or [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved and platform shortcuts

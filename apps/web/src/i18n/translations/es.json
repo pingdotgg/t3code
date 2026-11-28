@@ -8842,6 +8842,8 @@
   "16dfd6305f3951a3": "Terminal: cerrar",
   "6394fa415ab91b34": "Terminal: anterior",
   "2f766180f9d12615": "Terminal: siguiente",
+  "9f6502de404974cb": "Terminal: copiar",
+  "8e52ec2acf61a13c": "Terminal: pegar",
   "0e54f664e6fdc156": "Panel derecho: alternar",
   "81e0e9f4304d2f01": "Panel derecho: nuevo",
   "afdfe975da764288": "Panel del hilo: alternar",

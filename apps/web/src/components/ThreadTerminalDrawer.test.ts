@@ -11,9 +11,46 @@ import {
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
   synchronizeTerminalSession,
+  terminalClipboardShortcutAction,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
+  it("leaves only Alt-free native clipboard chords to the surface", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const key = (key: string, modifiers: Partial<KeyboardEvent> = {}) => ({
+      key,
+      code: `Key${key.toUpperCase()}`,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      ...modifiers,
+    });
+    const action = terminalClipboardShortcutAction;
+
+    expect(action("terminal.copy", key("c", { ctrlKey: true }), true)).toBe("native");
+    expect(action("terminal.copy", key("c", { ctrlKey: true }), false)).toBe("copy");
+    expect(action("terminal.copy", key("c", { ctrlKey: true, altKey: true }), true)).toBe("copy");
+    expect(action("terminal.copy", key("c", { metaKey: true }), true)).toBe("copy");
+    expect(action("terminal.paste", key("v", { ctrlKey: true, shiftKey: true }), false)).toBe(
+      "native",
+    );
+    expect(
+      action("terminal.paste", key("v", { ctrlKey: true, shiftKey: true, altKey: true }), false),
+    ).toBe("paste");
+    expect(action("terminal.paste", key("v", { metaKey: true }), false)).toBe("paste");
+    const insert = (modifiers: Partial<KeyboardEvent>) => ({
+      ...key("Insert", modifiers),
+      code: "Insert",
+    });
+    expect(action("terminal.copy", insert({ ctrlKey: true }), true)).toBe("native");
+    expect(action("terminal.copy", insert({ ctrlKey: true, altKey: true }), true)).toBe("copy");
+    expect(action("terminal.paste", insert({ shiftKey: true }), false)).toBe("native");
+    expect(action("terminal.paste", insert({ shiftKey: true, altKey: true }), false)).toBe("paste");
+    expect(action("terminal.new", key("c", { ctrlKey: true }), true)).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("handles an exit that lands while the terminal surface is still loading", () => {
     expect(shouldHandleTerminalExit("exited", "running", false, 1)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false, 1)).toBe(false);

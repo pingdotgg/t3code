@@ -8851,6 +8851,8 @@
   "16dfd6305f3951a3": "Terminal: Close",
   "6394fa415ab91b34": "Terminal: Previous",
   "2f766180f9d12615": "Terminal: Next",
+  "9f6502de404974cb": "Terminal: Copy",
+  "8e52ec2acf61a13c": "Terminal: Paste",
   "0e54f664e6fdc156": "Right Panel: Toggle",
   "81e0e9f4304d2f01": "Right Panel: New",
   "afdfe975da764288": "Thread Panel: Toggle",
