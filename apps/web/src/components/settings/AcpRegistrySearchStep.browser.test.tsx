@@ -1,4 +1,9 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -156,6 +161,9 @@ it("Escape in the search clears it without closing Add provider", async () => {
   );
   const search = page.getByRole("searchbox", { name: "Search ACP Registry" });
   await userEvent.fill(search, "gemini");
+  await vi.waitFor(() => {
+    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "gemini" } });
+  });
   for (const composition of [
     { key: "Escape", isComposing: true, keyCode: 27 },
     { key: "Escape", isComposing: false, keyCode: 229 },
@@ -175,6 +183,11 @@ it("Escape in the search clears it without closing Add provider", async () => {
   await userEvent.keyboard("{Escape}");
   await expect.element(search).toHaveValue("");
   await expect.element(search).toHaveFocus();
+  // The cleared search lists the whole Registry right away, without the typing debounce.
+  expect(state.search).toHaveBeenLastCalledWith({
+    environmentId,
+    input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
+  });
   // Holding Escape repeats the keydown, which must not also close the dialog.
   await act(() => {
     search.element().dispatchEvent(

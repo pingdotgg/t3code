@@ -103,6 +103,10 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
         typedAt: Date.now(),
       });
     },
+    clear: () => {
+      setPrepareError(null);
+      setInput({ text: "", submitted: "", typedAt: null });
+    },
     submit: () => {
       const trimmed = input.text.trim();
       setPrepareError(null);
@@ -193,7 +197,7 @@ export function AcpRegistrySearchStep({
               event.stopPropagation();
               if (composing) return;
               event.preventDefault();
-              if (query) registry.type("");
+              if (query) registry.clear();
             }}
             placeholder={gt("Search agents…")}
             role="searchbox"
