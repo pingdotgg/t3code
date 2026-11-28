@@ -139,6 +139,18 @@ function parseField(
   }
 }
 
+// The card has no other place for a multi-select's count limits.
+function selectionHint(field: Field | undefined): string {
+  if (field?.kind !== "multiChoice") return "";
+  const min = field.minItems > 1 ? field.minItems : undefined;
+  const max = field.maxItems < field.values.size ? field.maxItems : undefined;
+  if (min !== undefined && max !== undefined) {
+    return min === max ? ` (choose ${min})` : ` (choose ${min} to ${max})`;
+  }
+  if (max !== undefined) return ` (choose up to ${max})`;
+  return min === undefined ? "" : ` (choose at least ${min})`;
+}
+
 function optionValue(option: Option): string {
   return option.value ?? option.label;
 }
@@ -224,10 +236,14 @@ export function withOptionalChoices(
 
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 // `allowOther` lets single choices take typed text, sent as the field's value.
+// `keepMessage` puts a lone field's description after the message (MCP), not in its place (ACP repeats it).
 export function parseElicitationForm(
   requestedSchema: unknown,
   message: string,
-  { allowOther = false }: { readonly allowOther?: boolean } = {},
+  {
+    allowOther = false,
+    keepMessage = false,
+  }: { readonly allowOther?: boolean; readonly keepMessage?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
   const required = requiredIds(schema);
@@ -245,6 +261,8 @@ export function parseElicitationForm(
     fields.set(id, parsed.field);
     parsedFields.push({ id, property, options: parsed.options });
   }
+  // A required key without a property can never be answered.
+  for (const key of required) if (!fields.has(key)) return undefined;
   // An optional `<id>__other` or `<id>_other` text field is the free-text answer to optional
   // single choice `<id>`: ask them as one question and send custom text to the companion.
   // Multi-select keeps both fields, since it can answer with options and text.
@@ -259,15 +277,23 @@ export function parseElicitationForm(
     }
   }
   const folded = new Set(companions.values());
+  const lone = keepMessage && parsedFields.length - folded.size === 1;
+  const intro = text(message);
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
     const field = fields.get(id);
     const kind = field?.kind;
+    const header = text(property.title) ?? `Question ${questions.length + 1}`;
+    const description = text(property.description);
+    const prompt =
+      lone && description !== undefined && intro !== undefined && intro !== description
+        ? `${intro} ${description}`
+        : (description ?? intro ?? header);
     questions.push({
       id,
-      header: text(property.title) ?? `Question ${questions.length + 1}`,
-      question: text(property.description) ?? message,
+      header,
+      question: prompt + selectionHint(field),
       options,
       ...(kind === "text" ||
       kind === "number" ||
