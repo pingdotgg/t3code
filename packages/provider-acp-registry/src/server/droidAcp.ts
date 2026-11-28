@@ -82,3 +82,16 @@ export const extractDroidElicitationForm: NonNullable<
     },
   };
 };
+
+// Droid's modes are its autonomy levels: `normal` is Auto (Off), and the `auto-*` levels can act
+// without asking.
+export const droidSessionModeForPolicy: NonNullable<AcpAdapterV2Flavor["sessionModeForPolicy"]> = (
+  policy,
+  unpickedMode,
+) =>
+  policy.runtimeMode !== "full-access" &&
+  unpickedMode !== undefined &&
+  ["auto-low", "auto-medium", "auto-high"].includes(unpickedMode.currentModeId) &&
+  unpickedMode.availableModes.some((mode) => mode.id === "normal")
+    ? "normal"
+    : undefined;

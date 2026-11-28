@@ -25,6 +25,12 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
+// Factory Droid's modes are autonomy levels behind an `autonomy_level` option.
+const droidModesProfile = process.env.T3_ACP_DROID_MODES === "1";
+const modeConfigId = droidModesProfile ? "autonomy_level" : "mode";
+// A prompt containing "Always allow this session (<level>)" makes the mock Droid raise itself to
+// that level, as approving a request for the session does.
+const droidGrantPattern = /Always allow this session \(([\w-]+)\)/;
 // Comma-separated command names the mock advertises, so `/compact` support is testable.
 const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .split(",")
@@ -132,7 +138,9 @@ let currentModeId = antigravityProfile
   ? (process.env.T3_ACP_INITIAL_MODE ?? "default")
   : copilotModesProfile
     ? copilotModeId("agent")
-    : "ask";
+    : droidModesProfile
+      ? "auto-high"
+      : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let currentAntigravityThoughtLevel = "high";
 let parameterizedModelPicker = false;
@@ -348,7 +356,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         ]
       : []),
     {
-      configId: "mode",
+      configId: modeConfigId,
       name: "Mode",
       category: modeOptionCategory,
       type: "select" as const,
@@ -421,23 +429,30 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
         { id: copilotModeId("plan"), name: "Plan" },
         { id: copilotModeId("autopilot"), name: "Autopilot" },
       ]
-    : [
-        {
-          id: "ask",
-          name: "Ask",
-          description: "Request permission before making any changes",
-        },
-        {
-          id: "architect",
-          name: "Architect",
-          description: "Design and plan software systems without implementation",
-        },
-        {
-          id: "code",
-          name: "Code",
-          description: "Write and modify code with full tool access",
-        },
-      ];
+    : droidModesProfile
+      ? [
+          { id: "normal", name: "Auto (Off)" },
+          { id: "auto-low", name: "Auto (Low)" },
+          { id: "auto-medium", name: "Auto (Medium)" },
+          { id: "auto-high", name: "Auto (High)" },
+        ]
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -926,8 +941,16 @@ const program = Effect.gen(function* () {
           },
         );
       }
-      if (request.configId === "mode" && typeof request.value === "string") {
+      if (request.configId === modeConfigId && typeof request.value === "string") {
+        const changed = request.value !== currentModeId;
         currentModeId = request.value;
+        // Droid reports a changed level in a full config update before it answers.
+        if (droidModesProfile && changed) {
+          yield* agent.client.sessionUpdate({
+            sessionId: request.sessionId,
+            update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+          });
+        }
       }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
@@ -1636,6 +1659,22 @@ const program = Effect.gen(function* () {
             },
           });
         }
+      }
+      const grantedLevel = droidModesProfile
+        ? request.prompt
+            .map((block) =>
+              block.type === "text" && typeof block.text === "string"
+                ? droidGrantPattern.exec(block.text)?.[1]
+                : undefined,
+            )
+            .find((level) => level !== undefined)
+        : undefined;
+      if (grantedLevel !== undefined) {
+        currentModeId = grantedLevel;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+        });
       }
 
       if (emitTrackedToolCallKindThenHang !== undefined) {

@@ -40,6 +40,8 @@ Registry agents enforce their own sandbox and approval rules (switchable via the
 
 File reads and searches never wait for approval. Devin runs commands in T3 Code terminals; other agents run their own terminals and report output/exit status.
 
+A new Factory Droid session starts at the autonomy level saved in Droid's own settings. On a thread below **Full access** whose current model has no level picked in the menu, T3 Code switches Droid from Auto (Low), (Medium), or (High) to Auto (Off), where Droid offers it, when it starts or reloads the session and when the thread's permission mode changes. A session approval that had raised Droid's level no longer covers the edits or commands that depended on it, so Droid can ask again. Its own command rules still apply. A level picked in the menu applies in every permission mode, so Auto (High) lets Droid act without asking even on **Supervised**, unless a [managed policy](./managed-policy.md#permission-modes) caps the permission mode. As with any model option, T3 Code keeps the pick with the model it was made on, so a thread carries no level after you change to a model you have not picked one for. If a session or a turn fails while switching to Auto (Off), update Droid to 0.236.0 or later.
+
 ## Checkpoints
 
 Checkpoint rollback restores workspace files as usual. Because ACP agents cannot rewind their own conversation, the next turn starts a fresh session with the kept conversation history.
