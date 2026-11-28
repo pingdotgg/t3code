@@ -18,6 +18,30 @@ describe("V2 assistant streaming", () => {
       ready: "```a``` is inline.\n\n",
       rest: "```\ncode\n\nmore\n",
     });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "- ```ts\n  x()\n\n  y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  ```\nrest")).toEqual({
+      ready: "Intro\n\n- ```ts\n  x()\n\n  ```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n1. ~~~ts\n   x()\n\n   y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "1. ~~~ts\n   x()\n\n   y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n-\t```ts\n    x()\n\n\t```\nrest")).toEqual({
+      ready: "Intro\n\n-\t```ts\n    x()\n\n\t```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("- ```\n  x\n```\n\nbody\n```\nafter")).toEqual({
+      ready: "- ```\n  x\n```\n\nbody\n```\n",
+      rest: "after",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n    - ```\n    output\n\nAfter\n\n")).toEqual({
+      ready: "Intro\n\n    - ```\n    output\n\nAfter\n\n",
+      rest: "",
+    });
   });
 });
 

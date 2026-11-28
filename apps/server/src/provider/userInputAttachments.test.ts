@@ -360,7 +360,7 @@ describe("question answer paths", () => {
 \pard\intbl\itap2 Four\nestcell
 {\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
 \pard\intbl\itap1 Peer\cell\row}`,
-      "One Two Tail\tThree Four\nPeer",
+      "One Two Tail\tThree Four Peer",
     ],
     [
       "hidden text",
@@ -459,6 +459,16 @@ describe("question answer paths", () => {
       "text box shapes",
       String.raw`{\rtf1\ansi Shipping update.\par {\shp{\*\shpinst\shpleft4724\shptop0{\sp{\sn shapeType}{\sv 202}}{\sp{\sn wzName}{\sv Text Box 1}}{\shptxt \pard\plain Call the dock manager\par before noon\par}}{\shprslt{\*\do\dobxcolumn{\*\dptxbxtext\pard Call the dock manager\par before noon\par}}}}Trucks leave at six.\par}`,
       "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.",
+    ],
+    [
+      "table cells with several paragraphs",
+      String.raw`{\rtf1\ansi Stock\par\trowd\cellx2000\cellx4000\pard\intbl Item\cell Qty\cell\row\trowd\cellx2000\cellx4000\pard\intbl Apples\par\pard\intbl green\cell 3\cell\row\pard After\par}`,
+      "Stock\nItem\tQty\t\nApples green\t3\t\nAfter",
+    ],
+    [
+      "table cells with TextEdit paragraphs",
+      "{\\rtf1\\ansi Stock\\\n\\trowd\\cellx2000\\cellx4000\\pard\\intbl Item\\cell Qty\\cell\\row\\trowd\\cellx2000\\cellx4000\\pard\\intbl Apples\\\ngreen\\cell 3\\cell\\row\\pard After\\\n}",
+      "Stock\nItem\tQty\t\nApples green\t3\t\nAfter",
     ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
@@ -1803,7 +1813,7 @@ describe("question answer paths", () => {
           ext: "xlsx",
           parts: {
             "xl/workbook.xml":
-              '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
+              '<workbook><sheets><sheet name="Inventory _x005F_x0041_" r:id="a"/><sheet name="Budget_x0020_2026" r:id="b"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../Formatting/Cells.xml"/></Relationships>',
             "catalog/items.xml": "<sst><si><t>Lantern</t></si></sst>",
@@ -1815,9 +1825,9 @@ describe("question answer paths", () => {
               '<worksheet><sheetData><row><c t="inlineStr"><is><t>Ferry</t></is></c><c><v>628</v></c><c s="1"><v>45292</v></c><c s="2"><v>0.25</v></c><c s="3"><v>45293</v></c></row></sheetData></worksheet>',
           },
           expected: [
-            "## Sheet: Inventory",
+            "## Sheet: Inventory _x0041_",
             "Lantern\t\t37",
-            "## Sheet: Budget",
+            "## Sheet: Budget 2026",
             "Ferry\t628",
             "45292 [Excel numFmtId=14; date system 1900]",
             "0.25 [Excel numFmtId=9; date system 1900]",
