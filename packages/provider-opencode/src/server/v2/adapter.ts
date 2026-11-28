@@ -103,7 +103,11 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
+import {
+  OPENCODE_PROVIDER,
+  openCodePermissionPrompt,
+  openCodePermissionRequestKind,
+} from "../adapter.ts";
 import {
   openCodeCodeModeHtmlRenders,
   openCodeCodeModeSentMessages,
@@ -2783,7 +2787,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         {
           type: "approval_request",
           requestKind: openCodePermissionRequestKind(data.action, toolName),
-          prompt: data.resources.length === 0 ? data.action : data.resources.join("\n"),
+          prompt: openCodePermissionPrompt(data.action, data.resources),
           options: [
             { decision: "cancel", label: "Cancel" },
             { decision: "decline", label: "Decline" },
