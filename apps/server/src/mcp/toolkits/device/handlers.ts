@@ -129,7 +129,9 @@ const hostName = (host: { readonly id: DeviceHostId; readonly label?: string | u
 const mapLocateErrors = <A, R>(
   effect: Effect.Effect<
     A,
-    DeviceService.DeviceHostAmbiguousError | DeviceService.DeviceOnOtherHostError,
+    | DeviceService.DeviceHostAmbiguousError
+    | DeviceService.DeviceOnOtherHostError
+    | DeviceService.DeviceListFailedError,
     R
   >,
 ) =>
@@ -139,6 +141,12 @@ const mapLocateErrors = <A, R>(
         Effect.fail(
           new DeviceToolUnavailableError({
             reason: `Device ${error.deviceId} is on more than one host: ${error.hosts.map(hostName).join(", ")}. Pass hostId.`,
+          }),
+        ),
+      DeviceListFailedError: (error) =>
+        Effect.fail(
+          new DeviceToolUnavailableError({
+            reason: `${error.message} Call device_list to retry.`,
           }),
         ),
       DeviceOnOtherHostError: (error) =>
