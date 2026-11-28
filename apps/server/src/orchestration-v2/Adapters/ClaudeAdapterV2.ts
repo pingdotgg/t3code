@@ -852,6 +852,7 @@ export interface ClaudeAgentSdkQuerySession {
   readonly callMcpTool: (input: {
     readonly tool: string;
     readonly arguments: Record<string, unknown>;
+    readonly checkPermissions?: boolean;
   }) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
   readonly listPermissionRules: Effect.Effect<
     ReadonlyArray<ClaudePermissionRule>,
@@ -1179,18 +1180,34 @@ function claudeRulesMayCoverMcpTools(
   });
 }
 
+function claudeCanCheckReadOnlyMcpCalls(
+  capabilities: ReadonlySet<string>,
+  permissionMode: PermissionMode,
+  rules: ReadonlyArray<ClaudePermissionRule> | null,
+): boolean {
+  // Idle cards cannot answer CLI approval requests; keep T3's existing prompts outside this path.
+  return (
+    capabilities.has("mcp_call_check_permissions_v1") &&
+    permissionMode === "bypassPermissions" &&
+    rules !== null &&
+    !claudeRulesMayCoverMcpTools(rules, ["ask"])
+  );
+}
+
 /**
  * Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names.
- * Card calls skip Claude's permission check, so `readOnlyHint`, which skips T3's prompt, needs readable
- * rules (null when not) with no ask or deny rule that may cover the tool.
+ * Unchecked card calls skip Claude's permission check, so there `readOnlyHint`, which skips T3's prompt,
+ * needs readable rules (null when not) with no ask or deny rule that may cover the tool.
  */
 function claudeMcpToolForApps(
   tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
   rules: ReadonlyArray<ClaudePermissionRule> | null,
+  checkReadOnlyPermissions: boolean,
 ) {
   const annotations = tool.annotations ?? {};
   const readOnlyHint =
     annotations.readOnly !== true ||
+    checkReadOnlyPermissions ||
     (rules !== null && !claudeRulesMayCoverMcpTools(rules, ["ask", "deny"]))
       ? annotations.readOnly
       : undefined;
@@ -2217,6 +2234,7 @@ export const layerQueryRunner: Layer.Layer<
                 tool: call.tool,
                 arguments: call.arguments,
                 result_not_for_model: true,
+                ...(call.checkPermissions === true ? { check_permissions: true } : {}),
               }),
             catch: (cause) => queryRunnerError(cause, "callMcpTool"),
           }),
@@ -15687,7 +15705,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const rules = yield* liveQuery.query.listPermissionRules.pipe(
                 Effect.orElseSucceed(() => null),
               );
-              return (status?.tools ?? []).map((tool) => claudeMcpToolForApps(tool, rules));
+              const checkReadOnlyPermissions = claudeCanCheckReadOnlyMcpCalls(
+                liveQuery.capabilities,
+                liveQuery.permissionMode,
+                rules,
+              );
+              return (status?.tools ?? []).map((tool) =>
+                claudeMcpToolForApps(tool, rules, checkReadOnlyPermissions),
+              );
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
               const { liveQuery, statuses } = yield* mcpAppServerStatuses(
@@ -15705,7 +15730,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   detail: "Another tool on this MCP server has the same Claude tool name.",
                 });
               }
-              // mcp_call skips Claude's permission check, so its deny rules are applied here.
               const rules = yield* liveQuery.query.listPermissionRules.pipe(
                 Effect.mapError(
                   (cause) =>
@@ -15716,7 +15740,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     }),
                 ),
               );
-              if (claudeRulesMayCoverMcpTools(rules, ["deny"])) {
+              const checkPermissions =
+                sameName[0]?.annotations?.readOnly === true &&
+                claudeCanCheckReadOnlyMcpCalls(
+                  liveQuery.capabilities,
+                  liveQuery.permissionMode,
+                  rules,
+                );
+              // Unchecked mcp_call skips Claude's permission check; only the checked path resolves hidden aliases.
+              if (!checkPermissions && claudeRulesMayCoverMcpTools(rules, ["deny"])) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: `A Claude deny rule may cover ${tool}, so it was not called.`,
@@ -15727,6 +15759,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   .callMcpTool({
                     tool,
                     arguments: call.arguments,
+                    ...(checkPermissions ? { checkPermissions: true } : {}),
                   })
                   .pipe(
                     Effect.mapError(
