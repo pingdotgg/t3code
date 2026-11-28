@@ -94,11 +94,16 @@ import {
   type GitLabMergeRequestListState,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
-import type {
-  ProviderChangeRequestSummary,
-  ProviderChangeRequestWatchFingerprint,
-  ProviderFileStats,
-  ProviderListCursor,
+import {
+  type ProviderCheckLog,
+  type ProviderCheckReference,
+  type ProviderCheckRerun,
+  type ProviderChangeRequestSummary,
+  type ProviderChangeRequestWatchFingerprint,
+  type ProviderFileStats,
+  type ProviderListCursor,
+  type ProviderRepositoryRef,
+  tailLogLines,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
@@ -356,6 +361,8 @@ const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
 const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const CHECK_LOG_MAX_BYTES = 16 * 1024 * 1024;
+const CHECK_IS_NOT_A_JOB = "This check does not identify a GitLab job.";
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -424,6 +431,17 @@ export class GitLabPullRequestCli extends Context.Service<
       /** `false` skips a fork's maintainer edits permission read, for views that never show it. */
       readonly maintainerEdits?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
+
+    readonly readCheckLogs: (
+      input: ProviderRepositoryRef & {
+        readonly checks: ReadonlyArray<ProviderCheckReference>;
+        readonly tailLines: number;
+      },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, GitLabPullRequestCliError>;
+
+    readonly rerunChecks: (
+      input: ProviderRepositoryRef & { readonly checks: ReadonlyArray<ProviderCheckReference> },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, GitLabPullRequestCliError>;
 
     /** Approval and head pipeline state, read in one GraphQL request per 100 merge requests. */
     readonly getListStates: (input: {
@@ -696,6 +714,32 @@ export class GitLabPullRequestCli extends Context.Service<
 
 function projectPath(repository: string): string {
   return encodeURIComponent(repository.trim());
+}
+
+function checkJobPath(check: ProviderCheckReference, host: string): string | null {
+  const url = check.url === null ? null : URL.parse(check.url);
+  if (
+    url === null ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.host !== URL.parse(`${url.protocol}//${host}`)?.host
+  ) {
+    return null;
+  }
+  const [, project, job] =
+    /^\/((?:[^/]+\/)+[^/]+)\/-\/jobs\/([1-9]\d*)\/?$/.exec(url.pathname) ?? [];
+  if (project === undefined || job === undefined) return null;
+  try {
+    const parts = project.split("/").map(decodeURIComponent);
+    if (parts.some((part) => !/^[\w.-]+$/.test(part) || part === "." || part === "..")) {
+      return null;
+    }
+    // The job may belong to a fork, not the merge request's target project.
+    return `projects/${projectPath(parts.join("/"))}/jobs/${job}`;
+  } catch {
+    return null;
+  }
 }
 
 function gitLabReviewPositionLines(
@@ -2294,6 +2338,70 @@ export const make = Effect.gen(function* () {
 
   return GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
+
+    readCheckLogs: Effect.fn("GitLabPullRequestCli.readCheckLogs")(function* (input) {
+      return yield* Effect.forEach(
+        input.checks,
+        (check): Effect.Effect<ProviderCheckLog, GitLabPullRequestCliError> => {
+          const path = checkJobPath(check, input.host);
+          if (path === null) {
+            return Effect.succeed({
+              ...check,
+              log: null,
+              truncated: false,
+              detail: CHECK_IS_NOT_A_JOB,
+            });
+          }
+          return api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${path}/trace`,
+            maxOutputBytes: CHECK_LOG_MAX_BYTES,
+            timeoutMs: 60_000,
+          }).pipe(
+            Effect.map((response) => {
+              const tail = tailLogLines(response.stdout, input.tailLines);
+              return {
+                ...check,
+                log: tail.log,
+                truncated: tail.truncated || response.stdoutTruncated,
+                detail: response.stdoutTruncated
+                  ? "The log is too large; this is from its start."
+                  : null,
+              };
+            }),
+            Effect.catchTags({
+              GitLabCliCommandError: (error) =>
+                Effect.succeed({ ...check, log: null, truncated: false, detail: error.detail }),
+            }),
+          );
+        },
+        { concurrency: 4 },
+      );
+    }),
+
+    rerunChecks: Effect.fn("GitLabPullRequestCli.rerunChecks")(function* (input) {
+      const located = input.checks.map((check) => ({
+        check,
+        path: checkJobPath(check, input.host),
+      }));
+      const paths = new Set(located.flatMap(({ path }) => (path === null ? [] : [path])));
+      const outcomes = new Map<string, string | null>();
+      yield* Effect.forEach(
+        paths,
+        (path) =>
+          api({ cwd: input.cwd, host: input.host, path: `${path}/retry`, method: "POST" }).pipe(
+            Effect.as<string | null>(null),
+            Effect.catchTags({ GitLabCliCommandError: (error) => Effect.succeed(error.detail) }),
+            Effect.tap((detail) => Effect.sync(() => outcomes.set(path, detail))),
+          ),
+        { discard: true },
+      );
+      return located.map(({ check, path }) => {
+        const detail = path === null ? CHECK_IS_NOT_A_JOB : (outcomes.get(path) ?? null);
+        return { name: check.name, rerun: detail === null, detail };
+      });
+    }),
 
     listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
       const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
