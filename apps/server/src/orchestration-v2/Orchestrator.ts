@@ -1551,8 +1551,8 @@ function conversationProviderThread(
 }
 
 /**
- * Wakes and fresh starts act on the active session; a message continues the conversation, and so
- * does a delegated task's completion unless a fresh-session schedule run dispatched the task.
+ * Wakes and fresh starts act on the active session; a message continues the conversation. A
+ * delegated task's completion goes back to the session its dispatching run ran on.
  */
 function dispatchProviderThread(
   projection: Pick<
@@ -1562,16 +1562,22 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
+  if (freshContext || message.notification !== undefined) {
+    return projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    );
+  }
   const parentRunId = message.delegatedCompletion?.parentRunId;
-  const parentRun =
-    parentRunId === undefined ? undefined : projection.runs.find((run) => run.id === parentRunId);
-  return freshContext ||
-    message.notification !== undefined ||
-    (parentRunId !== undefined &&
-      (parentRun === undefined || isScheduledFreshRun(parentRun, projection.turnItems)))
-    ? projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      )
+  const parentProviderThreadId =
+    parentRunId === undefined
+      ? undefined
+      : projection.runs.find((run) => run.id === parentRunId)?.providerThreadId;
+  const parentProviderThread = projection.providerThreads.find(
+    (candidate) => candidate.id === parentProviderThreadId,
+  );
+  return parentProviderThread !== undefined &&
+    !providerThreadPredatesBoundary(parentProviderThread, contextBoundaryOrdinal(projection))
+    ? parentProviderThread
     : conversationProviderThread(projection);
 }
 
