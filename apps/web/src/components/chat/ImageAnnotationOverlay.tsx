@@ -312,7 +312,6 @@ export function ImageAnnotationOverlay({
             d={stroke.path}
             stroke={stroke.color}
             strokeWidth={stroke.width}
-            pointerEvents={tool === "erase" ? "stroke" : "none"}
           />
         ))}
         <g ref={liveLayerRef} />
