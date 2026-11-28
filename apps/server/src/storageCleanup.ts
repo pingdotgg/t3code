@@ -1425,11 +1425,22 @@ const make = Effect.gen(function* () {
         pathKey(path.dirname(worktreeKey)) === pathKey(scratchRoot);
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
-      const settlementChain = deleted
-        ? []
-        : worktreeSettlementChain(thread, threadsById, now, serverSettings);
-      const settledThread = settlementChain.at(-1);
       const members = deleted ? [thread, ...group] : group;
+      const owner = worktreeOwner(members);
+      const settlementChain =
+        deleted || owner === undefined
+          ? []
+          : worktreeSettlementChain(thread, threadsById, now, serverSettings);
+      const settledThread = settlementChain.at(-1);
+      // Without a single owner, the worktree is settled only once every sharer is.
+      const settledAt =
+        owner === undefined
+          ? group.every((member) => member.settledAt !== null)
+            ? Math.max(...group.map((member) => DateTime.toEpochMillis(member.settledAt!)))
+            : null
+          : settledThread?.settledAt == null
+            ? null
+            : DateTime.toEpochMillis(settledThread.settledAt);
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -1471,7 +1482,11 @@ const make = Effect.gen(function* () {
         );
         if (!exists) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (members.length > 1 && worktreeOwner(members) === undefined)
+        // Sharers from other projects may have cleanup policies this candidate's settings do not see.
+        if (
+          owner === undefined &&
+          (deleted || members.some((member) => member.projectId !== thread.projectId))
+        )
           return keep(`shared by ${members.length} threads`);
         if (project === undefined) return keep("project is unavailable");
         if (!group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)))
@@ -1495,10 +1510,7 @@ const make = Effect.gen(function* () {
           !deleted &&
           settings.worktreeAfterDays !== null &&
           activityAt < now - settings.worktreeAfterDays * DAY_MS;
-        const settledFor =
-          settledThread?.settledAt == null
-            ? null
-            : now - Math.max(DateTime.toEpochMillis(settledThread.settledAt), activityAt);
+        const settledFor = settledAt === null ? null : now - Math.max(settledAt, activityAt);
         const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
         const settled =
           settledFor !== null &&
@@ -1506,7 +1518,10 @@ const make = Effect.gen(function* () {
           settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
         // A worktree is unchanged before its first commit, so only finished threads qualify.
         const unchangedApplies =
-          settings.worktreeUnchanged && (settledThread !== undefined || thread.archivedAt !== null);
+          settings.worktreeUnchanged &&
+          (owner === undefined
+            ? group.every((member) => member.settledAt !== null || member.archivedAt !== null)
+            : settledThread !== undefined || thread.archivedAt !== null);
         let eligible = deleted || old || settled;
         let removalReason = deleted
           ? "thread was deleted"
@@ -1575,12 +1590,12 @@ const make = Effect.gen(function* () {
           const latestOwner = worktreeOwner(deleted ? [thread, ...latestGroup] : latestGroup);
           if (
             latestGroup.length !== group.length ||
-            latestOwner?.id !== thread.id ||
-            latestOwner?.branch !== thread.branch ||
+            latestOwner?.id !== owner?.id ||
             latestGroup.some((shell, index) => {
               const previous = group.find((member) => member.id === shell.id);
               return (
                 previous === undefined ||
+                shell.projectId !== previous.projectId ||
                 shell.branch !== thread.branch ||
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
