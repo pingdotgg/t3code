@@ -4,6 +4,7 @@ import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runti
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { describe, expect, it } from "vite-plus/test";
+import type { SidebarProviderEntry } from "./sidebar/SidebarThreadRow";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -39,6 +40,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  sameSidebarProviderEntries,
   withoutRemovedCheckout,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -49,7 +51,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1815,6 +1824,30 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("sameSidebarProviderEntries", () => {
+  const entries = (models: ReadonlyArray<{ slug: string; name: string }>) =>
+    new Map<string, SidebarProviderEntry>([
+      [
+        "codex",
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driverKind: ProviderDriverKind.make("codex"),
+          enabled: true,
+          displayName: "Codex",
+          models: models.map((model) => ({ ...model, isCustom: false, capabilities: null })),
+        },
+      ],
+    ]);
+
+  it("treats a fresh models array with the same content as unchanged", () => {
+    const models = [{ slug: "gpt-5", name: "GPT-5" }];
+    expect(sameSidebarProviderEntries(entries(models), entries(models))).toBe(true);
+    expect(
+      sameSidebarProviderEntries(entries(models), entries([{ slug: "gpt-5", name: "GPT 5" }])),
+    ).toBe(false);
   });
 });
 
