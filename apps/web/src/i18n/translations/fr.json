@@ -13132,5 +13132,9 @@
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",
   "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
-  "51aa7700c1f967d2": "Historique de sessions"
+  "51aa7700c1f967d2": "Historique de sessions",
+  "787f759cce79d5cc": "Copier le fil en Markdown",
+  "292759bc63d72b78": "Impossible de copier le fil en Markdown",
+  "c02f2abc01600502": "Fil en Markdown",
+  "8b6e37f51ac2cf7b": "Fil copié en Markdown"
 }

@@ -76,6 +76,7 @@ import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareK
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
+import { copyThreadMarkdown } from "../../lib/copyThreadMarkdown";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
@@ -103,6 +104,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: PullRequestGlyph.pullRequest,
   copyThreadReference: "link",
+  copyThreadMarkdown: "doc.text",
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -398,6 +400,15 @@ export function CommandPalette(props: {
       });
     }
     if (activeThreadRef) {
+      actions.push({
+        key: "copyThreadMarkdown",
+        kind: "action",
+        title: gt("Copy thread as Markdown"),
+        searchTerms: ["copy", "thread", "markdown", "export", "conversation"],
+        run: () => {
+          void copyThreadMarkdown(activeThreadRef);
+        },
+      });
       const threadActions = [
         ["files", gt("Go to file"), ["open", "files", "browse", "search"]],
         ["terminal", gt("Open terminal"), ["shell", "console"]],

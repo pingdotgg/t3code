@@ -2,10 +2,35 @@ import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeThreadProjectionFixture } from "../test-fixtures";
+import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../test-fixtures";
+import { threadTranscriptMarkdown } from "@t3tools/shared/threadTranscript";
 import { threadContextAttachment } from "./threadContextAttachment";
 
 describe("threadContextAttachment", () => {
+  it("exports inherited and live messages as Markdown without tool work or nested messages", () => {
+    const text = "```ts\nconst answer = 42;\n```\n\n" + "Full history. ".repeat(4000);
+    const fixture = makeStreamingTimelineFixture(text);
+    const rows = fixture.visibleTurnItems;
+    const nested = {
+      ...rows[2]!,
+      item: { ...rows[2]!.item, parentItemId: TurnItemId.make("parent") },
+    };
+    const result = threadTranscriptMarkdown({
+      threadId: fixture.threadId,
+      title: "Conversation",
+      updatedAt: DateTime.makeUnsafe(fixture.time(8)),
+      items: [{ ...rows[0]!, visibility: "inherited" }, ...rows.slice(1), nested],
+    });
+    expect(result).toBe(
+      [
+        "# Conversation",
+        `## User · ${fixture.time(0)}\n\nInspect`,
+        `## Assistant · ${fixture.time(3)}\n\nDone`,
+        `## User · ${fixture.time(5)}\n\nContinue`,
+        `## Assistant · ${fixture.time(7)}\n\n${text}`,
+      ].join("\n\n---\n\n") + "\n",
+    );
+  });
   it("preserves full inherited history and structured context without exposing runtime state", async () => {
     const projection = makeThreadProjectionFixture();
     const sourceThreadId = ThreadId.make("parent-thread");
