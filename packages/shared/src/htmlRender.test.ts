@@ -5,6 +5,7 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -16,6 +17,13 @@ describe("htmlRenderFileName", () => {
     const crosses = "a".repeat(119);
     expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
     expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+  });
+});
+
+describe("readHtmlRenderReference", () => {
+  it("never ends the title on half of an emoji at the length limit", () => {
+    const fits = "a".repeat(199);
+    expect(readHtmlRenderReference({ ...reference, title: `${fits}🚀 more` })?.title).toBe(fits);
   });
 });
 
