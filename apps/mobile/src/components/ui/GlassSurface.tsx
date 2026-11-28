@@ -25,7 +25,6 @@ interface GlassSurfaceProps extends ViewProps {
   readonly ref?: Ref<ViewInstance>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
-  // null leaves UIKit's material untinted instead of applying the theme tint.
   readonly tintColor?: ColorValue | null;
   readonly tintColorClassName?: string;
   readonly chrome?: "default" | "none";
@@ -49,7 +48,7 @@ export function GlassSurface({
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
-  const hasShadow = chrome !== "none" && Platform.OS !== "android";
+  const hasShadow = !supportsGlass && chrome !== "none" && Platform.OS !== "android";
   const surfaceStyle: ViewStyle = {
     borderRadius: MOBILE_SHAPE.glass,
     overflow: "hidden",
@@ -65,17 +64,10 @@ export function GlassSurface({
       <ThemedGlassView
         {...props}
         ref={ref}
-        className={cn(
-          chrome === "none"
-            ? "border-0 border-transparent bg-transparent"
-            : "border border-border bg-glass-surface",
-          className,
-        )}
+        className={cn("border-0 border-transparent bg-transparent", className)}
         glassEffectStyle={glassEffectStyle}
         tintColor={tintColor == null ? undefined : String(tintColor)}
-        tintColorClassName={
-          tintColorClassName ?? (tintColor === undefined ? "accent-glass-tint" : undefined)
-        }
+        tintColorClassName={tintColorClassName}
         colorScheme={isDarkMode ? "dark" : "light"}
         style={[surfaceStyle, style]}
       >
