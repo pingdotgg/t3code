@@ -95,3 +95,21 @@ it("relays a message once the document that handed over the port confirms it", (
   expect(toPort[1]).toEqual({ message: { jsonrpc: "2.0", id: 1, result: {} }, origin: "null" });
   expect(relay.toFrameWindow).toEqual([]);
 });
+
+it("links the document's port when another script messaged first", () => {
+  const relay = runRelay();
+  const toPort: Array<unknown> = [];
+  const port = {
+    onmessage: undefined as Listener | undefined,
+    postMessage: (message: unknown) => {
+      toPort.push(message);
+    },
+  };
+
+  // A local filtering proxy (AdGuard) adds a script that does this ahead of the bootstrap.
+  relay.fromFrame("pb_handshake", [{ postMessage: () => {} }]);
+  relay.fromFrame({ t3: MCP_APP_DOCUMENT_MESSAGE }, [port]);
+  relay.fromFrame(REQUEST);
+  port.onmessage?.({ data: { alive: 0 } });
+  expect(relay.relayed).toEqual([REQUEST]);
+});

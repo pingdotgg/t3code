@@ -216,4 +216,28 @@ describe("McpAppFrame", () => {
       ]),
     );
   });
+  it("answers an app when another script messages the host before the bootstrap", async () => {
+    // A local filtering proxy (AdGuard) adds a script that does this ahead of the bootstrap.
+    setup(
+      `<script>parent.postMessage("pb_handshake", "*", [new MessageChannel().port2]);</script>${injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`)}`,
+    );
+    await using screen = await render(
+      <McpAppFrame
+        environmentId={EnvironmentId.make("environment")}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+    const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
+    await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
+  });
 });
