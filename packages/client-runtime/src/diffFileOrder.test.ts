@@ -303,6 +303,18 @@ describe("orderDiffFilesForReview", () => {
     ]);
   });
 
+  it("prefers the source beside a dotted test over a longer same-named one elsewhere", () => {
+    expect(
+      order([
+        file("y/a.logic.ts"),
+        file("z/a.ts", ['import { b } from "./b";']),
+        file("z/b.ts"),
+        file("z/a.logic.test.ts"),
+        file("z/b.test.ts"),
+      ]),
+    ).toEqual(["y/a.logic.ts", "z/b.ts", "z/a.ts", "z/b.test.ts", "z/a.logic.test.ts"]);
+  });
+
   it("puts a test with no source in the diff after the ones that have theirs", () => {
     expect(order([file("src/orphan.spec.ts"), file("src/a.test.ts"), file("src/a.ts")])).toEqual([
       "src/a.ts",

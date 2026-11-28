@@ -216,21 +216,32 @@ function orderByImports(
 }
 
 // `a.logic.test.ts` covers `a.logic.ts` while `a.browser.test.ts` covers `a.ts`, so the longest
-// dotted prefix that names a source file wins.
-// A source beside the test wins over one of the same name in another folder.
+// dotted prefix that names a source file wins, and a source beside the test wins over a same-named
+// one in another folder.
 function testedSourcePosition(
   path: string,
   sourcePositions: ReadonlyMap<string, number>,
   pathPositions: ReadonlyMap<string, number>,
 ): number {
   const directory = path.slice(0, path.lastIndexOf("/") + 1);
-  let name = (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "");
-  while (true) {
-    const position = pathPositions.get(directory + name) ?? sourcePositions.get(name);
+  const name = (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "");
+  return (
+    longestPrefixPosition(name, (prefix) => pathPositions.get(directory + prefix)) ??
+    longestPrefixPosition(name, (prefix) => sourcePositions.get(prefix)) ??
+    Number.MAX_SAFE_INTEGER
+  );
+}
+
+function longestPrefixPosition(
+  name: string,
+  positionOf: (prefix: string) => number | undefined,
+): number | undefined {
+  for (let prefix = name; ;) {
+    const position = positionOf(prefix);
     if (position !== undefined) return position;
-    const dot = name.lastIndexOf(".");
-    if (dot <= 0) return Number.MAX_SAFE_INTEGER;
-    name = name.slice(0, dot);
+    const dot = prefix.lastIndexOf(".");
+    if (dot <= 0) return undefined;
+    prefix = prefix.slice(0, dot);
   }
 }
 
