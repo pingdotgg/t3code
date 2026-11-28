@@ -44,6 +44,17 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
+/** The path as stored on disk (links resolved, its stored letter case); null when it cannot be resolved. */
+export const onDiskPath = (filePath: string) =>
+  Effect.promise(() => NodeFSP.realpath(filePath).catch(() => null));
+
+/**
+ * Where an open file sits now, read from the descriptor where the platform tells it (Linux), so
+ * no later link swap changes the answer; null where it does not.
+ */
+export const openedFilePath = (handle: NodeFSP.FileHandle) =>
+  Effect.promise(() => NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null));
+
 /** Null when the path cannot be resolved. */
 export const realPathWithoutNativeResolver = (filePath: string) =>
   Effect.promise(() => realpathLikeFileSystem(filePath).catch(() => null));

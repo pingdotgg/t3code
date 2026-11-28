@@ -228,6 +228,156 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("inlines only the local images under the given roots, without opening the rest", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-roots-" });
+      const workspace = path.join(directory, "workspace");
+      const elsewhere = path.join(directory, "elsewhere");
+      yield* fileSystem.makeDirectory(path.join(workspace, "charts"), { recursive: true });
+      yield* fileSystem.makeDirectory(elsewhere);
+      const chart = path.join(workspace, "charts", "chart.png");
+      const secret = path.join(elsewhere, "secret.png");
+      yield* fileSystem.writeFile(chart, PNG_BYTES);
+      yield* fileSystem.writeFile(secret, PNG_BYTES);
+      const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
+      const access = { imageRoots: [workspace] };
+
+      const inside = yield* htmlRender.prepare(`<img src="${chart}">`, access);
+      expect(inside).toContain(`<img src="${pngUri}">`);
+      // A percent-encoded path is confined as the file it decodes to.
+      const encodedInside = yield* htmlRender.prepare(
+        `<img src="${workspace}/charts/ch%61rt.png">`,
+        access,
+      );
+      expect(encodedInside).toContain(`<img src="${pngUri}">`);
+
+      // A path that only starts like the root, one that climbs out of it, and one that does not
+      // exist are all refused by path alone, before any file is touched.
+      const sibling = `${workspace}-other/shot.png`;
+      const climbingRaw = `${workspace}/charts/../../elsewhere/secret.png`;
+      const climbingEncoded = `${workspace}/charts/%2E%2E/%2E%2E/elsewhere/secret.png`;
+      const absent = "/t3-missing-root/absent.png";
+      const outside = yield* htmlRender
+        .prepare(
+          `<img src="${chart}"><img src="${secret}"><img src="${sibling}"><img src="${climbingRaw}"><img src="${climbingEncoded}"><img src="${absent}">`,
+          access,
+        )
+        .pipe(Effect.flip);
+      expect(outside).toBeInstanceOf(HtmlRender.HtmlRenderImagesOutsideRootsError);
+      expect(outside._tag === "HtmlRenderImagesOutsideRootsError" && outside.paths).toEqual([
+        secret,
+        sibling,
+        climbingRaw,
+        climbingEncoded,
+        absent,
+      ]);
+
+      // A missing image inside the roots is still reported as missing.
+      const missing = path.join(workspace, "missing.png");
+      const notFound = yield* htmlRender
+        .prepare(`<img src="${missing}">`, access)
+        .pipe(Effect.flip);
+      expect(notFound).toBeInstanceOf(HtmlRender.HtmlRenderImagesNotFoundError);
+
+      // Without roots, any readable image is inlined, as before.
+      const anywhere = yield* htmlRender.prepare(`<img src="${secret}">`);
+      expect(anywhere).toContain(`<img src="${pngUri}">`);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses a link under the roots that points outside them",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-roots-" });
+        const workspace = path.join(directory, "workspace");
+        const elsewhere = path.join(directory, "elsewhere");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.makeDirectory(elsewhere);
+        const secret = path.join(elsewhere, "secret.png");
+        yield* fileSystem.writeFile(secret, PNG_BYTES);
+        const fileLink = path.join(workspace, "shot.png");
+        yield* fileSystem.symlink(secret, fileLink);
+        const folderLink = path.join(workspace, "out");
+        yield* fileSystem.symlink(elsewhere, folderLink);
+        const throughFolder = path.join(folderLink, "secret.png");
+
+        const error = yield* htmlRender
+          .prepare(`<img src="${fileLink}"><img src="${throughFolder}">`, {
+            imageRoots: [workspace],
+          })
+          .pipe(Effect.flip);
+        expect(error._tag === "HtmlRenderImagesOutsideRootsError" && error.paths).toEqual([
+          fileLink,
+          throughFolder,
+        ]);
+
+        // A root reached through a link of its own still serves the images inside it.
+        const linkedRoot = path.join(directory, "linked-workspace");
+        yield* fileSystem.symlink(workspace, linkedRoot);
+        const inside = path.join(workspace, "inside.png");
+        yield* fileSystem.writeFile(inside, PNG_BYTES);
+        const both = `<img src="${path.join(linkedRoot, "inside.png")}"><img src="${inside}">`;
+        // Either spelling of the root serves both spellings of the image, as `/tmp` and
+        // `/private/tmp` do on macOS.
+        expect(yield* htmlRender.prepare(both, { imageRoots: [linkedRoot] })).not.toContain(
+          directory,
+        );
+        expect(yield* htmlRender.prepare(both, { imageRoots: [workspace] })).not.toContain(
+          directory,
+        );
+        // `link/..` leaves the folder the link points into, as the filesystem reads it.
+        const reports = path.join(workspace, "reports");
+        yield* fileSystem.makeDirectory(path.join(reports, "daily"), { recursive: true });
+        const reportsChart = new Uint8Array([...PNG_BYTES, 1]);
+        yield* fileSystem.writeFile(path.join(reports, "chart.png"), reportsChart);
+        yield* fileSystem.writeFile(path.join(workspace, "chart.png"), PNG_BYTES);
+        const alias = path.join(workspace, "alias");
+        yield* fileSystem.symlink(path.join(reports, "daily"), alias);
+        expect(
+          yield* htmlRender.prepare(`<img src="${alias}/../chart.png">`, {
+            imageRoots: [workspace],
+          }),
+        ).toContain(Base64.encode(reportsChart));
+
+        // A missing image under the root's other spelling is missing, not outside.
+        const missing = yield* htmlRender
+          .prepare(`<img src="${path.join(linkedRoot, "missing.png")}">`, {
+            imageRoots: [workspace],
+          })
+          .pipe(Effect.flip);
+        expect(missing._tag).toBe("HtmlRenderImagesNotFoundError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a second hard link under the roots to a file outside them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-roots-" });
+      const workspace = path.join(directory, "workspace");
+      yield* fileSystem.makeDirectory(workspace);
+      const secret = path.join(directory, "secret.png");
+      yield* fileSystem.writeFile(secret, PNG_BYTES);
+      const linked = path.join(workspace, "shot.png");
+      yield* fileSystem.link(secret, linked);
+
+      const error = yield* htmlRender
+        .prepare(`<img src="${linked}">`, { imageRoots: [workspace] })
+        .pipe(Effect.flip);
+      expect(error._tag === "HtmlRenderImagesNotFoundError" && error.paths).toEqual([linked]);
+      // Without roots the server reads as its own user, as before.
+      expect(yield* htmlRender.prepare(`<img src="${linked}">`)).not.toContain(linked);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("publishes the prepared page as an html thread attachment", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

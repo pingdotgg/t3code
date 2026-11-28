@@ -22,12 +22,16 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
+  type Project,
 } from "@t3tools/contracts";
 import { pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -42,6 +46,7 @@ import {
   OrchestratorProviderSelectionBusyError,
 } from "../../orchestration-v2/Orchestrator.ts";
 
+import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -52,6 +57,7 @@ import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
@@ -346,6 +352,54 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
 });
 
 const fullAccessThreadId = ThreadId.make("mcp-core-full-access-thread");
+const htmlProjectId = ProjectId.make("mcp-core-html-project");
+// Set by a test before it calls a tool; the project and folder lookups read them at call time.
+let htmlWorkspace = "/t3-missing-workspace";
+let htmlExtraFolder = "/t3-missing-extra-folder";
+
+const layerHtmlTools = McpHttpServer.layerHtmlToolkit.pipe(
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(PreviewBrowser.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
+  Layer.provideMerge(
+    DocumentText.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed({ folders: [], extraRoots: [htmlExtraFolder] }),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(ProjectService.ProjectService)({
+      getById: (projectId) =>
+        Effect.succeed(
+          projectId === htmlProjectId
+            ? Option.some({ workspaceRoot: htmlWorkspace } as Project)
+            : Option.none(),
+        ),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (id) =>
+        Effect.succeed({
+          id,
+          projectId: htmlProjectId,
+          worktreePath: null,
+          deletedAt: null,
+          archivedAt: null,
+          activeRunId: RunId.make("mcp-core-run"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
+          interactionMode: "default",
+        } as OrchestrationV2ThreadShell),
+    }),
+  ),
+);
 
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
@@ -388,36 +442,96 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       expect(yield* byPath(name, scope), name).toContain("only full-access threads");
       expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
     }
-  }).pipe(
-    Effect.provide(
-      McpHttpServer.layerHtmlToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(McpProviderSessions.layer),
-        Layer.provide(PreviewBrowser.layer),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
-        Layer.provide(
-          DocumentText.layer.pipe(
-            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
-        ),
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) =>
-              Effect.succeed({
-                id,
-                deletedAt: null,
-                archivedAt: null,
-                activeRunId: RunId.make("mcp-core-run"),
-                providerInstanceId: ProviderInstanceId.make("codex"),
-                runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
-                interactionMode: "default",
-              } as OrchestrationV2ThreadShell),
-          }),
-        ),
+  }).pipe(Effect.provide(layerHtmlTools)),
+);
+
+it.effect("inlines a supervised thread's local images only from its workspace", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-html-images-" });
+    htmlWorkspace = path.join(directory, "workspace");
+    htmlExtraFolder = path.join(directory, "extra-folder");
+    const elsewhere = path.join(directory, "elsewhere");
+    yield* fileSystem.makeDirectory(htmlWorkspace);
+    yield* fileSystem.makeDirectory(htmlExtraFolder);
+    yield* fileSystem.makeDirectory(elsewhere);
+    yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const chart = path.join(htmlWorkspace, "chart.png");
+    const attached = path.join(config.attachmentsDir, "mcp-core-attached.png");
+    const extra = path.join(htmlExtraFolder, "extra.png");
+    const secret = path.join(elsewhere, "secret.png");
+    for (const file of [chart, attached, extra, secret]) yield* fileSystem.writeFile(file, png);
+    const pngUri = `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+
+    const call = (
+      name: "html_preview" | "html_render",
+      html: string,
+      caller: McpInvocationContext.McpInvocationScope,
+    ) =>
+      server
+        .callTool({
+          name,
+          arguments: { html, ...(name === "html_render" ? { title: "Chart", height: 240 } : {}) },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const published = Effect.fn(function* (result: McpSchema.CallToolResult) {
+      expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+      const reference = htmlRenderFromToolItem({
+        toolName: "t3-code.html_render",
+        output: result.structuredContent,
+      });
+      const file = resolveAttachmentPathById({
+        attachmentsDir: config.attachmentsDir,
+        attachmentId: reference!.attachmentId,
+      });
+      return yield* fileSystem.readFileString(file!);
+    });
+
+    const ownImages = yield* published(
+      yield* call(
+        "html_render",
+        `<img src="${chart}"><img src="${attached}"><img src="${extra}">`,
+        scope,
       ),
-    ),
-  ),
+    );
+    expect(ownImages).toContain(`<img src="${pngUri}"><img src="${pngUri}"><img src="${pngUri}">`);
+
+    for (const name of ["html_preview", "html_render"] as const) {
+      const refused = yield* call(name, `<img src="${chart}"><img src="${secret}">`, scope);
+      expect(refused.isError, name).toBe(true);
+      // Decoded, so Windows paths compare as written. html_preview returns image content, so
+      // its failure sits in structuredContent instead of a declared JSON result.
+      const failure =
+        name === "html_render"
+          ? declaredFailure(refused)
+          : (refused.structuredContent as { readonly error?: unknown } | undefined)?.error;
+      expect(failure, name).toMatchObject({ code: "capability_denied" });
+      const text = String(failure?.message);
+      expect(text, name).toContain("outside this thread's workspace");
+      expect(text, name).toContain(secret);
+      expect(text, name).not.toContain(chart);
+    }
+
+    const fullAccessImages = yield* published(
+      yield* call("html_render", `<img src="${secret}">`, fullAccess),
+    );
+    expect(fullAccessImages).toContain(`<img src="${pngUri}">`);
+
+    // A full-access thread above an administrator's lower ceiling is held to its workspace.
+    const capped = yield* call("html_render", `<img src="${secret}">`, {
+      ...fullAccess,
+      runtimeModeCeiling: "auto",
+    });
+    expect(declaredFailure(capped)).toMatchObject({ code: "capability_denied" });
+  }).pipe(Effect.provide(layerHtmlTools)),
 );
 
 it.effect("captures send_to_user results for providers that drop MCP outputs", () =>

@@ -30,7 +30,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { openMediaFile } from "../assets/MediaFile.ts";
+import { onDiskPath, openedFilePath, openMediaFile } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
@@ -39,6 +39,7 @@ import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
+import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
@@ -72,6 +73,15 @@ export class HtmlRenderImagesNotFoundError extends Schema.TaggedError<HtmlRender
 ) {
   override get message(): string {
     return `These local images could not be read: ${this.paths.join(", ")}. Use absolute paths to existing image files, or remove them.`;
+  }
+}
+
+export class HtmlRenderImagesOutsideRootsError extends Schema.TaggedError<HtmlRenderImagesOutsideRootsError>()(
+  "HtmlRenderImagesOutsideRootsError",
+  { paths: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `These local images are outside this thread's workspace: ${this.paths.join(", ")}. Below full access, only images in the workspace can be shown; move them there or embed them as data: URIs.`;
   }
 }
 
@@ -170,11 +180,17 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
 
 export type HtmlRenderPrepareError =
   | HtmlRenderImagesNotFoundError
+  | HtmlRenderImagesOutsideRootsError
   | HtmlRenderImageTooLargeError
   | HtmlRenderPageTooLargeError
   | HtmlRenderViewportHeightError;
 
 export type HtmlRenderSource = { readonly html: string } | { readonly path: string };
+
+/** Folders local images may be read from; absent, any readable image is inlined. */
+export interface HtmlRenderImageAccess {
+  readonly imageRoots?: ReadonlyArray<string> | undefined;
+}
 
 export interface HtmlPreview {
   readonly png: string;
@@ -188,13 +204,17 @@ export interface HtmlPreview {
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
-    readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
+    readonly prepare: (
+      html: string,
+      access?: HtmlRenderImageAccess,
+    ) => Effect.Effect<string, HtmlRenderPrepareError>;
     readonly publish: (
-      input: HtmlRenderSource & {
-        readonly threadId: ThreadId;
-        readonly title: string;
-        readonly height: number;
-      },
+      input: HtmlRenderSource &
+        HtmlRenderImageAccess & {
+          readonly threadId: ThreadId;
+          readonly title: string;
+          readonly height: number;
+        },
     ) => Effect.Effect<
       HtmlRenderReference,
       | HtmlRenderFileError
@@ -203,10 +223,11 @@ export class HtmlRender extends Context.Service<
       | HtmlRenderStoreError
     >;
     readonly preview: (
-      input: HtmlRenderSource & {
-        readonly width?: number | undefined;
-        readonly appearance?: ThemeAppearance | undefined;
-      },
+      input: HtmlRenderSource &
+        HtmlRenderImageAccess & {
+          readonly width?: number | undefined;
+          readonly appearance?: ThemeAppearance | undefined;
+        },
     ) => Effect.Effect<
       HtmlPreview,
       | HtmlRenderFileError
@@ -332,21 +353,128 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
-const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const references = findLocalImages(html);
-  const files = yield* Effect.forEach(
-    [...new Set(references.map((reference) => reference.path))],
-    (path) =>
-      Effect.gen(function* () {
-        for (const candidate of filePathCandidatesFor(path)) {
-          const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
-          if (Option.isSome(info) && info.value.type === "File") {
-            return { path, filePath: candidate, size: Number(info.value.size) };
+// Like `readPageFile`: open without following links and recheck the path, so a link swapped in
+// after the roots check is refused, and refuse a second hard link to a file outside the roots.
+// Where the platform names an open file's path (Linux), that path must be inside the roots too,
+// which no link swapped around the open can fake. Size and bytes come from this open file.
+const openConfinedImage = Effect.fn("HtmlRender.openConfinedImage")(function* (
+  filePath: string,
+  inRoots: (path: string) => boolean,
+) {
+  const file = yield* openMediaFile(filePath);
+  if (file === null || file.info.nlink !== 1n) return null;
+  const opened = yield* openedFilePath(file.handle);
+  return opened === null || inRoots(opened) ? file : null;
+});
+
+const confinedImageSize = (filePath: string, inRoots: (path: string) => boolean) =>
+  Effect.scoped(
+    Effect.map(openConfinedImage(filePath, inRoots), (file) =>
+      file === null ? undefined : Number(file.info.size),
+    ),
+  );
+
+const readConfinedImage = (filePath: string, inRoots: (path: string) => boolean) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const file = yield* openConfinedImage(filePath, inRoots);
+      if (file === null) return Option.none<Uint8Array>();
+      // Reads to the end, or one byte past the limit, so a file that grew is not cut short.
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const chunks: Array<Uint8Array> = [];
+          let total = 0;
+          while (total <= MAX_IMAGE_BYTES) {
+            const chunk = Buffer.alloc(Math.min(64 * 1024, MAX_IMAGE_BYTES + 1 - total));
+            const { bytesRead } = await file.handle.read(chunk, 0, chunk.length);
+            if (bytesRead === 0) break;
+            chunks.push(chunk.subarray(0, bytesRead));
+            total += bytesRead;
           }
-        }
-        return { path, filePath: undefined, size: undefined };
-      }),
+          return Option.some(new Uint8Array(Buffer.concat(chunks)));
+        },
+        catch: (cause) => new HtmlRenderFileError({ path: filePath, cause }),
+      });
+    }),
+  ).pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
+
+const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
+  html: string,
+  imageRoots: ReadonlyArray<string> | undefined,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
+  const references = findLocalImages(html);
+  // The on-disk path, `/private/tmp` for `/tmp` and the stored letter case included. A path that
+  // does not exist yet resolves through its nearest existing folder, so a missing image is placed
+  // by where it would be: inside the roots it is missing, outside it is refused, existing or not.
+  const canonical = (filePath: string): Effect.Effect<string> =>
+    Effect.flatMap(onDiskPath(filePath), (resolved) => {
+      if (resolved !== null) return Effect.succeed(resolved);
+      const parent = pathService.dirname(filePath);
+      return parent === filePath
+        ? Effect.succeed(filePath)
+        : Effect.map(canonical(parent), (folder) =>
+            pathService.join(folder, pathService.basename(filePath)),
+          );
+    });
+  const realRoots =
+    imageRoots === undefined
+      ? undefined
+      : yield* Effect.forEach(imageRoots, (root) => canonical(pathService.resolve(root)), {
+          concurrency: "unbounded",
+        });
+  const inRoots = (filePath: string) =>
+    realRoots !== undefined && realRoots.some((root) => isWithinRoot(pathService, filePath, root));
+  const isFile = (filePath: string) =>
+    fileSystem.stat(filePath).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    );
+  // The first spelling that names a file is the one read, so that is the one confined.
+  const locate = Effect.fn(function* (path: string) {
+    const candidates = filePathCandidatesFor(path);
+    if (realRoots === undefined) {
+      for (const filePath of candidates) {
+        if (yield* isFile(filePath)) return { path, filePath, outside: false };
+      }
+      return { path, filePath: undefined, outside: false };
+    }
+    // The spelling as written goes to realpath first, so `link/..` leaves where the link points,
+    // as the filesystem reads it, rather than where the text would.
+    const resolved = yield* Effect.forEach(candidates, (raw) =>
+      canonical(pathService.isAbsolute(raw) ? raw : pathService.resolve(raw)),
+    );
+    for (const filePath of resolved) {
+      if (yield* isFile(filePath)) return { path, filePath, outside: !inRoots(filePath) };
+    }
+    return { path, filePath: undefined, outside: !resolved.every(inRoots) };
+  });
+  const located = yield* Effect.forEach(
+    [...new Set(references.map((reference) => reference.path))],
+    locate,
+    { concurrency: 8 },
+  );
+  const outside = located.filter((file) => file.outside).map((file) => file.path);
+  if (outside.length > 0) return yield* new HtmlRenderImagesOutsideRootsError({ paths: outside });
+  const sizeOf = (filePath: string | undefined): Effect.Effect<number | undefined> => {
+    if (filePath === undefined) return Effect.undefined;
+    if (realRoots !== undefined) {
+      return confinedImageSize(filePath, inRoots).pipe(Effect.orElseSucceed(() => undefined));
+    }
+    return fileSystem.stat(filePath).pipe(
+      Effect.map((info) => (info.type === "File" ? Number(info.size) : undefined)),
+      Effect.orElseSucceed(() => undefined),
+    );
+  };
+  const files = yield* Effect.forEach(
+    located,
+    (file) =>
+      Effect.map(sizeOf(file.filePath), (size) => ({
+        path: file.path,
+        filePath: file.filePath,
+        size,
+      })),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -376,9 +504,11 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     (file) =>
       Effect.gen(function* () {
         if (file.filePath === undefined) return [];
-        const read = yield* fileSystem
-          .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
-          .pipe(Stream.mkUint8Array, Effect.option);
+        const read = yield* realRoots === undefined
+          ? fileSystem
+              .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
+              .pipe(Stream.mkUint8Array, Effect.option)
+          : readConfinedImage(file.filePath, inRoots);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;
         if (bytes.byteLength > MAX_IMAGE_BYTES) {
@@ -554,12 +684,17 @@ const make = Effect.gen(function* () {
     "path" in input ? readPageFile(input.path) : Effect.succeed(input.html);
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
-  const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
+  const inline = (html: string, access: HtmlRenderImageAccess | undefined) =>
+    inlineLocalImages(injectHtmlRenderBootstrap(html), access?.imageRoots).pipe(
+      Effect.provideContext(services),
+    );
 
-  const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
+  const prepare = Effect.fn("HtmlRender.prepare")(function* (
+    html: string,
+    access?: HtmlRenderImageAccess,
+  ) {
     yield* rejectViewportHeight(html);
-    const inlined = yield* inline(html);
+    const inlined = yield* inline(html, access);
     if (inlined.missing.length > 0) {
       return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
     }
@@ -567,14 +702,15 @@ const make = Effect.gen(function* () {
   });
 
   const publish = Effect.fn("HtmlRender.publish")(function* (
-    input: HtmlRenderSource & {
-      readonly threadId: ThreadId;
-      readonly title: string;
-      readonly height: number;
-    },
+    input: HtmlRenderSource &
+      HtmlRenderImageAccess & {
+        readonly threadId: ThreadId;
+        readonly title: string;
+        readonly height: number;
+      },
   ) {
     const source = yield* readSource(input);
-    const html = yield* prepare(source);
+    const html = yield* prepare(source, input);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -628,10 +764,11 @@ const make = Effect.gen(function* () {
   });
 
   const preview = Effect.fn("HtmlRender.preview")(function* (
-    input: HtmlRenderSource & {
-      readonly width?: number | undefined;
-      readonly appearance?: ThemeAppearance | undefined;
-    },
+    input: HtmlRenderSource &
+      HtmlRenderImageAccess & {
+        readonly width?: number | undefined;
+        readonly appearance?: ThemeAppearance | undefined;
+      },
   ) {
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
@@ -640,7 +777,7 @@ const make = Effect.gen(function* () {
     const appearance = input.appearance ?? "dark";
     const source = yield* readSource(input);
     yield* rejectViewportHeight(source);
-    const inlined = yield* inline(source);
+    const inlined = yield* inline(source, input);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,
