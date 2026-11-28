@@ -4,6 +4,7 @@ import {
   themeColorToNativeColor,
   type MobileThemeId,
 } from "../../lib/mobileTheme";
+import { TERMINAL_ANSI_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 
 export type TerminalAppearanceScheme = "light" | "dark";
 
@@ -103,6 +104,11 @@ export function getMobileTerminalTheme(
   const palette = getMobileThemeColors(paletteId, scheme);
   const colors = getMobileThemeVariables(paletteId, scheme);
   const background = themeColorToNativeColor(palette.terminalBackground);
+  const terminalPalette: [...TerminalPalette] = [...base.palette];
+  for (const [index, role] of TERMINAL_ANSI_COLOR_ROLES.entries()) {
+    const color = palette[role];
+    if (color !== undefined) terminalPalette[index] = themeColorToNativeColor(color);
+  }
   return {
     ...base,
     background,
@@ -111,6 +117,7 @@ export function getMobileTerminalTheme(
     border: colors["--color-border"],
     cursorForeground: themeColorToNativeColor(palette.terminalCursor),
     cursorBackground: background,
+    palette: terminalPalette,
   };
 }
 

@@ -561,8 +561,8 @@ export function ThemeEditorPanel({
       : THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)
         ? THEME_COLOR_ROLES.filter(
             (role) =>
-              colorsByAppearance[activeAppearance][role].trim().toLowerCase() ===
-              colorsByAppearance[activeAppearance][selectedRole].trim().toLowerCase(),
+              colorsByAppearance[activeAppearance][role]?.trim().toLowerCase() ===
+              colorsByAppearance[activeAppearance][selectedRole]?.trim().toLowerCase(),
           )
         : [selectedRole]
     : [];
@@ -1043,7 +1043,7 @@ export function ThemeEditorPanel({
           onToggleSelected={toggleThemeRole}
           role={family.role}
           selected={selectedRole === family.role}
-          value={colorsByAppearance[activeAppearance][family.role]}
+          value={colorsByAppearance[activeAppearance][family.role] ?? ""}
         />
       ))}
     </div>
@@ -1089,7 +1089,7 @@ export function ThemeEditorPanel({
             role={role}
             label={role === "canvas" ? gt("Background") : gt("Accent")}
             selected={selectedRole === role}
-            value={colorsByAppearance[activeAppearance][role]}
+            value={colorsByAppearance[activeAppearance][role] ?? ""}
           />
         ))}
       </div>

@@ -2,7 +2,11 @@ import { converter } from "culori/fn";
 import { describe, expect, it } from "vite-plus/test";
 
 import "~/index.css";
-import { getStandardPaintedThemeColors } from "./themePalette";
+import {
+  applyThemeColorPreview,
+  applyThemePalette,
+  getStandardPaintedThemeColors,
+} from "./themePalette";
 
 const toRgb = converter("rgb");
 
@@ -22,6 +26,24 @@ function paintedChannels(variable: string, canvas: readonly number[] = [0, 0, 0]
 }
 
 describe("standard painted theme colors", () => {
+  it("clears optional ANSI overrides when a draft or theme omits them", () => {
+    const colors = getStandardPaintedThemeColors("dark");
+    const root = document.documentElement;
+    const variable = "--app-theme-terminal-ansi-red";
+    try {
+      applyThemeColorPreview({ ...colors, terminalAnsiRed: "#123456" }, "dark");
+      expect(getComputedStyle(root).getPropertyValue(variable)).toBe("#123456");
+      applyThemeColorPreview(colors, "dark");
+      expect(getComputedStyle(root).getPropertyValue(variable)).toBe("");
+      applyThemeColorPreview({ ...colors, terminalAnsiRed: "#123456" }, "dark");
+      applyThemePalette("grove", "dark");
+      expect(getComputedStyle(root).getPropertyValue(variable)).toBe("");
+    } finally {
+      applyThemePalette("system", "light");
+      root.classList.remove("dark");
+    }
+  });
+
   it("match the chip surfaces index.css paints", () => {
     const root = document.documentElement;
     try {

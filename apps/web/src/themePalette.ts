@@ -18,6 +18,8 @@ import {
   T3_CODE_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
+  TERMINAL_ANSI_COLOR_ROLES,
+  TERMINAL_ANSI_THEME_VARIABLES,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeColors,
@@ -544,7 +546,7 @@ function themeRgbToThemeColor(color: ThemeRgbColor): string {
 
 function decodeThemeColors(colors: ThemeColors): ThemeColors {
   return Object.fromEntries(
-    THEME_COLOR_ROLES.map((role) => {
+    THEME_COLOR_ROLES.filter((role) => colors[role] !== undefined).map((role) => {
       const color = toCanonicalThemeColor(colors[role]);
       if (!color) {
         throw new Error(
@@ -1712,6 +1714,7 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   terminalSelection: "--app-theme-terminal-selection-background",
   terminalScrollbar: "--app-theme-terminal-scrollbar",
   terminalScrollbarHover: "--app-theme-terminal-scrollbar-hover",
+  ...TERMINAL_ANSI_THEME_VARIABLES,
 };
 
 export function getThemeColorVariable(role: ThemeColorRole): string {
@@ -1732,6 +1735,9 @@ export function applyThemeColorPreview(
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
+  for (const role of TERMINAL_ANSI_COLOR_ROLES) {
+    root.style.removeProperty(APP_THEME_VARIABLES[role]);
+  }
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
@@ -1750,6 +1756,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const palette = getThemeDefinition(theme);
   applyThemeCss(palette?.css);
   applyThemeBackground(palette?.id);
+  for (const role of TERMINAL_ANSI_COLOR_ROLES) {
+    root.style.removeProperty(APP_THEME_VARIABLES[role]);
+  }
 
   if (palette) {
     root.dataset.themeId = palette.id;
