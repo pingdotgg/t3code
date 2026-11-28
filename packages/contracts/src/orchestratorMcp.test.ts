@@ -82,3 +82,24 @@ describe("orchestrator MCP contracts", () => {
     ).toBe(next);
   });
 });
+
+it("decodes target.options from an object map or a selection array", () => {
+  const fromMap = decodeDelegateTaskInput({
+    task: "Research",
+    target: { model: "gpt-6.2-astra", options: { reasoningEffort: "xhigh" } },
+  });
+  expect(fromMap.target).toMatchObject({
+    model: "gpt-6.2-astra",
+    options: [{ id: "reasoningEffort", value: "xhigh" }],
+  });
+  const fromArray = decodeDelegateTaskInput({
+    task: "Research",
+    target: {
+      model: "gpt-6.2-astra",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    },
+  });
+  expect(fromArray.target).toMatchObject({
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+});

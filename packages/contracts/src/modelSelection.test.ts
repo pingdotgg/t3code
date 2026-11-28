@@ -84,3 +84,27 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+it.effect("still decodes the canonical array form of options", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeModelSelection({
+      instanceId: "codex",
+      model: "gpt-6.2-astra",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
+    assert.deepStrictEqual(parsed.options, [{ id: "reasoningEffort", value: "xhigh" }]);
+  }),
+);
+
+it.effect("rejects a null entry in an options array", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      decodeModelSelection({
+        instanceId: "codex",
+        model: "gpt-6.2-astra",
+        options: [null],
+      }),
+    );
+    assert.match(String(error), /Expected object|options/i);
+  }),
+);
