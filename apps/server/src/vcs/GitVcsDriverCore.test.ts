@@ -1290,6 +1290,91 @@ it.effect.each([
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([true, false])(
+  "copies selected ignored worktree files with include file %s",
+  (include) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", ".agents/\n.env\ncache/\n");
+        if (include)
+          yield* writeTextFile(
+            cwd,
+            ".worktreeinclude",
+            "# Local context\n.agents/skills/**\n!.agents/skills/private.md\n.env\nREADME.md\nnotes.txt\n",
+          );
+        yield* writeTextFile(cwd, ".agents/skills/example/SKILL.md", "local skill");
+        yield* writeTextFile(cwd, ".agents/skills/private.md", "excluded");
+        yield* writeTextFile(cwd, ".env", "LOCAL=value");
+        yield* writeTextFile(cwd, "cache/output", "cache");
+        yield* writeTextFile(cwd, "notes.txt", "untracked but not ignored");
+        yield* writeTextFile(cwd, "README.md", "uncommitted source edit");
+        const worktreePath = path.join(yield* makeTmpDir(), "created");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/includes",
+        });
+        assert.equal(
+          yield* fs.exists(path.join(worktreePath, ".agents/skills/example/SKILL.md")),
+          include,
+        );
+        assert.equal(yield* fs.exists(path.join(worktreePath, ".env")), include);
+        if (include)
+          assert.equal(
+            yield* fs.readFileString(path.join(worktreePath, ".agents/skills/example/SKILL.md")),
+            "local skill",
+          );
+        assert.isFalse(yield* fs.exists(path.join(worktreePath, ".agents/skills/private.md")));
+        assert.isFalse(yield* fs.exists(path.join(worktreePath, "cache/output")));
+        assert.isFalse(yield* fs.exists(path.join(worktreePath, "notes.txt")));
+        assert.equal(yield* fs.readFileString(path.join(worktreePath, "README.md")), "# test\n");
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("preserves existing worktree files and skips links when copying worktree includes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outside = yield* makeTmpDir();
+      yield* writeTextFile(outside, "secret", "outside");
+      yield* writeTextFile(cwd, ".gitignore", ".env\nlocal/\nlinked/\n");
+      yield* writeTextFile(cwd, ".worktreeinclude", ".env\nlocal/\nlinked/\n");
+      yield* writeTextFile(cwd, ".env", "source");
+      yield* writeTextFile(cwd, "local/secret", "source");
+      NodeFS.symlinkSync(outside, path.join(cwd, "linked"), "junction");
+      if (symlinksSupported)
+        NodeFS.symlinkSync(path.join(outside, "secret"), path.join(cwd, "local/link"));
+      yield* writeTextFile(cwd, ".git/hooks/post-checkout", "#!/bin/sh\nprintf hook > .env\n");
+      yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const worktreePath = path.join(yield* makeTmpDir(), "created");
+      const nested = path.join(cwd, "nested");
+      yield* fs.makeDirectory(nested);
+      yield* driver.createWorktree({
+        cwd: nested,
+        path: worktreePath,
+        refName: initialBranch,
+        newRefName: "feature/safe-includes",
+      });
+      assert.equal(yield* fs.readFileString(path.join(worktreePath, ".env")), "hook");
+      assert.equal(yield* fs.readFileString(path.join(worktreePath, "local/secret")), "source");
+      assert.isFalse(yield* fs.exists(path.join(worktreePath, "local/link")));
+      assert.isFalse(yield* fs.exists(path.join(worktreePath, "linked")));
+      assert.equal(yield* fs.readFileString(path.join(outside, "secret")), "outside");
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "preserves embedded newlines in repository paths after worktree creation",
   () =>

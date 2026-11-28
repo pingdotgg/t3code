@@ -6597,6 +6597,93 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
   });
 
+  const copyWorktreeIncludes = Effect.fn("GitVcsDriver.copyWorktreeIncludes")(
+    function* (cwd: string, destination: string) {
+      let source = yield* fileSystem.realPath(cwd);
+      while (!(yield* fileSystem.exists(path.join(source, ".git")))) {
+        const parent = path.dirname(source);
+        if (parent === source) return;
+        source = parent;
+      }
+      const includePath = path.join(source, ".worktreeinclude");
+      const include = yield* fileSystem.lstat(includePath).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(null),
+        ),
+      );
+      if (include?.type !== "File") return;
+      // Git supplies ignore-pattern semantics, including directory patterns and negations.
+      const selected = yield* executeGit("GitVcsDriver.copyWorktreeIncludes.select", source, [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "-z",
+        `--exclude-from=${includePath}`,
+      ]);
+      if (selected.stdout === "") return;
+      const ignored = yield* executeGit(
+        "GitVcsDriver.copyWorktreeIncludes.ignored",
+        source,
+        ["check-ignore", "--stdin", "-z"],
+        { stdin: selected.stdout, allowNonZeroExit: true },
+      );
+      if (ignored.exitCode === 1) return;
+      if (ignored.exitCode !== 0)
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.copyWorktreeIncludes.ignored",
+          command: "git",
+          cwd: source,
+          detail: "Could not identify ignored worktree files.",
+        });
+      for (const relativePath of splitNullSeparatedGitStdoutPaths(ignored)) {
+        const segments = relativePath.split("/");
+        if (
+          path.isAbsolute(relativePath) ||
+          segments.some((segment) => segment === ".." || segment.toLowerCase() === ".git")
+        )
+          continue;
+        let safe = true;
+        for (let index = 1; index <= segments.length; index++) {
+          const suffix = segments.slice(0, index);
+          const from = yield* fileSystem.lstat(path.join(source, ...suffix));
+          const to = yield* fileSystem.lstat(path.join(destination, ...suffix)).pipe(
+            Effect.catchIf(
+              (error) => error.reason._tag === "NotFound",
+              () => Effect.succeed(null),
+            ),
+          );
+          const leaf = index === segments.length;
+          if (
+            from.type !== (leaf ? "File" : "Directory") ||
+            (to !== null && (leaf || to.type !== "Directory"))
+          ) {
+            safe = false;
+            break;
+          }
+        }
+        if (!safe) continue;
+        const target = path.join(destination, relativePath);
+        yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fileSystem.copy(path.join(source, relativePath), target, { overwrite: false });
+      }
+    },
+    (effect, cwd) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "GitCommandError"
+            ? cause
+            : new GitCommandError({
+                operation: "GitVcsDriver.copyWorktreeIncludes",
+                command: "git worktree add",
+                cwd,
+                detail: "Could not copy selected local files into the worktree.",
+                cause,
+              }),
+        ),
+      ),
+  );
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -6777,6 +6864,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.andThen(
         fastCheckout ? checkoutCache.schedule(worktreePath, cacheGeneration) : Effect.void,
       ),
+      Effect.andThen(copyWorktreeIncludes(input.cwd, worktreePath)),
       Effect.andThen(
         onWorktreeClaimed
           ? Effect.uninterruptible(

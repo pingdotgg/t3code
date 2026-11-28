@@ -33,6 +33,17 @@ Configure worktrees in **Settings → Worktrees** (environment default or projec
 - **Worktree location** (per machine): Set an absolute path (e.g. `D:\worktrees` or `~/worktrees`) to store new worktrees elsewhere. Existing worktrees stay where they are; cleanup covers both folders.
 - **Fast worktree checkout (macOS beta)**: Enable **Settings → Labs → Fast worktree checkout** (Git 2.42+) to clone new worktrees via APFS copy-on-write from a local cache. Falls back to normal checkout for cross-drive paths, sparse checkouts, or Git LFS/filter repos.
 
+### Local files in new worktrees
+
+To bring ignored local skills or configuration into new Git worktrees, add a `.worktreeinclude` file at the source repository root. Use Git ignore patterns to select files or directories:
+
+```gitignore
+.agents/skills/
+.env
+```
+
+T3 copies matching ignored files before automatic setup actions and the first agent turn. Existing destination files stay intact. Tracked files, ordinary untracked files, and symlinks are not copied. Without `.worktreeinclude`, local files stay in the source checkout.
+
 ### Storage cleanup
 
 Enable automatic cleanup in **Settings → Worktrees → Cleanup** (off by default; runs on startup, on change, and hourly). Projects can set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
