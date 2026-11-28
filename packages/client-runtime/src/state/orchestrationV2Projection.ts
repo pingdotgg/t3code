@@ -65,6 +65,24 @@ function upsertEntity<T extends { readonly id: unknown }>(
   return next;
 }
 
+function attributePendingBackgroundTasks(
+  existing: OrchestrationV2ThreadProjection["providerThreads"],
+  next: OrchestrationV2ThreadProjection["providerThreads"][number],
+  runId: OrchestrationV2DomainEvent["runId"],
+) {
+  const tasks = next.pendingBackgroundTasks;
+  if (!tasks?.some((task) => task.runId === undefined)) return next;
+  const prev = existing.find((thread) => thread.id === next.id)?.pendingBackgroundTasks ?? [];
+  const known = new Map(prev.map((task) => [task.taskId, task.runId]));
+  return {
+    ...next,
+    pendingBackgroundTasks: tasks.map((task) => {
+      const owner = task.runId ?? (known.has(task.taskId) ? known.get(task.taskId) : runId);
+      return owner === undefined ? task : { ...task, runId: owner };
+    }),
+  };
+}
+
 // A deduped item repeats a record the stream just sent, so search newest first.
 function latestBodies(projection: OrchestrationV2ThreadProjection): DedupedBodySource {
   return {
@@ -405,7 +423,10 @@ export function applyOrchestrationV2ProjectionEvent(
           !isQueuedProviderThreadPlaceholder(event.payload)
             ? { ...base.thread, activeProviderThreadId: event.payload.id }
             : base.thread,
-        providerThreads: upsertEntity(base.providerThreads, event.payload),
+        providerThreads: upsertEntity(
+          base.providerThreads,
+          attributePendingBackgroundTasks(base.providerThreads, event.payload, event.runId),
+        ),
       };
     case "provider-turn.updated":
       return {
