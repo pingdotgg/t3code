@@ -11,7 +11,7 @@ Use the composer to send prompts, attach files, reference threads or pull reques
 
 The composer renders Markdown live as you type and reveals raw markers when your cursor enters styled text. The agent receives the exact Markdown you typed.
 
-- Disable live styling in **Settings → Chat → Rich text composer**.
+- Disable live styling, list continuation and nesting, and wrapping of selected text in **Settings → Chat → Rich text composer**.
 - Standard Markdown triggers (`- `, `1. `, `- [ ] `, `> `, `# `, `---`, and ` ``` ` + Enter) create lists, quotes, headings, rules, and code blocks.
 - In lists/quotes, `Shift+Enter` continues (or exits on an empty line), and `Tab` / `Shift+Tab` indents or outdents.
 - In code blocks, `Enter` keeps indentation, `Tab` / `Shift+Tab` indents selected lines, and closing ` ``` ` + Enter (or two blank lines) exits the block.

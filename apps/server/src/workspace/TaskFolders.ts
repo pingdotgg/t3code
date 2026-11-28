@@ -549,12 +549,11 @@ const make = Effect.gen(function* () {
     const resolved = yield* linkedGitDir(checkout);
     if (resolved === null)
       return `${checkout.worktreePath} is not a Git worktree of ${checkout.repositoryPath}`;
-    const head = (yield* fileSystem
-      .readFileString(path.join(resolved, "HEAD"))
-      .pipe(Effect.orElseSucceed(() => ""))).trim();
-    return head === `ref: refs/heads/${branch}`
-      ? null
-      : `${checkout.worktreePath} is not on the branch ${branch}`;
+    // Asked of Git: a reftable repository's HEAD file names no branch.
+    const head = yield* git
+      .currentBranch(checkout.worktreePath)
+      .pipe(Effect.orElseSucceed(() => null));
+    return head === branch ? null : `${checkout.worktreePath} is not on the branch ${branch}`;
   });
 
   const mapped = (taskFolder: Pick<TaskFolder, "root" | "anchor">, source: string) =>

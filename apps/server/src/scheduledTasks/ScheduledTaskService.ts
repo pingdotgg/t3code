@@ -731,7 +731,6 @@ export const layer = Layer.effect(
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
-          creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           -- Keep a next_run_at that a finishing run moved during this save, unless
           -- another edit changed the schedule or enabled state meanwhile.
