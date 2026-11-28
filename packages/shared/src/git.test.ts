@@ -227,9 +227,10 @@ describe("parseOriginUrlFromGitConfig", () => {
   it.each(["\u2028", "\u2029"])(
     "preserves Unicode line separators in remote urls: %j",
     (separator) => {
-      const url = `ssh://git@forge.example/org/first${separator}last.git`;
+      const url = `ssh://git@forge.example/org/first${separator}last.git${separator}`;
       for (const gap of ["\n", "\r\n", " "]) {
         expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = ${url}\n`)).toBe(url);
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = "${url}"\n`)).toBe(url);
       }
     },
   );
