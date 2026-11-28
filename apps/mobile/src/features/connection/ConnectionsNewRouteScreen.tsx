@@ -111,14 +111,16 @@ function PairingForm({
     setOwnAttempt(true);
   };
 
-  const handleHostChange = (value: string) => {
+  const splitPairingAddress = (value: string) => {
     const pairing = parsePairingUrl(value);
-    if (pairing.code) {
-      setHostInput(pairing.host);
-      setCodeInput(pairing.code);
-    } else {
-      setHostInput(value);
-    }
+    if (!pairing.code) return null;
+    setHostInput(pairing.host);
+    setCodeInput(pairing.code);
+    return pairing;
+  };
+
+  const handleHostChange = (value: string) => {
+    setHostInput(value);
     clearError();
   };
 
@@ -174,7 +176,8 @@ function PairingForm({
   };
 
   const handleSubmit = async () => {
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    const pairing = splitPairingAddress(hostInput);
+    const pairingUrl = buildPairingUrl(pairing?.host ?? hostInput, pairing?.code ?? codeInput);
     setOwnAttempt(true);
     setSubmitError(null);
     setIsSubmitting(true);
@@ -258,6 +261,7 @@ function PairingForm({
                 placeholder="192.168.1.100:3773"
                 value={hostInput}
                 onChangeText={handleHostChange}
+                onEndEditing={() => splitPairingAddress(hostInput)}
               />
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow

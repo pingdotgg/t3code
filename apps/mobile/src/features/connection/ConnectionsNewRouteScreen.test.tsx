@@ -51,15 +51,18 @@ vi.mock("../../components/ui/AppText", () => ({
     accessibilityLabel,
     value,
     onChangeText,
+    onEndEditing,
   }: {
     accessibilityLabel: string;
     value: string;
     onChangeText: (value: string) => void;
+    onEndEditing?: () => void;
   }) => (
     <input
       aria-label={accessibilityLabel}
       value={value}
       onChange={(event) => onChangeText(event.currentTarget.value)}
+      onBlur={onEndEditing}
     />
   ),
 }));
@@ -69,7 +72,24 @@ vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
 vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeAppearance: "dark" }),
 }));
-vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
+vi.mock("../settings/components/SettingsScreen", () => ({
+  SettingsScreen: ({
+    children,
+    actions,
+  }: {
+    children: ReactNode;
+    actions: { accessibilityLabel: string; disabled: boolean; onPress: () => void }[];
+  }) => (
+    <>
+      {children}
+      {actions.map(({ accessibilityLabel, disabled, onPress }) => (
+        <button key={accessibilityLabel} disabled={disabled} onClick={onPress}>
+          {accessibilityLabel}
+        </button>
+      ))}
+    </>
+  ),
+}));
 vi.mock("../settings/settings-navigation", () => ({
   leaveSettingsPage: vi.fn(),
   openSettings: vi.fn(),
@@ -104,6 +124,13 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
 
 import { ConnectionsNewRouteScreen } from "./ConnectionsNewRouteScreen";
 
+function enter(input: HTMLInputElement, value: string) {
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 it("does not show another feature's error as a pairing failure", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("__DEV__", false);
@@ -120,7 +147,7 @@ it("does not show another feature's error as a pairing failure", () => {
   expect(harness.pendingConnectionError).toBe("Could not send the message.");
 });
 
-it("splits a pasted pairing link and preserves the code during address edits", () => {
+it("splits a pasted pairing link when editing ends and preserves the code during address edits", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("__DEV__", false);
   harness.pendingConnectionError = null;
@@ -131,18 +158,13 @@ it("splits a pasted pairing link and preserves the code during address edits", (
     act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
     const address = container.querySelector<HTMLInputElement>('input[aria-label="Address"]')!;
     const code = container.querySelector<HTMLInputElement>('input[aria-label="Code"]')!;
-    const enter = (input: HTMLInputElement, value: string) => {
-      act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-          input,
-          value,
-        );
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
 
     enter(code, "manual-code");
-    enter(address, "  http://100.82.53.91:3773/pair#token=test-pairing-code\n");
+    const pasted = "  http://100.82.53.91:3773/pair#token=test-pairing-code";
+    enter(address, pasted);
+    expect(address.value).toBe(pasted);
+    expect(code.value).toBe("manual-code");
+    act(() => address.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(address.value).toBe("http://100.82.53.91:3773");
     expect(code.value).toBe("test-pairing-code");
 
@@ -152,6 +174,31 @@ it("splits a pasted pairing link and preserves the code during address edits", (
       expect(address.value).toBe(value);
       expect(code.value).toBe("replacement-code");
     }
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it("keeps a typed pairing link intact and submits its full token", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal("__DEV__", false);
+  harness.pendingConnectionError = null;
+  harness.connectPress.mockReset().mockResolvedValue({ ok: false, error: null });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  try {
+    act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
+    const address = container.querySelector<HTMLInputElement>('input[aria-label="Address"]')!;
+    const url = "http://100.82.53.91:3773/pair#token=test-pairing-code";
+    for (const character of url) enter(address, address.value + character);
+    expect(address.value).toBe(url);
+
+    await act(async () => container.querySelector("button")!.click());
+    expect(harness.connectPress).toHaveBeenCalledWith(
+      "http://100.82.53.91:3773/#token=test-pairing-code",
+      undefined,
+    );
   } finally {
     act(() => root.unmount());
   }
