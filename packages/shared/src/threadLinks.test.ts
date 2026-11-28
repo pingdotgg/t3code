@@ -570,7 +570,7 @@ describe("hosted thread links", () => {
     const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
 
     const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
-    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual(thread);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual({ ...thread, hosted: true });
     expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
 
     const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
