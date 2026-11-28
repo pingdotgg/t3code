@@ -10,6 +10,7 @@ import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-inp
 import { AppText as Text } from "../../components/ui/AppText";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { useAssetUrl } from "../../state/assets";
+import { useSyncListLayoutOnChange } from "./useSyncListLayoutOnChange";
 
 function AnswerFile(props: {
   environmentId: EnvironmentId;
@@ -17,6 +18,7 @@ function AnswerFile(props: {
 }) {
   const resource = { _tag: "attachment", attachmentId: props.attachment.id } as const;
   const url = useAssetUrl(props.environmentId, resource);
+  useSyncListLayoutOnChange(Boolean(url));
   return (
     <Pressable
       accessibilityRole="link"

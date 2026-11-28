@@ -9,6 +9,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import { useSyncListLayoutOnChange } from "./useSyncListLayoutOnChange";
 
 const FOLLOW_SLACK = 8;
 
@@ -38,6 +39,10 @@ export function ThreadCommandOutput(props: {
   const spans = useMemo(
     () => terminalOutputSpans(text, TERMINAL_PALETTES[props.themeAppearance]),
     [text, props.themeAppearance],
+  );
+  useSyncListLayoutOnChange(spans);
+  useSyncListLayoutOnChange(
+    `${data === null}:${data?.running}:${data?.output.truncated}:${error ?? ""}`,
   );
   if (text.length === 0) {
     const message = error

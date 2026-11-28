@@ -229,6 +229,7 @@ vi.mock("@legendapp/list/keyboard", () => ({
     ),
 }));
 vi.mock("@legendapp/list/react-native", () => ({
+  useSyncLayout: () => () => {},
   useViewabilityAmount: (callback: (token: { sizeVisible: number }) => void) =>
     useEffect(() => callback({ sizeVisible: 1 }), [callback]),
 }));

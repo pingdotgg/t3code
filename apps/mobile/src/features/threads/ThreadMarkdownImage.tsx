@@ -21,6 +21,7 @@ import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
 import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
+import { useSyncListLayoutOnChange } from "./useSyncListLayoutOnChange";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import {
@@ -141,6 +142,9 @@ export function ThreadMarkdownImageView(props: {
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
   const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
+  useSyncListLayoutOnChange(
+    displaySize ? `${displaySize.width}x${displaySize.height}` : `${placeholderWidth}:${failed}`,
+  );
 
   return (
     <View
