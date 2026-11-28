@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">Agentaviseringar</string>
+  <string name="agent_activity_channel_ongoing">Pågående agentaktivitet</string>
+
+  <string name="agent_activity_status_connecting">Ansluter</string>
+  <string name="agent_activity_status_working">Arbetar</string>
+  <string name="agent_activity_status_approval">Godkännande</string>
+  <string name="agent_activity_status_input">Indata</string>
+  <string name="agent_activity_status_waiting">Väntar</string>
+  <string name="agent_activity_status_done">Klar</string>
+  <string name="agent_activity_status_failed">Misslyckades</string>
+
+  <string name="agent_activity_chip_working">Aktiv</string>
+  <string name="agent_activity_chip_approve">Godkänn</string>
+  <string name="agent_activity_chip_answer">Svara</string>
+  <string name="agent_activity_chip_waiting">Väntar</string>
+  <string name="agent_activity_chip_done">Klar</string>
+  <string name="agent_activity_chip_failed">Fel</string>
+  <string name="agent_activity_chip_active">Aktiv</string>
+  <string name="agent_activity_chip_review">Granska</string>
+  <string name="agent_activity_chip_live">%1$s akt.</string>
+
+  <string name="agent_activity_action_open">Öppna</string>
+  <string name="agent_activity_action_approve">Godkänn</string>
+  <string name="agent_activity_action_answer">Svara</string>
+  <string name="agent_activity_action_dismiss">Stäng</string>
+
+  <string name="agent_activity_summary_default">Agentaktivitet</string>
+  <string name="agent_activity_summary_one_needs_you">1 behöver dig</string>
+  <string name="agent_activity_summary_many_need_you">%1$d behöver dig</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d misslyckades</item>
+    <item quantity="other">%1$d misslyckades</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d arbetar</item>
+    <item quantity="other">%1$d arbetar</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Klar, %1$d misslyckades</item>
+    <item quantity="other">Klar, %1$d misslyckades</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">Alla klara</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d aktiv</item>
+    <item quantity="other">%1$d aktiva</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">%1$d trådar</string>
+</resources>

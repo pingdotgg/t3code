@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">에이전트 알림</string>
+  <string name="agent_activity_channel_ongoing">진행 중인 에이전트 활동</string>
+
+  <string name="agent_activity_status_connecting">연결 중</string>
+  <string name="agent_activity_status_working">작업 중</string>
+  <string name="agent_activity_status_approval">승인</string>
+  <string name="agent_activity_status_input">입력</string>
+  <string name="agent_activity_status_waiting">대기 중</string>
+  <string name="agent_activity_status_done">완료</string>
+  <string name="agent_activity_status_failed">실패</string>
+
+  <string name="agent_activity_chip_working">작업 중</string>
+  <string name="agent_activity_chip_approve">승인</string>
+  <string name="agent_activity_chip_answer">답변</string>
+  <string name="agent_activity_chip_waiting">대기 중</string>
+  <string name="agent_activity_chip_done">완료</string>
+  <string name="agent_activity_chip_failed">실패</string>
+  <string name="agent_activity_chip_active">활성</string>
+  <string name="agent_activity_chip_review">검토</string>
+  <string name="agent_activity_chip_live">%1$s 활성</string>
+
+  <string name="agent_activity_action_open">열기</string>
+  <string name="agent_activity_action_approve">승인</string>
+  <string name="agent_activity_action_answer">답변</string>
+  <string name="agent_activity_action_dismiss">닫기</string>
+
+  <string name="agent_activity_summary_default">에이전트 활동</string>
+  <string name="agent_activity_summary_one_needs_you">1개 응답 필요</string>
+  <string name="agent_activity_summary_many_need_you">%1$d개 응답 필요</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">%1$d개 실패</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">%1$d개 작업 중</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">완료, %1$d개 실패</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">모두 완료</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">%1$d개 활성</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">스레드 %1$d개</string>
+</resources>

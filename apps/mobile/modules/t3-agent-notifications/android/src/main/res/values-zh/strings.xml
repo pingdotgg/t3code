@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">智能体提醒</string>
+  <string name="agent_activity_channel_ongoing">进行中的智能体活动</string>
+
+  <string name="agent_activity_status_connecting">正在连接</string>
+  <string name="agent_activity_status_working">运行中</string>
+  <string name="agent_activity_status_approval">待批准</string>
+  <string name="agent_activity_status_input">待输入</string>
+  <string name="agent_activity_status_waiting">等待中</string>
+  <string name="agent_activity_status_done">完成</string>
+  <string name="agent_activity_status_failed">失败</string>
+
+  <string name="agent_activity_chip_working">运行中</string>
+  <string name="agent_activity_chip_approve">待批准</string>
+  <string name="agent_activity_chip_answer">待输入</string>
+  <string name="agent_activity_chip_waiting">等待中</string>
+  <string name="agent_activity_chip_done">完成</string>
+  <string name="agent_activity_chip_failed">失败</string>
+  <string name="agent_activity_chip_active">运行中</string>
+  <string name="agent_activity_chip_review">待处理</string>
+  <string name="agent_activity_chip_live">%1$s 运行</string>
+
+  <string name="agent_activity_action_open">打开</string>
+  <string name="agent_activity_action_approve">批准</string>
+  <string name="agent_activity_action_answer">回复</string>
+  <string name="agent_activity_action_dismiss">忽略</string>
+
+  <string name="agent_activity_summary_default">智能体活动</string>
+  <string name="agent_activity_summary_one_needs_you">1 个需要你处理</string>
+  <string name="agent_activity_summary_many_need_you">%1$d 个需要你处理</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">%1$d 个失败</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">%1$d 个运行中</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">已完成，%1$d 个失败</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">全部完成</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">%1$d 个活跃</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">%1$d 个会话</string>
+</resources>

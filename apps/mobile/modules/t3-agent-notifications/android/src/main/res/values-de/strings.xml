@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">Agenten-Benachrichtigungen</string>
+  <string name="agent_activity_channel_ongoing">Laufende Agentenaktivität</string>
+
+  <string name="agent_activity_status_connecting">Verbindet</string>
+  <string name="agent_activity_status_working">Arbeitet</string>
+  <string name="agent_activity_status_approval">Genehmigung</string>
+  <string name="agent_activity_status_input">Eingabe</string>
+  <string name="agent_activity_status_waiting">Wartet</string>
+  <string name="agent_activity_status_done">Fertig</string>
+  <string name="agent_activity_status_failed">Fehlgeschlagen</string>
+
+  <string name="agent_activity_chip_working">Aktiv</string>
+  <string name="agent_activity_chip_approve">Freig.</string>
+  <string name="agent_activity_chip_answer">Antw.</string>
+  <string name="agent_activity_chip_waiting">Wartet</string>
+  <string name="agent_activity_chip_done">Fertig</string>
+  <string name="agent_activity_chip_failed">Fehler</string>
+  <string name="agent_activity_chip_active">Aktiv</string>
+  <string name="agent_activity_chip_review">Prüfen</string>
+  <string name="agent_activity_chip_live">%1$s akt.</string>
+
+  <string name="agent_activity_action_open">Öffnen</string>
+  <string name="agent_activity_action_approve">Genehmigen</string>
+  <string name="agent_activity_action_answer">Antworten</string>
+  <string name="agent_activity_action_dismiss">Verwerfen</string>
+
+  <string name="agent_activity_summary_default">Agentenaktivität</string>
+  <string name="agent_activity_summary_one_needs_you">1 braucht dich</string>
+  <string name="agent_activity_summary_many_need_you">%1$d brauchen dich</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d fehlgeschlagen</item>
+    <item quantity="other">%1$d fehlgeschlagen</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d arbeitet</item>
+    <item quantity="other">%1$d arbeiten</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Abgeschlossen, %1$d fehlgeschlagen</item>
+    <item quantity="other">Abgeschlossen, %1$d fehlgeschlagen</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">Alles abgeschlossen</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d aktiv</item>
+    <item quantity="other">%1$d aktiv</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">%1$d Threads</string>
+</resources>

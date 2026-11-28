@@ -34,6 +34,10 @@ class T3AgentNotificationsModule : Module() {
       AgentNotifications.setThreadOnScreen(path)
     }
 
+    Function("setLocale") { locale: String ->
+      appContext.reactContext?.let { AgentNotifications.setLocale(it, locale) }
+    }
+
     Function("openLiveUpdateSettings") {
       val context = appContext.reactContext
       if (context == null || Build.VERSION.SDK_INT < 36) {

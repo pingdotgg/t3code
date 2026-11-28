@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">エージェントのアラート</string>
+  <string name="agent_activity_channel_ongoing">進行中のエージェント活動</string>
+
+  <string name="agent_activity_status_connecting">接続中</string>
+  <string name="agent_activity_status_working">作業中</string>
+  <string name="agent_activity_status_approval">承認</string>
+  <string name="agent_activity_status_input">入力</string>
+  <string name="agent_activity_status_waiting">待機中</string>
+  <string name="agent_activity_status_done">完了</string>
+  <string name="agent_activity_status_failed">失敗</string>
+
+  <string name="agent_activity_chip_working">作業中</string>
+  <string name="agent_activity_chip_approve">承認</string>
+  <string name="agent_activity_chip_answer">回答</string>
+  <string name="agent_activity_chip_waiting">待機中</string>
+  <string name="agent_activity_chip_done">完了</string>
+  <string name="agent_activity_chip_failed">失敗</string>
+  <string name="agent_activity_chip_active">作業中</string>
+  <string name="agent_activity_chip_review">確認</string>
+  <string name="agent_activity_chip_live">%1$s 稼働</string>
+
+  <string name="agent_activity_action_open">開く</string>
+  <string name="agent_activity_action_approve">承認</string>
+  <string name="agent_activity_action_answer">回答</string>
+  <string name="agent_activity_action_dismiss">閉じる</string>
+
+  <string name="agent_activity_summary_default">エージェントのアクティビティ</string>
+  <string name="agent_activity_summary_one_needs_you">1 件が対応を求めています</string>
+  <string name="agent_activity_summary_many_need_you">%1$d 件が対応を求めています</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">%1$d 件が失敗</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">%1$d 件作業中</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">完了、%1$d 件が失敗</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">すべて完了</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">%1$d 個がアクティブ</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">%1$d 件のスレッド</string>
+</resources>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">Alertas de agentes</string>
+  <string name="agent_activity_channel_ongoing">Actividad de agentes en curso</string>
+
+  <string name="agent_activity_status_connecting">Conectando</string>
+  <string name="agent_activity_status_working">Trabajando</string>
+  <string name="agent_activity_status_approval">Aprobación</string>
+  <string name="agent_activity_status_input">Respuesta</string>
+  <string name="agent_activity_status_waiting">Esperando</string>
+  <string name="agent_activity_status_done">Listo</string>
+  <string name="agent_activity_status_failed">Falló</string>
+
+  <string name="agent_activity_chip_working">Activo</string>
+  <string name="agent_activity_chip_approve">Aprobar</string>
+  <string name="agent_activity_chip_answer">Resp.</string>
+  <string name="agent_activity_chip_waiting">Espera</string>
+  <string name="agent_activity_chip_done">Listo</string>
+  <string name="agent_activity_chip_failed">Falló</string>
+  <string name="agent_activity_chip_active">Activo</string>
+  <string name="agent_activity_chip_review">Revisar</string>
+  <string name="agent_activity_chip_live">%1$s act.</string>
+
+  <string name="agent_activity_action_open">Abrir</string>
+  <string name="agent_activity_action_approve">Aprobar</string>
+  <string name="agent_activity_action_answer">Responder</string>
+  <string name="agent_activity_action_dismiss">Descartar</string>
+
+  <string name="agent_activity_summary_default">Actividad de agentes</string>
+  <string name="agent_activity_summary_one_needs_you">1 te necesita</string>
+  <string name="agent_activity_summary_many_need_you">%1$d te necesitan</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d con error</item>
+    <item quantity="other">%1$d con error</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d trabajando</item>
+    <item quantity="other">%1$d trabajando</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Finalizado, %1$d con error</item>
+    <item quantity="other">Finalizado, %1$d con error</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">Todo finalizado</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d activo</item>
+    <item quantity="other">%1$d activos</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">%1$d hilos</string>
+</resources>

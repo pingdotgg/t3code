@@ -6,6 +6,7 @@ interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
+  setLocale?(locale: string): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
 }
@@ -24,12 +25,22 @@ function appScheme(): string {
   return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code";
 }
 
+let syncedLocale: string | null = null;
+
 export function configureAndroidAgentNotifications(
   deviceId: string,
   userId: string,
   ongoingEnabled: boolean,
 ): void {
   native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
+  if (syncedLocale !== null) {
+    native?.setLocale?.(syncedLocale);
+  }
+}
+
+export function setAndroidAgentNotificationsLocale(locale: string): void {
+  syncedLocale = locale;
+  native?.setLocale?.(locale);
 }
 
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {

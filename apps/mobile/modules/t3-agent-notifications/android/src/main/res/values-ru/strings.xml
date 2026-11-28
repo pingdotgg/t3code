@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">Оповещения агентов</string>
+  <string name="agent_activity_channel_ongoing">Текущая активность агентов</string>
+
+  <string name="agent_activity_status_connecting">Подключение</string>
+  <string name="agent_activity_status_working">Работает</string>
+  <string name="agent_activity_status_approval">Подтверждение</string>
+  <string name="agent_activity_status_input">Ввод</string>
+  <string name="agent_activity_status_waiting">Ожидает</string>
+  <string name="agent_activity_status_done">Готово</string>
+  <string name="agent_activity_status_failed">Ошибка</string>
+
+  <string name="agent_activity_chip_working">В раб.</string>
+  <string name="agent_activity_chip_approve">Подтв.</string>
+  <string name="agent_activity_chip_answer">Ответ</string>
+  <string name="agent_activity_chip_waiting">Ожид.</string>
+  <string name="agent_activity_chip_done">Готово</string>
+  <string name="agent_activity_chip_failed">Ошибка</string>
+  <string name="agent_activity_chip_active">Актив.</string>
+  <string name="agent_activity_chip_review">Провер.</string>
+  <string name="agent_activity_chip_live">%1$s акт.</string>
+
+  <string name="agent_activity_action_open">Открыть</string>
+  <string name="agent_activity_action_approve">Подтвердить</string>
+  <string name="agent_activity_action_answer">Ответить</string>
+  <string name="agent_activity_action_dismiss">Закрыть</string>
+
+  <string name="agent_activity_summary_default">Активность агентов</string>
+  <string name="agent_activity_summary_one_needs_you">1 ждёт вас</string>
+  <string name="agent_activity_summary_many_need_you">%1$d ждут вас</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">Ошибок: %1$d</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">В работе: %1$d</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">Завершено, ошибок: %1$d</item>
+  </plurals>
+  <string name="agent_activity_summary_all_finished">Все завершены</string>
+
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">Активно: %1$d</item>
+  </plurals>
+  <string name="agent_activity_subtext_threads">Чатов: %1$d</string>
+</resources>
