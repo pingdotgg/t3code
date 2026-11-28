@@ -6876,6 +6876,7 @@
   "ff49cda2006d155a": "Impossible de vérifier l’appartenance à la pile",
   "be49947d8fca9505": "Vérification de l’appartenance à la pile…",
   "a2e58d83bc5daf36": "Fusion automatique",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "Réduire le panneau de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "9f07c0e2e791c6b0": "{count, plural, one {{formatted} fichier modifié} other {{formatted} fichiers modifiés}}",
   "1f7445dfeeb0502d": "Copier la commande de checkout",

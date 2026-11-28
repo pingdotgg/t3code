@@ -6887,6 +6887,7 @@
   "ff49cda2006d155a": "无法检查堆叠归属",
   "be49947d8fca9505": "正在检查堆叠归属…",
   "a2e58d83bc5daf36": "自动合并",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "收起 {term, select, mr {MR} cr {change request} other {PR}} 面板",
   "9f07c0e2e791c6b0": "{count, plural, other {{formatted} 个已更改的文件}}",
   "1f7445dfeeb0502d": "复制检出工作副本的命令",

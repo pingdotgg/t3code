@@ -70,6 +70,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
     read: Effect.Effect<
       Pick<GitHubPullRequestDetail, "state" | "checks" | "headSha"> & {
         workflowApprovalsRequired?: number;
+        mergeBlocked?: boolean;
       },
       GitHubPullRequestApiError
     >,
@@ -189,6 +190,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
             ...(fresh.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: fresh.workflowApprovalsRequired }),
+            ...(fresh.mergeBlocked === undefined ? {} : { mergeBlocked: fresh.mergeBlocked }),
           };
           entry.value =
             fresh.workflowApprovalsRequired !== undefined && fresh.headSha === head.head.sha

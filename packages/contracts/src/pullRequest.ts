@@ -693,6 +693,8 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /** Whether host rules block this viewer's immediate merge. Absent when the host does not report it. */
+  mergeBlocked: Schema.optional(Schema.Boolean),
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
@@ -706,6 +708,8 @@ export const PullRequestChecks = Schema.Struct({
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /** The detail's `mergeBlocked`, read with the checks so a block clears as they refresh. */
+  mergeBlocked: Schema.optional(Schema.Boolean),
 });
 export type PullRequestChecks = typeof PullRequestChecks.Type;
 

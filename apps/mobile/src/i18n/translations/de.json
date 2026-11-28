@@ -3127,6 +3127,7 @@
   "1d44f8d46fa8508e": "Markiere diesen Entwurf vor dem Mergen als bereit für Review.",
   "6ffcf2825c96d94b": "Löse die Branch-Konflikte vor dem Mergen.",
   "ceac7373aef06b11": "Dieses Repository hat keine verfügbaren Merge-Methoden.",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "Auf {provider} öffnen",
   "dd7e258483f58a8f": "Archivierter Thread",
   "754d11d1f210a398": "Neuen Thread starten",

@@ -140,6 +140,8 @@ query PullRequestCore(
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
+      # Newer than some Enterprise servers; without it, branch rules never read as blocking.
+      isMergeQueueEnabled @include(if: $mergeQueue)
       baseRef {
         compare(headRef: $headRef) {
           behindBy

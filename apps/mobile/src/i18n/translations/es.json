@@ -3122,6 +3122,7 @@
   "1d44f8d46fa8508e": "Marca este borrador como listo para revisión antes de fusionar.",
   "6ffcf2825c96d94b": "Resuelve los conflictos de la rama antes de fusionar.",
   "ceac7373aef06b11": "Este repositorio no tiene métodos de merge disponibles.",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "Abrir en {provider}",
   "dd7e258483f58a8f": "Hilo archivado",
   "754d11d1f210a398": "Iniciar un hilo nuevo",

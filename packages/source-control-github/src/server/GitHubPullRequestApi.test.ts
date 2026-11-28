@@ -71,6 +71,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         isDraft: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
+        isMergeQueueEnabled: false,
         reviewDecision: null,
         additions: 0,
         deletions: 0,
@@ -2460,7 +2461,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           id: "PR_7",
           headRefOid: "abc123",
           isMergeQueueEnabled: false,
-          mergeStateStatus: "BLOCKED",
+          mergeStateStatus: "CLEAN",
           baseRef: { compare: { behindBy: 2 } },
           ...pullRequest,
         },
@@ -2550,6 +2551,58 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(
         yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
       ).toBeUndefined();
+    }),
+  );
+
+  // GitHub merges a BLOCKED pull request for a viewer who may bypass branch rules, with none of
+  // the opt-in github.com asks for, so the merge mutation must never be sent while it is blocked.
+  it.effect("refuses an immediate merge while branch rules block the pull request", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
+        ["mergePullRequest(", { data: { mergePullRequest: { pullRequest: { state: "MERGED" } } } }],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+      );
+      expect(error._tag).toBe("GitHubMergeBlockedError");
+      // Only the action-state read ran; the merge mutation was never sent.
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("refuses a stack merge while branch rules block a layer it would merge", () =>
+    Effect.gen(function* () {
+      route(["merge-async", { status: "merged", details: {} }]);
+      const answer = mockedExecute.getMockImplementation()!;
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "graphql" && matches(call, "query PullRequestActionState")
+          ? Effect.succeed(
+              output(
+                encodeJson(
+                  actionState({
+                    mergeStateStatus: call.variables?.["number"] === 6 ? "BLOCKED" : "CLEAN",
+                  }),
+                ),
+              ),
+            )
+          : answer(call),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "merge",
+          stackNumber: 3,
+          expectedStackHeads: [
+            { number: 6, headSha: "aaa" },
+            { number: 7, headSha: "bbb" },
+          ],
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "GitHubMergeBlockedError", number: 6 });
+      expect(restCallsTo("merge-async")).toEqual([]);
     }),
   );
 
@@ -2893,7 +2946,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
               "Details\n\nCo-authored-by: Alice <alice@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>",
             ),
           ],
-          ["query PullRequestActionState", actionState()],
+          [
+            "query PullRequestActionState",
+            // Auto-merge is what a pull request that is not ready to merge yet is armed with.
+            actionState({ mergeStateStatus: action === "merge" ? "CLEAN" : "BLOCKED" }),
+          ],
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         yield* cli.runPullRequestAction({
@@ -3172,13 +3229,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
           checks: [],
           headSha: sha,
           workflowApprovalsRequired: known?.runs.length ?? 0,
+          mergeBlocked: !runsChanged,
         };
       });
-      yield* revalidate(pullRequestInput, read);
-      yield* revalidate(pullRequestInput, read);
+      const first = yield* revalidate(pullRequestInput, read);
+      expect(first).toEqual({
+        state: "open",
+        checks: [],
+        workflowApprovalsRequired: 0,
+        mergeBlocked: true,
+      });
+      expect(yield* revalidate(pullRequestInput, read)).toEqual(first);
       expect(reads).toBe(1);
       runsChanged = true;
-      yield* revalidate(pullRequestInput, read);
+      expect(yield* revalidate(pullRequestInput, read)).toEqual({
+        state: "open",
+        checks: [],
+        workflowApprovalsRequired: 1,
+        mergeBlocked: false,
+      });
       expect(reads).toBe(2);
     }).pipe(
       Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {

@@ -6875,6 +6875,7 @@
   "ff49cda2006d155a": "Não foi possível verificar a participação na pilha",
   "be49947d8fca9505": "Verificando a participação na pilha…",
   "a2e58d83bc5daf36": "Merge automático",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "Recolher o painel {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
   "9f07c0e2e791c6b0": "{count, plural, one {{formatted} arquivo alterado} other {{formatted} arquivos alterados}}",
   "1f7445dfeeb0502d": "Copiar comando de checkout",

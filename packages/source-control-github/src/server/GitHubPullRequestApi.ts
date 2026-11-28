@@ -314,7 +314,21 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
   }
 }
 
+/**
+ * GitHub lets a viewer who may bypass branch rules merge a blocked pull request through the plain
+ * merge mutation, with none of the opt-in github.com asks for. T3 never takes that path on its own.
+ */
+export class GitHubMergeBlockedError extends Schema.TaggedError<GitHubMergeBlockedError>()(
+  "GitHubMergeBlockedError",
+  { number: Schema.Int },
+) {
+  override get message(): string {
+    return `The repository's rules block merging #${this.number} until their requirements are met. Enable auto-merge to merge it once they are, or bypass the rules on GitHub.`;
+  }
+}
+
 export type GitHubPullRequestApiError =
+  | GitHubMergeBlockedError
   | GitHubBranchDeletionRefusedError
   | GitHubStackActionError
   | GitHubRequestPolicy.GitHubApiError
@@ -2692,6 +2706,35 @@ export const make = Effect.gen(function* () {
     }),
 
     runPullRequestAction: Effect.fn("GitHubPullRequestApi.runPullRequestAction")(function (input) {
+      const readActionState = (number = input.number) => {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        const target = { ...input, number, operation: "runPullRequestAction" };
+        return client
+          .PullRequestActionState({
+            owner,
+            name,
+            number,
+            headRef: `refs/pull/${number}/head`,
+          })
+          .pipe(
+            toleratingMissingPullRef(decodePullRequestActionState),
+            graphql({ ...target, allowReserve: true }),
+            Effect.map((result) => result.repository?.pullRequest ?? null),
+            Effect.flatMap(found(target)),
+          );
+      };
+      // BLOCKED also covers pending required checks and reviews. A viewer who may bypass branch
+      // rules would merge straight past them, so an immediate merge is refused while blocked.
+      const refuseBlockedMerge = (
+        state: {
+          readonly isMergeQueueEnabled?: boolean | null | undefined;
+          readonly mergeStateStatus?: string | null | undefined;
+        },
+        number = input.number,
+      ) =>
+        state.isMergeQueueEnabled !== true && state.mergeStateStatus?.toUpperCase() === "BLOCKED"
+          ? Effect.fail(new GitHubMergeBlockedError({ number }))
+          : Effect.void;
       if (input.action === "delete-branch") {
         return Effect.gen(function* () {
           if (input.stackNumber !== undefined) {
@@ -2794,6 +2837,17 @@ export const make = Effect.gen(function* () {
             Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
           );
+        if (input.action === "merge")
+          // Merging a layer merges the open layers below it too; the stack action checks that
+          // `expectedStackHeads` names exactly those layers.
+          return Effect.forEach(
+            input.expectedStackHeads?.map((layer) => layer.number) ?? [input.number],
+            (number) =>
+              readActionState(number).pipe(
+                Effect.flatMap((state) => refuseBlockedMerge(state, number)),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ).pipe(Effect.andThen(stackAction("merge")));
         if (input.action !== "enable-auto-merge") return stackAction(input.action);
         const expectedHeadOid = input.expectedStackHeads?.find(
           (layer) => layer.number === input.number,
@@ -2925,21 +2979,9 @@ export const make = Effect.gen(function* () {
       }
       return Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
-        // Fresh head and merge-queue state determine the mutation's revision and route.
         const target = { ...input, operation: "runPullRequestAction" };
-        const state = yield* client
-          .PullRequestActionState({
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-          })
-          .pipe(
-            toleratingMissingPullRef(decodePullRequestActionState),
-            graphql({ ...target, allowReserve: true }),
-            Effect.map((result) => result.repository?.pullRequest ?? null),
-            Effect.flatMap(found(target)),
-          );
+        // Fresh head and merge-queue state determine the mutation's revision and route.
+        const state = yield* readActionState();
         if (action === "update-branch") {
           if (state.baseRef?.compare?.behindBy === 0) return;
           return yield* client
@@ -2984,6 +3026,7 @@ export const make = Effect.gen(function* () {
           state.isMergeQueueEnabled === true ||
           (action === "enable-auto-merge" &&
             !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+        if (action === "merge") yield* refuseBlockedMerge(state);
         const merge = {
           pullRequestId: state.id,
           mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",

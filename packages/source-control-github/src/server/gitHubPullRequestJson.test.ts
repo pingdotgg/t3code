@@ -417,6 +417,7 @@ describe("pull request detail decoding", () => {
             viewerCanUpdate: true,
             viewerDidAuthor: false,
             viewerCanUpdateBranch: false,
+            isMergeQueueEnabled: false,
             baseRef: null,
             reviewRequests: { nodes: [] },
             labels: { nodes: [] },
@@ -559,6 +560,19 @@ describe("pull request detail decoding", () => {
 
     expect(detail.checks.map((check) => check.status)).toEqual(["success", "action-required"]);
     expect(detail.checksState).toBe("pending");
+  });
+
+  it("blocks merging a mergeable pull request with green checks that branch rules still hold, unless a merge queue takes it", () => {
+    const passing = [check({ name: "build", status: "COMPLETED", conclusion: "SUCCESS" })];
+
+    expect(detailOf(passing)).toMatchObject({
+      checksState: "passing",
+      mergeability: "mergeable",
+      mergeBlocked: true,
+    });
+    expect(detailOf(passing, { mergeStateStatus: "CLEAN" }).mergeBlocked).toBe(false);
+    expect(detailOf(passing, { isMergeQueueEnabled: true }).mergeBlocked).toBe(false);
+    expect(detailOf(passing, { isMergeQueueEnabled: undefined }).mergeBlocked).toBe(false);
   });
 
   it("reads a merged pull request's merge commit and who merged it", () => {
