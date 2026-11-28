@@ -19,6 +19,7 @@ import {
   antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
+  antigravitySkipsPermissions,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
 
@@ -87,6 +88,40 @@ describe("Antigravity system prompt append", () => {
         ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
         : undefined,
     );
+  });
+});
+
+describe("antigravitySkipsPermissions", () => {
+  it.each([
+    { label: "undefined policy", policy: undefined, expected: false },
+    {
+      label: "unrestricted full-access",
+      policy: { runtimeMode: "full-access" as const },
+      expected: true,
+    },
+    {
+      label: "full-access with matching maxRuntimeMode",
+      policy: { runtimeMode: "full-access" as const, maxRuntimeMode: "full-access" as const },
+      expected: true,
+    },
+    {
+      label: "full-access with narrower maxRuntimeMode",
+      policy: { runtimeMode: "full-access" as const, maxRuntimeMode: "auto" as const },
+      expected: false,
+    },
+    {
+      label: "full-access with explicit approvalPolicy",
+      policy: { runtimeMode: "full-access" as const, approvalPolicy: "on-request" },
+      expected: false,
+    },
+    {
+      label: "full-access with explicit sandboxPolicy",
+      policy: { runtimeMode: "full-access" as const, sandboxPolicy: { type: "readOnly" } },
+      expected: false,
+    },
+    { label: "auto", policy: { runtimeMode: "auto" as const }, expected: false },
+  ])("returns $expected for $label", ({ policy, expected }) => {
+    expect(antigravitySkipsPermissions(policy)).toBe(expected);
   });
 });
 

@@ -53,6 +53,7 @@ import {
   antigravityModelOptions,
   antigravityServesT3Code,
   antigravitySessionMode,
+  antigravitySkipsPermissions,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   OPEN_MODEL_ACCESS_RELEASE,
@@ -229,6 +230,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      options?: { readonly skipPermissions?: boolean },
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -310,6 +312,7 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv,
           auth,
           runtimeTempDirectory,
+          ...(options?.skipPermissions === true ? { skipPermissions: true } : {}),
         }),
       };
     });
@@ -374,12 +377,13 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, runtimePolicy, ...runtimeInput } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        { skipPermissions: antigravitySkipsPermissions(runtimePolicy) },
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,

@@ -440,19 +440,36 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
+        // Unrestricted Full access passes `--dangerously-skip-permissions` so detached subagents do
+        // not time out on unforwarded prompts; restricted Full access and Auto-accept edits omit it.
         h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        for (const scenario of [
+          {
+            name: "full-access",
+            policy: { runtimeMode: "full-access" as const },
+            skipPermissions: true,
+          },
+          {
+            name: "full-access-restricted",
+            policy: { runtimeMode: "full-access" as const, approvalPolicy: "on-request" },
+            skipPermissions: false,
+          },
+          {
+            name: "auto-accept-edits",
+            policy: { runtimeMode: "auto-accept-edits" as const },
+            skipPermissions: false,
+          },
+        ]) {
           const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
+          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${scenario.name}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
+            ...scenario.policy,
             interactionMode: "default",
             cwd: workspace,
           });
           const cliSession = yield* h.instance.orchestrationAdapter.openSession({
             threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
+            providerSessionId: ProviderSessionId.make(`provider-session-cli-${scenario.name}`),
             modelSelection,
             runtimePolicy: cliPolicy,
           });
@@ -467,6 +484,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             h.profileDirectory,
             "--app-data-dir",
             "antigravity-acp",
+            ...(scenario.skipPermissions ? ["--dangerously-skip-permissions"] : []),
           ]);
           expect(
             (yield* h.readRequests)
@@ -479,6 +497,64 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "respawns without --dangerously-skip-permissions when a Full access session downgrades before a turn",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const threadId = ThreadId.make("thread-antigravity-downgrade");
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-downgrade-" });
+            const fullAccessPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const supervisedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("provider-session-antigravity-downgrade"),
+              modelSelection,
+              runtimePolicy: fullAccessPolicy,
+            });
+            const providerThread = yield* session.ensureThread({
+              threadId,
+              modelSelection,
+              runtimePolicy: fullAccessPolicy,
+            });
+            yield* session.resumeThread({
+              providerThread,
+              modelSelection,
+              runtimePolicy: supervisedPolicy,
+            });
+          }),
+        );
+
+        const agentLaunches = h.launches.filter(
+          (launch) => launch.command === h.first.executablePath,
+        );
+        expect(agentLaunches.map((launch) => launch.args)).toEqual([
+          [
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
+            "--dangerously-skip-permissions",
+          ],
+          ["acp", "--gemini-dir", h.profileDirectory, "--app-data-dir", "antigravity-acp"],
+        ]);
+        yield* h.assertClosed;
       }),
   );
 
