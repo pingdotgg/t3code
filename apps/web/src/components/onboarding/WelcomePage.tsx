@@ -854,40 +854,39 @@ function FindProjectsSection({
   if (importSourceCount === 0) return null;
   return (
     <WelcomeSection title={gt("Projects")}>
-      <div className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-2 py-1">
-        <RowIcon>
-          <FolderSearchIcon className="size-4" />
-        </RowIcon>
-        <span className="min-w-0 flex-1">
-          <span className="block text-meta text-foreground">
-            <T>Bring in your projects</T>
-          </span>
-          <span className="block text-caption text-muted-foreground">
-            <T>
-              T3 Code can read your <Var>{importSourcesLabel}</Var> session history to find the
-              folders you worked in, and their git remotes.
-            </T>
-          </span>
-        </span>
-        <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void find()}>
-          <T>Find my projects</T>
-        </Button>
-      </div>
-      <label htmlFor={usageCheckboxId} className="flex items-center gap-3 py-1 ps-8 text-caption">
-        <RowIcon>
+      <OnboardingAgentRow
+        icon={<FolderSearchIcon className="size-4.5 shrink-0 text-muted-foreground" />}
+        title={<T>Bring in your projects</T>}
+        description={
+          <T>
+            T3 Code can read your <Var>{importSourcesLabel}</Var> session history to find the
+            folders you worked in, and their git remotes.
+          </T>
+        }
+        control={
+          <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void find()}>
+            <T>Find my projects</T>
+          </Button>
+        }
+      >
+        <label
+          htmlFor={usageCheckboxId}
+          className="flex items-center gap-2 text-meta text-muted-foreground"
+        >
           <Checkbox
             id={usageCheckboxId}
             checked={includeUsage}
             disabled={disabled}
             onCheckedChange={(checked) => setIncludeUsage(Boolean(checked))}
           />
-        </RowIcon>
-        <span className="text-muted-foreground">
-          <T>
-            Also show my usage stats from these agents, which can read their sign-in to check limits
-          </T>
-        </span>
-      </label>
+          <span className="text-pretty">
+            <T>
+              Also show my usage stats from these agents, which can read their sign-in to check
+              limits
+            </T>
+          </span>
+        </label>
+      </OnboardingAgentRow>
     </WelcomeSection>
   );
 }
@@ -1353,7 +1352,13 @@ function AgentRow({
   if (!compact)
     return (
       <OnboardingAgentRow
-        driver={provider.driver}
+        icon={
+          <ProviderInstanceIcon
+            driverKind={provider.driver}
+            displayName={name}
+            iconClassName="size-4.5"
+          />
+        }
         title={name}
         description={detail}
         control={
