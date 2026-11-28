@@ -63,10 +63,19 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
   const measured = readMeasuredHeights(heights);
   return {
     attachmentId,
-    title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
+    title: htmlRenderTitle(title),
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
   };
+}
+
+export function htmlRenderTitle(title: string) {
+  return (
+    title
+      .trim()
+      .slice(0, HTML_RENDER_MAX_TITLE_LENGTH)
+      .replace(/\p{Surrogate}$/u, "") || "HTML"
+  );
 }
 
 export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: HtmlRenderReference) {
