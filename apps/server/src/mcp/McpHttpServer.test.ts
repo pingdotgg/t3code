@@ -21,12 +21,14 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import { TestClock } from "effect/testing";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -2138,9 +2140,10 @@ it.effect(
 );
 
 // Claude retries an MCP request after 5 seconds and gives up on the server after 30.
-it.live("admits an MCP request while the thread's forge lookup has not answered", () =>
+it.effect("admits an MCP request while the thread's forge lookup has not answered", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
       const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
         requestNamespace: "hungForgeToken",
@@ -2170,7 +2173,8 @@ it.live("admits an MCP request while the thread's forge lookup has not answered"
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
             // A `gh auth token` stuck on the secret service never hands back an answer in time.
             Layer.mock(PullRequestService.PullRequestService)({
-              servesProject: () => Effect.never,
+              servesProject: () =>
+                Deferred.succeed(lookupStarted, undefined).pipe(Effect.andThen(Effect.never)),
             }),
             Layer.mock(GitManager.GitManager)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -2198,8 +2202,11 @@ it.live("admits an MCP request while the thread's forge lookup has not answered"
             "application/json",
           ),
         })
-        .pipe(Effect.timeoutOption("4 seconds"));
-      expect(initialize._tag).toBe("Some");
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(lookupStarted);
+      yield* TestClock.adjust("1 second");
+      const response = yield* Fiber.join(initialize);
+      expect(response.status).toBe(200);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
