@@ -228,9 +228,14 @@ function wrapPosixCommand(command: string, sentinel: string): string {
   return lines.join("\r ");
 }
 
+function quoteFish(value: string): string {
+  return `'${value.replace(/[\\']/g, "\\$&")}'`;
+}
+
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
+  shellPath: string,
   sentinel: string,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
@@ -238,7 +243,15 @@ function wrapCommandForCompletion(
     case "powershell":
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+      // The closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
+      // Interactive fish leaves a body that fails to parse in its editor, so it is parse-checked first (fish before
+      // 3.2 rejects unknown commands there). A failed check reads away the lines typed after it, so a retry finds an
+      // empty editor, then prints the error last so the setup output tail still shows it.
+      return [
+        "begin; if string match -qr '^(3\\.([2-9]|[1-9][0-9])|[4-9]|[1-9][0-9])\\.' -- $version",
+        `set -l e (printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-execute 2>&1); or begin; set -l s $status; for __t3i in (seq ${body.split("\r").length + 2}); read -l --prompt-str '' __t3l; end; printf '%s\\n' $e; printf '\\n${sentinel}%s\\n' $s; end`,
+        `end; end\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`,
+      ].join("; ");
     case "nushell": {
       const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
         char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
@@ -590,6 +603,7 @@ export const make = Effect.gen(function* () {
         commandLine = wrapCommandForCompletion(
           script.command,
           completionShell,
+          shell,
           completionSentinel(completionToken),
         );
       }

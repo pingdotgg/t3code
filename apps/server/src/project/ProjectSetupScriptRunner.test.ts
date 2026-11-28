@@ -169,6 +169,20 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
+  it.effect("a fish setup command that fails to parse still reports completion", () =>
+    Effect.gen(function* () {
+      const command = 'node "${HOME:-.}/x.mjs" setup';
+      const { writes } = yield* setup({ shell: "/usr/bin/fish", command });
+      yield* TestClock.adjust("3 seconds");
+      const [check, ...rest] = (yield* Queue.take(writes)).split("\r");
+      expect(check).toContain(
+        `'node "\${HOME:-.}/x.mjs" setup' | '/usr/bin/fish' --no-execute 2>&1); or begin; set -l s $status; for __t3i in (seq 3); read -l --prompt-str '' __t3l; end; printf '%s\\n' $e; printf`,
+      );
+      // Typed on its own line so the fish line editor still expands abbreviations.
+      expect(rest).toContain(command);
+    }),
+  );
+
   it.effect("types an escaped Nushell wrapper once its line editor starts", () =>
     Effect.gen(function* () {
       const command =
