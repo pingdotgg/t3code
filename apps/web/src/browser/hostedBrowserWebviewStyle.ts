@@ -18,7 +18,7 @@ export interface HostedBrowserWebviewWrapperStyle {
 }
 
 const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
-// Opacity 0 lets the compositor skip the guest and stall captures; this stays drawn but unseen.
+// Translucent themes show the parked guest through the app; 0 would let the compositor skip it and stall captures.
 const PARKED_BROWSER_WEBVIEW_OPACITY = 0.01;
 
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
@@ -52,8 +52,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   }
 
   if (renderingActive) {
-    // Electron stops compositing offscreen guests, so capture-active guests stay in the viewport.
-    // Translucent themes show what sits behind the app, so the parked guest cannot rely on being covered.
+    // Electron stops compositing offscreen guests; keep capture-active guests inside the viewport behind the app.
     return {
       left: 0,
       top: 0,
