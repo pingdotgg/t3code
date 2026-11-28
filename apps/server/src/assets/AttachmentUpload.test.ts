@@ -199,6 +199,30 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("does not store PNG bytes declared as image/jpeg as a JPEG", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pngBytes = new Uint8Array([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52,
+      ]);
+      const issued = yield* issueAttachmentUploadUrl({
+        name: "screenshot.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: pngBytes.byteLength,
+      });
+      const claims = yield* validateAttachmentUploadToken(
+        issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!claims) throw new Error("Expected valid upload claims.");
+
+      yield* storeAttachmentUpload(claims, pngBytes);
+      expect(
+        NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.jpg`)),
+      ).toBe(false);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("streams generic files to a path with their original extension", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
