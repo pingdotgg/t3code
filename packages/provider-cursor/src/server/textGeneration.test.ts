@@ -166,6 +166,26 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("runs the agent without plan mode or built-in tools", () =>
+    Effect.gen(function* () {
+      // Plan mode lets the model put the JSON in a CreatePlan call instead of its reply.
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/cursor-plan-mode",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "default"),
+      });
+
+      const options = cursorSdkMock.create.mock.calls[0]?.[0];
+      expect(options).not.toMatchObject({ mode: "plan" });
+      expect(options).toMatchObject({ tools: [] });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("accepts json objects with extra assistant text around them", () =>
     Effect.gen(function* () {
       cursorSdkMock.prompt.mockResolvedValueOnce({
