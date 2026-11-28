@@ -1161,7 +1161,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                   const wrapperStdout = `${JSON.stringify({
                     content: [],
                     structuredContent: { htmlRender: page("node-wrapper") },
-                  })}\n{finished}`;
+                  })}\n{finished}\n{"finished":true}`;
                   yield* send({
                     sessionUpdate: "tool_call",
                     toolCallId: "node-wrapper",
@@ -1176,6 +1176,18 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "node-wrapper",
                     status: "completed",
                     rawOutput: { stdout: wrapperStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
+                    status: "completed",
+                    rawOutput: {
+                      stdout: JSON.stringify({
+                        content: [],
+                        structuredContent: { htmlRender: page("spoofed-replacement") },
+                      }),
+                      exit_code: 0,
+                    },
                   });
                   yield* send({
                     sessionUpdate: "tool_call_update",

@@ -1126,6 +1126,7 @@ interface ShellWord {
 function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>> {
   const commands: Array<Array<ShellWord>> = [];
   let words: Array<ShellWord> = [];
+  const pendingHeredocs: Array<{ readonly delimiter: string; readonly stripTabs: boolean }> = [];
   let text = "";
   let hasWord = false;
   let start = -1;
@@ -1144,6 +1145,55 @@ function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>>
     if (words.length === 0) return;
     commands.push(words);
     words = [];
+  };
+
+  const readHeredocDelimiter = (): string => {
+    while (index < command.length && (command[index] === " " || command[index] === "\t")) {
+      index += 1;
+    }
+    let delimiter = "";
+    while (index < command.length) {
+      const ch = command[index]!;
+      if (ACP_MCP_SHELL_COMMAND_SEPARATOR.test(ch) || ACP_MCP_SHELL_WORD_SEPARATOR.test(ch)) {
+        break;
+      }
+      if (ch === "'" || ch === '"') {
+        const quote = ch;
+        index += 1;
+        while (index < command.length && command[index] !== quote) {
+          if (quote === '"' && command[index] === "\\" && index + 1 < command.length) {
+            index += 1;
+          }
+          delimiter += command[index]!;
+          index += 1;
+        }
+        if (index < command.length) index += 1;
+        continue;
+      }
+      if (ch === "\\" && index + 1 < command.length) {
+        delimiter += command[index + 1]!;
+        index += 2;
+        continue;
+      }
+      delimiter += ch;
+      index += 1;
+    }
+    return delimiter;
+  };
+
+  const skipPendingHeredocs = () => {
+    while (pendingHeredocs.length > 0 && index < command.length) {
+      const heredoc = pendingHeredocs.shift()!;
+      while (index < command.length) {
+        const lineEnd = command.indexOf("\n", index);
+        const rawLine = lineEnd === -1 ? command.slice(index) : command.slice(index, lineEnd);
+        index = lineEnd === -1 ? command.length : lineEnd + 1;
+        const normalized = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+        const candidate = heredoc.stripTabs ? normalized.replace(/^\t+/, "") : normalized;
+        if (candidate === heredoc.delimiter) break;
+      }
+    }
+    pendingHeredocs.length = 0;
   };
 
   while (index < command.length) {
@@ -1213,9 +1263,27 @@ function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>>
       }
       continue;
     }
+    if (char === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+      pushWord();
+      index += 2;
+      const stripTabs = command[index] === "-";
+      if (stripTabs) index += 1;
+      const delimiter = readHeredocDelimiter();
+      if (delimiter.length > 0) {
+        pendingHeredocs.push({ delimiter, stripTabs });
+      }
+      continue;
+    }
     if (ACP_MCP_SHELL_COMMAND_SEPARATOR.test(char)) {
       pushCommand();
-      index += 1;
+      if (char === "\r" && command[index + 1] === "\n") {
+        index += 2;
+      } else {
+        index += 1;
+      }
+      if ((char === "\n" || char === "\r") && pendingHeredocs.length > 0) {
+        skipPendingHeredocs();
+      }
       continue;
     }
     if (ACP_MCP_SHELL_WORD_SEPARATOR.test(char)) {

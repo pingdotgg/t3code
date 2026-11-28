@@ -1463,6 +1463,13 @@ const HTML_RENDER_IDENTITY: AcpMcpToolCallIdentity = {
   tool: HTML_RENDER_TOOL_NAME,
 };
 
+function isTerminalHtmlRenderMcpResult(record: Record<string, unknown>): boolean {
+  return (
+    htmlRenderFromToolItem({ toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`, output: record }) !==
+      undefined || compactDynamicToolOutput(record)?.isError === true
+  );
+}
+
 function terminalMcpResult(rawOutput: unknown): Record<string, unknown> | undefined {
   const text = textFromUnknown(rawOutput);
   if (text === undefined) return undefined;
@@ -1471,7 +1478,7 @@ function terminalMcpResult(rawOutput: unknown): Record<string, unknown> | undefi
   if (trimmed.startsWith("{")) {
     try {
       const parsed = unknownRecord(JSON.parse(trimmed));
-      if (parsed !== undefined) return parsed;
+      if (parsed !== undefined && isTerminalHtmlRenderMcpResult(parsed)) return parsed;
     } catch {
       // Multi-line output can start with `{` before the trailing JSON result line.
     }
@@ -1482,7 +1489,7 @@ function terminalMcpResult(rawOutput: unknown): Record<string, unknown> | undefi
     if (line === undefined || !line.startsWith("{")) continue;
     try {
       const parsed = unknownRecord(JSON.parse(line));
-      if (parsed !== undefined) return parsed;
+      if (parsed !== undefined && isTerminalHtmlRenderMcpResult(parsed)) return parsed;
     } catch {
       // Skip non-JSON lines starting with `{` so an earlier MCP result line still matches.
     }
@@ -5906,6 +5913,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : yield* mcpSessions.takeHtmlRender(active.input.threadId, {}, reported);
             if (page === undefined) return undefined;
             active.terminalHtmlRenderCalls.add(call.toolCallId);
+            active.claimedHtmlRenders.set(call.toolCallId, page);
             return {
               ...HTML_RENDER_IDENTITY,
               input: { title: page.title, height: page.height },
@@ -6040,22 +6048,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   toolName,
                   output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
                 }) ?? context.claimedHtmlRenders.get(toolCall.toolCallId);
-              if (reportedPage !== undefined) {
-                yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage);
-              }
+              const claimedReportedPage =
+                reportedPage === undefined
+                  ? undefined
+                  : yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage);
+              const verifiedReportedPage =
+                reportedPage === undefined
+                  ? undefined
+                  : (claimedReportedPage ??
+                    (toolCall.kind !== "execute" ||
+                    previousPage?.attachmentId === reportedPage.attachmentId
+                      ? reportedPage
+                      : undefined));
               const page =
-                reportedPage ??
+                verifiedReportedPage ??
                 previousPage ??
                 (yield* mcpSessions.takeHtmlRender(context.input.threadId, input));
               if (page !== undefined) {
                 context.claimedHtmlRenders.set(toolCall.toolCallId, page);
-                if (reportedPage === undefined) {
+                if (verifiedReportedPage === undefined) {
                   output = { htmlRender: page };
                 }
                 context.tools.set(toolCall.toolCallId, {
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: { htmlRender: page } },
                 });
+              } else if (reportedPage !== undefined && toolCall.kind === "execute") {
+                output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
               }
             }
             if (

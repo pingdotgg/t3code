@@ -1751,6 +1751,7 @@ describe("extractMcpToolCallIdentity", () => {
       "rg acp-mcp-call html_render",
       "grep -c 'acp-mcp-call html_render' f",
       "echo acp-mcp-call html_render",
+      "cat <<'EOF'\nacp-mcp-call html_render\nEOF",
     ]) {
       expect(
         extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),
