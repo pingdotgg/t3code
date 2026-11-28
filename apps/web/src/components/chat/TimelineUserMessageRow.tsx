@@ -46,6 +46,7 @@ import { Button, InlineButton } from "../ui/button";
 import { FreshSessionRow, ModelSwitchRow } from "./V2LifecycleRow";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { AttachmentImage } from "../media/AttachmentImage";
+import { ImagePreviewBackgroundSelect } from "../media/ImagePreviewBackgroundSelect";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import {
   buildAttachmentVideoAsset,
@@ -871,6 +872,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
       </SharedTooltipTrigger>
       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
+        {userImages.length > 0 ? <ImagePreviewBackgroundSelect side="top" /> : null}
         {typeof revertTurnCount === "number" && (
           <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
         )}

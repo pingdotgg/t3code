@@ -43,6 +43,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { toastManager } from "../ui/toast";
 import { m } from "../../i18n/messages";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -571,7 +572,8 @@ function QueuedMessage(props: {
                     }}
                   >
                     {thumbnail.previewUrl ? (
-                      <img
+                      <AttachmentImage
+                        name={thumbnail.name}
                         src={thumbnail.previewUrl}
                         alt={thumbnail.name}
                         className="size-full object-cover"

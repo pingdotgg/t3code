@@ -3,6 +3,7 @@ import type { MessageResolver } from "~/i18n/messages";
 import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { documentChipKindForFileName } from "~/pierre-icons";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -176,7 +177,8 @@ function UserMessagePreviewAnnotationDetails(props: {
             if (preview) ctx.onImageExpand(preview);
           }}
         >
-          <img
+          <AttachmentImage
+            name={props.image.name}
             src={props.image.previewUrl}
             alt={gt("Annotated preview crop")}
             className="max-h-64 w-full object-contain"

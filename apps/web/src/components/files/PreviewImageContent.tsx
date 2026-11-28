@@ -4,6 +4,7 @@ import { MaximizeIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import { observeResize } from "~/lib/observeResize";
 import { AttachmentImage } from "../media/AttachmentImage";
+import { ImagePreviewBackgroundSelect } from "../media/ImagePreviewBackgroundSelect";
 import { FileSurfaceAction, FileSurfaceFailure } from "./fileSurfaceChrome";
 
 export default function PreviewImageContent(props: {
@@ -54,6 +55,7 @@ export default function PreviewImageContent(props: {
             : gt("Loading image…")}
         </span>
         <div className="flex items-center gap-1">
+          <ImagePreviewBackgroundSelect />
           <FileSurfaceAction
             label={gt("Zoom out")}
             disabled={!natural.width || scale <= 0.05}

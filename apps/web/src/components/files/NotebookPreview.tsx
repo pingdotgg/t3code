@@ -5,6 +5,8 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import ChatMarkdown from "~/components/ChatMarkdown";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
+import { AttachmentImage } from "../media/AttachmentImage";
+import { ImagePreviewBackgroundSelect } from "../media/ImagePreviewBackgroundSelect";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
@@ -185,12 +187,18 @@ export default function NotebookPreview(props: {
                         />
                       ) : null
                     ) : output.kind === "image" ? (
-                      <img
-                        src={output.text}
-                        alt={gt("Cell {number} output", { number: String(index + 1) })}
-                        loading="lazy"
-                        className="max-h-96 max-w-full p-4 object-contain"
-                      />
+                      <div className="p-4">
+                        <div className="mb-2">
+                          <ImagePreviewBackgroundSelect />
+                        </div>
+                        <AttachmentImage
+                          name={`Cell ${index + 1} output`}
+                          src={output.text}
+                          alt={gt("Cell {number} output", { number: String(index + 1) })}
+                          loading="lazy"
+                          className="max-h-96 max-w-full object-contain"
+                        />
+                      </div>
                     ) : (
                       <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
                         {output.text}
