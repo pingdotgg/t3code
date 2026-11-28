@@ -99,6 +99,8 @@ const QUOTED_NOTICE = Buffer.from(
 );
 const reusable = (failure: OrchestrationV2ProviderFailure) =>
   ({ failure, threadDisposition: "reusable" }) as const;
+const failureOf = <A>(outcome: A | "completed") =>
+  outcome === "completed" ? assert.fail("expected no completed outcome") : outcome;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -130,7 +132,7 @@ describe("watchAntigravityPromptOutcome", () => {
         Effect.gen(function* () {
           const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
           appendSteps(steps);
-          return yield* check(result, options);
+          return failureOf(yield* check(result, options));
         });
       const input = Buffer.from("Run the fixture.");
       const reply = Buffer.from("FIXTURE_OK");
@@ -366,7 +368,10 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
+      assert.equal(
+        failureOf(yield* linked({ stopReason: "refusal" }))?.failure.class,
+        "usage_limit",
+      );
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));

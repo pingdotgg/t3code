@@ -107,6 +107,13 @@ export interface VcsCheckpointOps {
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;
+  /**
+   * Names `fromCheckpointRef`'s commit `toCheckpointRef` too, keeping an existing one. False, copying
+   * nothing, when the source is absent or the folder holds populated submodules (their own refs).
+   */
+  readonly copyCheckpointRef: (
+    input: Omit<VcsListAuthoredPathsInput, "range">,
+  ) => Effect.Effect<boolean, VcsError>;
   readonly restoreCheckpoint: (
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;

@@ -1,7 +1,7 @@
 import { NodeCrypto, NodeFileSystem } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Effect, Exit, Fiber, FileSystem, Latch, Layer, Option } from "effect"
+import { Effect, Exit, Fiber, FileSystem, Latch, Layer, Option, Schema } from "effect"
 import {
   Entity,
   EntityAddress,
@@ -20,6 +20,7 @@ import {
   SqlMessageStorage
 } from "effect/cluster"
 import { Reactivity } from "effect/reactivity"
+import { Rpc } from "effect/rpc"
 import { SqlClient, Statement } from "effect/sql"
 import { TestClock } from "effect/testing"
 import { MssqlContainer } from "../fixtures/mssql-utils.ts"
@@ -490,6 +491,62 @@ describe("SqlMessageStorage", () => {
             )
             expect(Exit.isFailure(exit)).toBe(true)
           }))
+
+        it.effect(
+          "saveRequest returns Duplicate under REPEATABLE READ when another tx commits the same primary key",
+          () =>
+            Effect.gen(function*() {
+              yield* truncate
+              const sql = yield* SqlClient.SqlClient
+              const storage = yield* MessageStorage.MessageStorage
+              const [{ isolation }] = yield* sql<{ isolation: string }>`SELECT @@transaction_isolation AS isolation`
+              expect(isolation).toEqual("REPEATABLE-READ")
+
+              const reqA = yield* makeRequest({
+                rpc: PrimaryKeyTest,
+                payload: PrimaryKeyTest.payloadSchema.make({ id: 123 })
+              })
+              const reqB = yield* makeRequest({
+                rpc: PrimaryKeyTest,
+                payload: PrimaryKeyTest.payloadSchema.make({ id: 123 })
+              })
+              const bSawEmpty = yield* Latch.make()
+              const aCommitted = yield* Latch.make()
+
+              const txA = yield* storage.withTransaction(Effect.gen(function*() {
+                const existing = yield* storage.requestIdForPrimaryKey({
+                  address: reqA.envelope.address,
+                  tag: reqA.envelope.tag,
+                  id: "123"
+                })
+                expect(existing).toEqual(Option.none())
+                yield* bSawEmpty.await
+                return yield* storage.saveRequest(reqA)
+              })).pipe(
+                Effect.tap(() => aCommitted.open),
+                Effect.forkChild({ startImmediately: true })
+              )
+
+              const txB = yield* storage.withTransaction(Effect.gen(function*() {
+                const existing = yield* storage.requestIdForPrimaryKey({
+                  address: reqB.envelope.address,
+                  tag: reqB.envelope.tag,
+                  id: "123"
+                })
+                expect(existing).toEqual(Option.none())
+                yield* bSawEmpty.open
+                yield* aCommitted.await
+                return yield* storage.saveRequest(reqB)
+              })).pipe(Effect.forkChild({ startImmediately: true }))
+
+              const savedA = yield* Fiber.join(txA).pipe(Effect.timeout("10 seconds"))
+              const savedB = yield* Fiber.join(txB).pipe(Effect.timeout("10 seconds"))
+              expect(savedA._tag).toEqual("Success")
+              assert(savedB._tag === "Duplicate")
+              expect(savedB.originalId).toEqual(reqA.envelope.requestId)
+            }).pipe(TestClock.withLive),
+          { timeout: 30_000 }
+        )
       }
 
       if (label === "mssql") {
@@ -1250,6 +1307,56 @@ describe("SqlMessageStorage", () => {
           yield* storage.saveReply(yield* makeReply(request))
           messages = yield* storage.unprocessedMessagesById([request.envelope.requestId])
           expect(messages).toHaveLength(0)
+        }))
+
+      it.effect("requestsForAddress matches type, id and tag exactly and ignores the shard", () =>
+        Effect.gen(function*() {
+          yield* truncate
+
+          const storage = yield* MessageStorage.MessageStorage
+          const address = { entityType: "Workflow/Child", entityId: "Id" }
+          const request = (id: string, options?: {
+            readonly rpc?: Rpc.AnyWithProps
+            readonly entityType?: string
+            readonly entityId?: string
+            readonly shardId?: ShardId.ShardId
+          }) =>
+            makeRequest({
+              rpc: options?.rpc ?? LongKeyRpc,
+              payload: options?.rpc ? { id } : LongKeyRpc.payloadSchema.make({ id }),
+              entityType: options?.entityType ?? address.entityType,
+              entityId: options?.entityId ?? address.entityId,
+              shardId: options?.shardId
+            })
+          const longId = "long-key-".repeat(50)
+          const unprocessed = yield* request(longId)
+          const processed = yield* request("short-key")
+          const otherShard = yield* request("other-shard", { shardId: ShardId.make("default", 2) })
+          const others = [
+            yield* request("other-tag", { rpc: Rpc.make("OtherTag", { payload: { id: Schema.String } }) }),
+            // Collations may ignore case, accents or trailing spaces.
+            yield* request("tag-case", { rpc: Rpc.make("longkeyrpc", { payload: { id: Schema.String } }) }),
+            yield* request("tag-space", { rpc: Rpc.make("LongKeyRpc ", { payload: { id: Schema.String } }) }),
+            yield* request("type-case", { entityType: "Workflow/child" }),
+            yield* request("type-space", { entityType: "Workflow/Child " }),
+            yield* request("id-case", { entityId: "id" }),
+            yield* request("id-accent", { entityId: "Íd" }),
+            yield* request("id-space", { entityId: "Id " })
+          ]
+
+          yield* storage.saveRequest(unprocessed)
+          yield* storage.saveRequest(processed)
+          yield* storage.saveReply(yield* makeReply(processed))
+          yield* storage.saveRequest(otherShard)
+          for (const other of others) yield* storage.saveRequest(other)
+
+          const found = yield* storage.requestsForAddress({
+            address: unprocessed.envelope.address,
+            tag: LongKeyRpc._tag
+          })
+          expect(found.map((r) => (r.payload as { readonly id: string }).id).sort()).toEqual(
+            [longId, "other-shard", "short-key"].sort()
+          )
         }))
     })
   })

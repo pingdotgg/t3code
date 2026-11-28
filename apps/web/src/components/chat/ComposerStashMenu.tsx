@@ -32,7 +32,8 @@ export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResol
     const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_MAX_CHARS - 1 : SNIPPET_MAX_CHARS;
     return `${trimmed.slice(0, end).trimEnd()}…`;
   }
-  const imageCount = entry.attachments.length + entry.droppedImageNames.length;
+  const imageCount =
+    entry.attachments.length + missingImageCount(entry) + (entry.pendingImageCount ?? 0);
   const fileCount = entry.files?.length ?? 0;
   const attachmentCount = imageCount + fileCount;
   if (attachmentCount === 0) {

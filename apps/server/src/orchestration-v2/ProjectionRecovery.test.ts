@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -38,16 +39,17 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
-const layerTest = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const layerTest = Layer.mergeAll(
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+  EffectOutbox.layer,
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const layerRecoveryTest = ProviderRuntimeRecovery.layer.pipe(
   Layer.provideMerge(
     EventSink.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           EventStore.layer,
-          ProjectionStore.layer,
+          ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
           EffectOutbox.layer,
           IdAllocator.layer,
         ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),

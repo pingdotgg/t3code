@@ -5,9 +5,12 @@ import { enableCliCompileCache } from "./cliCompileCache.ts";
 // paths dispatch before the full CLI module graph (seconds of evaluation) loads.
 export async function runCliCommand() {
   const command = process.argv[2];
-  // Install the socket guard before importing code that can open outbound connections.
-  const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
+  // Install the socket guards before importing code that can open outbound connections.
+  // Fast paths such as the Cursor SDK worker never reach runCli, so they need these here too.
+  const { extendConnectionAttemptTimeout, ignoreMacosTypeOfServiceEinval } =
+    await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
+  extendConnectionAttemptTimeout();
   if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {

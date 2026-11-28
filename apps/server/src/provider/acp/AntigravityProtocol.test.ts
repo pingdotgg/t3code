@@ -22,6 +22,7 @@ import {
 } from "@t3tools/provider-acp/server/runtimeModel";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 import { acpChangedPathsOfToolCall } from "@t3tools/provider-acp/server/clientPolicy";
+import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -675,6 +676,40 @@ describe("Antigravity tool results", () => {
     );
   });
 
+  it("keeps bounded screenshot bytes from T3 MCP tool results", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+    const tooLarge = "A".repeat(MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 4);
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "shot-1",
+        status: "completed",
+        rawOutput: {
+          content: [
+            { type: "image", mimeType: "image/png", data: png },
+            { type: "image", mimeType: "image/png", data: tooLarge },
+            { type: "text", text: JSON.stringify({ url: "https://example.test/" }) },
+          ],
+        },
+        content: [
+          { type: "content", content: { type: "image", mimeType: "image/png", data: png } },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    const normalized = normalizeAntigravitySessionUpdate(notification);
+    expect(isSessionNotification(normalized)).toBe(true);
+    const update = parseToolUpdate(normalized).toolCall.data;
+    expect(toolOutputImages(update.rawOutput)).toEqual([
+      { mimeType: "image/png", data: png },
+      { mimeType: "image/png" },
+    ]);
+    expect(normalized.update).toMatchObject({
+      content: [{ type: "content", content: { type: "image", mimeType: "image/png", data: png } }],
+    });
+  });
+
   const changesBeyondSizeLimits: ReadonlyArray<{
     readonly part: string;
     readonly update: Pick<EffectAcpSchema.ToolCallUpdate, "content" | "rawInput">;
@@ -876,6 +911,62 @@ describe("Antigravity served reads", () => {
       ).toolCall,
     );
     expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const proxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_proxy_send",
+            title: "Run mcp_t3-code_tool_call",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {
+              name: "send_to_user",
+              arguments: { message: "Hello", toolSummary: "Nested summary" },
+              toolSummary: "Outer summary",
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(proxiedT3Call.data.rawInput).toEqual({
+      name: "send_to_user",
+      arguments: { message: "Hello" },
+    });
+
+    const callMcpProxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_call_mcp_proxy_send",
+            title: "MCP Tool tool_call",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: {
+              ServerName: "t3-code",
+              ToolName: "tool_call",
+              Arguments: {
+                name: "send_to_user",
+                arguments: { message: "Hello", toolSummary: "Nested summary" },
+                toolSummary: "Outer summary",
+              },
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(callMcpProxiedT3Call.data.rawInput).toEqual({
+      ServerName: "t3-code",
+      ToolName: "tool_call",
+      Arguments: {
+        name: "send_to_user",
+        arguments: { message: "Hello" },
+      },
+    });
 
     const foreignCall = normalizeAntigravityToolCall(
       parseToolUpdate({

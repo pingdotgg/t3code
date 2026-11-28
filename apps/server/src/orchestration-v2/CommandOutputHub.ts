@@ -79,7 +79,9 @@ function persistedCommandOutput(output: string | undefined): {
     // Cut at a newline to avoid splitting escape sequences.
     source = output.slice(output.length - MAX_FINAL_SOURCE_CHARS);
     const newline = source.indexOf("\n");
-    if (newline !== -1 && newline + 1 < source.length) source = source.slice(newline + 1);
+    if (newline !== -1 && source.length - (newline + 1) >= TERMINAL_OUTPUT_TAIL_CHARS) {
+      source = source.slice(newline + 1);
+    }
   }
   const normalized = normalizeTerminalOutput(source);
   return {

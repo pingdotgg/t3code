@@ -90,52 +90,52 @@ export function SettingsScopeSentence() {
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
       {onEnvironment && hasCheckouts ? (
         <T context="settings scope sentence; each variable is a menu">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">Applying settings for</span>
             <Var>{project}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">on</span>
             <Var>{environment}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">in</span>
             <Var>{checkout}</Var>
           </span>
         </T>
       ) : onEnvironment ? (
         <T context="settings scope sentence; each variable is a menu">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">Applying settings for</span>
             <Var>{project}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">on</span>
             <Var>{environment}</Var>
           </span>
         </T>
       ) : hasCheckouts ? (
         <T context="settings scope sentence; each variable is a menu">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">Applying settings for</span>
             <Var>{project}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">across</span>
             <Var>{environment}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">in</span>
             <Var>{checkout}</Var>
           </span>
         </T>
       ) : (
         <T context="settings scope sentence; each variable is a menu">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">Applying settings for</span>
             <Var>{project}</Var>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="shrink-0">across</span>
             <Var>{environment}</Var>
           </span>
@@ -197,7 +197,7 @@ function ScopeMenu({
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
       render={<Button variant="outline" size="sm" />}
-      className="min-w-0 max-w-72"
+      className="min-w-0 max-w-[min(100%,18rem)]"
     >
       {icon}
       <span className="min-w-0 truncate">{label}</span>

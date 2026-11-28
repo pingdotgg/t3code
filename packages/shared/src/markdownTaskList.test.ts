@@ -51,8 +51,24 @@ describe("markdownTaskMarkerOffset", () => {
     for (const text of ["Wrapped", "Wrapped onto two lines"]) {
       expect(markdownTaskMarkerOffset(markdown, 3, text, true)).toBe(markdown.lastIndexOf("[ ]"));
     }
-    expect(markdownTaskMarkerOffset("-\n  [ ] Task", 0, "Task", true)).toBe(4);
-    expect(markdownTaskMarkerOffset("> -\n>   [ ] Task", 0, "Task", true)).toBe(8);
+    expect(markdownTaskMarkerOffset("- [ ]\n  Task", 0, "Task", true)).toBe(2);
+  });
+
+  it("skips next-line markers that the native renderer does not render as checkboxes", () => {
+    const body = "-\n  [ ] Same\n\n```txt\nseparator\n```\n\n- [ ] Same";
+    expect(markdownTaskMarkerOffset(body, 0, "Same", true)).toBe(body.lastIndexOf("[ ]"));
+    expect(markdownTaskMarkerOffset("> -\n>   [ ] Task", 0, "Task", true)).toBeNull();
+  });
+
+  it("counts empty task items before the tapped checkbox", () => {
+    for (const empty of ["- [ ]", "- [x]", "1. [X]\r"]) {
+      const body = `${empty}\n\n- [ ] Same`;
+      const offset = markdownTaskMarkerOffset(body, 1, "Same", true);
+      expect(offset).toBe(body.lastIndexOf("[ ]"));
+      expect(setMarkdownTaskChecked(body, offset ?? -1, true)).toBe(`${empty}\n\n- [x] Same`);
+      expect(markdownTaskMarkerOffset(body, 1, "Other", true)).toBeNull();
+      expect(markdownTaskMarkerOffset(body, 1, "Same", false)).toBeNull();
+    }
   });
 
   it("tells identical labels apart by document index, across code blocks", () => {

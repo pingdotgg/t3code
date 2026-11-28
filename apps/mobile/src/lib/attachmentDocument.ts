@@ -98,7 +98,11 @@ export function useAttachmentDocument(input: {
   readonly attachment: FileBackedComposerAttachment | null;
 }) {
   const resolve = useMessages();
-  const kind = filePreviewKind(input, { richDocuments: false });
+  const richKind = filePreviewKind(input);
+  const kind =
+    richKind === "epub" && !input.attachment && input.environmentId
+      ? "epub"
+      : filePreviewKind(input, { richDocuments: false });
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight attachment share download when the component unmounts

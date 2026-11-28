@@ -23,6 +23,20 @@ describe("composer list continuation", () => {
     );
   });
 
+  it.each([
+    ["* [x] done", "* [x] done\n* [ ] "],
+    ["1. [x] done", "1. [x] done\n2. [ ] "],
+  ])("continues %j as an unchecked task with the same marker", (value, expected) => {
+    expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(expected);
+  });
+
+  it("renumbers following items after a numbered task", () => {
+    const value = "1. [x] a\n2. [ ] b";
+    expect(applyEdit(value, listContinuationForEnter(value, "1. [x] a".length)!)).toBe(
+      "1. [x] a\n2. [ ] \n3. [ ] b",
+    );
+  });
+
   it("splits mid-line items", () => {
     expect(applyEdit("1. foobar", listContinuationForEnter("1. foobar", 5)!)).toBe(
       "1. fo\n2. obar",
@@ -34,6 +48,10 @@ describe("composer list continuation", () => {
     expect(applyEdit("- ", listContinuationForEnter("- ", 2)!)).toBe("");
     expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
     expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
+    expect(applyEdit("* [ ] ", listContinuationForEnter("* [ ] ", 6)!)).toBe("");
+    expect(applyEdit("1. [x] a\n2. [ ] ", listContinuationForEnter("1. [x] a\n2. [ ] ", 16)!)).toBe(
+      "1. [x] a\n",
+    );
   });
 
   it("lifts an empty nested item one level per press before leaving the list", () => {
@@ -88,7 +106,18 @@ describe("composer list indentation", () => {
     expect(applyEdit(value, edit)).toBe("1. parent\n   1. first\n   2. second");
   });
 
-  it.each(["- parent\n- child", "1. parent\n2. child", "  7. child"])(
+  it.each([
+    ["1. a\n2. b\n3. c\n4. d", "1. a\n   1. b\n2. c\n3. d"],
+    ["1. a\n2. b\n3) c", "1. a\n   1. b\n3) c"],
+    ["1. a\n2. b\n   - x\n3. c", "1. a\n   1. b\n   - x\n2. c"],
+  ])("renumbers following siblings when indenting %j to %j", (value, expected) => {
+    const cursor = value.indexOf("b");
+    const edit = listIndentForTab(value, cursor, cursor)!;
+    expect(applyEdit(value, edit)).toBe(expected);
+    expect(edit.cursorAfter).toBe(expected.indexOf("b"));
+  });
+
+  it.each(["- parent\n- child", "1. parent\n2. child", "1. a\n2. child\n3. c", "  7. child"])(
     "undoes Tab on %j with Shift+Tab and keeps the caret on its text",
     (value) => {
       const cursor = value.lastIndexOf("child") + 2;

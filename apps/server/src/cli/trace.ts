@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
@@ -82,7 +83,7 @@ export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duratio
     if (
       span.exit?._tag === "Interrupted" ||
       span.attributes?.["effect.fiber.interrupted"] === true ||
-      span.status?.message === "Interrupted"
+      (span.status?.code === "1" && span.status.message === "Interrupted")
     ) {
       stats.interrupted += 1;
     }
@@ -203,12 +204,23 @@ const traceSummaryCommand = Command.make("summary", {
         ? { nowMs: yield* Clock.currentTimeMillis, duration: flags.since.value }
         : undefined;
       const summarizer = makeTraceSpanSummary(window);
-      yield* Effect.forEach(
+      const reads = yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
-        (path) => streamTraceFileLines(fs, path, summarizer.addLine),
-        { discard: true },
+        (path) => streamTraceFileLines(fs, path, summarizer.addLine).pipe(Effect.result),
       );
       const summary = summarizer.finish();
+      const failures = reads.filter(Result.isFailure);
+      const firstFailure = failures[0];
+      if (
+        firstFailure &&
+        summary.spanCount === 0 &&
+        !reads.some((read) => Result.isSuccess(read) && read.success)
+      ) {
+        return yield* firstFailure.failure;
+      }
+      for (const { failure } of failures) {
+        yield* Console.error(failure.message);
+      }
 
       yield* Console.log(
         summary.spanCount === 0

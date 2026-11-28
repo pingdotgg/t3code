@@ -27,7 +27,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
-it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
+it.effect("rejects a stale form save after deletion while preserving creation source", () =>
   Effect.gen(function* () {
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -54,10 +54,22 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
         modelSelection: { instanceId: "codex", model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
       });
       const created = yield* service.upsert(input);
-      const edit = yield* decodeUpsertInput({ ...input, requireExisting: true, title: "Edited" });
-      expect((yield* service.upsert(edit)).task.title).toBe("Edited");
+      const edit = yield* decodeUpsertInput({
+        ...input,
+        requireExisting: true,
+        title: "Edited",
+        createdBy: undefined,
+        creationSource: "web",
+      });
+      const edited = yield* service.upsert(edit);
+      expect(edited.task.title).toBe("Edited");
+      expect(edited.task.createdBy).toBe("agent");
+      expect(edited.task.creationSource).toBe("mcp");
+      expect((yield* service.list()).tasks[0]?.creationSource).toBe("mcp");
       yield* service.delete({ id: created.task.id });
 
       const failure = yield* service.upsert(edit).pipe(Effect.flip);

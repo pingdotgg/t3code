@@ -115,6 +115,10 @@ export function AppRouteModal({
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
+          // A press released inside the popup still clicks the viewport, their common ancestor.
+          onPointerUp={(event) => {
+            if (event.target !== event.currentTarget) backdropPressRef.current = false;
+          }}
           onClick={(event) => {
             if (backdropPressRef.current && event.target === event.currentTarget) setOpen(false);
             backdropPressRef.current = false;

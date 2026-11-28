@@ -76,5 +76,10 @@ export function renderCodexDirectivesForCopy(markdown: string): string {
 /** A link destination as written, with its character references and escapes resolved. */
 export function decodeMarkdownLinkEscapes(href: string): string {
   const decoded = href.includes("&") ? decodeHTMLStrict(href) : href;
-  return isWindowsAbsolutePath(decoded) ? decoded : decoded.replace(/\\([!-/:-@[-`{-~])/g, "$1");
+  return isWindowsAbsolutePath(decoded)
+    ? decoded
+    : href.replace(
+        /\\([!-/:-@[-`{-~])|&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]*);/g,
+        (match, escaped: string | undefined) => escaped ?? decodeHTMLStrict(match),
+      );
 }

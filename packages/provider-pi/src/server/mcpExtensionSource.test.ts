@@ -41,6 +41,7 @@ async function loadHooks(
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: { env: {}, argv },
+    Buffer,
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -120,6 +121,47 @@ describe("Pi project trust", () => {
     assert.equal(sent.length, notices * 2);
     for (const message of sent)
       assert.include(message, "for /repo because the folder is not trusted");
+  });
+});
+
+describe("Pi image media types", () => {
+  it("relabels a mislabelled image already in history before each model call", async () => {
+    const handlers = (await loadHooks()) as Map<
+      string,
+      (event: {
+        messages: ReadonlyArray<unknown>;
+      }) => { messages: ReadonlyArray<unknown> } | undefined
+    >;
+    const png = "iVBORw0KGgoAAAANSUhEUg==";
+    const jpeg = "/9j/4AAQSkZJRg==";
+    const history = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What colours are in this image?" },
+          { type: "image", data: png, mimeType: "image/jpeg" },
+          { type: "image", data: jpeg, mimeType: "image/jpeg" },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Provider error" }] },
+      { role: "user", content: [{ type: "text", text: "Say hi." }] },
+    ];
+
+    const result = handlers.get("context")!({ messages: history });
+
+    assert.deepEqual(result?.messages, [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What colours are in this image?" },
+          { type: "image", data: png, mimeType: "image/png" },
+          { type: "image", data: jpeg, mimeType: "image/jpeg" },
+        ],
+      },
+      history[1],
+      history[2],
+    ]);
+    assert.isUndefined(handlers.get("context")!({ messages: [history[1], history[2]] }));
   });
 });
 
@@ -332,6 +374,30 @@ describe("Pi MCP tool exposure", () => {
       ["mcp__t3_code__orchestrator_capabilities", "mcp__t3_code__delegate_task"],
       "an alias stays callable while its direct public tool is off",
     );
+  });
+
+  it("keeps a deferred tool's hidden alias active after tool_search loads its public tool", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      activatesOnRegistration: true,
+    });
+    const event = { systemPrompt: "" };
+    await bridge.handlers.get("session_start")!(event, discoveryContext);
+    assert.include(bridge.getActiveTools(), "mcp__t3_code__preview_snapshot");
+
+    // tool_search loads the deferred public tool during a run.
+    bridge.restoreActiveTools([...bridge.getActiveTools(), "mcp__t3-code__preview_snapshot"]);
+    await bridge.handlers.get("before_agent_start")!(event, discoveryContext);
+
+    // Pi hides recorded declarations with the current hidden set, so dropping the alias
+    // re-declares it in the prompt head and the next request misses the prompt cache.
+    assert.include(
+      bridge.getActiveTools(),
+      "mcp__t3_code__preview_snapshot",
+      "the next run drops the alias recorded in the transcript",
+    );
+    assert.notInclude(bridge.declaredTools(), "mcp__t3_code__preview_snapshot");
   });
 
   it.each(["legacy Pi", "disabled tool search"])(

@@ -55,7 +55,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, probeClaudeWorkspaceSnapshot } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -1543,6 +1543,7 @@ it.layer(
           ...previousProvider,
           checkedAt: "2026-10-30T00:01:00.000Z",
           models: [previousProvider.models[0]],
+          ...(driver === "claudeAgent" ? { modelsIncomplete: true } : {}),
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(
@@ -1551,6 +1552,49 @@ it.layer(
         );
       },
     );
+
+    it("drops a Claude gateway model the same gateway no longer lists (#43603)", () => {
+      const auth = {
+        status: "authenticated",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:15721",
+      } as const;
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth,
+        checkedAt: "2026-11-25T00:00:00.000Z",
+        version: "2.1.332",
+        models: [
+          { slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false, capabilities: null },
+          {
+            slug: "gw--model:free[1m]",
+            name: "gw--model:free",
+            isCustom: false,
+            capabilities: null,
+          },
+          { slug: "gw--model:free", name: "gw--model:free", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-11-26T00:00:00.000Z",
+        models: [previousProvider.models[0], previousProvider.models[1]],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models.map(
+          (model) => model.slug,
+        ),
+        ["claude-sonnet-5-5", "gw--model:free[1m]"],
+      );
+    });
 
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
@@ -2478,6 +2522,7 @@ it.layer(
               slashCommands: [],
               skills: [],
             } as const satisfies ServerProvider;
+            const snapshotRef = yield* Ref.make<ServerProvider>(provider);
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
@@ -2500,8 +2545,14 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
+                getSnapshot: Ref.get(snapshotRef),
+                refresh: Ref.update(probes, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(snapshotRef)),
+                ),
+                refreshUsage: Ref.update(snapshotRef, (current) => ({
+                  ...current,
+                  usageLimits: { checkedAt: "2026-06-10T00:05:00.000Z", windows: [] },
+                })),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -2611,6 +2662,17 @@ it.layer(
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
           // A changed manifest also rechecks latest CLI versions.
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
+
+          // A limits refresh updates limits directly and skips full probes and maintenance checks.
+          const probesBeforeLimits = yield* Ref.get(first.probes);
+          yield* first.takeMaintenanceReads;
+          yield* registry.refreshUsageLimits();
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeLimits);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, []);
+          const refreshedFirst = (yield* registry.getProviders).find(
+            (entry) => entry.instanceId === first.instance.instanceId,
+          );
+          assert.strictEqual(refreshedFirst?.usageLimits?.checkedAt, "2026-06-10T00:05:00.000Z");
 
           yield* first.takeMaintenanceReads;
           yield* Ref.set(updateEvents, []);
@@ -4738,6 +4800,55 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("drops a retired gateway model when the surviving model is configured manually", () =>
+      Effect.gen(function* () {
+        const surviving = { value: "gateway/current", displayName: "Current", description: "" };
+        const retired = { value: "gateway/retired", displayName: "Retired", description: "" };
+        const settings = {
+          ...defaultClaudeSettings,
+          customModels: [{ slug: surviving.value, name: "My current model" }],
+        };
+        const environment = {
+          ANTHROPIC_BASE_URL: "https://gateway.example",
+          CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+        };
+        const before = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving, retired] }),
+          environment,
+        );
+        const after = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving] }),
+          environment,
+        );
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const visible = ProviderRegistry.mergeProviderSnapshot(
+          { ...before, instanceId, driver },
+          { ...after, instanceId, driver },
+        );
+        assert.include(
+          before.models.map((model) => model.slug),
+          retired.value,
+        );
+        assert.deepStrictEqual(
+          visible.models
+            .filter((model) => model.slug.startsWith("gateway/"))
+            .map((model) => model.slug),
+          [surviving.value],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.332\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("adds models Claude Code reports that the catalog does not know", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
@@ -4780,6 +4891,7 @@ it.layer(
             ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
+        assert.strictEqual(status.modelsIncomplete, undefined);
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
         assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
           {
@@ -4845,6 +4957,44 @@ it.layer(
         );
         assert.isNull(status.version, "mise's own version is not Claude's");
       }),
+    );
+
+    it.effect("leaves skills unscanned until a project's composer asks for them", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-home-" });
+        yield* fs.makeDirectory(path.join(homePath, "skills", "review"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(homePath, "skills", "review", "SKILL.md"),
+          "---\nname: review\ndescription: Review a change\n---\n",
+        );
+        const settings = { ...defaultClaudeSettings, homePath };
+
+        const status = yield* checkClaudeProviderStatus(settings, claudeCapabilities(), {
+          ANTHROPIC_BASE_URL: "",
+        });
+        assert.deepStrictEqual(status.skills, []);
+
+        const workspace = yield* probeClaudeWorkspaceSnapshot(
+          settings,
+          status as ServerProvider,
+          path.join(homePath, "missing-project"),
+          { ANTHROPIC_BASE_URL: "" },
+        );
+        assert.deepStrictEqual(
+          workspace.skills.map((skill) => skill.name),
+          ["review"],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
     );
 
     it.effect("reports a logged-out CLI as unauthenticated", () =>
@@ -4992,6 +5142,7 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.strictEqual(status.modelsIncomplete, true);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

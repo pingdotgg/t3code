@@ -1,7 +1,8 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
+import { EXTENSION_TO_FILE_FORMAT } from "@pierre/diffs";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
@@ -9,9 +10,31 @@ import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
+
+const savedPositions = createPositionMemory<{
+  readonly visible: number;
+  readonly cell: number;
+  readonly offset: number;
+}>();
+const cellsOf = (root: HTMLElement) => root.querySelectorAll(":scope > div > section");
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
 const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
+
+const FORMAT_TO_EXTENSION = new Map<string, string>();
+for (const [extension, format] of Object.entries(EXTENSION_TO_FILE_FORMAT)) {
+  if (format && !FORMAT_TO_EXTENSION.has(format)) FORMAT_TO_EXTENSION.set(format, extension);
+}
+
+function notebookCellFileName(kind: "code" | "raw", language: string) {
+  if (kind !== "code") return "cell.txt";
+  const normalized = language.toLowerCase();
+  if (/^c\+\+\d*$/.test(normalized)) return "cell.cpp";
+  if (normalized === "c#") return "cell.cs";
+  if (normalized === "f#") return "cell.fs";
+  return `cell.${FORMAT_TO_EXTENSION.get(normalized) ?? normalized}`;
+}
 
 function NotebookSource(props: { readonly name: string; readonly text: string }) {
   const [height, setHeight] = useState(Math.min(360, props.text.split("\n").length * 20 + 16));
@@ -31,8 +54,31 @@ export default function NotebookPreview(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const [visible, setVisible] = useState(20);
+  const positionKey = useContext(PreviewPositionKey);
+  const [saved] = useState(() => savedPositions.get(positionKey));
+  const [visible, setVisible] = useState(saved?.visible ?? 20);
   const scroll = useRef<HTMLDivElement>(null);
+  const savePosition = (root: HTMLElement, expanded: number) => {
+    const top = root.getBoundingClientRect().top;
+    const cells = Array.from(cellsOf(root));
+    const cell = Math.max(
+      0,
+      cells.findIndex((node) => node.getBoundingClientRect().bottom > top),
+    );
+    savedPositions.set(positionKey, {
+      visible: expanded,
+      cell,
+      offset: top - (cells[cell]?.getBoundingClientRect().top ?? top),
+    });
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened notebook to its saved cell once the cells have laid out.
+  useLayoutEffect(() => {
+    const root = scroll.current;
+    const cell = saved && root ? cellsOf(root)[saved.cell] : undefined;
+    if (!root || !saved || !cell) return;
+    root.scrollTop +=
+      cell.getBoundingClientRect().top - root.getBoundingClientRect().top + saved.offset;
+  }, [saved]);
   const [outputView, setOutputView] = useState(() => ({
     mounted: new Set<string>(),
     heights: new Map<string, number>(),
@@ -102,7 +148,11 @@ export default function NotebookPreview(props: {
       <FileSurfaceNotice>
         <T>Saved outputs only. Code is never executed.</T>
       </FileSurfaceNotice>
-      <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+      <div
+        ref={scroll}
+        className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto"
+        onScroll={(event) => savePosition(event.currentTarget, visible)}
+      >
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
           {props.notebook.cells.slice(0, visible).map((cell, index) => (
             <section
@@ -123,7 +173,7 @@ export default function NotebookPreview(props: {
                 />
               ) : cell.source.trim() ? (
                 <NotebookSource
-                  name={`cell.${cell.kind === "code" ? (({ python: "py", javascript: "js", typescript: "ts", julia: "jl" } as Record<string, string>)[props.notebook.language] ?? props.notebook.language) : "txt"}`}
+                  name={notebookCellFileName(cell.kind, props.notebook.language)}
                   text={cell.source}
                 />
               ) : null}
@@ -172,7 +222,14 @@ export default function NotebookPreview(props: {
             </p>
           ) : null}
           {visible < props.notebook.cells.length ? (
-            <Button variant="outline" size="sm" onClick={() => setVisible((count) => count + 20)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (scroll.current) savePosition(scroll.current, visible + 20);
+                setVisible(visible + 20);
+              }}
+            >
               {gt(
                 "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
                 { count: props.notebook.cells.length - visible },

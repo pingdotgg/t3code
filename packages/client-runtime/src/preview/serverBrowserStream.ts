@@ -25,6 +25,7 @@ export interface PreviewStreamControl {
     readonly type: string;
     readonly message: string;
     readonly defaultValue: string;
+    readonly authChallengeId?: string;
   };
 }
 
@@ -54,13 +55,21 @@ const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["d
     "message" in value &&
     typeof value.message === "string" &&
     "defaultValue" in value &&
-    typeof value.defaultValue === "string");
+    typeof value.defaultValue === "string" &&
+    (!("authChallengeId" in value) || typeof value.authChallengeId === "string"));
 
 /** Coordinates are page CSS px. */
 export type PreviewStreamInput =
   | { readonly type: "takeControl" }
   | { readonly type: "releaseControl" }
-  | { readonly type: "dialog"; readonly accept: boolean; readonly promptText?: string }
+  | {
+      readonly type: "dialog";
+      readonly accept: boolean;
+      readonly promptText?: string;
+      readonly authChallengeId?: string | undefined;
+      readonly username?: string;
+      readonly password?: string;
+    }
   | { readonly type: "viewport"; readonly setting: PreviewViewportSetting }
   | {
       readonly type: "mouse";

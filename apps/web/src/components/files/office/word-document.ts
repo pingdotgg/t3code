@@ -30,6 +30,10 @@ import { PreviewError } from "../previewFailure";
 
 // An open Word document: its engine session, fonts, layout, built pages and painting. The document worker holds one.
 
+const isBundledWordScript = Schema.is(
+  Schema.Literals(["cjk-sc", "cjk-tc", "cjk-jp", "cjk-kr", "arabic", "hebrew"]),
+);
+
 const FontRequirements = Schema.fromJsonString(
   Schema.Array(
     Schema.Struct({
@@ -37,9 +41,7 @@ const FontRequirements = Schema.fromJsonString(
       family: Schema.String,
       bold: Schema.Boolean,
       italic: Schema.Boolean,
-      scripts: Schema.optional(
-        Schema.Array(Schema.Literals(["cjk-sc", "cjk-tc", "cjk-jp", "cjk-kr", "arabic", "hebrew"])),
-      ),
+      scripts: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 );
@@ -102,7 +104,7 @@ export async function openWordDocument(bytes: Uint8Array, fonts: FontFaceSet | u
     session.layoutFontRequirementsJson(JSON.stringify(request)),
   ).map(({ scripts, ...requirement }) => ({
     ...requirement,
-    ...(scripts ? { scripts: [...scripts] } : {}),
+    ...(scripts ? { scripts: scripts.filter(isBundledWordScript) } : {}),
   }));
 
   await Promise.all([
