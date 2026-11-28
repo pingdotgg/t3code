@@ -227,6 +227,24 @@ export function heaviestAgents(
     }));
 }
 
+/** Summed over every block device; null when no device line parses. */
+function diskActivity(diskstats: string) {
+  let inFlight = 0;
+  let ioTicks = 0;
+  let devices = 0;
+  for (const line of diskstats.split("\n")) {
+    // After major, minor and name: field 9 is I/Os in flight, field 10 is ms spent doing I/O.
+    const fields = line.trim().split(/\s+/);
+    const flight = Number(fields[11]);
+    const ticks = Number(fields[12]);
+    if (!Number.isFinite(flight) || !Number.isFinite(ticks)) continue;
+    inFlight += flight;
+    ioTicks += ticks;
+    devices++;
+  }
+  return devices === 0 ? null : { inFlight, ioTicks };
+}
+
 function cgroupNumber(text: string, pattern: RegExp): number | null {
   const value = pattern.exec(text)?.[1];
   return value === undefined ? null : Number(value);
@@ -241,6 +259,9 @@ const make = Effect.fn("makeHostResources")(function* () {
   const config = yield* Config.ServerConfig;
   const levels = yield* Ref.make(CALM);
   const unreadSamples = yield* Ref.make({ memory: 0, cpu: 0, io: 0, disk: 0 });
+  const lastDiskTicks = yield* Ref.make<{ readonly at: number; readonly ticks: number } | null>(
+    null,
+  );
   const lastAgentCpu = yield* Ref.make<{
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
@@ -314,13 +335,27 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? NodeOS.loadavg()[0]! / Math.max(1, NodeOS.availableParallelism())
         : null;
     const disk = yield* diskSpace;
+    const sampledAt = yield* Clock.currentTimeMillis;
+    const diskActive = linux ? diskActivity(yield* readFile("/proc/diskstats")) : null;
+    const previousTicks = yield* Ref.getAndSet(
+      lastDiskTicks,
+      diskActive === null ? null : { at: sampledAt, ticks: diskActive.ioTicks },
+    );
+    // An io_uring waiter (Ghostty) counts as PSI io full with no disk request in flight.
+    const disksIdle =
+      diskActive !== null &&
+      diskActive.inFlight === 0 &&
+      (previousTicks === null ||
+        sampledAt - previousTicks.at > CPU_SAMPLE_MAX_AGE_MS ||
+        previousTicks.ticks === diskActive.ioTicks);
+    const ioFull = psiAverage(ioPsi, "full", "avg60");
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),
       agentsMemoryFull: psiAverage(agentsPsi, "full", "avg10"),
       darwinMemoryLevel,
       cpuSome,
-      ioFull: psiAverage(ioPsi, "full", "avg60"),
+      ioFull: disksIdle && ioFull !== null ? 0 : ioFull,
       loadPerCpu,
       diskFreeBytes: disk?.free ?? null,
       diskTotalBytes: disk?.total ?? null,
