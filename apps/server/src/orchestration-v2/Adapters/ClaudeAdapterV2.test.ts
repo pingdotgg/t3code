@@ -8862,6 +8862,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #44307 the client's automatic Plan-to-Build follow-up was refused while a
+  // Plan turn's background agents still ran.
+  it.effect(
+    "accepts a Default follow-up to a Full access Plan turn whose background work runs",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const modelSelection = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const turn = (ordinal: number, interactionMode: "plan" | "default") => {
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-plan-to-default:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode,
+              cwd: "/workspace",
+            }),
+          });
+          return {
+            ...input,
+            appThread: { ...input.appThread, runtimeMode: "full-access" as const, interactionMode },
+          };
+        };
+        yield* harness.runtime.startTurn(turn(1, "plan"));
+        assert.equal(harness.getOpenedOptions()?.permissionMode, "plan");
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* harness.runtime.startTurn(turn(2, "default"));
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
   it.effect("applies a model change sent with a steer to the running turn", () =>
     Effect.gen(function* () {
