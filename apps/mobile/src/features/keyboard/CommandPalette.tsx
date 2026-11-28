@@ -78,6 +78,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useProjectsInSidebarOrder } from "../home/projects-in-sidebar-order";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -233,6 +234,7 @@ export function CommandPalette(props: {
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
   const projects = useProjects();
+  const sidebarOrderedProjects = useProjectsInSidebarOrder(projects);
   const threads = useVisibleThreadShells();
   const delegatedUnderParent = useDelegatedUnderParent();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
@@ -423,33 +425,31 @@ export function CommandPalette(props: {
         });
       }
     }
-    const openProjects = projects.filter((project) => project.archivedAt == null);
-    const projectItems: CommandPaletteItem[] = [
-      ...openProjects.filter((project) => project.pinnedAt != null),
-      ...openProjects.filter((project) => project.pinnedAt == null),
-    ].map((project) => ({
-      key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
-      kind: "project",
-      project,
-      title: project.title,
-      detail: gt("New thread · {environment}", {
-        environment:
-          savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId,
-      }),
-      searchTerms: [project.workspaceRoot, "new thread", "project"],
-      run: () =>
-        selectDetail({
-          name: "Thread",
-          params: {
-            draft: {
-              requestId: uuidv4(),
-              environmentId: project.environmentId,
-              projectId: project.id,
-              title: project.title,
-            },
-          },
+    const projectItems: CommandPaletteItem[] = sidebarOrderedProjects
+      .filter((project) => project.archivedAt == null)
+      .map((project) => ({
+        key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
+        kind: "project",
+        project,
+        title: project.title,
+        detail: gt("New thread · {environment}", {
+          environment:
+            savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId,
         }),
-    }));
+        searchTerms: [project.workspaceRoot, "new thread", "project"],
+        run: () =>
+          selectDetail({
+            name: "Thread",
+            params: {
+              draft: {
+                requestId: uuidv4(),
+                environmentId: project.environmentId,
+                projectId: project.id,
+                title: project.title,
+              },
+            },
+          }),
+      }));
     const threadItems: CommandPaletteItem[] = threads
       .filter(
         (thread) =>
@@ -502,6 +502,7 @@ export function CommandPalette(props: {
     canShareWithGuest,
     navigation,
     projects,
+    sidebarOrderedProjects,
     runCommand,
     savedConnectionsById,
     selectDetail,
