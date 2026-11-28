@@ -11867,7 +11867,16 @@ describe("AcpAdapterV2", () => {
                       rawInput: { prompt: "second" },
                       rawOutput: { childSessionId: "child-2" },
                     });
-                    // ID-less terminal must not settle the fresh child when task ID is shared.
+                    // A second distinct child session in the same turn with the same task ID gets its own identity.
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "shared-task",
+                      title: "Second fresh child",
+                      status: "in_progress",
+                      rawInput: { prompt: "third" },
+                      rawOutput: { childSessionId: "child-3" },
+                    });
+                    // ID-less terminal must not settle the fresh children when task ID is shared.
                     yield* send({
                       sessionUpdate: "tool_call_update",
                       toolCallId: "shared-task",
@@ -11885,6 +11894,12 @@ describe("AcpAdapterV2", () => {
                       toolCallId: "shared-task",
                       status: "completed",
                       rawOutput: { childSessionId: "child-2", result: "done-2" },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "shared-task",
+                      status: "completed",
+                      rawOutput: { childSessionId: "child-3", result: "done-3" },
                     });
                     return { stopReason: "end_turn" as const };
                   }),
@@ -11938,14 +11953,21 @@ describe("AcpAdapterV2", () => {
           Stream.takeUntil((e) => e.type === "turn.terminal"),
           Stream.runCollect,
         );
-        const fresh = rest.find(
-          (e): e is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-            e.type === "subagent.updated" &&
-            e.subagent.id !== carried!.id &&
-            e.subagent.status === "running",
-        )?.subagent;
-        assert.isDefined(fresh);
-        assert.notEqual(fresh.id, carried!.id);
+        const runningFresh = rest
+          .filter(
+            (
+              e,
+            ): e is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              e.type === "subagent.updated" &&
+              e.subagent.id !== carried!.id &&
+              e.subagent.status === "running",
+          )
+          .map((e) => e.subagent);
+        assert.lengthOf(runningFresh, 2);
+        const [fresh, freshSecond] = runningFresh;
+        assert.notEqual(fresh!.id, carried!.id);
+        assert.notEqual(freshSecond!.id, carried!.id);
+        assert.notEqual(fresh!.id, freshSecond!.id);
         const terminalSubagents = rest.filter(
           (e): e is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
             e.type === "subagent.updated" && e.subagent.status === "completed",
@@ -11955,8 +11977,12 @@ describe("AcpAdapterV2", () => {
           "done-1",
         );
         assert.equal(
-          terminalSubagents.find((e) => e.subagent.id === fresh.id)?.subagent.result,
+          terminalSubagents.find((e) => e.subagent.id === fresh!.id)?.subagent.result,
           "done-2",
+        );
+        assert.equal(
+          terminalSubagents.find((e) => e.subagent.id === freshSecond!.id)?.subagent.result,
+          "done-3",
         );
         assert.isFalse(
           terminalSubagents.some((e) => e.subagent.result === "ambiguous"),
@@ -11992,6 +12018,15 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (tool) => {
+              const args = tool.data.rawInput;
+              return typeof args === "object" &&
+                args !== null &&
+                "taskId" in args &&
+                typeof args.taskId === "string"
+                ? args.taskId
+                : undefined;
+            },
             makeRuntime: makeMockRuntime({
               childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
               mockAgentPath: yield* bundledMockAgentPath,
@@ -12045,18 +12080,19 @@ describe("AcpAdapterV2", () => {
         const peerB = makePeer(threadB, "session-b");
         const peerC = makePeer(ThreadId.make("thread-v1-c"), "session-c");
 
-        // Snapshot-only session B buffers an ineligible in_progress update; resumeThread must not offer.
+        // Snapshot-only session B buffers an ineligible in_progress update with a running background task; resumeThread must not offer.
         yield* runtime.readThreadSnapshot({ providerThread: peerB });
         yield* send("session-b", {
           sessionUpdate: "tool_call_update",
           toolCallId: "running-1",
           status: "in_progress",
+          rawInput: { taskId: "bg-b" },
         });
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
         yield* runtime.resumeThread({ providerThread: peerB });
         assert.isEmpty(offers);
 
-        // Switching from snapshot-only session B to session C clears B's buffered wake even without a route.
+        // Switching from snapshot-only session B to session C clears B's buffered wake, and B's running task must not block C.
         yield* runtime.readThreadSnapshot({ providerThread: peerC });
         assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
         yield* send("session-c", {
@@ -12065,8 +12101,13 @@ describe("AcpAdapterV2", () => {
         });
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
         assert.isEmpty(offers);
+        yield* runtime.resumeThread({ providerThread: peerC });
+        assert.deepEqual(
+          offers.map((wake) => [wake.threadId, wake.providerThreadId]),
+          [[peerC.appThreadId, peerC.id]],
+        );
         yield* runtime.readThreadSnapshot({ providerThread: peerB });
-        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
