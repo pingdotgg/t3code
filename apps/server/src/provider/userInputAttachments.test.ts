@@ -2074,6 +2074,21 @@ describe("question answer paths", () => {
           ],
         },
         {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">' +
+              "<office:body><office:text><text:p>Shipping update.</text:p>" +
+              '<text:p><draw:frame draw:name="Frame1" text:anchor-type="paragraph"><draw:text-box><text:p>Call the dock manager</text:p><text:p>before noon</text:p></draw:text-box></draw:frame>Trucks leave at six.</text:p>' +
+              '<text:p><draw:custom-shape text:anchor-type="char" draw:name="Text Box 1"><text:p>Gate 4</text:p><text:p>North side</text:p><draw:enhanced-geometry draw:type="ooxml-rect"/></draw:custom-shape>Drivers sign in.</text:p>' +
+              '<text:p>Badge <draw:custom-shape text:anchor-type="as-char"><text:p>A</text:p><text:p>B</text:p></draw:custom-shape> required.</text:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          exact:
+            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.",
+          expected: [],
+        },
+        {
           ext: "ods",
           parts: {
             "content.xml":
