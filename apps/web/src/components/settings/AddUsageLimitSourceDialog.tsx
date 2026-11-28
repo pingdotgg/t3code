@@ -48,12 +48,11 @@ export function AddUsageLimitSourceDialog({
   const endpoint = URL.parse(trimmedUrl);
   const canSave =
     keyValid &&
-    (http
-      ? endpoint !== null &&
-        /^https?:$/.test(endpoint.protocol) &&
-        !endpoint.username &&
-        !endpoint.password
-      : trimmedUrl.length > 0 && managementKey !== "");
+    endpoint !== null &&
+    /^https?:$/.test(endpoint.protocol) &&
+    !endpoint.username &&
+    !endpoint.password &&
+    (http || managementKey !== "");
 
   const reset = () => {
     setLabel("");
