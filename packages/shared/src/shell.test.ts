@@ -258,6 +258,16 @@ describe("mergePathEntries", () => {
       "/opt/bin :/opt/bin:/usr/bin",
     );
   });
+
+  it("keeps the first POSIX current-directory entry in search order", () => {
+    expect(mergePathEntries("/first::/second:", ":/third", "darwin")).toBe(
+      "/first::/second:/third",
+    );
+    expect(mergePathEntries("/first", "/second:", "linux")).toBe("/first:/second:");
+    expect(mergePathEntries("::", undefined, "linux")).toBe(":");
+    expect(mergePathEntries("", undefined, "linux")).toBeUndefined();
+    expect(mergePathEntries("; C:\\bin ;;", undefined, "win32")).toBe("C:\\bin");
+  });
 });
 
 describe("windowsEnvironmentValueCommand", () => {
@@ -551,6 +561,7 @@ describe("mergePathValues", () => {
       "/opt/bin :/opt/bin:/usr/bin",
     );
     expect(mergePathValues('/opt/bin"', "/opt/bin", "linux")).toBe('/opt/bin":/opt/bin');
+    expect(mergePathValues(":/usr/bin", "/usr/bin:", "linux")).toBe(":/usr/bin");
   });
 });
 
