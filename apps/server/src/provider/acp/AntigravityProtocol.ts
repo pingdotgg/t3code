@@ -180,7 +180,7 @@ export function extractAntigravityUserInputQuestion(
 const isAskQuestionForm = Schema.is(
   Schema.Struct({
     properties: Schema.Record(Schema.String, Schema.Unknown),
-    required: Schema.optional(Schema.Array(Schema.String)),
+    required: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
   }),
 );
 const isAskQuestionField = Schema.is(
@@ -210,7 +210,7 @@ export const extractAntigravityElicitationForm: NonNullable<
   const form = parseElicitationForm(request.requestedSchema, request.message);
   if (form === undefined) return undefined;
   const { properties } = request.requestedSchema;
-  const required = new Set(request.requestedSchema.required);
+  const required = new Set(request.requestedSchema.required ?? []);
   const askedIds = new Set(form.questions.map((question) => question.id));
 
   // The shared parser folds a single choice's companion; fold a multi-select's here too.
