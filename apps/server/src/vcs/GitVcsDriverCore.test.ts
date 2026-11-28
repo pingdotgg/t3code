@@ -2885,8 +2885,8 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const spawner = ChildProcessSpawner.make((command) => {
       if (
         ChildProcess.isStandardCommand(command) &&
-        command.args[0] === "submodule" &&
-        command.args[1] === "update"
+        command.args.includes("submodule") &&
+        command.args.includes("update")
       ) {
         return Effect.acquireRelease(
           Effect.succeed(
@@ -8226,8 +8226,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "submodule" &&
-              command.args[1] === "update"
+              command.args.includes("submodule") &&
+              command.args.includes("update")
             ) {
               yield* Deferred.succeed(updateStarted, undefined);
               yield* Deferred.await(releaseUpdate);
@@ -8338,6 +8338,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             "sparse-none",
           ),
         );
+      }).pipe(withGitFileProtocol),
+    );
+
+    it.effect("borrows submodule objects from the source checkout without keeping a link", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const submoduleRepo = yield* makeTmpDir("git-submodule-");
+        yield* initRepoWithCommit(submoduleRepo);
+        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+        yield* git(submoduleRepo, ["add", "."]);
+        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["submodule", "add", NodeURL.pathToFileURL(submoduleRepo).href, "shared"]);
+        yield* git(cwd, ["commit", "-m", "add submodule"]);
+        // The remote keeps its refs but can no longer serve objects; only the source has them.
+        const remoteObjects = pathService.join(submoduleRepo, ".git", "objects");
+        yield* fileSystem.remove(remoteObjects, { recursive: true });
+        yield* fileSystem.makeDirectory(pathService.join(remoteObjects, "pack"), {
+          recursive: true,
+        });
+
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "borrowed");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree(
+          { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/borrowed" },
+          { submodules: "recursive" },
+        );
+
+        const shared = pathService.join(worktreePath, "shared");
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(shared, "SHARED.md")),
+          "# shared\n",
+        );
+        yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
+        yield* git(shared, ["fsck", "--no-progress"]);
+        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
       }).pipe(withGitFileProtocol),
     );
 

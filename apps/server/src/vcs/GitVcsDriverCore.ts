@@ -6865,26 +6865,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* progress.onSubmodulesStarted();
       }
       const onSubmoduleLine = progress?.onSubmoduleLine;
-      const updateSubmodules = (paths: readonly string[]) =>
+      const updateSubmodules = (paths: readonly string[], borrowEnv?: NodeJS.ProcessEnv) =>
         runGit(
           "GitVcsDriver.createWorktree.updateSubmodules",
           worktreePath,
           [
+            ...(borrowEnv
+              ? [
+                  "-c",
+                  "submodule.alternateLocation=superproject",
+                  // Git checks each source module and clones the unusable ones (shallow, missing).
+                  "-c",
+                  "submodule.alternateErrorStrategy=ignore",
+                ]
+              : []),
             "submodule",
             "update",
             "--init",
             ...(submoduleMode.value === "recursive" ? ["--recursive"] : []),
             // Git reports transfer progress to a pipe only when forced.
             ...(onSubmoduleLine ? ["--progress"] : []),
+            // Copies the borrowed objects, so the worktree never depends on the source checkout.
+            ...(borrowEnv ? ["--dissociate"] : []),
             // A clone left by a failed update already has HEAD at the gitlink, so Git would skip it.
             ...(paths.length > 0 ? ["--force", "--", ...paths] : []),
           ],
           {
             // Cloning scales with remote size; let it finish or be cancelled, like worktree add.
             timeoutMs: null,
+            ...(borrowEnv ? { env: borrowEnv } : {}),
             ...(onSubmoduleLine
               ? {
-                  env: { LANGUAGE: "C" },
+                  env: { ...borrowEnv, LANGUAGE: "C" },
                   progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
                   // Progress for many submodules can pass the output cap; truncate instead of failing.
                   appendTruncationMarker: true,
@@ -6921,6 +6933,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           yield* updateSubmodules(clonedPaths);
         }
       });
+      // superproject borrows from each alternate's modules/<name>, but a linked worktree shares
+      // the source's object store instead of listing it as an alternate. Behind an empty primary
+      // store it becomes one, so Git clones each submodule from the source's copy and fetches
+      // only what that lacks.
+      const borrowSubmodules = Effect.gen(function* () {
+        const objectsPath = yield* runGitStdout(
+          "GitVcsDriver.createWorktree.objectsPath",
+          worktreePath,
+          ["rev-parse", "--git-path", "objects"],
+        );
+        const objectDirectories = yield* runGitStdout(
+          "GitVcsDriver.createWorktree.alternates",
+          worktreePath,
+          ["count-objects", "-v"],
+        );
+        // Git's relative paths use the physical cwd.
+        const physicalWorktree = yield* fileSystem.realPath(worktreePath);
+        const emptyObjects = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-submodule-objects-",
+        });
+        yield* updateSubmodules(
+          [],
+          privateObjectDirectoryEnv(
+            emptyObjects,
+            path.resolve(physicalWorktree, objectsPath.trim()),
+            objectDirectories,
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        // Older Git lacks --dissociate, and a failed clone leaves the others unchecked-out.
+        Effect.catch(() => updateSubmodules([]).pipe(Effect.andThen(checkOutClonedSubmodules))),
+      );
       // Registering submodule URLs writes the shared config; the clones that follow do not.
       yield* runGit(
         "GitVcsDriver.createWorktree.initSubmodules",
@@ -6928,7 +6973,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["submodule", "init"],
         { writesSharedConfig: true },
       ).pipe(
-        Effect.andThen(updateSubmodules([])),
+        Effect.andThen(borrowSubmodules),
         Effect.matchEffect({
           onFailure: (cause) =>
             Effect.logWarning("worktree submodule checkout failed; submodules may be incomplete", {
