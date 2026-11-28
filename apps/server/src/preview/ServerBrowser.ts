@@ -1606,17 +1606,23 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    const { navStatus } = snapshot;
     // Existing desktop and popup PDFs can start loading before interception attaches.
+    // A page the desktop loaded and then let go would otherwise come back blank here.
     if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+      (navStatus._tag === "Loading" && ((!adopted && !desktop) || isPdfAssetUrl(navStatus.url))) ||
+      (navStatus._tag === "Success" && !adopted && !desktop)
     ) {
       tab.loading = true;
-      const initialUrl = URL.parse(snapshot.navStatus.url);
+      const initialUrl = URL.parse(navStatus.url);
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
-      const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
-      const url = snapshot.navStatus.url;
+      const options = {
+        // A reloaded page stands in for one that had loaded, so actions wait until it has too.
+        waitUntil: navStatus._tag === "Success" ? "load" : "commit",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      } as const;
+      const url = navStatus.url;
       tab.initialNavigation = settleOnAuth(tab, () =>
         ((desktop || adopted) && page.url() === url
           ? page.reload(options)
@@ -2779,13 +2785,30 @@ const make = Effect.gen(function* () {
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
-      case "status":
-        return statusWithTitle(
+      case "status": {
+        const tab =
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
-          request.agentSessionId,
-        );
+            : ((await runPromise(
+                findTab(request.threadId, request.tabId).pipe(
+                  Effect.catchTags({
+                    ServerBrowserTabNotFoundError: () => Effect.void,
+                  }),
+                ),
+              )) ?? undefined);
+        // A dialog may hold the reload until the caller sees and answers it.
+        if (tab?.initialNavigation && !tab.dialog) {
+          const dialog = Promise.withResolvers<void>();
+          const onDialog = () => dialog.resolve();
+          tab.page.once("dialog", onDialog);
+          try {
+            await Promise.race([tab.initialNavigation.catch(constVoid), dialog.promise]);
+          } finally {
+            tab.page.off("dialog", onDialog);
+          }
+        }
+        return statusWithTitle(tab, request.agentSessionId);
+      }
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
@@ -2992,6 +3015,8 @@ const make = Effect.gen(function* () {
       await resolveDialog(tab, { accept, promptText, authChallengeId });
       return statusWithTitle(tab, request.agentSessionId);
     }
+    // The first operation on a recovered page can run before its reload finishes.
+    if (!tab.dialog) await tab.initialNavigation?.catch(constVoid);
     const agentSessionId = request.agentSessionId!;
 
     if (

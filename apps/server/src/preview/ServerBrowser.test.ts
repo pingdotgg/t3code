@@ -3739,6 +3739,154 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("status reconnects the agent's tab after the desktop lets it go", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      yield* Effect.promise(() => desktopDetachReady.promise);
+      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId: opened.tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({ available: true, tabId: opened.tabId });
+      // The agent still reaches its tab without passing a tabId.
+      expect(
+        yield* broker.invoke({ scope, operation: "evaluate", input: { expression: "after()" } }),
+      ).toBe("evaluated");
+      expect(desktopConnections).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("status reports a failed reconnect and keeps the agent's tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      yield* Effect.promise(() => desktopDetachReady.promise);
+      desktopAttachesLate = true;
+      desktopTabs.delete(tabId);
+      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      // The desktop does not take the tab back, and the headless browser fails to start.
+      contextFailure = new Error("Chromium launch failed");
+      const failing = yield* broker
+        .invoke<PreviewAutomationStatus>({ scope, operation: "status", input: {} })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => desktopAttachWaiting.promise);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(failing)).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        tabId,
+      });
+      contextFailure = null;
+      expect(
+        yield* broker.invoke({ scope, operation: "evaluate", input: { expression: "after()" } }),
+      ).toBe("evaluated");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["status", "evaluate", "dialog"] as const)(
+  "handles %s while restoring the page on a detached tab",
+  (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* Broker.PreviewAutomationBroker;
+        yield* ServerBrowser.ServerBrowser;
+        yield* Effect.yieldNow;
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: "https://example.com/?t=1", reuseExistingTab: false, show: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+        yield* (yield* Manager.PreviewManager).reportStatus({
+          threadId: scope.thread.threadId,
+          tabId,
+          serverControlled: true,
+          navStatus: { _tag: "Success", url: "https://example.com/?t=1", title: "Example" },
+          canGoBack: false,
+          canGoForward: false,
+        });
+        // Opening DevTools on a desktop tab releases it until DevTools closes.
+        yield* Effect.promise(() => desktopDetachReady.promise);
+        desktopAttachesLate = true;
+        desktopTabs.delete(tabId);
+        desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
+        yield* Effect.promise(() => desktopReleased.promise);
+        const reloading = Promise.withResolvers<void>();
+        const reloaded = Promise.withResolvers<void>();
+        yield* Effect.addFinalizer(() => Effect.sync(() => reloaded.resolve()));
+        initialNavigation = () => {
+          reloading.resolve();
+          return reloaded.promise;
+        };
+        let reloadDone = false;
+        let answeredAfterReload = false;
+        const operation = scenario === "evaluate" ? "evaluate" : "status";
+        const pending = yield* broker
+          .invoke<unknown>({
+            scope,
+            operation,
+            input: operation === "status" ? {} : { expression: "document.title" },
+          })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (answeredAfterReload = reloadDone))),
+            Effect.forkScoped,
+          );
+        yield* Effect.promise(() => desktopAttachWaiting.promise);
+        yield* TestClock.adjust("10 seconds");
+        yield* Effect.promise(() => reloading.promise);
+        if (scenario === "dialog") {
+          const accept = vi.fn(async () => reloaded.resolve());
+          contexts[0]!.page.emit("dialog", {
+            type: () => "confirm",
+            message: () => "Continue loading?",
+            defaultValue: () => "",
+            accept,
+            dismiss: vi.fn(async () => {}),
+          });
+          expect(yield* Fiber.join(pending)).toMatchObject({
+            available: true,
+            tabId,
+            dialog: { type: "confirm", message: "Continue loading?" },
+          });
+          yield* broker.invoke({ scope, tabId, operation: "dialog", input: { accept: true } });
+          expect(accept).toHaveBeenCalledTimes(1);
+          return;
+        }
+        reloadDone = true;
+        reloaded.resolve();
+        const result = yield* Fiber.join(pending);
+
+        expect(answeredAfterReload).toBe(true);
+        if (operation === "status")
+          expect(result).toMatchObject({ available: true, tabId, url: "https://example.com/?t=1" });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.effect("the tab the desktop shows is visible and picked for agents without a tab", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -92,6 +92,59 @@ it.effect("atomically registers a connected host and correlates its response", (
   }),
 );
 
+it.effect("allows status to finish starting the server browser", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const delivered = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(delivered, undefined);
+          yield* Deferred.await(ready);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { available: true },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      const pending = yield* broker
+        .invoke({ scope, operation: "status", input: {} })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(delivered);
+      yield* TestClock.adjust("20 seconds");
+      yield* Deferred.succeed(ready, undefined);
+      expect(yield* Fiber.join(pending)).toEqual({ available: true });
+    }),
+  ),
+);
+
+it.effect("an explicit timeout still bounds status on a preferred host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const delivered = yield* Deferred.make<number>();
+      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+      yield* Stream.runForEach(requests, (request) =>
+        Deferred.succeed(delivered, request.timeoutMs),
+      ).pipe(Effect.forkScoped);
+      const pending = yield* broker
+        .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 2_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      expect(yield* Deferred.await(delivered)).toBe(2_000);
+      yield* TestClock.adjust("20 seconds");
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+        timeoutMs: 2_000,
+      });
+    }),
+  ),
+);
+
 it.effect("targets multiple tabs explicitly while retaining a default tab", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;
