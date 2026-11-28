@@ -68,6 +68,13 @@ export type ThreadImportError =
   | ThreadImportProjectMismatchError
   | ThreadImportContinuationError;
 
+/** A checkout an import prepared for its thread. */
+export interface ImportedWorkspace {
+  readonly worktreePath: string;
+  readonly branch: string | null;
+  readonly undo: Effect.Effect<void>;
+}
+
 /**
  * Creates a thread here from another environment's conversation. Its history is run-less and
  * marked imported, so the first run gets it as context whatever the provider. Ids derive from
@@ -76,13 +83,15 @@ export type ThreadImportError =
 export class ThreadImportService extends Context.Service<
   ThreadImportService,
   {
-    readonly importThread: (
+    readonly importThread: <E = never>(
       input: OrchestratorMcpThreadImportInput & {
         readonly runtimeMode: RuntimeMode;
         readonly interactionMode: ProviderInteractionMode;
         readonly linkOrigin: OrchestrationV2LinkOrigin | undefined;
+        /** Prepares the thread's checkout, only when this import creates the thread. */
+        readonly workspace?: Effect.Effect<ImportedWorkspace, E>;
       },
-    ) => Effect.Effect<OrchestratorMcpThreadImportResult, ThreadImportError>;
+    ) => Effect.Effect<OrchestratorMcpThreadImportResult, ThreadImportError | E>;
   }
 >()("t3/orchestration-v2/ThreadImportService") {}
 
@@ -125,6 +134,7 @@ const make = Effect.gen(function* () {
     const existing = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
     let created = false;
     if (existing === null) {
+      const workspace = input.workspace === undefined ? undefined : yield* input.workspace;
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         createdBy: "agent",
@@ -136,8 +146,9 @@ const make = Effect.gen(function* () {
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
-        branch: input.branch ?? null,
-        worktreePath: input.worktreePath ?? null,
+        branch: workspace === undefined ? (input.branch ?? null) : workspace.branch,
+        worktreePath:
+          workspace === undefined ? (input.worktreePath ?? null) : workspace.worktreePath,
         linkedPullRequest: null,
         branchPullRequest: null,
         activeProviderThreadId: null,
@@ -181,6 +192,8 @@ const make = Effect.gen(function* () {
               Effect.flatMap((raced) => (raced === null ? Effect.failCause(cause) : Effect.void)),
             ),
           ),
+          // The checkout was made for a thread that now does not exist.
+          Effect.tapError(() => workspace?.undo ?? Effect.void),
           Effect.mapError((cause) => new ThreadImportWriteError({ threadId, cause })),
         );
       created = true;

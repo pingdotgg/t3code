@@ -28,6 +28,7 @@ import * as Fiber from "effect/Fiber";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "./handoff/ThreadHandoff.testkit.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -167,7 +168,9 @@ const makeLaptopWith = (
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(PeerLinkRequests.layer),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      Layer.provide(
+        Layer.merge(Layer.mock(RemoteDelegation.RemoteDelegation)({}), HandoffTestkit.layerUnused),
+      ),
       Layer.provide(Layer.succeedContext(answering)),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
