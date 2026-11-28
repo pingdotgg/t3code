@@ -74,6 +74,19 @@ export function serializeCodeBlockToMarkdown(source: string, language: string | 
 // Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
 // copied as shown, without fences; DOM text from rendered markdown carries no NUL.
 const CODE_BOUNDARY = "\u0000";
+// An empty code part before a marker the serializer writes keeps escapeBlockStarts off it.
+const BLOCK_GUARD = `${CODE_BOUNDARY}${CODE_BOUNDARY}`;
+// CommonMark/GFM block starts: headings, quotes, lists, rules, setext, fences, table delimiters.
+// Deeper indentation is indented code or a continuation line, where a backslash would show.
+const BLOCK_START =
+  /\u0000[\s\S]*?\u0000|^( {0,3})(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
+const escapeBlockStart = (match: string, indent?: string, rule?: string) => {
+  if (indent === undefined) return match;
+  return rule ? `${indent}${rule.replace(/[*_~]/g, "\\$&")}` : `${match}\\`;
+};
+const escapeBlockStarts = (text: string) => text.replace(BLOCK_START, escapeBlockStart);
+const protectVerbatim = (text: string) =>
+  text ? CODE_BOUNDARY + text.replace(/(?<!\n)\n*$/, `${CODE_BOUNDARY}$&`) : "";
 
 function verbatimBlock(code: string): string {
   return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
@@ -131,7 +144,7 @@ function serializeTable(table: Element): string {
       emittedSeparator = true;
     }
   }
-  return `${lines.join("\n")}\n\n`;
+  return `${BLOCK_GUARD}${lines.join(`\n${BLOCK_GUARD}`)}\n\n`;
 }
 
 function serializeListItem(
@@ -147,6 +160,7 @@ function serializeListItem(
   let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
+  if (!inTableCell) content = escapeBlockStarts(content);
   if (!item.querySelector(":scope > p")) {
     content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
@@ -154,7 +168,7 @@ function serializeListItem(
   const continuationIndent = " ".repeat(bullet.length);
   const [first = "", ...rest] = content.split("\n");
   return [
-    `${marker}${first}`,
+    `${BLOCK_GUARD}${marker}${first}`,
     ...rest.map((line) => (line.length > 0 ? `${continuationIndent}${line}` : line)),
   ].join("\n");
 }
@@ -189,6 +203,7 @@ function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
     }
     content += serializeNode(child, inTableCell);
   }
+  if (!inTableCell) content = escapeBlockStarts(content);
   return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
 }
 
@@ -198,7 +213,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
   if (!content) return "";
   const quoted = content
     .split("\n")
-    .map((line) => (line.length > 0 ? `> ${line}` : ">"))
+    .map((line) => (line.length > 0 ? `${BLOCK_GUARD}> ${line}` : `${BLOCK_GUARD}>`))
     .join("\n");
   return `${quoted}\n\n`;
 }
@@ -385,9 +400,10 @@ function serializeNode(node: Node, inTableCell = false): string {
     if (element.hasAttribute("data-markdown-mermaid")) {
       return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
     }
-    return element.hasAttribute("data-markdown-math")
+    const copy = element.hasAttribute("data-markdown-math")
       ? markdownCopy
       : escapeTablePipes(markdownCopy, inTableCell);
+    return protectVerbatim(copy);
   }
   if (isSkippedElement(element)) return "";
   const alert = element.getAttribute(ALERT_ATTRIBUTE);
@@ -396,21 +412,22 @@ function serializeNode(node: Node, inTableCell = false): string {
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
-    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
+    return `${BLOCK_GUARD}${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
   }
 
   switch (element.tagName) {
     case "BR":
       return "\n";
     case "HR":
-      return "---\n\n";
+      return `${BLOCK_GUARD}---\n\n`;
     case "P":
       return `${serializeChildren(element, inTableCell).trim()}\n\n`;
     case "PRE":
       return escapeTablePipes(serializeCodeBlock(element), inTableCell);
     case "CODE": {
       const content = escapeTablePipes(element.textContent ?? "", inTableCell);
-      return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      const code = isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+      return protectVerbatim(code);
     }
     case "STRONG":
     case "B":
@@ -501,7 +518,7 @@ function soleCodeBlock(container: Node): Element | null {
 function tidyMarkdown(markdown: string): string {
   // Odd parts are code, kept verbatim, so a selection that starts or ends inside
   // code keeps that code's leading and trailing whitespace.
-  const parts = markdown.split(CODE_BOUNDARY);
+  const parts = escapeBlockStarts(markdown).split(CODE_BOUNDARY);
   const last = parts.length - 1;
   return parts
     .map((part, index) => {
