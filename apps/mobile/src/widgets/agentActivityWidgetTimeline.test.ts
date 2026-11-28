@@ -1,7 +1,10 @@
+import { decodeOptions, msg } from "gt-react-native";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+
+import type { MessageResolver } from "../i18n/messages";
 
 import {
   AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS,
@@ -68,5 +71,19 @@ describe("agentActivityWidgetTimeline", () => {
 
     expect(timeline).toHaveLength(1);
     expect(timeline[0]?.props.activities[0]?.phase).toBe("failed");
+  });
+
+  it("shows relay rows in the app language, not the relay's English status", () => {
+    const tagged = ((message: string, options?: Record<string, unknown>) => {
+      const vars = { ...decodeOptions(message), ...options };
+      return `«${String(vars.$_source ?? message)}»`;
+    }) as MessageResolver;
+    const timeline = agentActivityWidgetTimeline(
+      { kind: "snapshot", aggregate: aggregate([row("completed", "Done")]) },
+      now,
+      tagged,
+    );
+
+    expect(timeline[0]?.props.activities[0]?.status).toBe(tagged(msg("Done")));
   });
 });
