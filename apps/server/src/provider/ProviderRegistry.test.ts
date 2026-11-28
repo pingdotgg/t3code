@@ -2522,6 +2522,7 @@ it.layer(
               slashCommands: [],
               skills: [],
             } as const satisfies ServerProvider;
+            const snapshotRef = yield* Ref.make<ServerProvider>(provider);
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
@@ -2544,8 +2545,14 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
+                getSnapshot: Ref.get(snapshotRef),
+                refresh: Ref.update(probes, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(snapshotRef)),
+                ),
+                refreshUsage: Ref.update(snapshotRef, (current) => ({
+                  ...current,
+                  usageLimits: { checkedAt: "2026-06-10T00:05:00.000Z", windows: [] },
+                })),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -2655,6 +2662,17 @@ it.layer(
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
           // A changed manifest also rechecks latest CLI versions.
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
+
+          // A limits refresh updates limits directly and skips full probes and maintenance checks.
+          const probesBeforeLimits = yield* Ref.get(first.probes);
+          yield* first.takeMaintenanceReads;
+          yield* registry.refreshUsageLimits();
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeLimits);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, []);
+          const refreshedFirst = (yield* registry.getProviders).find(
+            (entry) => entry.instanceId === first.instance.instanceId,
+          );
+          assert.strictEqual(refreshedFirst?.usageLimits?.checkedAt, "2026-06-10T00:05:00.000Z");
 
           yield* first.takeMaintenanceReads;
           yield* Ref.set(updateEvents, []);

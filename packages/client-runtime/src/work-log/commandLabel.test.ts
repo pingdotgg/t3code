@@ -16,6 +16,7 @@ describe("commandProgramName", () => {
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
     ["bash -c $'ls\\nnpm test'", "ls"],
     ["bash -c $'\\x6e\\160m test'", "npm"],
+    ['powershell -NoP -exec bypass -c "git status"', "git"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -136,7 +137,12 @@ describe("commandProgramName", () => {
     [">/tmp/log && npm test", "npm"],
     ["cd /tmp && 2>& 1 node app.js", "node"],
     ["cd /tmp && {output}>/tmp/log deno test", "deno"],
-  ])("skips redirections before the next command: %s", (command, program) => {
+    ["whoami>/dev/null", "whoami"],
+    ["cat</etc/hosts", "cat"],
+    ["whoami&>/dev/null", "whoami"],
+    ["'my>tool' arg", "my>tool"],
+    ["my\\>tool arg", "my>tool"],
+  ])("handles redirections around commands: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
@@ -144,6 +150,8 @@ describe("commandProgramName", () => {
     ["cd /tmp <<-EOF\n\tnot-a-command\n\tEOF\nbun test", "bun"],
     ["cd /tmp <<A <<B\none\nA\ntwo\nB\ngit status", "git"],
     ["cd /tmp <<EOF && pnpm test\nnot-a-command\nEOF\nbun test", "pnpm"],
+    ["cd . <<''\npretend\n\nprintf ok", "printf"],
+    ['cd . <<""\npretend\n\nprintf ok', "printf"],
   ])("skips heredoc bodies before finding the next command: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -210,6 +218,12 @@ describe("commandDisplayText with Windows shell wrappers", () => {
     ['cmd.exe /c "npm test"', "npm test"],
     ['Bash.exe -lc "git status"', "git status"],
     ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
+    [
+      'powershell.exe -NoProf -NonI -ep Bypass -ExecutionPol Bypass -wd C:\\repo -Comm "git status"',
+      "git status",
+    ],
+    ['pwsh -v ignored -c "git status"', 'pwsh -v ignored -c "git status"'],
+    ['powershell -v 5.1 -c "git status"', "git status"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
@@ -222,6 +236,29 @@ describe("commandDisplayText with ANSI-C and locale quoting", () => {
     ['bash -lc $"npm test"', "npm test"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandDisplayText with line continuations", () => {
+  it.each([
+    ['bash \\\n-lc "git status"', "git status"],
+    ['bash -lc "git status \\\n--short"', "git status --short"],
+  ])("removes them as bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["bash -lc 'git status \\\n--short'", "git status \\\n--short"],
+    ["bash -c $'git status \\\n--short'", "git status \\\n--short"],
+    ['bash \\\n-lc "git status \\\r\n--short"', "git status \\\r\n--short"],
+  ])("keeps them where bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it("keeps Windows shell scripts on separate lines", () => {
+    expect(commandDisplayText('cmd.exe /c "dir C:\\\necho done"')).toMatch(
+      /^dir C:\\?\necho done$/u,
+    );
   });
 });
 

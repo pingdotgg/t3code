@@ -384,11 +384,11 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       // POSIX shells search the working directory for an empty entry. Resolve it now: the
       // connector may be launched from elsewhere.
       const workingDirectoryEntry = directory === "" && platform !== "win32";
-      const trimmed = directory.trim().replace(/^"|"$/gu, "");
-      if (trimmed.length === 0 && !workingDirectoryEntry) continue;
+      const entry = platform === "win32" ? directory.trim().replace(/^"|"$/gu, "") : directory;
+      if (entry.length === 0 && !workingDirectoryEntry) continue;
       const candidate = workingDirectoryEntry
         ? path.resolve(cwd, executableFileName(platform))
-        : path.join(trimmed, executableFileName(platform));
+        : path.join(entry, executableFileName(platform));
       if (!(yield* isExecutableFile(candidate))) continue;
       const available = yield* compatibleCandidate(candidate, "path");
       if (available) return available;

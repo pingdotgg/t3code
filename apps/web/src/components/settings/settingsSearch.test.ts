@@ -291,15 +291,27 @@ describe("searchSettings", () => {
     for (const [title, id] of [
       ["Automatic worktree cleanup", "storage-worktrees"],
       ["Delete settled worktrees", "storage-worktrees"],
+      ["Delete worktrees with deleted threads", "storage-worktrees"],
+      ["Delete merged worktrees", "storage-worktrees"],
       ["Delete old browser artifacts", "storage-artifacts"],
       ["Delete old rotated logs", "storage-artifacts"],
       ["Custom search URL", "browser-search-engine"],
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["ChatGPT account", "providers"],
       ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
+    }
+  });
+
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
     }
   });
 
