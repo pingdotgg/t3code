@@ -6,7 +6,9 @@ import {
 } from "../../hooks/useSettings";
 import { MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } from "../ui/menu";
 import {
+  isDefaultThreadDetailsOrder,
   isDefaultThreadDetailsVisibility,
+  resolveThreadDetailsOrder,
   resolveThreadDetailsVisibility,
   RESET_THREAD_DETAILS_ITEMS,
   setThreadDetailsItem,
@@ -16,6 +18,7 @@ import {
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
 export function ThreadDetailsItemsMenuItems() {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
+  const order = useClientSettings(resolveThreadDetailsOrder);
   const m = useMessages();
   return (
     <>
@@ -39,7 +42,9 @@ export function ThreadDetailsItemsMenuItems() {
       </MenuGroup>
       <MenuSeparator />
       <MenuItem
-        disabled={isDefaultThreadDetailsVisibility(visibility)}
+        disabled={
+          isDefaultThreadDetailsVisibility(visibility) && isDefaultThreadDetailsOrder(order)
+        }
         onClick={() => updateClientSettings(RESET_THREAD_DETAILS_ITEMS)}
       >
         <T>Reset to default</T>

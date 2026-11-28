@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { PopoverCreateHandle } from "../ui/popover";
@@ -83,6 +83,9 @@ function Card({
               <p style={{ height: density === "full" ? rows * 100 : 50 }}>
                 Details for {threadRef.threadId}
               </p>
+              <button type="button" aria-roledescription="sortable" aria-pressed="false">
+                Grip
+              </button>
               {density === "full" && automationRows > 0 ? (
                 <section data-thread-automations-panel style={{ height: automationRows * 100 }} />
               ) : null}
@@ -151,6 +154,20 @@ it("removes the leaving thread's popup on a thread switch", async () => {
   await screen.rerender(<Card threadRef={threadA} inline={false} fixture={fixture} />);
   await expect.element(page.getByText("Details for thread-b")).not.toBeInTheDocument();
   await expect.element(page.getByText("Details for thread-a")).not.toBeInTheDocument();
+});
+
+it("keeps the popover open when Escape cancels a block drag", async () => {
+  using fixture = setup();
+  await using _screen = await render(<Card threadRef={threadB} inline={false} fixture={fixture} />);
+  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
+  const grip = page.getByRole("button", { name: "Grip" }).element();
+  grip.setAttribute("aria-pressed", "true");
+  grip.focus();
+  await userEvent.keyboard("{Escape}");
+  expect(popoverOpen(threadB)).toBe(true);
+  grip.setAttribute("aria-pressed", "false");
+  await userEvent.keyboard("{Escape}");
+  await expect.poll(() => popoverOpen(threadB)).toBe(false);
 });
 
 it("reopens after a normal close", async () => {

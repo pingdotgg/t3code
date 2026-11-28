@@ -61,6 +61,7 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
+import { useThreadRowLayout } from "./thread-row-layout";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
@@ -122,6 +123,7 @@ export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
 
 function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const gt = useGT();
+  const rowLayout = useThreadRowLayout();
   const messages = useMessages();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { themeVariables: materialTheme } = useAppearancePreferences();
@@ -366,6 +368,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     listEnvironments,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    rowLayout,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread, props.onOpenPendingTask);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -418,6 +421,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
         return (
           <ThreadListV2Row
+            rowLayout={rowLayout}
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
             variant={item.item.variant}

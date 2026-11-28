@@ -72,6 +72,7 @@ import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
+import { useThreadRowLayout } from "../threads/thread-row-layout";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
@@ -195,6 +196,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 
 export function HomeScreen(props: HomeScreenProps) {
   const gt = useGT();
+  const rowLayout = useThreadRowLayout();
   const m = useMessages();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const workspace = useWorkspaceTabs();
@@ -530,6 +532,7 @@ export function HomeScreen(props: HomeScreenProps) {
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
+        rowLayout={rowLayout}
         pane={sidebarSurface ? "sidebar" : "screen"}
         selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
         fullSwipeWidth={fullSwipeWidth}
@@ -611,6 +614,7 @@ export function HomeScreen(props: HomeScreenProps) {
     selectedThreadKey,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    rowLayout,
   };
 
   const hasAnyThreads =

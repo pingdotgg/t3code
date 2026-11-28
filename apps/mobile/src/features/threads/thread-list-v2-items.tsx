@@ -38,8 +38,15 @@ import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
-import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
+import { memo, useCallback, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import {
+  Platform,
+  Pressable,
+  Text as RNText,
+  useWindowDimensions,
+  View,
+  type TextLayoutEvent,
+} from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -97,6 +104,11 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import {
+  resolveSidebarRowLines,
+  type SidebarRowLayout,
+  type SidebarRowToken,
+} from "@t3tools/client-runtime/thread-row-layout";
 
 interface StatusLabel {
   // Null when the icon and timer carry the status on their own.
@@ -760,6 +772,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly providerInstance: ThreadRowProviderInstance | null;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  readonly rowLayout: SidebarRowLayout;
   readonly pane?: "screen" | "sidebar";
   readonly showTrailingDivider?: boolean;
   readonly selected?: boolean;
@@ -801,22 +814,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
-  const { width: windowWidth, fontScale } = useWindowDimensions();
-  const titleTypography = useScaledTextRole("body");
-  const metadataTypography = useScaledTextRole("label");
-  const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
-  const machineIconSize = metadataTypography.fontSize * fontScale;
-  // Android's nonlinear system text scaling can differ from the fontScale estimate.
-  const [androidTitleLineHeight, setTitleLineHeight] = useState(
-    titleTypography.lineHeight * fontScale,
-  );
-  const titleLineHeight =
-    Platform.OS === "android" ? androidTitleLineHeight : titleTypography.lineHeight * fontScale;
+  const { width: windowWidth } = useWindowDimensions();
+  const metrics = useThreadRowMetrics();
   const gt = useGT();
   const m = useMessages();
   const {
     thread,
     variant,
+    rowLayout,
     onSelectThread,
     onOpenThreadPullRequests,
     onDeleteThread,
@@ -1379,46 +1384,68 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const rowItemContent: ThreadRowItemContent = {
+    environmentId: thread.environmentId,
+    title: thread.title,
+    titleClassName: cn(
+      "text-base",
+      !recede && "font-t3-medium",
+      selected ? selectedThreadRowColors.foregroundClassName : rowAppearance.foregroundClassName,
+      isRegeneratingTitle && "opacity-55",
+    ),
+    project: props.project,
+    branch: thread.branch,
+    issues: thread.issues,
+    pr,
+    pullRequestAction: prBadgeLabel
+      ? { label: prBadgeLabel, onPress: handleOpenPullRequests }
+      : null,
+    environmentLabel: props.environmentLabel,
+    environmentMachine: props.environmentMachine,
+    agents: providerInstance
+      ? {
+          instance: providerInstance,
+          drivers: providerDrivers,
+          iconUrl: providerIconUrl,
+          nameLabel: providerNameLabel,
+        }
+      : null,
+    timeLabel,
+    metrics,
+    tone: {
+      text: selected
+        ? selectedThreadRowColors.mutedForegroundClassName
+        : rowAppearance.tertiaryForegroundClassName,
+      icon: selected
+        ? selectedThreadRowColors.mutedIconTintClassName
+        : rowAppearance.tertiaryIconTintClassName,
+      mutedIcon: rowAppearance.mutedIconTintClassName,
+      time: selected
+        ? selectedThreadRowColors.foregroundClassName
+        : rowAppearance.tertiaryForegroundClassName,
+      providerSurfaceColor: rowAppearance.providerIconSurfaceColor,
+    },
+  };
+  const showsError =
+    (rawStatus === "failed" || rawStatus === "limited") && Boolean(thread.runtime?.lastError);
   const cardContent = (
-    <>
-      <View className="flex-row items-start gap-2">
-        {props.project ? (
-          <View className="justify-center" style={{ height: titleLineHeight }}>
-            <ProjectFavicon
-              environmentId={thread.environmentId}
-              faviconPath={props.project.faviconPath}
-              projectIcon={props.project.projectIcon}
-              size={projectIconSize}
-              projectTitle={props.project.title}
-              workspaceRoot={props.project.workspaceRoot}
-            />
-          </View>
-        ) : null}
-        <Text
-          className={cn(
-            "flex-1 text-base",
-            !recede && "font-t3-medium",
-            selected
-              ? selectedThreadRowColors.foregroundClassName
-              : rowAppearance.foregroundClassName,
-            isRegeneratingTitle && "opacity-55",
-          )}
-          numberOfLines={2}
-          onTextLayout={
-            Platform.OS === "android"
-              ? ({ nativeEvent }) => {
-                  const firstLine = nativeEvent.lines[0];
-                  if (firstLine && Math.abs(firstLine.height - titleLineHeight) > 0.5) {
-                    setTitleLineHeight(firstLine.height);
-                  }
-                }
-              : undefined
-          }
-        >
-          {thread.title}
-        </Text>
-        <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+    <ThreadRowLines
+      content={rowItemContent}
+      layout={rowLayout}
+      error={
+        showsError
+          ? {
+              text: thread.runtime?.lastError ?? "",
+              className: selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : status === "limited"
+                  ? "text-warning-foreground"
+                  : "text-danger-foreground",
+            }
+          : null
+      }
+      topTrailing={
+        <>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1428,217 +1455,82 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               type="monochrome"
             />
           ) : null}
-          {showsWoke ? (
-            <Pressable
-              className="-m-2.5 flex-row items-center gap-1 p-2.5"
-              accessibilityRole="button"
-              accessibilityLabel={gt("Dismiss Woke notification")}
-              onPress={handleAcknowledgeWoke}
-              onLongPress={() => undefined}
-              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-            >
-              <SymbolView
-                name="bell.badge"
-                size={13}
-                tintColorClassName={
-                  selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
-                }
-                type="monochrome"
-                weight="semibold"
-              />
-              <Text
-                className={cn(
-                  "text-xs font-t3-bold",
-                  selected
-                    ? selectedThreadRowColors.foregroundClassName
-                    : "text-warning-foreground",
-                )}
-              >
-                {gt("Woke", { $context: "thread came back from snooze" })}
-              </Text>
-            </Pressable>
-          ) : statusLabel ? (
-            <View className="flex-row items-center gap-1">
-              <SymbolView
-                name={statusLabel.icon}
-                size={13}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.iconTintClassName
-                    : statusLabel.iconTintClassName
-                }
-                type="monochrome"
-                weight="semibold"
-              />
-              <Text
-                className={cn(
-                  "text-xs font-t3-bold",
-                  selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-                )}
-              >
-                {statusLabel.label}
-                {status === "working" ? (
-                  <ThreadListV2Duration
-                    environmentId={thread.environmentId}
-                    startedAt={resolveThreadWorkingStartedAt(thread)}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : status === "waiting" ? (
-                  <ThreadListV2Duration
-                    environmentId={thread.environmentId}
-                    startedAt={thread.latestRun?.completedAt ?? null}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : null}
-              </Text>
-            </View>
-          ) : (
+        </>
+      }
+      status={
+        showsWoke ? (
+          <Pressable
+            className="-m-2.5 flex-row items-center gap-1 p-2.5"
+            accessibilityRole="button"
+            accessibilityLabel={gt("Dismiss Woke notification")}
+            onPress={handleAcknowledgeWoke}
+            onLongPress={() => undefined}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <SymbolView
+              name="bell.badge"
+              size={13}
+              tintColorClassName={
+                selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
+              }
+              type="monochrome"
+              weight="semibold"
+            />
             <Text
               className={cn(
-                "text-xs tabular-nums",
-                selected
-                  ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
+                "text-xs font-t3-bold",
+                selected ? selectedThreadRowColors.foregroundClassName : "text-warning-foreground",
               )}
             >
-              {timeLabel}
+              {gt("Woke", { $context: "thread came back from snooze" })}
             </Text>
-          )}
-        </View>
-      </View>
-      {props.searchMatch ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+          </Pressable>
+        ) : statusLabel ? (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={statusLabel.icon}
+              size={13}
+              tintColorClassName={
+                selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
+              }
+              type="monochrome"
+              weight="semibold"
+            />
+            <Text
+              className={cn(
+                "text-xs font-t3-bold",
+                selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
+              )}
+            >
+              {statusLabel.label}
+              {status === "working" ? (
+                <ThreadListV2Duration
+                  environmentId={thread.environmentId}
+                  startedAt={resolveThreadWorkingStartedAt(thread)}
+                  leadingSpace={statusLabel.label !== null}
+                />
+              ) : status === "waiting" ? (
+                <ThreadListV2Duration
+                  environmentId={thread.environmentId}
+                  startedAt={thread.latestRun?.completedAt ?? null}
+                  leadingSpace={statusLabel.label !== null}
+                />
+              ) : null}
+            </Text>
+          </View>
+        ) : undefined
+      }
+      belowTitle={
+        props.searchMatch ? (
           <ThreadSearchMatchExcerpt
             sidebar={sidebarPane}
             match={props.searchMatch}
             query={props.searchQuery ?? ""}
             selected={selected}
           />
-        </View>
-      ) : null}
-      <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
-          </Text>
-        ) : props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={machineIconSize}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
-              />
-            ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-            </Text>
-          </View>
-        ) : (
-          <View className="flex-1" />
-        )}
-        {pr ? (
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
-            <SymbolView
-              name={
-                pr.kind === "stack"
-                  ? PullRequestGlyph.stack
-                  : pr.state === null
-                    ? PullRequestGlyph.pullRequest
-                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
-              }
-              size={12}
-              tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
-              }
-            />
-            <Text
-              accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
-            >
-              {pr.label}
-            </Text>
-          </Pressable>
-        ) : null}
-        {providerInstance ? (
-          <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
-                  className="-mr-1 opacity-30"
-                >
-                  <ProviderIcon provider={driver} size={12} />
-                </View>
-              ) /* oxlint-enable react/no-array-index-key */,
-            )}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
-            {providerNameLabel ? (
-              <Text
-                className={cn(
-                  "ml-1.5 text-xs",
-                  selected
-                    ? selectedThreadRowColors.mutedForegroundClassName
-                    : rowAppearance.tertiaryForegroundClassName,
-                )}
-                ellipsizeMode="middle"
-                numberOfLines={1}
-                style={{ maxWidth: 140 }}
-              >
-                {providerNameLabel}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-      </View>
-    </>
+        ) : null
+      }
+    />
   );
 
   const fadedCardContent = recede ? (
@@ -1709,7 +1601,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 environmentId={thread.environmentId}
                 faviconPath={props.project.faviconPath}
                 projectIcon={props.project.projectIcon}
-                size={projectIconSize}
+                size={metrics.projectIconSize}
                 projectTitle={props.project.title}
                 workspaceRoot={props.project.workspaceRoot}
               />
@@ -1816,3 +1708,362 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </View>
   );
 });
+
+export type ThreadRowMetrics = ReturnType<typeof useThreadRowMetrics>;
+
+export function useThreadRowMetrics() {
+  const { fontScale } = useWindowDimensions();
+  const titleTypography = useScaledTextRole("body");
+  const metadataTypography = useScaledTextRole("label");
+  // Android's nonlinear system text scaling can differ from the fontScale estimate.
+  const [androidTitleLineHeight, setTitleLineHeight] = useState(
+    titleTypography.lineHeight * fontScale,
+  );
+  const titleLineHeight =
+    Platform.OS === "android" ? androidTitleLineHeight : titleTypography.lineHeight * fontScale;
+  return {
+    titleLineHeight,
+    metadataLineHeight: metadataTypography.lineHeight * fontScale,
+    projectIconSize: titleTypography.fontSize * 1.25 * fontScale,
+    machineIconSize: metadataTypography.fontSize * fontScale,
+    onTitleTextLayout:
+      Platform.OS === "android"
+        ? ({ nativeEvent }: TextLayoutEvent) => {
+            const firstLine = nativeEvent.lines[0];
+            if (firstLine && Math.abs(firstLine.height - titleLineHeight) > 0.5) {
+              setTitleLineHeight(firstLine.height);
+            }
+          }
+        : undefined,
+  };
+}
+
+/** What a thread row shows for each layout item, so the list and the settings preview match. */
+export interface ThreadRowItemContent {
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  readonly titleClassName: string;
+  readonly project:
+    | (Pick<
+        ComponentProps<typeof ProjectFavicon>,
+        "faviconPath" | "projectIcon" | "workspaceRoot"
+      > & {
+        readonly title: string;
+      })
+    | null;
+  readonly branch: string | null;
+  readonly issues: ReadonlyArray<{ readonly displayKey: string }> | undefined;
+  readonly pr: ThreadPrPresentation | null;
+  /** Makes the pull request badge a button; the settings preview leaves it inert. */
+  readonly pullRequestAction?: { readonly label: string; readonly onPress: () => void } | null;
+  readonly environmentLabel: string | null;
+  readonly environmentMachine?: EnvironmentMachineKind | undefined;
+  readonly agents: {
+    readonly instance: ThreadRowProviderInstance;
+    readonly drivers: ReadonlyArray<string>;
+    readonly iconUrl: string | null | undefined;
+    readonly nameLabel: string | null;
+  } | null;
+  readonly timeLabel: string;
+  readonly metrics: ThreadRowMetrics;
+  readonly tone: {
+    readonly text: string;
+    readonly icon: string;
+    readonly mutedIcon: string;
+    readonly time: string;
+    readonly providerSurfaceColor: string | undefined;
+  };
+}
+
+/** Null when the thread has nothing to show for the item. */
+export function threadRowItemNode(
+  token: SidebarRowToken,
+  content: ThreadRowItemContent,
+): ReactNode {
+  const { metrics, tone, project, pr, agents } = content;
+  switch (token.id) {
+    case "title":
+      return (
+        <Text
+          className={content.titleClassName}
+          numberOfLines={2}
+          onTextLayout={metrics.onTitleTextLayout}
+        >
+          {content.title}
+        </Text>
+      );
+    case "projectIcon":
+      return project ? (
+        <View className="justify-center" style={{ height: metrics.titleLineHeight }}>
+          <ProjectFavicon
+            environmentId={content.environmentId}
+            faviconPath={project.faviconPath}
+            projectIcon={project.projectIcon}
+            size={metrics.projectIconSize}
+            projectTitle={project.title}
+            workspaceRoot={project.workspaceRoot}
+          />
+        </View>
+      ) : null;
+    case "projectName":
+      return project ? (
+        <Text className={cn("text-xs", tone.text)} numberOfLines={1}>
+          {project.title}
+        </Text>
+      ) : null;
+    case "environment":
+      return content.environmentLabel ? (
+        <View className="min-w-0 flex-row items-center gap-1">
+          {content.environmentMachine ? (
+            <EnvironmentMachineSymbol
+              kind={content.environmentMachine}
+              size={metrics.machineIconSize}
+              tintColorClassName={tone.icon}
+            />
+          ) : null}
+          {token.form === "compact" ? null : (
+            <Text className={cn("shrink text-xs", tone.text)} numberOfLines={1}>
+              {content.environmentLabel}
+            </Text>
+          )}
+        </View>
+      ) : null;
+    case "branch":
+      return content.branch ? (
+        <View className="min-w-0 flex-row items-center gap-1">
+          <SymbolView
+            name="arrow.triangle.branch"
+            size={metrics.machineIconSize}
+            tintColorClassName={tone.icon}
+          />
+          <Text
+            className={cn("shrink text-xs", tone.text)}
+            ellipsizeMode="middle"
+            numberOfLines={1}
+          >
+            {content.branch}
+          </Text>
+        </View>
+      ) : null;
+    case "issues":
+      return content.issues?.[0] ? (
+        <View className="flex-row items-center gap-1">
+          <SymbolView name="git.issue" size={12} tintColorClassName={tone.icon} />
+          <Text className={cn("text-xs", tone.text)} style={{ fontFamily: MONO_FONT }}>
+            {content.issues.length === 1
+              ? content.issues[0].displayKey.replace(/^#/, "")
+              : content.issues.length}
+          </Text>
+        </View>
+      ) : null;
+    case "pullRequest": {
+      if (!pr) return null;
+      const badge = (
+        <>
+          <SymbolView
+            name={
+              pr.kind === "stack"
+                ? PullRequestGlyph.stack
+                : pr.state === null
+                  ? PullRequestGlyph.pullRequest
+                  : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+            }
+            size={12}
+            tintColorClassName={
+              pr.state === null || pr.isDraft
+                ? tone.mutedIcon
+                : pr.state === "open"
+                  ? "accent-adaptive-emerald-600-400"
+                  : pr.state === "closed"
+                    ? "accent-adaptive-rose-600-400"
+                    : "accent-adaptive-violet-600-400"
+            }
+          />
+          <Text
+            accessibilityLabel={pr.accessibilityLabel}
+            className={cn("text-xs", pr.textClassName)}
+            style={{ fontFamily: MONO_FONT }}
+          >
+            {pr.label}
+          </Text>
+        </>
+      );
+      return content.pullRequestAction ? (
+        <Pressable
+          // Padding cancelled by negative margin grows the touch target into
+          // the row padding without moving the badge.
+          className="-m-2.5 flex-row items-center gap-1 p-2.5"
+          accessibilityRole="button"
+          accessibilityLabel={content.pullRequestAction.label}
+          onPress={content.pullRequestAction.onPress}
+          // Handle long-press so opening the iOS row menu cannot also open the PR on release.
+          onLongPress={() => undefined}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+        >
+          {badge}
+        </Pressable>
+      ) : (
+        <View className="flex-row items-center gap-1">{badge}</View>
+      );
+    }
+    case "agents":
+      return agents ? (
+        <View className="flex-row items-center">
+          {agents.drivers.slice(0, -1).map(
+            (driver, index) => (
+              /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
+                key={`${driver}:${index}`}
+                className="-mr-1 opacity-30"
+              >
+                <ProviderIcon provider={driver} size={12} />
+              </View>
+            ) /* oxlint-enable react/no-array-index-key */,
+          )}
+          <ProviderInstanceIcon
+            iconUrl={agents.iconUrl}
+            provider={agents.instance.driverKind}
+            size={14}
+            displayName={agents.instance.displayName}
+            accentColor={agents.instance.accentColor}
+            showBadge={agents.instance.showBadge}
+            surfaceColor={tone.providerSurfaceColor}
+          />
+          {agents.nameLabel ? (
+            <Text
+              className={cn("ml-1.5 text-xs", tone.text)}
+              ellipsizeMode="middle"
+              numberOfLines={1}
+              style={{ maxWidth: 140 }}
+            >
+              {agents.nameLabel}
+            </Text>
+          ) : null}
+        </View>
+      ) : null;
+    case "time":
+      return content.timeLabel ? (
+        <Text className={cn("text-xs tabular-nums", tone.time)}>{content.timeLabel}</Text>
+      ) : null;
+    case "spacer":
+      return <View className="flex-1" />;
+    case "terminals":
+      return null;
+  }
+}
+
+const isTextItem = (token: SidebarRowToken) =>
+  token.id === "title" ||
+  token.id === "projectName" ||
+  token.id === "branch" ||
+  (token.id === "environment" && token.form !== "compact");
+
+/** The lines of a thread card, laid out as `layout` says. */
+export function ThreadRowLines(props: {
+  readonly content: ThreadRowItemContent;
+  readonly layout: SidebarRowLayout;
+  /** A failed run's error, shown on the line under the title. */
+  readonly error?: { readonly text: string; readonly className: string } | null;
+  /** The run status, shown in place of a time that ends the top line. */
+  readonly status?: ReactNode;
+  readonly topTrailing?: ReactNode;
+  readonly belowTitle?: ReactNode;
+}) {
+  const { content, layout } = props;
+  const { metrics } = content;
+  const titleLine =
+    (["top", "middle", "bottom"] as const).find((line) =>
+      layout[line].some((token) => token.id === "title"),
+    ) ?? "top";
+  // A failed run's error takes the line under the title, as it always has, even when that line
+  // would fold. It replaces the line's text items and keeps its badges.
+  const errorLine = props.error ? (titleLine === "bottom" ? "middle" : "bottom") : null;
+  const resolvedLines = resolveSidebarRowLines({
+    lines: layout,
+    titleLine,
+    keepLines: errorLine ? [...layout.keepLines, errorLine] : layout.keepLines,
+    hasContent: (token) => threadRowItemNode(token, content) !== null,
+  });
+  // A line with no items still folds, so the error gets an empty one.
+  const lines =
+    errorLine && resolvedLines[errorLine] === null
+      ? { ...resolvedLines, [errorLine]: [] }
+      : resolvedLines;
+  // A time that ends the top line sits in the status slot, where a run status takes its place.
+  // Agents from a folded line join after it, so the slot reads the layout, not the resolved line.
+  const slotTime = layout.top.at(-1)?.id === "time" ? layout.top.at(-1) : undefined;
+  // Lines under the title start where the title text does.
+  const titleTextInset = layout[titleLine]
+    .slice(
+      0,
+      layout[titleLine].findIndex((token) => token.id === "title"),
+    )
+    .some((token) => token.id === "projectIcon" && content.project)
+    ? metrics.projectIconSize + 8
+    : 0;
+  const renderItems = (tokens: ReadonlyArray<SidebarRowToken>) =>
+    tokens.map((token) => {
+      const node = threadRowItemNode(token, content);
+      if (node === null) return null;
+      const grows =
+        token.id === "spacer" ||
+        (token.id === "title" && !tokens.some((other) => other.id === "spacer"));
+      return (
+        <View
+          key={token.key}
+          className={cn("min-w-0", grows ? "flex-1" : isTextItem(token) ? "shrink" : "shrink-0")}
+        >
+          {node}
+        </View>
+      );
+    });
+  return (
+    <>
+      {(["top", "middle", "bottom"] as const).map((line) => {
+        const tokens = lines[line];
+        if (tokens === null) return null;
+        const isTitleLine = line === titleLine;
+        const shown =
+          line === "top" && slotTime ? tokens.filter((token) => token !== slotTime) : tokens;
+        return (
+          <View key={line}>
+            <View
+              className={cn("flex-row gap-2", isTitleLine ? "items-start" : "mt-1 items-center")}
+              style={{
+                // A kept line holds one line of metadata even when it has nothing to show.
+                minHeight: isTitleLine ? metrics.titleLineHeight : metrics.metadataLineHeight,
+                paddingLeft: isTitleLine ? 0 : titleTextInset,
+              }}
+            >
+              {line === errorLine && props.error ? (
+                <>
+                  <Text className={cn("flex-1 text-xs", props.error.className)} numberOfLines={1}>
+                    {props.error.text}
+                  </Text>
+                  {renderItems(
+                    shown.filter((token) => !isTextItem(token) && token.id !== "spacer"),
+                  )}
+                </>
+              ) : (
+                renderItems(shown)
+              )}
+              {line === "top" ? (
+                <View
+                  className="ml-auto flex-row items-center gap-1.5"
+                  style={{ minHeight: metrics.titleLineHeight }}
+                >
+                  {props.topTrailing}
+                  {props.status ?? (slotTime ? threadRowItemNode(slotTime, content) : null)}
+                </View>
+              ) : null}
+            </View>
+            {isTitleLine && props.belowTitle ? (
+              <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+                {props.belowTitle}
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+    </>
+  );
+}

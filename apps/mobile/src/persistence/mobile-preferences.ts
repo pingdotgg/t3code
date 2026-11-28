@@ -172,6 +172,8 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
+  /** Thread list card layout, stored like the web client's `sidebarRowLayout`. */
+  readonly threadRowLayout?: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly workingShelfEnabled?: boolean;
   /** The kind of question the Workflows tab's Needs you list was last narrowed to. */
   readonly workflowQuestionKind?: string;
@@ -266,6 +268,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
+    threadRowLayout?: Readonly<Record<string, ReadonlyArray<string>>>;
     workingShelfEnabled?: boolean;
     workflowQuestionKind?: string;
     useLastProjectForNewThreads?: boolean;
@@ -412,6 +415,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isToolCallVisibility(parsed.toolCallVisibility)) {
     preferences.toolCallVisibility = parsed.toolCallVisibility;
+  }
+  if (typeof parsed.threadRowLayout === "object" && parsed.threadRowLayout !== null) {
+    preferences.threadRowLayout = Object.fromEntries(
+      Object.entries(parsed.threadRowLayout).flatMap(([line, ids]) =>
+        Array.isArray(ids) ? [[line, ids.filter((id) => typeof id === "string")]] : [],
+      ),
+    );
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;

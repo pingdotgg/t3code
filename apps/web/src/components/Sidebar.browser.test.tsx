@@ -574,3 +574,98 @@ describe("sidebar settled pagination", () => {
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
 });
+
+describe("sidebar thread card layout", () => {
+  it.each([
+    { name: "default", layout: {}, heights: [82, 64] },
+    {
+      name: "fixed height",
+      layout: {
+        top: ["projectIcon", "projectName", "spacer"],
+        middle: ["title"],
+        bottom: ["branch", "spacer", "agents"],
+        // An older layout that kept only one line still means a fixed height.
+        keep: ["middle"],
+      },
+      heights: [82, 82],
+    },
+    {
+      // The time keeps a sparse card's last line, so that line never folds.
+      name: "time on the bottom line",
+      layout: {
+        top: ["projectIcon", "projectName"],
+        middle: ["title"],
+        bottom: ["branch", "spacer", "time"],
+      },
+      heights: [82, 82],
+    },
+    {
+      name: "fixed height with only the title",
+      layout: {
+        top: [],
+        middle: ["title"],
+        bottom: [],
+        hidden: [
+          "projectIcon",
+          "projectName",
+          "branch",
+          "agents",
+          "environment",
+          "terminals",
+          "pullRequest",
+          "issues",
+        ],
+        keep: ["middle", "bottom"],
+      },
+      heights: [64, 64],
+    },
+  ])("$name: each card's height hint matches its rendered height", async ({ layout, heights }) => {
+    using stack = new DisposableStack();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    stack.defer(() => style.remove());
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarRowLayout: layout });
+    const activeProject = {
+      ...project("a-project-name-long-enough-to-crowd-the-line"),
+      title: "a-project-name-long-enough-to-crowd-the-line",
+    };
+    const threads = [
+      makeThreadFixture({
+        ...threadShell(activeProject.id, 0),
+        branch: "feature/a-branch-name-long-enough-to-crowd-the-line-too",
+      }),
+      threadShell(activeProject.id, 1),
+    ];
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider style={{ width: 256 }}>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Thread 1").first()).toBeInTheDocument();
+    const cards = [...screen.container.querySelectorAll<HTMLElement>("[data-thread-item]")];
+    expect(
+      cards.map((card) => [
+        Math.round(card.getBoundingClientRect().height),
+        Number.parseFloat(card.style.containIntrinsicSize.replace("auto ", "")) + 4,
+      ]),
+    ).toEqual(heights.map((height) => [height, height]));
+  });
+});

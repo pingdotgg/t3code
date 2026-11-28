@@ -62,7 +62,6 @@ import {
 import {
   memo,
   Fragment,
-  use,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -137,7 +136,8 @@ import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger }
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import {
-  SidebarRowLayoutEditingContext,
+  resolveSidebarRowLines,
+  sidebarRowItemFlexClassName,
   type SidebarRowItemId,
   type SidebarRowLayout,
   type SidebarRowLine,
@@ -710,9 +710,8 @@ function ThreadRenameInput(props: {
   );
 }
 
-export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const gt = useGT();
-  const layoutEditing = use(SidebarRowLayoutEditingContext);
   const messages = useMessages();
   const {
     isRenaming,
@@ -1129,7 +1128,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
       className={cn(
         "min-w-0 text-start text-sm transition-opacity motion-reduce:transition-none",
-        titleStretches ? "flex-1" : "shrink",
+        sidebarRowItemFlexClassName({ id: "title", form: null, key: "title" }, titleStretches),
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
@@ -1306,7 +1305,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         ) : null;
       case "projectName":
         return props.projectDisplayName ? (
-          <span className="min-w-0 shrink truncate font-normal text-secondary-label text-xs">
+          <span
+            className={cn(
+              "truncate font-normal text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             {props.projectDisplayName}
           </span>
         ) : null;
@@ -1328,14 +1332,24 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             <TooltipPopup side="top">{props.environmentLabel}</TooltipPopup>
           </Tooltip>
         ) : (
-          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+          <span
+            className={cn(
+              "flex items-center gap-1.5 text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             {environmentIcon}
             <span className="min-w-0 truncate">{props.environmentLabel}</span>
           </span>
         );
       case "branch":
         return checkoutThread.branch ? (
-          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+          <span
+            className={cn(
+              "flex items-center gap-1.5 text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             <ThreadWorktreeIndicator thread={checkoutThread} />
             <span className="flex min-w-0">
               <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
@@ -1358,7 +1372,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </span>
         );
       case "spacer":
-        return <span className="min-w-0 flex-1" />;
+        return <span className={sidebarRowItemFlexClassName(token, titleStretches)} />;
+      case "time":
+        return (
+          <span className="shrink-0 text-secondary-label text-xs tabular-nums">
+            <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
+          </span>
+        );
       case "title":
         return (
           <>
@@ -1376,17 +1396,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     line: Exclude<SidebarRowLine, "hidden">,
     tokens: ReadonlyArray<SidebarRowToken>,
   ) => {
-    const items = tokens.map((token) => ({ token, node: itemNode(token) }));
-    if (layoutEditing) return layoutEditing.renderLine(line, items);
-    return items
+    return tokens
+      .map((token) => ({ token, node: itemNode(token) }))
       .filter((item) => item.node !== null)
       .map((item) => <Fragment key={item.token.key}>{item.node}</Fragment>);
   };
-  // Agents and spacers carry no thread detail, so a line with nothing else folds into the title's line.
-  const hasDetail = (tokens: ReadonlyArray<SidebarRowToken>) =>
-    tokens.some(
-      (token) => token.id !== "agents" && token.id !== "spacer" && itemNode(token) !== null,
-    );
   const titleLine =
     (["top", "middle", "bottom"] as const).find((line) =>
       props.layout[line].some((token) => token.id === "title"),
@@ -1396,42 +1410,40 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   // other items, and every other line joins one line under it.
   const withoutFolderItems = (tokens: ReadonlyArray<SidebarRowToken>) =>
     tokens.filter(
-      (token) => token.id !== "projectIcon" && token.id !== "projectName" && token.id !== "title",
+      // Folder rows show the time in their own slot.
+      (token) =>
+        token.id !== "projectIcon" &&
+        token.id !== "projectName" &&
+        token.id !== "title" &&
+        token.id !== "time",
     );
-  const lineTokens: Record<
-    "top" | "middle" | "bottom",
-    ReadonlyArray<SidebarRowToken>
-  > = inFolderVariant
-    ? {
-        top: [],
-        middle: withoutFolderItems(props.layout[titleLine]),
-        bottom: (["top", "middle", "bottom"] as const)
-          .filter((line) => line !== titleLine)
-          .flatMap((line) => withoutFolderItems(props.layout[line])),
-      }
-    : props.layout;
-  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept.
-  const kept = (line: "middle" | "bottom") =>
-    inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line);
-  const folds = (line: "middle" | "bottom") =>
-    layoutEditing === null &&
-    !kept(line) &&
-    (inFolderVariant ? line === "bottom" : line !== titleLine) &&
-    !hasDetail(lineTokens[line]);
-  const middleFolds = folds("middle");
-  const bottomFolds = folds("bottom");
-  const foldedAgents = [
-    ...(middleFolds ? lineTokens.middle : []),
-    ...(bottomFolds ? lineTokens.bottom : []),
-  ].filter((token) => token.id === "agents");
-  const tokensFor = (line: "top" | "middle" | "bottom") => {
-    const own =
-      (line === "middle" && middleFolds) || (line === "bottom" && bottomFolds)
-        ? []
-        : lineTokens[line];
-    const foldsHere = inFolderVariant ? line === "middle" : line === titleLine;
-    return foldsHere ? [...own, ...foldedAgents] : own;
-  };
+  const resolvedLines = resolveSidebarRowLines(
+    inFolderVariant
+      ? {
+          lines: {
+            top: [],
+            middle: withoutFolderItems(props.layout[titleLine]),
+            bottom: (["top", "middle", "bottom"] as const)
+              .filter((line) => line !== titleLine)
+              .flatMap((line) => withoutFolderItems(props.layout[line])),
+          },
+          titleLine: "middle",
+          // The merged line keeps whenever any of the card's lines is kept.
+          keepLines: props.layout.keepLines.length > 0 ? ["bottom"] : [],
+          hasContent: (token) => itemNode(token) !== null,
+        }
+      : {
+          lines: props.layout,
+          titleLine,
+          keepLines: props.layout.keepLines,
+          hasContent: (token) => itemNode(token) !== null,
+        },
+  );
+  const middleFolds = resolvedLines.middle === null;
+  const bottomFolds = resolvedLines.bottom === null;
+  const tokensFor = (line: "top" | "middle" | "bottom") => resolvedLines[line] ?? [];
+  // A time that ends the top line sits in the status slot, where hover swaps it for row controls.
+  const timeInStatusSlot = tokensFor("top").at(-1)?.id === "time";
   const metaLine = bottomFolds ? null : (
     <div
       className={cn(
@@ -1463,7 +1475,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={isRenaming || sortable?.isDragging || layoutEditing !== null}>
+        <Tooltip disabled={isRenaming || sortable?.isDragging}>
           <TooltipTrigger
             render={
               <div
@@ -1673,9 +1685,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       )}
       style={{ containIntrinsicSize: `auto ${cardHeight}px` }}
     >
-      <Tooltip
-        disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging || layoutEditing !== null}
-      >
+      <Tooltip disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
             <div
@@ -1698,14 +1708,17 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         >
           <div
             className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)"
-            style={layoutEditing === null ? { height: cardHeight } : undefined}
+            style={{ height: cardHeight }}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
-              {renderLine("top", tokensFor("top"))}
+              {renderLine(
+                "top",
+                timeInStatusSlot ? tokensFor("top").slice(0, -1) : tokensFor("top"),
+              )}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1779,9 +1792,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                           ) : null}
                         </span>
                       )
-                    ) : (
+                    ) : timeInStatusSlot ? (
                       <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
-                    )}
+                    ) : null}
                   </span>
                   {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span

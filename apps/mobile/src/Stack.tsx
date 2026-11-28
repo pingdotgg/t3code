@@ -98,6 +98,7 @@ import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
+import { SettingsThreadRowsRouteScreen } from "./features/settings/SettingsThreadRowsRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
@@ -186,6 +187,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsEnvironmentNew: msg("Add Environment"),
   SettingsArchive: msg("Archive", { $context: "noun, settings page of archived threads" }),
   SettingsNavigation: msg("Navigation tabs"),
+  SettingsThreadRows: msg("Thread rows"),
   SettingsAppearance: msg("Appearance"),
   SettingsProjectGrouping: msg("General"),
   SettingsOrganization: msg("General"),
@@ -323,6 +325,11 @@ const SETTINGS_SCREENS = {
   SettingsNavigation: createNativeStackScreen({
     screen: SettingsNavigationRouteScreen,
     linking: "settings/navigation-tabs",
+    options: settingsPage(),
+  }),
+  SettingsThreadRows: createNativeStackScreen({
+    screen: SettingsThreadRowsRouteScreen,
+    linking: "settings/thread-rows",
     options: settingsPage(),
   }),
   SettingsAppearance: createNativeStackScreen({
