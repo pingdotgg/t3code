@@ -627,6 +627,9 @@ Third}`;
       [{ kernelspec }, "python"],
       [{ language_info: { name: "" }, kernelspec }, "python"],
       [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+      [{ kernelspec: { name: "Python3" } }, "python"],
+      [{ kernelspec: { name: { toString: null } } }, "text"],
+      [{ language_info: { name: { toString: null } }, kernelspec: { language: "r" } }, "r"],
     ] as const) {
       expect(
         openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
