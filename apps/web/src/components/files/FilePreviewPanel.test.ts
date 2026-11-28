@@ -1088,6 +1088,8 @@ Third}`;
           <item id="chapter" href="book/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
           <item id="read" href="overlays/chapter.smil" media-type="application/smil+xml"/>
           <item id="captions" href="captions.xml" media-type="application/ttml+xml"/>
+          <item id="captions-dfxp" href="captions-dfxp.xml" media-type="application/ttaf+xml"/>
+          <item id="captions-ext" href="captions-ext.dfxp" media-type="application/xml"/>
           <item id="clip" href="clip.mp4" media-type="video/mp4"/>
         </manifest><spine><itemref idref="chapter"/></spine></package>`,
       )
@@ -1095,6 +1097,8 @@ Third}`;
         "book/chapter.xhtml",
         `<html><body><p id="line-1">First line</p>
           <video autoplay=""><track kind="captions" srclang="en" label="English" src="../captions.xml" default=""/>
+          <track kind="captions" srclang="fr" label="French" src="../captions-dfxp.xml"/>
+          <track kind="captions" srclang="es" label="Spanish" src="../captions-ext.dfxp"/>
           <track kind="captions" src="https://example.test/remote.vtt"/>
           <source src="../clip.mp4#t=00:01:00,00:02:00"/><source src="../clip.mp4#t=,120"/>
           <source src="../clip.mp4#t=npt:2.5,4.25"/></video>
@@ -1106,6 +1110,14 @@ Third}`;
           <div><p begin="500ms" dur="2s">Tea &amp; coffee<br/>served.</p></div>
           <p begin="500ms" end="2s">Thanks.</p>
         </div></body></tt>`,
+      )
+      .file(
+        "captions-dfxp.xml",
+        `<tt xmlns="http://www.w3.org/2006/04/ttaf1"><body><div><p begin="0s" end="1.5s">Bonjour.</p></div></body></tt>`,
+      )
+      .file(
+        "captions-ext.dfxp",
+        `<tt xmlns="http://www.w3.org/2006/04/ttaf1"><body><div><p begin="1s" dur="1.5s">Hola.</p></div></body></tt>`,
       )
       .file(
         "overlays/chapter.smil",
@@ -1120,14 +1132,25 @@ Third}`;
     const page = await (await openEpub(archive)).page(0);
     try {
       const tracks = page.html.match(/<track [^>]*>/g);
-      expect(tracks).toHaveLength(1);
+      expect(tracks).toHaveLength(3);
       expect(tracks?.[0]).toContain('kind="captions" srclang="en" label="English" default');
+      expect(tracks?.[1]).toContain('kind="captions" srclang="fr" label="French"');
+      expect(tracks?.[2]).toContain('kind="captions" srclang="es" label="Spanish"');
       expect(page.html).toContain("<video controls playsinline>");
-      const caption = await fetch(tracks?.[0]?.match(/src="([^"]+)"/)?.[1] ?? "");
-      expect(caption.headers.get("Content-Type")).toBe("text/vtt");
-      expect(await caption.text()).toBe(
-        "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+      const captions = await Promise.all(
+        (tracks ?? []).map(async (track) => {
+          const response = await fetch(track.match(/src="([^"]+)"/)?.[1] ?? "");
+          return { type: response.headers.get("Content-Type"), text: await response.text() };
+        }),
       );
+      expect(captions).toEqual([
+        {
+          type: "text/vtt",
+          text: "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+        },
+        { type: "text/vtt", text: "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nBonjour.\n" },
+        { type: "text/vtt", text: "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nHola.\n" },
+      ]);
       expect(page.html.match(/#t=[\d.,]+(?=")/g)).toEqual(["#t=60,120", "#t=0,120", "#t=2.5,4.25"]);
       expect(page.narration).toEqual([
         { src: page.assets.at(-1), begin: 2, end: 3.25, anchor: "line-1" },

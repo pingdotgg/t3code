@@ -603,8 +603,14 @@ export async function openEpub(archive: JSZip) {
       const bytes = await entry.async("uint8array");
       if (bytes.length > 1024 * 1024) return "";
       const type = media.get(target);
+      const ext = extension(target);
       let content;
-      if (type === "application/ttml+xml" || extension(target) === "ttml") {
+      if (
+        type === "application/ttml+xml" ||
+        type === "application/ttaf+xml" ||
+        ext === "ttml" ||
+        ext === "dfxp"
+      ) {
         try {
           content = ttmlCaptions(parseXml(officeXmlDecoder(bytes).decode(bytes)));
         } catch (cause) {
