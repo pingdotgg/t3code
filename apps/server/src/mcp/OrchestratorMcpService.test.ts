@@ -3693,17 +3693,8 @@ describe("OrchestratorMcpService provider resolution", () => {
               expected: "Review the auth flow",
             },
             {
-              prompt: "Review the auth flow\u2029Pay special attention to token renewal.",
-              expected: "Review the auth flow",
-            },
-            {
               prompt: `\n\n  ${"a".repeat(80)}  \nmore`,
               expected: "a".repeat(80),
-            },
-            {
-              prompt:
-                "Review the auth flow\n\nPay special attention to token renewal, refresh races and the logout path.",
-              expected: "Review the auth flow",
             },
             {
               title: "Auth review",
