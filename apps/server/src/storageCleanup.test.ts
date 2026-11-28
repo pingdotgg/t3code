@@ -974,6 +974,19 @@ it.live("removes a worktree whose ignored folder holds a gitfile pointing nowher
   ),
 );
 
+it.live("deletes a removed worktree's branch when the default branch contains it", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, repo, command } = yield* cleanupFixture();
+      const [entry] = (yield* service.runNow).entries;
+      expect(entry).toMatchObject({ outcome: "removed" });
+      expect(yield* fs.exists(worktree)).toBe(false);
+      const branches = yield* command(repo, ["for-each-ref", "--format=%(refname)", "refs/heads/"]);
+      expect(branches.stdout.trim().split("\n")).toEqual(["refs/heads/main"]);
+    }),
+  ),
+);
+
 it.live("keeps a worktree whose gitfile target exists only with its trailing space", () =>
   runCleanupTest(
     Effect.gen(function* () {
