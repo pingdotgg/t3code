@@ -310,6 +310,7 @@ export const make = Effect.gen(function* () {
       shellThreadFamilies: true,
       shellOlderSettled: true,
       agentFeedback: true,
+      desktopBrowser: ServerConfig.hasDesktopBrowserChannel(serverConfig),
     },
   };
 

@@ -40,6 +40,7 @@ vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
   readThreadShell: (ref: ScopedThreadRef) => fixture.shells.get(ref.threadId) ?? null,
+  readEnvironmentHasDesktopBrowser: () => false,
   waitForThreadShellRemoval: async () => true,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
