@@ -1322,7 +1322,7 @@ it.effect.each(["shutdown", "close"] as const)(
         {
           bind: ({ session }) =>
             Effect.gen(function* () {
-              if (pauseBind) {
+              if (pauseBind && operation === "close") {
                 yield* Deferred.succeed(pauseBind.entered, undefined);
                 yield* Deferred.await(pauseBind.proceed);
               }
@@ -1330,7 +1330,11 @@ it.effect.each(["shutdown", "close"] as const)(
               return session;
             }),
           prune: (live) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (pauseBind && operation === "shutdown") {
+                yield* Deferred.succeed(pauseBind.entered, undefined);
+                yield* Deferred.await(pauseBind.proceed);
+              }
               for (const session of launchers) if (!live.has(session)) launchers.delete(session);
             }),
           // Records whether the launcher still existed, since its close runs through it.
@@ -1396,12 +1400,13 @@ it.effect.each(["shutdown", "close"] as const)(
       const binding = yield* Effect.forkChild(
         service.agentLauncher({ ...target(threadId), targetArgs: [] }),
       );
-      yield* Deferred.await(pauseBind.entered);
+      if (operation === "close") yield* Deferred.await(pauseBind.entered);
       const updates = yield* service.subscribe;
       const retiring = yield* Effect.forkChild(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
-      expect((yield* PubSub.take(updates)).sessions).toEqual([]);
+      if (operation === "shutdown") yield* Deferred.await(pauseBind.entered);
+      else expect((yield* PubSub.take(updates)).sessions).toEqual([]);
       yield* service.refreshHosts;
       expect((yield* service.state).sessions).toEqual([]);
       yield* Effect.sync(() => retiring.interruptUnsafe());
@@ -2457,3 +2462,83 @@ describe("locating a device id across hosts", () => {
     ),
   );
 });
+
+it.effect("boots separate devices from one catalog entry at the same time", () =>
+  Effect.gen(function* () {
+    const catalogId = DeviceId.make("eas-ios");
+    const booted: string[] = [];
+    const entered = yield* Queue.unbounded<void>();
+    const release = yield* Deferred.make<void>();
+    const device = (id: string, isBooted: boolean) => ({
+      id,
+      name: id,
+      platform: "ios" as const,
+      version: "test",
+      booted: isBooted,
+      physical: false,
+    });
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      devices: {
+        list: Effect.sync(() => ({
+          devices: [device(catalogId, false), ...booted.map((id) => device(id, true))],
+          detail: undefined,
+        })),
+        // Each open of the catalog entry starts its own device, as an Expo session does.
+        boot: () =>
+          Queue.offer(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(
+              Effect.sync(() => {
+                const id = `session-${booted.length + 1}`;
+                booted.push(id);
+                return id;
+              }),
+            ),
+          ),
+        attach: () => Effect.void,
+        shutdown: () => Effect.void,
+        screenshot: () => Effect.succeed(new Uint8Array()),
+      },
+      run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+    };
+    const service = yield* DeviceService.makeWithHosts(
+      new Map([
+        [
+          LOCAL_DEVICE_HOST_ID,
+          {
+            id: LOCAL_DEVICE_HOST_ID,
+            label: "This machine",
+            summary: Effect.succeed({
+              id: LOCAL_DEVICE_HOST_ID,
+              label: "This machine",
+              kind: "local",
+              platforms: [{ platform: "ios", available: true }],
+              hubInstalled: true,
+              agentDeviceInstalled: false,
+            }),
+            platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+            ensureReady: () => Effect.succeed(ready),
+            ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+            current: Effect.succeed(ready),
+            stopAgent: Effect.void,
+            stop: Effect.void,
+          } satisfies DeviceHost.DeviceHost["Service"],
+        ],
+      ]),
+    ).pipe(Effect.provide(NodeCrypto.layer));
+    const open = (thread: string) =>
+      Effect.forkChild(
+        service.open({ threadId: ThreadId.make(thread), deviceId: catalogId, platform: "ios" }),
+      );
+    const first = yield* open("first");
+    const second = yield* open("second");
+    yield* Queue.take(entered);
+    yield* Queue.take(entered);
+    yield* Deferred.succeed(release, undefined);
+    const opened = [yield* Fiber.join(first), yield* Fiber.join(second)];
+    expect(opened.map((session) => session.deviceId).sort()).toEqual(["session-1", "session-2"]);
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);

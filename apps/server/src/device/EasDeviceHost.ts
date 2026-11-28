@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -101,8 +102,7 @@ interface RunningSession {
   readonly remoteDeviceId: string;
   readonly preview: { readonly origin: string; readonly token: Redacted.Redacted<string> };
   readonly agent: DeviceHost.AgentDaemonEndpoint;
-  /** Set once a stop has been asked for but Expo has not confirmed it. */
-  stopping: boolean;
+  stopFailed: boolean;
 }
 
 /**
@@ -615,7 +615,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
         baseUrl: endpoints.agentDevice.url,
         token: Redacted.value(endpoints.agentDevice.token),
       },
-      stopping: false,
+      stopFailed: false,
     });
     return sessionId;
   });
@@ -628,6 +628,66 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
       checkedAt.delete(session.sessionId);
     });
 
+  // Undefined when the attempt's owner was interrupted.
+  type StopResult = Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined;
+  const pendingStops = new Map<RunningSession, Deferred.Deferred<StopResult>>();
+
+  const stopTracked = Effect.fn("EasDeviceHost.stopTracked")(function* (
+    expo: ExpoApi,
+    session: RunningSession,
+    retry = false,
+  ) {
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        while (true) {
+          const pending = pendingStops.get(session);
+          if (!pending) break;
+          if (retry) return;
+          const exit = yield* restore(Deferred.await(pending));
+          if (exit !== undefined && Exit.isSuccess(exit)) return;
+          // The joined attempt failed or its owner was canceled; this caller makes its own.
+        }
+        if (sessions.get(session.sessionId) !== session) return;
+        // Publish the pending result without yielding between the lookup and registration.
+        const result = Deferred.makeUnsafe<StopResult>();
+        pendingStops.set(session, result);
+        const stop = stopSession(expo, session.sessionId, session.name);
+        yield* restore(
+          retry
+            ? stop.pipe(
+                Effect.catch((cause) =>
+                  expo
+                    .session(session.sessionId)
+                    .pipe(
+                      Effect.flatMap((current) =>
+                        current.status === "STOPPED" || current.status === "ERRORED"
+                          ? forgetEntry(session.name)
+                          : Effect.fail(cause),
+                      ),
+                    ),
+                ),
+              )
+            : stop,
+        ).pipe(
+          Effect.andThen(forget(session)),
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              session.stopFailed = Exit.isFailure(exit);
+              pendingStops.delete(session);
+            }).pipe(
+              Effect.andThen(
+                Deferred.succeed(
+                  result,
+                  Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? undefined : exit,
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  });
+
   /**
    * Expo ends sessions on its own at their run or idle limit; stop listing
    * those. A stop that failed earlier is retried, and recorded sessions nothing
@@ -638,7 +698,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     const now = yield* Clock.currentTimeMillis;
     const stale = [...sessions.values()].filter(
       (session) =>
-        session.stopping || now - (checkedAt.get(session.sessionId) ?? 0) > STATUS_TTL_MS,
+        !pendingStops.has(session) &&
+        (session.stopFailed || now - (checkedAt.get(session.sessionId) ?? 0) > STATUS_TTL_MS),
     );
     const reapDue = now - reapedAt > REAP_INTERVAL_MS;
     if (stale.length === 0 && unresolved.size === 0 && uncertain.size === 0 && !reapDue) return;
@@ -661,46 +722,28 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     yield* Effect.forEach(
       stale,
       (session) =>
-        (session.stopping
-          ? stopSession(expo, session.sessionId, session.name).pipe(
-              Effect.andThen(forget(session)),
-              // A session Expo already ended is let go even if stopping it keeps failing.
-              Effect.catch(() =>
-                expo
-                  .session(session.sessionId)
-                  .pipe(
-                    Effect.flatMap((current) =>
-                      current.status === "STOPPED" || current.status === "ERRORED"
-                        ? forget(session).pipe(Effect.andThen(forgetEntry(session.name)))
-                        : Effect.fail(current.status),
-                    ),
-                  ),
-              ),
-            )
-          : expo
-              .session(session.sessionId)
-              .pipe(
-                Effect.flatMap((current) =>
-                  current.status === "STOPPED" || current.status === "ERRORED"
-                    ? forget(session).pipe(Effect.andThen(forgetEntry(session.name)))
-                    : Effect.sync(() => void checkedAt.set(session.sessionId, now)),
-                ),
+        Effect.suspend(() => {
+          if (pendingStops.has(session) || sessions.get(session.sessionId) !== session)
+            return Effect.void;
+          if (session.stopFailed) return stopTracked(expo, session, true);
+          return expo.session(session.sessionId).pipe(
+            Effect.flatMap((current) => {
+              if (
+                pendingStops.has(session) ||
+                session.stopFailed ||
+                sessions.get(session.sessionId) !== session
               )
-        ).pipe(Effect.ignore),
+                return Effect.void;
+              return current.status === "STOPPED" || current.status === "ERRORED"
+                ? forget(session).pipe(Effect.andThen(forgetEntry(session.name)))
+                : Effect.sync(() => void checkedAt.set(session.sessionId, now));
+            }),
+          );
+        }).pipe(Effect.ignore),
       { discard: true, concurrency: 4 },
     );
     if (reap) yield* reapLeftovers(expo);
   }).pipe(Effect.ignore);
-
-  /**
-   * Stops a tracked session. Until Expo confirms, it stays tracked: listed,
-   * counted against the limit, and retried by the next listing.
-   */
-  const stopTracked = (expo: ExpoApi, session: RunningSession) =>
-    Effect.suspend(() => {
-      session.stopping = true;
-      return stopSession(expo, session.sessionId, session.name);
-    }).pipe(Effect.andThen(forget(session)));
 
   const devices: DeviceHost.DeviceOperations = {
     list: dropEnded.pipe(

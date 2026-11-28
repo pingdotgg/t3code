@@ -52,6 +52,7 @@ const fakeExpo = (
     /** Expo answers the create with GraphQL errors: a refusal. */
     readonly rejectCreate?: boolean;
     readonly failStop?: () => boolean;
+    readonly stopGate?: () => Gate | undefined;
     readonly failList?: () => boolean;
     readonly active?: ReadonlyArray<{ id: string; status: string; name: string }>;
     readonly previewGate?: Gate;
@@ -142,8 +143,14 @@ const fakeExpo = (
             }),
           );
       }
-      if (operation === "T3StopEasSimulatorSession" && options.failStop?.()) {
-        return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
+      if (operation === "T3StopEasSimulatorSession") {
+        const gate = options.stopGate?.();
+        if (gate) {
+          yield* Deferred.succeed(gate.requested, undefined);
+          yield* Deferred.await(gate.release);
+        }
+        if (options.failStop?.())
+          return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
       }
       if (operation === "T3ActiveEasSimulatorSessions" && options.failList?.()) {
         return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
@@ -593,6 +600,151 @@ describe("Expo Simulators host", () => {
       expect(failure.message).toContain("could not be read");
       expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("lists a pending stop without retrying it, then retries a completed failure", () =>
+    Effect.gen(function* () {
+      const gate = yield* makeGate;
+      let first = true;
+      let stopFails = true;
+      const expo = fakeExpo({
+        stopGate: () => {
+          if (!first) return;
+          first = false;
+          return gate;
+        },
+        failStop: () => stopFails,
+      });
+      const host = yield* makeHost(expo, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      const id = yield* ready.devices.boot(catalogDevice!);
+      const stopping = yield* Effect.forkChild(ready.devices.shutdown({ id, platform: "ios" }));
+      yield* Deferred.await(gate.requested);
+      const listed = yield* ready.devices.list.pipe(
+        Effect.ensuring(Deferred.succeed(gate.release, undefined)),
+      );
+      expect(listed.devices.map((device) => device.id)).toContain(id);
+      expect(expo.stopped()).toEqual([id]);
+      expect(Exit.isFailure(yield* Fiber.await(stopping))).toBe(true);
+      stopFails = false;
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).not.toContain(id);
+      expect(expo.stopped()).toEqual([id, id]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect.each(["cancels", "fails"] as const)(
+    "keeps an explicit stop running when discovery %s its retry",
+    (outcome) =>
+      Effect.gen(function* () {
+        const retry = yield* makeGate;
+        let failures = 1;
+        let nextGate: Gate | undefined;
+        const expo = fakeExpo({
+          failStop: () => failures-- > 0,
+          stopGate: () => {
+            const gate = nextGate;
+            nextGate = undefined;
+            return gate;
+          },
+        });
+        const host = yield* makeHost(expo, config(), yield* Scope.make());
+        const ready = yield* host.ensureReady(() => Effect.void);
+        const [catalogDevice] = (yield* ready.devices.list).devices;
+        const id = yield* ready.devices.boot(catalogDevice!);
+        const stop = ready.devices.shutdown({ id, platform: "ios" });
+        yield* Effect.flip(stop);
+
+        failures = outcome === "fails" ? 1 : 0;
+        nextGate = retry;
+        const listing = yield* Effect.forkChild(ready.devices.list);
+        yield* Deferred.await(retry.requested);
+        const stopping = yield* Effect.forkChild(stop, { startImmediately: true });
+        expect(expo.stopped()).toEqual([id, id]);
+        if (outcome === "cancels") yield* Fiber.interrupt(listing);
+        else yield* Deferred.succeed(retry.release, undefined);
+
+        yield* Fiber.join(stopping);
+        expect(expo.stopped()).toEqual([id, id, id]);
+        expect((yield* ready.devices.list).devices.map((device) => device.id)).not.toContain(id);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect(
+    "keeps an Expo device removed when a listing that skipped its stop retry returns late",
+    () =>
+      Effect.gen(function* () {
+        const retry = yield* makeGate;
+        const snapshot = yield* makeGate;
+        let stopFails = true;
+        let nextGate: Gate | undefined;
+        let summariesUntilPause = 0;
+        const expo = fakeExpo({
+          failStop: () => stopFails,
+          stopGate: () => {
+            const gate = nextGate;
+            nextGate = undefined;
+            return gate;
+          },
+        });
+        const host = yield* makeHost(expo, config(), yield* Scope.make());
+        const service = yield* DeviceService.makeWithHosts(
+          new Map([
+            [
+              host.id,
+              {
+                ...host,
+                summary: host.summary.pipe(
+                  Effect.tap(() =>
+                    Effect.suspend(() => {
+                      if (summariesUntilPause === 0 || --summariesUntilPause !== 0)
+                        return Effect.void;
+                      return Deferred.succeed(snapshot.requested, undefined).pipe(
+                        Effect.andThen(Deferred.await(snapshot.release)),
+                      );
+                    }),
+                  ),
+                ),
+              },
+            ],
+          ]),
+        );
+        const session = yield* service.open({
+          threadId: ThreadId.make("expo-view"),
+          hostId: host.id,
+          deviceId: "eas-ios",
+          platform: "ios",
+        });
+        yield* service.shutdown(session).pipe(Effect.flip);
+
+        stopFails = false;
+        nextGate = retry;
+        const removing = yield* Effect.forkChild(service.list);
+        yield* Deferred.await(retry.requested);
+        // List checks readiness before collecting inventory, then gathers host summaries.
+        summariesUntilPause = 2;
+        const stale = yield* Effect.forkChild(service.list);
+        yield* Deferred.await(snapshot.requested);
+        expect(expo.stopped()).toEqual([session.deviceId, session.deviceId]);
+        yield* Deferred.succeed(retry.release, undefined);
+        expect((yield* Fiber.join(removing)).devices.map((device) => device.id)).not.toContain(
+          session.deviceId,
+        );
+
+        yield* Deferred.succeed(snapshot.release, undefined);
+        const final = yield* Fiber.join(stale);
+        expect(final.devices.map((device) => device.id)).not.toContain(session.deviceId);
+        expect(final.sessions).toEqual([]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            NodeCrypto.layer,
+            ServerSettings.layerTest({ enableDeviceSupport: true }),
+          ),
+        ),
+      ),
   );
 
   it.effect("keeps a session it could not stop counted, listed, and retried", () =>
