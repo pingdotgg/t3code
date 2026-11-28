@@ -26,8 +26,10 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // stops at the next error, so each start scans its own span and the match stays linear.
 const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
-// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
-const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message" in a protobuf string
+// whose length varint (65-90, 95) can be an uppercase ASCII byte immediately before STATUS.
+const STATUS_ERROR =
+  /(CANCELLED|UNKNOWN|INVALID_ARGUMENT|DEADLINE_EXCEEDED|NOT_FOUND|ALREADY_EXISTS|PERMISSION_DENIED|RESOURCE_EXHAUSTED|FAILED_PRECONDITION|ABORTED|OUT_OF_RANGE|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS|UNAUTHENTICATED) \(code (\d{3})\): (\P{Cc}+)/u;
 // Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
 const ERROR_JSON_START = /\{\s*"error"\s*:/g;
 const decodeVerificationError = Schema.decodeUnknownOption(
@@ -51,15 +53,21 @@ const decodeVerificationErrorInfo = Schema.decodeUnknownOption(
     ),
   }),
 );
-const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+const QUOTA_EXHAUSTED = /(?:"reason"\s*:\s*"QUOTA_EXHAUSTED"|\breason:QUOTA_EXHAUSTED\b)/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
-const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
-const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const GO_DURATION = "(?:\\d+(?:\\.\\d+)?(?:ns|us|µs|μs|ms|h|m|s))+";
+const delayPattern = (field: string) =>
+  new RegExp(
+    `(?:"${field}"\\s*:\\s*"(${GO_DURATION})"|\\b${field}:(${GO_DURATION})(?=[\\s\\],}]|$))`,
+  );
+const RESET_TIMESTAMP =
+  /(?:"quotaResetTimeStamp"\s*:\s*"([^"\s]+)"|\bquotaResetTimeStamp:([^\s\],}]+))/;
+const RESET_DELAY = delayPattern("quotaResetDelay");
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
-const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const RETRY_DELAY = delayPattern("retryDelay");
 // Antigravity 1.5 may state the reset only in the message: "... Resets in 4m42s.".
 const RESETS_IN = /\bResets in ((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?!\w|\.\d)/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
@@ -142,18 +150,36 @@ const lastStepAfter =
     };
   };
 
-function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | undefined {
-  // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
-  const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
-  if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay =
-    RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1] ?? RESETS_IN.exec(text)?.[1];
-  if (delay === undefined || now === undefined) return undefined;
+function matchedValue(match: RegExpExecArray | null): string | undefined {
+  return match?.[1] ?? match?.[2];
+}
+
+function parsePositiveDelayMs(delay: string | undefined): number | undefined {
+  if (delay === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
     delayMs += Number(amount) * (GO_DURATION_UNIT_MS[unit!] ?? 0);
   }
-  return delayMs > 0 ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs })) : undefined;
+  return delayMs > 0 ? Math.ceil(delayMs) : undefined;
+}
+
+function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | undefined {
+  // makeProviderFailure drops an unparsable timestamp, and recovery ignores one at or before now.
+  const timestamp = matchedValue(RESET_TIMESTAMP.exec(text));
+  const parsedTimestamp = timestamp === undefined ? Option.none() : DateTime.make(timestamp);
+  if (now === undefined) return Option.isSome(parsedTimestamp) ? timestamp : undefined;
+  if (Option.isSome(parsedTimestamp) && DateTime.isGreaterThan(parsedTimestamp.value, now)) {
+    return timestamp;
+  }
+  const delayMs =
+    parsePositiveDelayMs(matchedValue(RESET_DELAY.exec(text))) ??
+    parsePositiveDelayMs(matchedValue(RETRY_DELAY.exec(text))) ??
+    parsePositiveDelayMs(RESETS_IN.exec(text)?.[1]);
+  return delayMs !== undefined
+    ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs }))
+    : Option.isSome(parsedTimestamp)
+      ? timestamp
+      : undefined;
 }
 
 // Reorders STATUS_ERROR's groups to API_ERROR's: HTTP status, message, status name.
