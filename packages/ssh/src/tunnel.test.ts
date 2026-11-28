@@ -349,6 +349,42 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
+  it("keeps the release mirror query on both archive requests", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+    try {
+      const bin = NodePath.join(root, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "uname"),
+        '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "curl"),
+        '#!/bin/sh\nfor output; do :; done\nfor arg; do case "$arg" in https://*) printf "%s\\n" "$arg" ;; esac; done\n: > "$output"\n',
+        { mode: 0o755 },
+      );
+      const mirror = "https://updates.example.test/releases";
+      const query = "?token=fixture%2F123";
+      const runner = NodePath.join(root, "run-t3.sh");
+      NodeFS.writeFileSync(
+        runner,
+        SshTunnel.buildRemoteT3RunnerScript({ ...ARCHIVE, releaseBaseUrl: `${mirror}/${query}` }),
+      );
+      const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+        encoding: "utf8",
+        env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+
+      assert.deepEqual(result.stdout.trim().split("\n"), [
+        `${mirror}/v${ARCHIVE.archiveVersion}/SHA256SUMS${query}`,
+        `${mirror}/v${ARCHIVE.archiveVersion}/t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz${query}`,
+      ]);
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { installed: ARCHIVE.archiveVersion, status: 0, reuses: true },
     { installed: ARCHIVE.archiveVersion, status: 1, reuses: false },
