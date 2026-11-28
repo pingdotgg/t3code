@@ -412,10 +412,10 @@ function OpenDevicePreview({
   const onUnauthorized = async () => refresh();
   const readDetail = useAtomCommand(deviceEnvironment.detail, { reportFailure: false });
   const [usKeyboardLayout, setUsKeyboardLayout] = useState(false);
-  // A layout the host could not work out counts as US, the simulator's default.
+  // Only a layout the host reports as US: one it does not report may be another layout.
   const readUsKeyboardLayout = useEffectEvent(async (hostId: string, deviceId: string) => {
     const result = await readDetail({ environmentId, input: { hostId, deviceId } });
-    return result._tag === "Success" ? (result.value.settings.usKeyboardLayout ?? true) : true;
+    return result._tag === "Success" && result.value.settings.usKeyboardLayout === true;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the iOS simulator's keyboard layout from the host; keys go by key place until it answers
   useEffect(() => {

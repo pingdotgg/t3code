@@ -264,7 +264,7 @@ it("sends Cmd editing shortcuts to the simulator and leaves the rest to the brow
   expect(input.sent.slice(3)).toEqual(["down 6", "up 6"]);
 });
 
-it("sends keys by key place in order with touches until the layout read answers", async () => {
+it("sends keys by key place unless the host reports a US simulator layout", async () => {
   using input = setup();
   await using screen = await render(input.view(), options);
   await act(async () => input.configure());
@@ -284,7 +284,7 @@ it("sends keys by key place in order with touches until the layout read answers"
   type("KeyQ", "a");
   await act(async () => input.readLayout(false));
   type("KeyQ", "a");
-  // A host that reports no layout, as servers before this setting do, counts as US.
+  // A host that reports no layout, as servers before this setting do, may hold any layout.
   await act(async () => input.readLayout(undefined));
   type("KeyQ", "a");
   await act(async () => input.readLayout("failed"));
@@ -294,9 +294,9 @@ it("sends keys by key place in order with touches until the layout read answers"
     "up 4",
     "down 14",
     "up 14",
-    "down 4",
-    "up 4",
-    "down 4",
-    "up 4",
+    "down 14",
+    "up 14",
+    "down 14",
+    "up 14",
   ]);
 });

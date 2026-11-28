@@ -146,11 +146,10 @@ export function DeviceStreamView(props: {
     props.platform === "ios" && props.visible ? deviceDetailReadAtom(detailKey) : NOOP_ATOM,
   );
   const deviceDetail = useAtomValue(deviceDetailAtom(detailKey));
-  // Keys go by key place until the read answers, so they stay in order with touches. After
-  // it, a layout the host did not report counts as US, the simulator's default.
-  const layoutRead = deviceDetail.detail !== null || deviceDetail.error !== null;
+  // Keys go by key place unless the host says the layout is US: a host that does not report
+  // it may hold a simulator with another layout, which key places already type correctly.
   const usKeyboardLayout =
-    props.platform === "ios" && (deviceDetail.detail?.settings.usKeyboardLayout ?? layoutRead);
+    props.platform === "ios" && deviceDetail.detail?.settings.usKeyboardLayout === true;
   const sendKey = (event: KeyboardEvent, phase: "down" | "up") =>
     client?.sendKey(event, phase, usKeyboardLayout);
   const canvas = session?.canvas ?? null;
