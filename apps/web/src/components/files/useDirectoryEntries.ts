@@ -195,7 +195,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     ...entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
   ]);
 
-  // Reads the root and failed folders (with their ancestors); other folders wait for `revalidate` on screen.
+  // Reads the root and every failed folder with its ancestors, so Retry reaches collapsed folders.
+  // Every other listed folder waits for `revalidate`, so a refresh costs what is on screen.
   const refresh = () => {
     if (!active.current) return;
     for (const path of requested.current) if (path !== "") stale.current.add(path);
