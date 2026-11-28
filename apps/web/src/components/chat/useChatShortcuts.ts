@@ -2,6 +2,7 @@ import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/cont
 import { useEffect, useEffectEvent } from "react";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveChatShortcutCommand, type ShortcutMatchContext } from "../../keybindings";
+import { hasLiveAssistantSelection } from "../../lib/assistantSelectionState";
 import { isTerminalCloseConfirmPending } from "../../lib/terminalCloseConfirm";
 import {
   preventRepeatedTerminalCloseShortcut,
@@ -85,17 +86,27 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       !inSideChatPane &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
-      shouldTypeToFocusComposer(event) &&
-      input.composerRef.current?.insertTextAtEnd(event.key) === true
+      shouldTypeToFocusComposer(event)
     ) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
+      // Only scan keybindings ahead of type-to-focus when live assistant text is selected.
+      const yieldsToCite =
+        !event.repeat &&
+        hasLiveAssistantSelection() &&
+        resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+          context: { ...shortcutContext, assistantSelection: true },
+        }) === "chat.citeSelection";
+      if (yieldsToCite) return;
+      if (input.composerRef.current?.insertTextAtEnd(event.key) === true) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
     }
 
     const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
       context: shortcutContext,
     });
+
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
     const run =
       input.commands[command] ??

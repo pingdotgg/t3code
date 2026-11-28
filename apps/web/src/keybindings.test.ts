@@ -3,6 +3,7 @@ import {
   compileResolvedKeybindingsConfig,
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
+  parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
 import {
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import {
   effectiveShortcutsForCommand,
+  formatAriaKeyshortcut,
   formatShortcutLabel,
   isRichTextBoldShortcut,
   isSidebarToggleShortcut,
@@ -24,6 +26,7 @@ import {
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
   type ShortcutEventLike,
+  type ShortcutMatchContext,
 } from "./keybindings";
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
@@ -246,6 +249,85 @@ describe("settle thread shortcut", () => {
         context: { terminalFocus: true },
       }),
     );
+  });
+});
+
+describe("cite selection shortcut", () => {
+  const citeKey = (
+    overrides: Partial<ShortcutEventLike>,
+    context: Partial<ShortcutMatchContext>,
+    keybindings = DEFAULT_RESOLVED_KEYBINDINGS,
+  ) =>
+    resolveShortcutCommand(event({ key: "r", ...overrides }), keybindings, {
+      platform: "MacIntel",
+      context,
+    });
+
+  it("cites with R only while assistant text is selected outside fields and terminals", () => {
+    assert.strictEqual(citeKey({}, { assistantSelection: true }), "chat.citeSelection");
+    assert.strictEqual(citeKey({ key: "R", shiftKey: true }, { assistantSelection: true }), null);
+    assert.isNull(citeKey({}, { assistantSelection: false }));
+    assert.isNull(citeKey({}, { assistantSelection: true, editableFocus: true }));
+    assert.isNull(citeKey({}, { assistantSelection: true, terminalFocus: true }));
+    for (const modifier of ["metaKey", "ctrlKey", "altKey"] as const) {
+      assert.isNull(citeKey({ [modifier]: true }, { assistantSelection: true }));
+    }
+  });
+
+  it("keeps an unconditional remap from shadowing other commands without a selection", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([{ key: "mod+l", command: "chat.citeSelection" }]),
+    );
+    const modL = { key: "l", metaKey: true };
+
+    assert.strictEqual(
+      citeKey(modL, { assistantSelection: true }, keybindings),
+      "chat.citeSelection",
+    );
+    assert.isNull(citeKey(modL, { assistantSelection: true, editableFocus: true }, keybindings));
+    assert.strictEqual(
+      citeKey(modL, { assistantSelection: false, previewFocus: true }, keybindings),
+      "preview.focusUrl",
+    );
+    assert.deepEqual(
+      effectiveShortcutsForCommand(keybindings, "preview.focusUrl", {
+        platform: "MacIntel",
+        context: { previewFocus: true },
+      }),
+      [modShortcut("l")],
+    );
+    assert.isNull(citeKey({}, { assistantSelection: true }, keybindings));
+  });
+
+  it("drops the shortcut and its label once unassigned", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "r", command: "chat.citeSelection", when: "false" },
+      ]),
+    );
+
+    assert.isNull(citeKey({}, { assistantSelection: true }, keybindings));
+    assert.isNull(
+      shortcutLabelForCommand(keybindings, "chat.citeSelection", {
+        platform: "MacIntel",
+        context: { assistantSelection: true },
+      }),
+    );
+  });
+});
+
+describe("formatAriaKeyshortcut", () => {
+  it.each([
+    ["r", "MacIntel", "R"],
+    ["mod+l", "MacIntel", "Meta+L"],
+    ["mod+l", "Win32", "Control+L"],
+    ["alt+shift+space", "Linux", "Alt+Shift+Space"],
+    ["mod++", "Linux", "Control+Plus"],
+    ["shift+arrowup", "MacIntel", "Shift+ArrowUp"],
+    ["esc", "MacIntel", "Escape"],
+    ["f6", "MacIntel", "F6"],
+  ])("formats %s on %s as %s", (key, platform, expected) => {
+    assert.strictEqual(formatAriaKeyshortcut(parseKeybindingShortcut(key)!, platform), expected);
   });
 });
 
