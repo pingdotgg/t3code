@@ -1427,6 +1427,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
   readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
+  readonly notificationIcon?: ThreadFeedActivity["icon"] | undefined;
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1437,14 +1438,18 @@ export function ThreadWorkGroupToggle(props: {
 }) {
   const gt = useGT();
   const statusLabel = props.hasFailure
-    ? gt("{preview}, tool call failed", { preview: props.summary })
+    ? props.notificationIcon
+      ? gt("{preview}, notification failed", { preview: props.summary })
+      : gt("{preview}, tool call failed", { preview: props.summary })
     : props.summary;
   const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
     props.summaryToolIcon ??
-    (props.toolSurface
-      ? workRowSymbolName(props.toolSurface)
-      : toolGroupSummarySymbolName(props.summaryKind));
+    (props.notificationIcon
+      ? workRowSymbolName(props.notificationIcon)
+      : props.toolSurface
+        ? workRowSymbolName(props.toolSurface)
+        : toolGroupSummarySymbolName(props.summaryKind));
 
   return (
     <WorkLogBlock layout="group-header">
@@ -1474,15 +1479,25 @@ export function ThreadWorkGroupToggle(props: {
             accessibilityState={{ expanded: props.expanded }}
             accessibilityLabel={accessibilityLabel}
             accessibilityHint={
-              props.expanded
-                ? gt(
-                    "{count, plural, one {Double tap to hide {count} tool call.} other {Double tap to hide {count} tool calls.}}",
-                    { count: props.hiddenCount },
-                  )
-                : gt(
-                    "{count, plural, one {Double tap to show {count} tool call.} other {Double tap to show {count} tool calls.}}",
-                    { count: props.hiddenCount },
-                  )
+              props.notificationIcon
+                ? props.expanded
+                  ? gt(
+                      "{count, plural, one {Double tap to hide {count} notification.} other {Double tap to hide {count} notifications.}}",
+                      { count: props.hiddenCount },
+                    )
+                  : gt(
+                      "{count, plural, one {Double tap to show {count} notification.} other {Double tap to show {count} notifications.}}",
+                      { count: props.hiddenCount },
+                    )
+                : props.expanded
+                  ? gt(
+                      "{count, plural, one {Double tap to hide {count} tool call.} other {Double tap to hide {count} tool calls.}}",
+                      { count: props.hiddenCount },
+                    )
+                  : gt(
+                      "{count, plural, one {Double tap to show {count} tool call.} other {Double tap to show {count} tool calls.}}",
+                      { count: props.hiddenCount },
+                    )
             }
             onPress={() => {
               void Haptics.selectionAsync();

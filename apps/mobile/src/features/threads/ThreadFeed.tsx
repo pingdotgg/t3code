@@ -2228,6 +2228,7 @@ function renderFeedEntry(
         toolSurface={entry.toolSurface}
         toolIcon={entry.toolIcon}
         summaryToolIcon={entry.summaryToolIcon}
+        notificationIcon={entry.notificationIcon}
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
