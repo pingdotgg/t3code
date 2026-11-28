@@ -408,6 +408,21 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  it.each([
+    ["bypassPermissions", { accepted: true, directory: "/workspace" }],
+    ["auto", undefined],
+    ["default", undefined],
+  ] as const)("attests workspace trust only in %s", (permissionMode, expected) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-workspace-trust",
+      resume: false,
+      cwd: "/workspace",
+      permissionMode,
+    });
+    assert.deepEqual(options.workspaceTrust, expected);
+  });
+
   it("passes the thread's other folders and every --add-dir and --plugin-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,

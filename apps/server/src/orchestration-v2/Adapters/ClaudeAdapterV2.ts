@@ -796,6 +796,8 @@ export type ClaudeAgentSdkQueryOptions = Omit<
   readonly model: string;
   readonly tools: NonNullable<ClaudeQueryOptions["tools"]>;
   readonly permissionMode: NonNullable<ClaudeQueryOptions["permissionMode"]>;
+  // Read by the SDK at runtime but missing from its Options type.
+  readonly workspaceTrust?: { readonly accepted: true; readonly directory: string };
 } & ClaudeAgentSdkThreadIdentity;
 
 export interface ClaudeAgentSdkQueryOpenInput {
@@ -2792,7 +2794,16 @@ export function makeClaudeQueryOptions(input: {
   ];
   const withDirectories =
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
-  return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
+  if (input.cwd === null) return withDirectories;
+  // Claude Code skips agent-file hooks and MCP servers in a folder nobody trusted, and the SDK
+  // never shows its trust dialog. Full access already runs anything there, so it attests trust.
+  return options.permissionMode === "bypassPermissions"
+    ? {
+        ...withDirectories,
+        cwd: input.cwd,
+        workspaceTrust: { accepted: true, directory: input.cwd },
+      }
+    : { ...withDirectories, cwd: input.cwd };
 }
 
 /**
