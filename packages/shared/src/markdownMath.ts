@@ -34,16 +34,21 @@ export function markdownMathRanges(source: string, tree?: Root) {
       node.type === "inlineMath" ||
       (node.type === "code" && node.lang === "math")
     ) {
-      const parserStart = node.position?.start.offset;
-      const parserEnd = node.position?.end.offset;
-      if (parserStart === undefined || parserEnd === undefined) return;
+      const position = node.position;
+      const parserStart = position?.start.offset;
+      const parserEnd = position?.end.offset;
+      if (!position || parserStart === undefined || parserEnd === undefined) return;
       const start = parserStart + sourceOffset;
       const end = parserEnd + sourceOffset;
       const authored = source.slice(start, end);
       if (node.type === "code") {
         const open = /^[ \t]*(`{3,}|~{3,})/.exec(authored)?.[1];
-        const close = /\n[ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(authored)?.[1];
+        const close = /[\r\n][ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(authored)?.[1];
         if (!open || !close || open[0] !== close[0] || close.length < open.length) return;
+        // An unclosed fence keeps a would-be closer (e.g. indented 4+ spaces) in its value.
+        const valueLines = node.value ? node.value.split(/\r\n|\r|\n/).length : 0;
+        const spanLines = position.end.line - position.start.line + 1;
+        if (spanLines < valueLines + 2) return;
       }
       const display = node.type !== "inlineMath" || /^(?:\$\$|\\\[)/.test(authored);
       ranges.push({ start, end, source: authored, tex: node.value, display, inTable: table });

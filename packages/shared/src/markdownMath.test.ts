@@ -84,8 +84,16 @@ describe("chat math parsing", () => {
 
   it("only exposes closed explicit math fences to editors and native rendering", () => {
     expect(markdownMathRanges("```math\nx^2")).toEqual([]);
+    expect(markdownMathRanges("```math\rx^2")).toEqual([]);
+    expect(markdownMathRanges("````math\rx^2\r```")).toEqual([]);
+    expect(markdownMathRanges("```math\rx^2\r~~~")).toEqual([]);
+    expect(markdownMathRanges("```math\r@foo\r    ```")).toEqual([]);
     expect(markdownMathRanges("```math\nx^2\n```")[0]?.tex).toBe("x^2");
+    expect(markdownMathRanges("```math\rx^2\r```")).toMatchObject([
+      { start: 0, end: 15, tex: "x^2", display: true },
+    ]);
     expect(markdownMathRanges("> ```math\n> x^2\n> ```")[0]?.tex).toBe("x^2");
+    expect(markdownMathRanges("> ```math\r> x^2\r> ```")[0]?.tex).toBe("x^2");
   });
   it("reads the four delimiters models emit", () => {
     expect(formulas("Inline $x^2$ and \\(y_1\\), display $$a+b$$ and \\[c\\].")).toEqual([
