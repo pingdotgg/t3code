@@ -8,6 +8,8 @@ type AddProjectDestinationRouteParams = {
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
   readonly prompt?: string | string[];
+  readonly projectTitle?: string | string[];
+  readonly draftId?: string | string[];
 };
 
 export function AddProjectDestinationRoute({

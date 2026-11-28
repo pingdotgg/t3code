@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
-    repositoryIdentity?: { canonicalKey: string };
+    repositoryIdentity?: { canonicalKey: string; locator: { remoteUrl: string } };
   }[],
   cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
@@ -36,6 +36,11 @@ const state = vi.hoisted(() => ({
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
+  retargetSavedNewTaskDraft: vi.fn(
+    async (_draftKey: string, _project: unknown, cancelled?: () => boolean) => !cancelled?.(),
+  ),
+  setComposerDraftText: vi.fn(),
+  draftsLoaded: async () => {},
   dispatch: vi.fn(),
   alert: vi.fn(),
   navigationState: undefined as NavigationState | undefined,
@@ -60,6 +65,7 @@ vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
       state.dispatch(selectWorkspaceDetail(detail)),
   };
 });
+vi.mock("../connection/useRetryEnvironment", () => ({ useRetryEnvironment: () => vi.fn() }));
 vi.mock("../../native/StackHeader", () => ({
   nativeHeaderScrollEdgeEffects: () => undefined,
 }));
@@ -80,6 +86,11 @@ vi.mock("@react-navigation/native", () => ({
   useRoute: () => state.navigationState?.routes[state.navigationState.index],
   useNavigation: () => ({
     dispatch: state.dispatch,
+    // The screen is already presented when these tests act on it.
+    addListener: (_event: string, listener: () => void) => {
+      listener();
+      return () => {};
+    },
     getState: () =>
       state.navigationState ?? {
         index: 4,
@@ -187,9 +198,10 @@ vi.mock("../../state/projects", () => ({
 }));
 
 vi.mock("../../state/use-composer-drafts", () => ({
-  waitForComposerDraftsLoaded: async () => {},
+  waitForComposerDraftsLoaded: () => state.draftsLoaded(),
   createNewTaskDraft: () => "prompt-draft",
-  setComposerDraftText: () => {},
+  retargetSavedNewTaskDraft: state.retargetSavedNewTaskDraft,
+  setComposerDraftText: state.setComposerDraftText,
 }));
 
 import {
@@ -357,13 +369,14 @@ it.each([
   },
 );
 
-function cloneAction() {
+function cloneAction(props: { readonly draftId?: string; readonly prompt?: string } = {}) {
   const action = findAction(
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
         remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
+        ...props,
       }),
     ),
     "Clone project",
@@ -411,10 +424,22 @@ describe("clone project permissions", () => {
     [
       "opens the existing project of that repository instead of cloning into its folder",
       "example.com/owner/repo",
+      "git@example.com:owner/repo.git",
       false,
     ],
-    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
-  ])("%s", async (_name, canonicalKey, clones) => {
+    [
+      "leaves a folder holding another repository to the clone",
+      "example.com/owner/other",
+      "https://example.com/owner/other.git",
+      true,
+    ],
+    [
+      "leaves a checkout from the same path on another port to the clone",
+      "example.com/owner/repo",
+      "https://example.com:8443/owner/repo.git",
+      true,
+    ],
+  ])("%s", async (_name, canonicalKey, remoteUrl, clones) => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.cloneDestinations = [];
     state.startCloneResult = Promise.resolve(
@@ -426,7 +451,7 @@ describe("clone project permissions", () => {
         id: "existing",
         title: "repo",
         workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
-        repositoryIdentity: { canonicalKey },
+        repositoryIdentity: { canonicalKey, locator: { remoteUrl } },
       },
     ];
     try {
@@ -438,6 +463,92 @@ describe("clone project permissions", () => {
       state.startCloneResult = null;
     }
   });
+
+  it("moves the draft it was opened from onto the project instead of copying its text", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.retargetSavedNewTaskDraft.mockClear();
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: {
+          canonicalKey: "example.com/owner/repo",
+          locator: { remoteUrl: "https://example.com/owner/repo.git" },
+        },
+      },
+    ];
+    try {
+      await cloneAction({ draftId: "new-task:source" })();
+
+      expect(state.retargetSavedNewTaskDraft).toHaveBeenCalledWith(
+        "new-task:source",
+        { environmentId: "environment", projectId: "existing" },
+        expect.any(Function),
+      );
+    } finally {
+      state.existingProjects = [];
+    }
+  });
+
+  it.each(["while saved drafts load", "while the draft moves"] as const)(
+    "leaves the draft where it was when the person goes Back %s",
+    async (moment) => {
+      state.scopes.add(AuthOrchestrationOperateScope);
+      state.retargetSavedNewTaskDraft.mockClear();
+      state.setComposerDraftText.mockClear();
+      state.dispatch.mockReset();
+      state.existingProjects = [
+        {
+          environmentId: "environment",
+          id: "existing",
+          title: "repo",
+          workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+          repositoryIdentity: {
+            canonicalKey: "example.com/owner/repo",
+            locator: { remoteUrl: "https://example.com/owner/repo.git" },
+          },
+        },
+      ];
+      let wentBack = false;
+      const goBack = () => {
+        wentBack = true;
+        state.navigationState = {
+          index: 1,
+          routes: [
+            { key: "home", name: "Home" },
+            { key: "draft", name: "Thread", params: { draft: {} } },
+          ],
+        } as unknown as NavigationState;
+      };
+      if (moment === "while saved drafts load") {
+        state.draftsLoaded = async () => goBack();
+      } else {
+        // The retarget re-awaits draft loading before it writes; Back lands in that gap.
+        state.retargetSavedNewTaskDraft.mockImplementationOnce(
+          async (_key, _project, cancelled) => {
+            goBack();
+            return !cancelled?.();
+          },
+        );
+      }
+      try {
+        await cloneAction({ draftId: "new-task:source", prompt: "fix the bug" })();
+
+        expect(wentBack).toBe(true);
+        expect(state.retargetSavedNewTaskDraft).toHaveBeenCalledTimes(1);
+        await expect(state.retargetSavedNewTaskDraft.mock.results[0]?.value).resolves.toBe(false);
+        // Neither the saved draft nor a prompt copy reached the destination.
+        expect(state.setComposerDraftText).not.toHaveBeenCalled();
+        expect(state.dispatch).not.toHaveBeenCalled();
+      } finally {
+        state.existingProjects = [];
+        state.navigationState = undefined;
+        state.draftsLoaded = async () => {};
+      }
+    },
+  );
 });
 
 function mountProjectFlow(

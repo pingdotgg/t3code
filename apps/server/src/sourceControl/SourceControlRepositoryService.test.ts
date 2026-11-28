@@ -699,6 +699,132 @@ it.effect("strips embedded credentials from the remote URL it reports", () =>
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("reuses only a matching checked-out repository at an occupied clone destination", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-reuse-" });
+    const destinationPath = path.join(parent, "t3code");
+    yield* fs.makeDirectory(destinationPath);
+    const notesPath = path.join(destinationPath, "notes.txt");
+    yield* fs.writeFileString(notesPath, "keep my edits");
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const input = { remoteUrl: CLONE_URLS.sshUrl, destinationPath };
+      assert.isTrue((yield* service.prepareClone(input, { reuseCheckout: true })).existingCheckout);
+      const different = yield* Effect.flip(
+        service.prepareClone(
+          { ...input, remoteUrl: "https://github.com/octocat/other" },
+          {
+            reuseCheckout: true,
+          },
+        ),
+      );
+      assert.include(different.detail, "not empty");
+      assert.include((yield* Effect.flip(service.prepareClone(input))).detail, "not empty");
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel") ? destinationPath : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed(CLONE_URLS.url),
+          },
+        }),
+      ),
+    );
+    assert.equal(yield* fs.readFileString(notesPath), "keep my edits");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("reuses a checkout from another port only over another scheme", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-port-" });
+    const destinationPath = path.join(parent, "repo");
+    yield* fs.makeDirectory(destinationPath);
+    yield* fs.writeFileString(path.join(destinationPath, "notes.txt"), "keep my edits");
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const reuse = (remoteUrl: string) =>
+        service.prepareClone({ remoteUrl, destinationPath }, { reuseCheckout: true });
+      assert.isTrue((yield* reuse("https://git.example.com:8443/team/repo")).existingCheckout);
+      // SSH and HTTPS reach the same server on different ports.
+      assert.isTrue((yield* reuse("ssh://git@git.example.com:2222/team/repo")).existingCheckout);
+      const otherServer = yield* Effect.flip(reuse("https://git.example.com:9443/team/repo"));
+      assert.include(otherServer.detail, "not empty");
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel") ? destinationPath : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed("https://git.example.com:8443/team/repo.git"),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("a restored retry reuses a checkout only once git has written its index", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-index-" });
+    const destinationPath = path.join(parent, "repo");
+    yield* fs.makeDirectory(path.join(destinationPath, ".git"), { recursive: true });
+    yield* fs.writeFileString(path.join(destinationPath, "notes.txt"), "keep my edits");
+    const input = { remoteUrl: CLONE_URLS.url, destinationPath };
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const complete = { reuseCheckout: true, requireCompleteCheckout: true } as const;
+      // Git stopped after setting HEAD but before checking out the working tree.
+      const interrupted = yield* Effect.flip(service.prepareClone(input, complete));
+      assert.include(interrupted.detail, "not empty");
+      // Ordinary reuse still accepts it: an existing checkout is the user's to judge.
+      assert.isTrue((yield* service.prepareClone(input, { reuseCheckout: true })).existingCheckout);
+
+      yield* fs.writeFileString(path.join(destinationPath, ".git", "index"), "");
+      assert.isTrue((yield* service.prepareClone(input, complete)).existingCheckout);
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel")
+                  ? destinationPath
+                  : args.includes("--git-path")
+                    ? ".git/index"
+                    : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed(CLONE_URLS.url),
+          },
+        }),
+      ),
+    );
+    assert.equal(
+      yield* fs.readFileString(path.join(destinationPath, "notes.txt")),
+      "keep my edits",
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("discards only a directory git wrote to", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

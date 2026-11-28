@@ -201,6 +201,28 @@ export function parseGitRemoteRepository(
 }
 
 /**
+ * Repository keys drop the port so SSH and HTTPS spellings match, but two URLs with the same
+ * scheme and different ports reach different servers. False only for that case.
+ */
+export function gitRemotesShareServerPort(left: string, right: string): boolean {
+  const url = (value: string) => {
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim())) return null;
+    try {
+      return new URL(value.trim());
+    } catch {
+      return null;
+    }
+  };
+  // WHATWG URL drops only special-scheme default ports, so `ssh://h:22` keeps its port.
+  const port = (value: URL) => value.port || (GIT_DEFAULT_PORTS[value.protocol] ?? "");
+  const a = url(left);
+  const b = url(right);
+  return a === null || b === null || a.protocol !== b.protocol || port(a) === port(b);
+}
+
+const GIT_DEFAULT_PORTS: Partial<Record<string, string>> = { "ssh:": "22", "git:": "9418" };
+
+/**
  * `host/path` for a remote that names a host, otherwise the remote itself, lower case. A host that
  * spells repositories differently over SSH or treats `.git` literally has its source control registry's
  * `repositoryKeyFromRemote` rewrite this, so persisted keys come from that, not from here.

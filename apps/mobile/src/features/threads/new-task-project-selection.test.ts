@@ -201,7 +201,7 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch([other, otherDrive], windows)).toBe(otherDrive);
   });
 
-  it("does not treat a known different repository as a basename or title match", () => {
+  it("requires a verified match when the source repository is known", () => {
     const selected = makeProject("t3code", "mac", {
       repositoryKey: "github.com/t3tools/t3code",
       workspaceRoot: "/Users/me/t3code",
@@ -212,8 +212,7 @@ describe("resolveEnvironmentProjectMatch", () => {
       workspaceRoot: "/home/me/t3code",
     });
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
-    expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
-    expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+    expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBeNull();
     expect(isSameRepository(fork, selected)).toBe(false);
   });
 });

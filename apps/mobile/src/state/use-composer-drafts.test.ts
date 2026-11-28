@@ -2172,6 +2172,13 @@ describe("mobile composer drafts", () => {
     await expect(cancelled).resolves.toBe(false);
     expect(getComposerDraftSnapshot(key).project).toMatchObject(from);
 
+    // Drafts are loaded, but the caller's route can still change while the load check settles.
+    let routeLeft = false;
+    const leftDuring = retargetSavedNewTaskDraft(key, to, () => routeLeft);
+    routeLeft = true;
+    await expect(leftDuring).resolves.toBe(false);
+    expect(getComposerDraftSnapshot(key).project).toMatchObject(from);
+
     await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
     expect(getComposerDraftSnapshot(key)).toMatchObject({
       text: "kept through a cold start",

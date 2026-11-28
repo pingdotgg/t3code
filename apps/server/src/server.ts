@@ -501,7 +501,13 @@ const layerSourceControlRepositoryService = SourceControlRepositoryService.layer
 );
 
 const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
-  Layer.provide(layerSourceControlRepositoryService),
+  Layer.provide(
+    Layer.mergeAll(
+      layerSourceControlRepositoryService,
+      ServerSecretStore.layer,
+      ProjectStore.layer,
+    ),
+  ),
 );
 
 const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(

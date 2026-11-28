@@ -37,6 +37,8 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
+import { gitRemotesShareServerPort, parseGitRemoteRepository } from "@t3tools/shared/git";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isGitCommandError = Schema.is(GitCommandError);
@@ -49,6 +51,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly prepareClone: (
       input: SourceControlCloneRepositoryInput,
+      options?: SourceControlPrepareCloneOptions,
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
@@ -68,6 +71,21 @@ export interface SourceControlPreparedClone {
   readonly remoteUrl: string;
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
+  readonly existingCheckout?: boolean;
+}
+
+/** A clone refused with this never touched the destination, so its files are not the clone's. */
+export const DESTINATION_NOT_EMPTY = "Destination path already exists and is not empty.";
+
+export interface SourceControlPrepareCloneOptions {
+  /** Accept a destination that already holds a checkout of the same repository. */
+  readonly reuseCheckout?: boolean;
+  /**
+   * Also require proof that the checkout finished. Git sets `HEAD` before it writes the working
+   * tree and creates the index only once checkout completes, so a clone stopped between the two
+   * has the right commit but no index.
+   */
+  readonly requireCompleteCheckout?: boolean;
 }
 
 export interface SourceControlCloneOptions {
@@ -257,9 +275,51 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const isMatchingCheckout = Effect.fn("SourceControlRepositoryService.isMatchingCheckout")(
+    function* (cwd: string, remoteUrl: string, requireComplete: boolean) {
+      const root = yield* git.execute({
+        operation: "SourceControlRepositoryService.isMatchingCheckout",
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+      });
+      if ((yield* fileSystem.realPath(cwd)) !== (yield* fileSystem.realPath(root.stdout.trim()))) {
+        return false;
+      }
+      const primary = yield* git.resolvePrimaryRemoteName(cwd);
+      const existingRemote = yield* git.readConfigValue(cwd, `remote.${primary}.url`);
+      if (!existingRemote) return false;
+      const existingUrl = redactRemoteUrl(existingRemote);
+      const matching =
+        existingUrl === remoteUrl ||
+        (parseGitRemoteRepository(existingUrl) !== null &&
+          parseGitRemoteRepository(remoteUrl) !== null &&
+          sourceControlDefinitions.repositoryKeyFromRemote(existingUrl) ===
+            sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) &&
+          gitRemotesShareServerPort(existingUrl, remoteUrl));
+      if (!matching) return false;
+      yield* git.execute({
+        operation: "SourceControlRepositoryService.isMatchingCheckout",
+        cwd,
+        args: ["rev-parse", "--verify", "HEAD^{commit}"],
+      });
+      if (requireComplete) {
+        const index = yield* git.execute({
+          operation: "SourceControlRepositoryService.isMatchingCheckout",
+          cwd,
+          args: ["rev-parse", "--git-path", "index"],
+        });
+        return yield* fileSystem.exists(path.resolve(cwd, index.stdout.trim()));
+      }
+      return true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
-    function* (destinationPath: string) {
-      const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
+    function* (
+      normalizedDestination: string,
+      reuse?: { readonly remoteUrl: string; readonly requireComplete: boolean },
+    ) {
       if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
@@ -275,10 +335,20 @@ export const make = Effect.gen(function* () {
             ),
           );
         if (entries.length > 0) {
+          if (
+            reuse &&
+            (yield* isMatchingCheckout(
+              normalizedDestination,
+              reuse.remoteUrl,
+              reuse.requireComplete,
+            ))
+          ) {
+            return true;
+          }
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
             provider: SourceControlProviderKind.make("unknown"),
-            detail: "Destination path already exists and is not empty.",
+            detail: DESTINATION_NOT_EMPTY,
           });
         }
       } else {
@@ -289,18 +359,17 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      return {
-        destinationPath: normalizedDestination,
-        parentPath: path.dirname(normalizedDestination),
-        directoryName: path.basename(normalizedDestination),
-      };
+      return false;
     },
   );
 
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
+    options?: SourceControlPrepareCloneOptions,
   ) {
-    const preparedDestination = yield* prepareDestination(input.destinationPath);
+    const destinationPath = yield* normalizeDestinationPath(input.destinationPath);
+    const reuseCheckout = options?.reuseCheckout && !(input.provider && input.repository);
+    if (!reuseCheckout) yield* prepareDestination(destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
     let provider: SourceControlProviderKind =
@@ -310,7 +379,7 @@ export const make = Effect.gen(function* () {
       repository = yield* lookupRepository({
         provider: input.provider,
         repository: input.repository,
-        cwd: preparedDestination.parentPath,
+        cwd: path.dirname(destinationPath),
       });
       remoteUrl = selectRemoteUrl(repository, input.protocol);
       provider = input.provider;
@@ -324,11 +393,19 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const redactedRemoteUrl = redactRemoteUrl(remoteUrl);
+    const existingCheckout = reuseCheckout
+      ? yield* prepareDestination(destinationPath, {
+          remoteUrl: redactedRemoteUrl,
+          requireComplete: options?.requireCompleteCheckout === true,
+        })
+      : false;
     return {
-      destinationPath: preparedDestination.destinationPath,
-      remoteUrl: redactRemoteUrl(remoteUrl),
+      destinationPath,
+      remoteUrl: redactedRemoteUrl,
       cloneUrl: remoteUrl,
       repository,
+      ...(existingCheckout ? { existingCheckout: true } : {}),
     } satisfies SourceControlPreparedClone;
   });
 
@@ -624,8 +701,8 @@ export const make = Effect.gen(function* () {
         mapRepositoryError("lookupRepository", input.provider),
       );
     }),
-    prepareClone: Effect.fnUntraced(function* (input) {
-      return yield* prepareClone(input).pipe(
+    prepareClone: Effect.fnUntraced(function* (input, options) {
+      return yield* prepareClone(input, options).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),
