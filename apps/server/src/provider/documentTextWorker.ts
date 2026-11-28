@@ -1809,6 +1809,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       try {
         const decoded = decodeURIComponent(rootfile);
         if (files.has(decoded)) rootfile = decoded;
+        else if (!has(rootfile)) {
+          const normalized = NodePath.posix.normalize(decoded);
+          if (files.has(normalized)) rootfile = normalized;
+        }
       } catch {}
       const packageXml = read(rootfile);
       const items = new Map(
