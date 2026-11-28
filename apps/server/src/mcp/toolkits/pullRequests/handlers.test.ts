@@ -409,6 +409,9 @@ describe("pull request toolkit handlers", () => {
         .call("link_pull_request", { repository: "tfs/Collection/Project/_git/Repo", number: 124 })
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestUrlUnavailableError" });
+      // pull_request_read takes no url or host, so its error must not ask for them.
+      const readError = yield* harness.call("pull_request_read", { number: 124 }).pipe(Effect.flip);
+      expect(readError.message).not.toMatch(/\b(url|host)\b/i);
 
       const supplied = "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/123";
       const fromUrl = yield* harness.call("link_pull_request", { url: supplied });

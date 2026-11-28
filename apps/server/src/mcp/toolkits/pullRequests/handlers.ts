@@ -600,6 +600,11 @@ const make = Effect.gen(function* () {
     return comments.map((comment) => placed.get(comment)!);
   });
 
+  const projectRemoteUnresolved = new PullRequestForgeError({
+    detail:
+      "This thread's project has no recognised remote, so its pull requests cannot be read here.",
+  });
+
   /** The thread's checkout, its project, and the PR the input names (default: the branch's). */
   const locate = Effect.fn("PullRequestsToolkit.locate")(function* (input: ThreadPullRequestInput) {
     const thread = yield* requireThread(PullRequestForgeError, undefined);
@@ -629,7 +634,20 @@ const make = Effect.gen(function* () {
           ? null
           : { number: branchPullRequest.number, repository: branchPullRequest.repository };
     if (named === null) return yield* new PullRequestBranchHasNoneError();
-    const target = yield* resolveTarget(named, project);
+    // resolveTarget's errors suggest url and host, which these tools do not take.
+    const target = yield* resolveTarget(named, project).pipe(
+      Effect.catchTags({
+        PullRequestTargetIncompleteError: () => Effect.fail(projectRemoteUnresolved),
+        PullRequestHostRequiredError: () => Effect.fail(projectRemoteUnresolved),
+        PullRequestUrlUnavailableError: () =>
+          Effect.fail(
+            new PullRequestForgeError({
+              detail:
+                "This thread's project is on a forge whose pull request links are unknown, so its pull requests cannot be read here.",
+            }),
+          ),
+      }),
+    );
     const ref: PullRequestRef = {
       projectId: project.id,
       host: target.host,
