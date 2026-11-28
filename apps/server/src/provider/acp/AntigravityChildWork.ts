@@ -905,7 +905,7 @@ const toolArguments = (args: unknown) =>
     : (args ?? {});
 
 const capText = (value: string, limit: number) =>
-  value.length <= limit ? value : `${value.slice(0, limit)}…`;
+  value.length <= limit ? value : `${value.slice(0, limit).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
 /** Skips the runtime's opening envelope around the launch prompt the view already shows. */
 function transcriptSteps(
