@@ -476,6 +476,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
+    readonly startupPhase?: string;
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
@@ -548,6 +549,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.extensionStatuses === undefined
             ? {}
             : { extensionStatuses: options.extensionStatuses }),
+          ...(options.startupPhase === undefined ? {} : { startupPhase: options.startupPhase }),
         };
         yield* Ref.update(state, (current) => {
           const eventQueues = new Map(current.eventQueues);
@@ -657,6 +659,7 @@ function layerTest(input: {
   readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
+  readonly startupPhase?: string;
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
@@ -715,6 +718,7 @@ function layerTest(input: {
       ...(input.extensionStatuses === undefined
         ? {}
         : { extensionStatuses: input.extensionStatuses }),
+      ...(input.startupPhase === undefined ? {} : { startupPhase: input.startupPhase }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
       ...(input.hasPendingBackgroundWork === undefined
@@ -4210,6 +4214,8 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         projection.providerSessions.at(-1)?.lastError,
         "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.",
       );
+      // The step the session was starting on ended with it.
+      assert.isUndefined(projection.providerSessions.at(-1)?.startupPhase);
     });
 
     yield* effect.pipe(
@@ -4218,6 +4224,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
           state,
           idleTimeoutMs: 1000,
           failEventStream: true,
+          startupPhase: "launch",
           releaseRecorded,
         }),
       ),
@@ -5702,6 +5709,144 @@ it.effect.each([
                 : {}),
             // Another thread's work keeps the shared session open past the children's idle unloads.
             hasPendingBackgroundWork: Effect.succeed(keptOpen),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 archives a delivered delegated child when a settle detaches it before its idle unload",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread-provider-session-manager-settle-parent");
+        const parentRunId = idAllocator.derive.run({ threadId: parentThreadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const threadId = ThreadId.make("thread-provider-session-manager-settle-child");
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const taskId = idAllocator.derive.rootNode({ runId });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-settled",
+        });
+        const created = yield* makeThreadCreatedEvent({
+          idAllocator,
+          threadId,
+          now,
+          delegatedBy: parentThreadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now }),
+            {
+              ...created,
+              payload: { ...created.payload, forkedFrom: { type: "node", nodeId: taskId } },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              nodeId: taskId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId: parentThreadId,
+                runId: parentRunId,
+                parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: CODEX_DRIVER,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: null,
+                childThreadId: threadId,
+                nativeTaskRef: null,
+                prompt: "Delegated work",
+                title: null,
+                model: null,
+                completionDelivery: { state: "delivered", observedByRunId: null },
+                status: "completed",
+                result: "Done.",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            } satisfies OrchestrationV2DomainEvent,
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "Delegated work",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-settled",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+
+        // Auto-settle detaches the finished child before its idle unload fires.
+        yield* manager.detach({ providerSessionId, threadId });
+        assert.equal(yield* Queue.take(unloads), "archive:native-settled");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            unloads,
+            hasPendingBackgroundWork: Effect.succeed(true),
           }),
         ),
       );
