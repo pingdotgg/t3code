@@ -19,7 +19,7 @@ const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 // A path can contain `:0:` before the actual line number.
-const POSSIBLE_INLINE_MATCH = /^\S.*?:0*[1-9]\d*:.*$/;
+const POSSIBLE_INLINE_MATCH = /^\S.*?:0*[1-9]\d*:/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
