@@ -1223,6 +1223,99 @@ describe("ChatMarkdown copy", () => {
       [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
     ).toEqual(["Configure", "Deploy"]);
   });
+
+  it.each([
+    {
+      label: "the full table",
+      from: "Name",
+      to: "20",
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+    },
+    {
+      label: "multiple body rows",
+      from: "Alice",
+      to: "20",
+      text: "| Alice | Engineer | 10 |\n| --- | :---: | ---: |\n| Bob | Designer | 20 |",
+    },
+    {
+      label: "multiple cells in one row",
+      from: "Alice",
+      to: "Engineer",
+      text: "| Alice | Engineer |\n| --- | :---: |",
+    },
+    {
+      label: "a row whose selection stops at the start of the next row",
+      from: "Name",
+      to: "Alice",
+      skipTo: true,
+      text: "| Name | Role | Score |\n| --- | :---: | ---: |",
+    },
+  ])(
+    "copies $label inside a rendered table as Markdown and HTML",
+    async ({ from, to, skipTo, text }) => {
+      setup();
+      await using screen = await renderText(
+        "| Name | Role | Score |\n| :--- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      );
+      const cellText = (shown: string) =>
+        [...screen.container.querySelectorAll("th, td")]
+          .map((cell) => cell.firstChild)
+          .find((node) => node?.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
+      const start = cellText(from);
+      const end = cellText(to);
+      const range = document.createRange();
+      range.setStart(start, 0);
+      range.setEnd(end, skipTo ? 0 : end.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+      expect(pasted.querySelector("table")).not.toBeNull();
+      expect(serializeRenderedMarkdownFragment(pasted.body)).toBe(text);
+    },
+  );
+
+  it("keeps a single selected table cell as plain text even when the selection edge touches the next cell", async () => {
+    setup();
+    await using screen = await renderText("| Name | Role |\n| --- | --- |\n| Alice | Engineer |");
+    const cellText = (shown: string) =>
+      [...screen.container.querySelectorAll("th, td")]
+        .map((cell) => cell.firstChild)
+        .find((node) => node?.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
+    const range = document.createRange();
+    range.setStart(cellText("Alice"), 0);
+    range.setEnd(cellText("Engineer"), 0);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const payload = chatMarkdownClipboardPayload(selection);
+    expect(payload?.text).toBe("Alice");
+    const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+    expect(pasted.querySelector("table")).toBeNull();
+    expect(pasted.body.textContent).toBe("Alice");
+  });
+
+  it("preserves an intentionally empty cell at the end of a copied table selection", async () => {
+    setup();
+    await using screen = await renderText("| Item | Note |\n| --- | --- |\n| Alpha |  |");
+    const header = screen.container.querySelector("th")!.firstChild!;
+    const emptyCell = screen.container.querySelectorAll("td")[1]!;
+    const range = document.createRange();
+    range.setStart(header, 0);
+    range.setEnd(emptyCell, 0);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const payload = chatMarkdownClipboardPayload(selection);
+    expect(payload?.text).toBe("| Item | Note |\n| --- | --- |\n| Alpha |  |");
+    const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+    expect(pasted.querySelectorAll("table td")).toHaveLength(2);
+  });
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
