@@ -523,7 +523,8 @@ it("closes an open theme variant radial picker on Escape before closing Settings
           isImportOpen={false}
           onImportOpenChange={() => {}}
           refreshTheme={() => {}}
-          setAppearanceMode={() => true}
+          appearanceChoice="dark"
+          setAppearanceChoice={() => true}
           setTheme={() => true}
           setThemeHalf={() => true}
           theme="dark"

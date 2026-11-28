@@ -868,7 +868,7 @@ function FindProjectsSection({
             </T>
           </span>
         </span>
-        <Button size="sm" variant="outline" disabled={disabled} onClick={() => void find()}>
+        <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void find()}>
           <T>Find my projects</T>
         </Button>
       </div>

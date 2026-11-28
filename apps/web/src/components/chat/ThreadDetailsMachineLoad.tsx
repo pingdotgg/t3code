@@ -50,58 +50,58 @@ export function ThreadDetailsMachineLoad({
       : toneOf(worstHostPressureLevel({ ...pressure, memory: "none", disk: "none" }));
   return (
     <ThreadDetailsSection title={gt("Machine load")} variant="usage">
+      <UsageRow
+        label={gt("CPU", { $context: "machine load row label" })}
+        icon={<CpuIcon />}
+        fill={snapshot.cpuUtilization === null ? null : percent(snapshot.cpuUtilization)}
+        tone={cpuTone}
+        value={
+          snapshot.cpuUtilization === null
+            ? gt("Unavailable")
+            : `${percent(snapshot.cpuUtilization)}%`
+        }
+        tooltip={
+          <span className="text-foreground">
+            {cpuTone === null
+              ? gt("{count, plural, one {{count} CPU} other {{count} CPUs}}", {
+                  count: snapshot.cpuCount,
+                })
+              : gt("Work waits for a free CPU or for the disk, so agents run slowly.")}
+          </span>
+        }
+      />
+      <UsageRow
+        label={gt("Memory", { $context: "machine load row label" })}
+        icon={<MemoryStickIcon />}
+        fill={
+          snapshot.totalMemoryBytes > 0 ? percent(usedMemory / snapshot.totalMemoryBytes) : null
+        }
+        tone={toneOf(pressure?.memory)}
+        value={`${formatBytes(usedMemory)} / ${formatBytes(snapshot.totalMemoryBytes)}`}
+        tooltip={
+          <span className="text-foreground">
+            {pressure?.memory === undefined || pressure.memory === "none"
+              ? gt("{available} available", {
+                  available: formatBytes(snapshot.availableMemoryBytes),
+                })
+              : gt("Agents keep waiting while the system frees up memory.")}
+          </span>
+        }
+      />
+      {diskFree !== null && diskTotal !== null && diskTotal > 0 ? (
         <UsageRow
-          label={gt("CPU", { $context: "machine load row label" })}
-          icon={<CpuIcon />}
-          fill={snapshot.cpuUtilization === null ? null : percent(snapshot.cpuUtilization)}
-          tone={cpuTone}
-          value={
-            snapshot.cpuUtilization === null
-              ? gt("Unavailable")
-              : `${percent(snapshot.cpuUtilization)}%`
-          }
+          label={gt("Disk", { $context: "machine load row label" })}
+          icon={<HardDriveIcon />}
+          fill={percent((diskTotal - diskFree) / diskTotal)}
+          tone={toneOf(pressure?.disk)}
+          value={gt("{free} free", { free: formatBytes(diskFree) })}
           tooltip={
             <span className="text-foreground">
-              {cpuTone === null
-                ? gt("{count, plural, one {{count} CPU} other {{count} CPUs}}", {
-                    count: snapshot.cpuCount,
-                  })
-                : gt("Work waits for a free CPU or for the disk, so agents run slowly.")}
+              {gt("Where T3 Code keeps its data and worktrees")}
             </span>
           }
         />
-        <UsageRow
-          label={gt("Memory", { $context: "machine load row label" })}
-          icon={<MemoryStickIcon />}
-          fill={
-            snapshot.totalMemoryBytes > 0 ? percent(usedMemory / snapshot.totalMemoryBytes) : null
-          }
-          tone={toneOf(pressure?.memory)}
-          value={`${formatBytes(usedMemory)} / ${formatBytes(snapshot.totalMemoryBytes)}`}
-          tooltip={
-            <span className="text-foreground">
-              {pressure?.memory === undefined || pressure.memory === "none"
-                ? gt("{available} available", {
-                    available: formatBytes(snapshot.availableMemoryBytes),
-                  })
-                : gt("Agents keep waiting while the system frees up memory.")}
-            </span>
-          }
-        />
-        {diskFree !== null && diskTotal !== null && diskTotal > 0 ? (
-          <UsageRow
-            label={gt("Disk", { $context: "machine load row label" })}
-            icon={<HardDriveIcon />}
-            fill={percent((diskTotal - diskFree) / diskTotal)}
-            tone={toneOf(pressure?.disk)}
-            value={gt("{free} free", { free: formatBytes(diskFree) })}
-            tooltip={
-              <span className="text-foreground">
-                {gt("Where T3 Code keeps its data and worktrees")}
-              </span>
-            }
-          />
-        ) : null}
+      ) : null}
     </ThreadDetailsSection>
   );
 }

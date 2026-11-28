@@ -93,7 +93,7 @@ function RenameEnvironmentForm({
         </div>
       </DialogPanel>
       <DialogFooter>
-        <DialogClose render={<Button type="button" variant="outline" />}>
+        <DialogClose render={<Button type="button" variant="secondary" />}>
           <T>Cancel</T>
         </DialogClose>
         <Button type="submit" disabled={!canSave}>

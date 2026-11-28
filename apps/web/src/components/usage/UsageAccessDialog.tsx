@@ -204,7 +204,7 @@ function UsageAccessActions({ choices }: { readonly choices: UsageAccessChoices 
   return (
     <>
       <Button
-        variant="outline"
+        variant="secondary"
         disabled={choices.saving}
         onClick={() => void choices.answer(false)}
       >
