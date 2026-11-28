@@ -55,7 +55,6 @@ export function parseGrepOutput(
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
     if (file !== undefined && numbered) {
       if (
-        ambiguousHeading &&
         ripgrepFormat === "heading" &&
         RIPGREP_NUMBERED_LINE.test(line) &&
         !PATH_LINE_TEXT.test(line)
