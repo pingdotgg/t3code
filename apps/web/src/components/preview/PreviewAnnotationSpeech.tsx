@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type {
   DesktopPreviewAnnotationVoiceConfig,
@@ -5,7 +7,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useGT, useMessages } from "gt-react";
+import { useEffect, useRef } from "react";
 
 import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
@@ -32,6 +35,8 @@ export function PreviewAnnotationSpeech({
   config: DesktopPreviewAnnotationVoiceConfig;
   keybindings: Parameters<typeof useDictationShortcut>[0]["keybindings"];
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const thread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
@@ -40,7 +45,6 @@ export function PreviewAnnotationSpeech({
     projectId ? scopeProjectRef(threadRef.environmentId, projectId) : null,
   );
   const draft = useRef({ text: "", cursor: 0, selectionEnd: 0 });
-  const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
   const guestFocused = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notices focus returning from the preview guest to this window
@@ -60,14 +64,13 @@ export function PreviewAnnotationSpeech({
     projectId,
     projectName: project?.title,
     ownerKey: JSON.stringify(["preview-annotation", threadRef, tabId, config.sessionId]),
-    draftText: text,
+    offerSetup: false,
     readDraft: () => ({
       text: draft.current.text,
       selection: { start: draft.current.cursor, end: draft.current.selectionEnd },
     }),
     commitDraft: (next, selection) => {
       draft.current = { text: next, cursor: selection.start, selectionEnd: selection.end };
-      setText(next);
       void publish(current.current.voiceState, { text: next, cursor: selection.start });
     },
   });
@@ -94,7 +97,7 @@ export function PreviewAnnotationSpeech({
     available,
     phase: state.phase,
     errorAction: state.errorAction,
-    status: resolveSpeechPresentation(state, null).status,
+    status: resolveSpeechPresentation(state, null, messages).status,
     preview: preview ? preview.committed + preview.tentative : null,
     level,
     shortcutLabel,
@@ -114,8 +117,8 @@ export function PreviewAnnotationSpeech({
         current.current.speech.cancel();
         toastManager.add({
           type: "error",
-          title: "Could not update annotation voice input",
-          description: error instanceof Error ? error.message : String(error),
+          title: gt("Could not update annotation voice input"),
+          description: thrownErrorMessage(error, m) ?? String(error),
         });
       }
     },
@@ -135,7 +138,6 @@ export function PreviewAnnotationSpeech({
             cursor: Math.min(event.cursor, event.text.length),
             selectionEnd: Math.min(event.selectionEnd ?? event.cursor, event.text.length),
           };
-          setText(event.text);
           if (event.action === "focus" || event.action === "key" || event.action === "start")
             guestFocused.current = true;
           if (event.action === "blur") guestFocused.current = false;
@@ -183,9 +185,11 @@ export function PreviewAnnotationSpeech({
       step={speech.setup.step}
       status={speech.status}
       model={speech.setup.model}
+      language={speech.setup.language}
       downloading={speech.setup.downloading}
       error={speech.setup.error}
       onOpenChange={speech.setup.setOpen}
+      onRetryCatalog={speech.setup.retryCatalog}
       onDownload={() => void speech.setup.download()}
       onCancelDownload={() => void speech.setup.cancelDownload()}
       onStartRecording={() => void speech.setup.startRecording()}

@@ -1,15 +1,18 @@
 import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
-  applyPullRequestDraftFilterChange,
+  applyPullRequestFilterChange,
   parsePullRequestQuery,
+  pullRequestMenuFilters,
 } from "@t3tools/client-runtime/pull-request-query";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { Keyboard, Platform, Pressable, RefreshControl, View } from "react-native";
+import { Keyboard, Platform, Pressable, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,10 +31,13 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
+import { pullRequestViewMatches } from "./pullRequestSavedViews";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
+  distinctIgnoringCase,
   filterPullRequestList,
   pullRequestListFacets,
   pullRequestListInput,
@@ -93,6 +99,7 @@ export function PullRequestsScreen(
   } = {},
 ) {
   const navigation = useNavigation();
+  const gt = useGT();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
   const { environments } = useWorkspaceState();
@@ -119,7 +126,6 @@ export function PullRequestsScreen(
   const debouncedQuery = useDebouncedValue(tab.query.trim(), 180);
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const typedQuery = tab.searchMode === "resting" ? "" : tab.query;
-  const typedDraft = parsePullRequestQuery(typedQuery).filters.draft;
   const listControls = usePullRequestListControls();
   const selectedEnvironmentId = listControls.environmentId;
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
@@ -195,18 +201,14 @@ export function PullRequestsScreen(
     setKnownFacets((previous) => ({
       source: facets,
       environmentId,
-      authors: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.authors : []),
-          ...facets.authors,
-        ]),
-      ].sort(),
-      labels: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.labels : []),
-          ...facets.labels,
-        ]),
-      ].sort(),
+      authors: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.authors : []),
+        ...facets.authors,
+      ]).sort(),
+      labels: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.labels : []),
+        ...facets.labels,
+      ]).sort(),
       labelColors: {
         ...facets.labelColors,
         ...(previous.environmentId === environmentId ? previous.labelColors : {}),
@@ -230,11 +232,12 @@ export function PullRequestsScreen(
     })),
     environmentId,
     onEnvironmentChange: listControls.setEnvironmentId,
-    value: typedDraft
-      ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
-      : controls,
+    value: {
+      ...controls,
+      filters: pullRequestMenuFilters(parsePullRequestQuery(typedQuery).filters, controls.filters),
+    },
     onChange: (next) => {
-      const update = applyPullRequestDraftFilterChange(typedQuery, controls.filters, next.filters);
+      const update = applyPullRequestFilterChange(typedQuery, controls.filters, next.filters);
       listControls.setControls(environmentId, { ...next, filters: update.filters });
       if (update.query !== typedQuery)
         workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
@@ -294,20 +297,16 @@ export function PullRequestsScreen(
         // to this tab. The thread list shows none either.
         showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
-        renderScrollComponent={NativeScrollView}
-        // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-        // the list in the same frame as the bar.
-        contentInsetAdjustmentBehavior="automatic"
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+        contentInsetAdjustmentBehavior="never"
+        contentInset={Platform.OS === "ios" ? { top: contentTopInset } : undefined}
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
           initialScrollOffset > 0 ? initialScrollOffset - contentTopInset : undefined
         }
-        contentInsetStartAdjustment={contentTopInset}
         contentContainerStyle={{
-          paddingBottom:
-            Math.max(bottomSafeArea, workspace.bottomClearance) -
-            (Platform.OS === "ios" ? bottomSafeArea : 0),
+          paddingBottom: Math.max(bottomSafeArea, workspace.bottomClearance),
         }}
         onScroll={(event) => {
           workspace.recordScrollOffset(
@@ -318,15 +317,53 @@ export function PullRequestsScreen(
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         renderItem={renderPullRequest}
+        // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
+        ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              savedViewsMenu={
+                <SavedViewsMenu
+                  read={(preferences) => preferences.pullRequestSavedViews}
+                  write={(pullRequestSavedViews) => ({ pullRequestSavedViews })}
+                  list="pullRequest"
+                  suggestedName={
+                    controls.involvement === "reviewing" ? gt("PRs Requesting My Review") : ""
+                  }
+                  matches={pullRequestViewMatches}
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query.trim()
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
+                    );
+                    workspace.dispatch({
+                      type: "query",
+                      tab: "pullRequests",
+                      query: view.query.trim(),
+                    });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
+              filters={filters}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (
                   <PullRequestListError
                     key={`${error.environmentId} ${error.projectTitle} ${error.message}`}
-                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`}
+                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || gt("Environment", { $context: "fallback name for a server" })}: ${error.message}`}
                   />
                 ))}
               </View>
@@ -338,15 +375,15 @@ export function PullRequestsScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more pull requests"
+                accessibilityLabel={gt("Loading more pull requests")}
               />
             </View>
           ) : result.loadMoreError ? (
             <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
               <Button
-                label="Try again"
-                accessibilityLabel="Retry loading more pull requests"
+                label={gt("Try again")}
+                accessibilityLabel={gt("Retry loading more pull requests")}
                 onPress={() => void result.loadMore(true)}
               />
             </View>
@@ -354,8 +391,8 @@ export function PullRequestsScreen(
             // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
             <View className="items-center py-4">
               <Button
-                label="Load more"
-                accessibilityLabel="Load more pull requests"
+                label={gt("Load more")}
+                accessibilityLabel={gt("Load more pull requests")}
                 onPress={() => void result.loadMore()}
               />
             </View>
@@ -371,22 +408,22 @@ export function PullRequestsScreen(
               <EmptyState
                 title={
                   result.error
-                    ? "Couldn't load pull requests"
+                    ? gt("Couldn't load pull requests")
                     : targets.length && connectedTargets.length === 0
-                      ? "Environment offline"
+                      ? gt("Environment offline")
                       : targets.length
                         ? query
-                          ? "No results"
-                          : "No matching pull requests"
-                        : "Connect an environment"
+                          ? gt("No results")
+                          : gt("No matching pull requests")
+                        : gt("Connect an environment")
                 }
                 detail={
                   result.error ??
                   (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
+                    ? gt("Reconnect to load pull requests that aren't saved on this device.")
                     : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                      ? gt("Pull requests from the selected environments' projects appear here.")
+                      : gt("Add an environment in Settings to browse its pull requests."))
                 }
                 variant="plain"
               />

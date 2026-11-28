@@ -13,6 +13,9 @@ import android.net.Uri
 import android.view.DragEvent
 import android.view.View
 import android.view.KeyEvent
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -47,6 +50,46 @@ class ComposerPasteTest {
       KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON
     )
   )
+
+  @Test
+  @Config(sdk = [33, 36])
+  fun sentImageCopySurvivesAClipboardBridgeDroppingHtml() {
+    val id = "file_sent-image"
+    val copiedText = "Review this image\n ![android-smoke.png](t3-context://v1/image/$id)"
+    val fragment = """
+      {
+        "version": 1,
+        "source": {"environmentId": "source", "messageId": "sent-message"},
+        "records": [{
+          "version": 1, "contextId": "$id", "label": "android-smoke.png", "kind": "image",
+          "attachmentId": "stored-image", "name": "android-smoke.png",
+          "mimeType": "image/png", "sizeBytes": 53249
+        }]
+      }
+    """.trimIndent()
+    T3ComposerClipboard.write(context, copiedText, fragment)
+    clipboard.setPrimaryClip(ClipData.newPlainText("clipboard bridge", copiedText))
+    editor.setText("")
+    editor.setSelection(0)
+    var pasted: Map<String, String>? = null
+    editor.pasteContextListener = { pasted = it }
+
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(copiedText, pasted?.get("text"))
+    val recovered = JSONObject(requireNotNull(pasted?.get("fragment")))
+    assertEquals("source", recovered.getJSONObject("source").getString("environmentId"))
+    assertEquals(id, recovered.getJSONArray("records").getJSONObject(0).getString("contextId"))
+    assertEquals("", editor.text.toString())
+
+    editor.pasteContextListener = { error("Paste as Text must stay plain") }
+    assertTrue(pasteAsText())
+    assertEquals(copiedText, editor.text.toString())
+
+    clipboard.setPrimaryClip(ClipData.newPlainText("other app", "Different text"))
+    assertEquals("", T3ComposerClipboard.read(context)["fragment"])
+    clipboard.setPrimaryClip(ClipData.newPlainText("other app", copiedText))
+    assertEquals("", T3ComposerClipboard.read(context)["fragment"])
+  }
 
   @Test
   fun shortcutKeepsLargeTextInlineAndUndoable() {
@@ -101,6 +144,88 @@ class ComposerPasteTest {
     assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
     assertEquals(pasted, intercepted)
     assertEquals("old", editor.text.toString())
+  }
+
+  @Test
+  fun keyboardClipboardInsertFoldsAtTheUtf8Threshold() {
+    val pasted = "é".repeat(16 * 1024)
+    editor.setText("before old after")
+    editor.setSelection(10, 7)
+    var intercepted: Triple<String, Int, Int>? = null
+    editor.pasteTextListener = { text, start, end -> intercepted = Triple(text, start, end) }
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
+
+    assertTrue(connection.commitText(pasted, 1))
+    assertEquals(Triple(pasted, 7, 10), intercepted)
+    assertEquals("before old after", editor.text.toString())
+
+    intercepted = null
+    assertTrue(connection.commitText(pasted, 1, null))
+    assertEquals(Triple(pasted, 7, 10), intercepted)
+    assertEquals("before old after", editor.text.toString())
+  }
+
+  @Test
+  fun keyboardClipboardInsertWhileComposingReplacesTheComposingWord() {
+    val pasted = "wor" + "é".repeat(16 * 1024)
+    editor.setText("before ")
+    editor.setSelection(editor.length())
+    var intercepted: Triple<String, Int, Int>? = null
+    editor.pasteTextListener = { text, start, end -> intercepted = Triple(text, start, end) }
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
+
+    for (withTextAttribute in listOf(false, true)) {
+      editor.setText("before ")
+      editor.setSelection(editor.length())
+      intercepted = null
+      assertTrue(connection.setComposingText("wor", 1))
+      val committed = if (withTextAttribute) {
+        connection.commitText(pasted, 1, null)
+      } else {
+        connection.commitText(pasted, 1)
+      }
+      assertTrue(committed)
+      assertEquals(Triple(pasted, 7, 10), intercepted)
+      assertEquals("before wor", editor.text.toString())
+      assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))
+    }
+  }
+
+  @Test
+  fun keyboardClipboardPrefixInterceptsInputLimitOverflow() {
+    val pasted = "word from clipboard"
+    clipboard.setPrimaryClip(ClipData.newPlainText("test", pasted))
+    editor.setText("x".repeat(119_997))
+    editor.setSelection(editor.length())
+    var intercepted: Triple<String, Int, Int>? = null
+    editor.pasteTextListener = { text, start, end -> intercepted = Triple(text, start, end) }
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
+
+    assertTrue(connection.setComposingText("wor", 1))
+    assertTrue(connection.commitText(pasted, 1))
+    assertEquals(Triple(pasted, 119_997, 120_000), intercepted)
+    assertEquals(120_000, editor.length())
+    assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))
+  }
+
+  @Test
+  fun keyboardCommitsAtTheInputLimitInterceptOnlyClipboardInserts() {
+    clipboard.setPrimaryClip(ClipData.newPlainText("test", "unrelated clipboard"))
+    val intercepted = mutableListOf<String>()
+    editor.pasteTextListener = { text, _, _ -> intercepted.add(text) }
+    editor.setText("x".repeat(120_000))
+    editor.setSelection(editor.length())
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
+
+    assertTrue(connection.commitText("hello", 1))
+    assertEquals(listOf("hello"), intercepted)
+    assertEquals(120_000, editor.length())
+
+    assertTrue(connection.commitText("a", 1))
+    assertTrue(connection.setComposingText("wor", 1))
+    assertTrue(connection.commitText("word", 1))
+    assertEquals(listOf("hello"), intercepted)
+    assertEquals("x".repeat(120_000) + "aword", editor.text.toString())
   }
 
   @Test

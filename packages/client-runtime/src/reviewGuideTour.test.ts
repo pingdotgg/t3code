@@ -26,7 +26,7 @@ const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
 `;
 
 function parse(patch: string) {
-  const file = parsePatchFiles(patch, `test:${patch.length}`)[0]?.files[0];
+  const file = parsePatchFiles(patch, { cacheKeyPrefix: `test:${patch.length}` })[0]?.files[0];
   if (file === undefined) throw new Error("patch did not parse");
   return file;
 }
@@ -127,6 +127,18 @@ describe("rowsToPatch", () => {
       );
     },
   );
+
+  it.each([
+    ["src/line\tbreak.ts", String.raw`src/line\tbreak.ts`],
+    ["src/line\nbreak.ts", String.raw`src/line\nbreak.ts`],
+  ])("keeps the filename %j through the round trip", (path, escaped) => {
+    const original = parse(
+      `diff --git "a/${escaped}" "b/${escaped}"\n--- "a/${escaped}"\n+++ "b/${escaped}"\n@@ -1 +1 @@\n-old\n+new\n`,
+    );
+    expect(original.name).toBe(path);
+    const shown = excerptRows(fileDiffRows(original), { side: "new", start: 1, end: 1 });
+    expect(parse(rowsToPatch(path, path, shown)).name).toBe(path);
+  });
 
   it("starts a hunk per source hunk so separate hunks stay separate", () => {
     const shown = excerptRows(rows, { side: "old", start: 14, end: 42 });

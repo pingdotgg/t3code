@@ -23,9 +23,14 @@ export interface PtyExitEvent {
   signal: number | null;
 }
 
+/** What a PTY receives for client terminal input, whose `binary` data is one byte per code unit. */
+export function ptyInput(data: string, binary: boolean | undefined): string | Buffer {
+  return binary ? Buffer.from(data, "latin1") : data;
+}
+
 export interface PtyProcess {
   readonly pid: number;
-  write(data: string): void;
+  write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
   onData(callback: (data: string) => void): () => void;

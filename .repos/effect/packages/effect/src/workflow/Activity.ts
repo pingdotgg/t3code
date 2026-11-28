@@ -21,6 +21,7 @@ import type { Scope } from "../Scope.ts"
 import type * as Types from "../Types.ts"
 import * as DurableDeferred from "./DurableDeferred.ts"
 import { makeHashDigest } from "./internal/crypto.ts"
+import { RetryingExecution } from "./internal/retry.ts"
 import * as Workflow from "./Workflow.ts"
 import type { WorkflowEngine, WorkflowInstance } from "./WorkflowEngine.ts"
 
@@ -220,6 +221,12 @@ const retryOnInterrupt = (
  * Retries an effect with `Effect.retry` while updating `CurrentAttempt` for
  * each attempt.
  *
+ * **Details**
+ *
+ * Under `Workflow.SuspendOnFailure`, failed attempts reach the retry policy
+ * instead of suspending immediately. If the policy is exhausted and the error
+ * escapes, the workflow suspends and `resume` replays the stored failures.
+ *
  * @stability unstable
  * @category error handling
  * @since 4.0.0
@@ -235,9 +242,12 @@ export const retry: {
 } = dual(
   2,
   (effect: Effect.Effect<any, any, any>, options: {}) =>
-    Effect.suspend(() => {
+    Effect.contextWith((context: Context.Context<never>) => {
       let attempt = 1
-      return Effect.suspend(() => Effect.provideService(effect, CurrentAttempt, attempt++)).pipe(Effect.retry(options))
+      return Effect.suspend(() => Effect.provideService(effect, CurrentAttempt, attempt++)).pipe(
+        Effect.provideService(RetryingExecution, Context.getOrUndefined(context, InstanceTag)?.executionId),
+        Effect.retry(options)
+      )
     })
 )
 
@@ -332,11 +342,13 @@ const makeExecute = Effect.fnUntraced(function*<
   const attempt = yield* CurrentAttempt
   yield* Effect.annotateCurrentSpan({ executionId: instance.executionId })
   const result = yield* Workflow.wrapActivityResult(
-    engine.activityExecute(activity, attempt),
+    Effect.map(engine.activityExecute(activity, attempt), (result) => {
+      if (result._tag === "Suspended" && result.failed) instance.failed = true
+      return result
+    }),
     (_) => _._tag === "Suspended"
   )
   if (result._tag === "Suspended") {
-    if (result.failed) instance.failed = true
     return yield* Workflow.suspend(instance)
   }
   return yield* result.exit

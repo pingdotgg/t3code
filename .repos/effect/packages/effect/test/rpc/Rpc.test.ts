@@ -28,6 +28,7 @@ describe("Rpc", () => {
           }
         },
         requestId: RequestId("1"),
+        remoteParentSpan: undefined,
         headers: Headers.empty
       })
       assert.strictEqual(result, "two")
@@ -81,5 +82,13 @@ describe("Rpc", () => {
     }
     assert.strictEqual(some.value.success, Schema.String)
     assert.strictEqual(some.value.error, Schema.Number)
+  })
+
+  it("RpcGroup supports pipe on fresh and derived groups", () => {
+    const group = RpcGroup.make(Rpc.make("one"))
+    const derived = group.add(Rpc.make("two"))
+
+    assert.strictEqual(group.pipe((g) => g), group)
+    assert.strictEqual(derived.pipe((g) => g.requests.size, (n) => n + 1), 3)
   })
 })

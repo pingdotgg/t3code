@@ -27,12 +27,17 @@ patches:
   # Keep message metadata optional when the API omits it.
   - '[{"op":"replace","path":"/components/schemas/BetaMessage/required","value":["id","type","role","content","model","stop_reason","stop_sequence","usage"]},{"op":"replace","path":"/components/schemas/Message/required","value":["id","type","role","content","model","stop_reason","stop_sequence","usage","container"]},{"op":"replace","path":"/components/schemas/BetaMessageDeltaEvent/required","value":["delta","type","usage"]},{"op":"replace","path":"/components/schemas/BetaMessageDelta/required","value":["stop_reason","stop_sequence"]}]'
   # Keep fields added since the released schemas optional, so responses without them still decode
-  # (the thinking token estimate needs a beta header; older API versions and gateways omit the rest).
-  - '[{"op":"replace","path":"/components/schemas/BetaThinkingContentBlockDelta/required","value":["thinking","type"]},{"op":"replace","path":"/components/schemas/BetaCompactionContentBlockDelta/required","value":["content","type"]},{"op":"replace","path":"/components/schemas/BetaResponseCompactionBlock/required","value":["content","type"]},{"op":"replace","path":"/components/schemas/ModelInfo/required","value":["created_at","display_name","id","type"]},{"op":"replace","path":"/components/schemas/BetaModelInfo/required","value":["created_at","display_name","id","type"]},{"op":"replace","path":"/components/schemas/Container/required","value":["expires_at","id"]},{"op":"replace","path":"/components/schemas/MessageDelta/required","value":["container","stop_reason","stop_sequence"]}]'
-  # Make citations optional in text blocks (API may omit this field).
-  - '[{"op":"replace","path":"/components/schemas/ResponseTextBlock/required","value":["text","type"]},{"op":"replace","path":"/components/schemas/BetaResponseTextBlock/required","value":["text","type"]}]'
+  # (the thinking token estimate needs a beta header, container skills are sent only when the request
+  # loads skills, and older API versions and gateways omit the rest).
+  - '[{"op":"replace","path":"/components/schemas/BetaThinkingContentBlockDelta/required","value":["thinking","type"]},{"op":"replace","path":"/components/schemas/BetaCompactionContentBlockDelta/required","value":["content","type"]},{"op":"replace","path":"/components/schemas/BetaResponseCompactionBlock/required","value":["content","type"]},{"op":"replace","path":"/components/schemas/ModelInfo/required","value":["created_at","display_name","id","type"]},{"op":"replace","path":"/components/schemas/BetaModelInfo/required","value":["created_at","display_name","id","type"]},{"op":"replace","path":"/components/schemas/Container/required","value":["expires_at","id"]},{"op":"replace","path":"/components/schemas/BetaContainer/required","value":["expires_at","id"]},{"op":"replace","path":"/components/schemas/MessageDelta/required","value":["container","stop_reason","stop_sequence"]}]'
+  # Keep citations optional in text and document blocks; the API omits them unless citations are enabled.
+  - '[{"op":"replace","path":"/components/schemas/ResponseTextBlock/required","value":["text","type"]},{"op":"replace","path":"/components/schemas/BetaResponseTextBlock/required","value":["text","type"]},{"op":"replace","path":"/components/schemas/ResponseDocumentBlock/required","value":["source","title","type"]},{"op":"replace","path":"/components/schemas/BetaResponseDocumentBlock/required","value":["source","title","type"]}]'
+  # Keep `file_id` optional in citations; the API sets it only for documents uploaded to the Files API.
+  - '[{"op":"replace","path":"/components/schemas/ResponseCharLocationCitation/required","value":["cited_text","document_index","document_title","end_char_index","start_char_index","type"]},{"op":"replace","path":"/components/schemas/BetaResponseCharLocationCitation/required","value":["cited_text","document_index","document_title","end_char_index","start_char_index","type"]},{"op":"replace","path":"/components/schemas/ResponsePageLocationCitation/required","value":["cited_text","document_index","document_title","end_page_number","start_page_number","type"]},{"op":"replace","path":"/components/schemas/BetaResponsePageLocationCitation/required","value":["cited_text","document_index","document_title","end_page_number","start_page_number","type"]},{"op":"replace","path":"/components/schemas/ResponseContentBlockLocationCitation/required","value":["cited_text","document_index","document_title","end_block_index","start_block_index","type"]},{"op":"replace","path":"/components/schemas/BetaResponseContentBlockLocationCitation/required","value":["cited_text","document_index","document_title","end_block_index","start_block_index","type"]}]'
   # Make model optional in BetaMessageIterationUsage (gateways and older responses may omit it)
   - '[{"op":"replace","path":"/components/schemas/BetaMessageIterationUsage/required","value":["cache_creation","cache_creation_input_tokens","cache_read_input_tokens","input_tokens","output_tokens","type"]}]'
+  # Keep refusal fallback fields optional; the API omits them when no fallback applies (#10932).
+  - '[{"op":"replace","path":"/components/schemas/BetaRefusalStopDetails/required","value":["category","explanation","type"]}]'
 # Decode every error envelope and let the status code decide the error, as released.
 collapseErrorResponses: true
 # Released schemas that no operation references: stream events, batch results, memory tool
@@ -102,7 +107,7 @@ header: |
    */
 excludeAnnotations:
   - examples
-disableAdditionalProperties: true
+closeObjects: true
 replacements:
   # Schema.Unknown doesn't work with Schema.toCodecJson (used by HttpClientResponse.schemaBodyJson)
   # Replace with Schema.Json which properly handles arbitrary JSON values
@@ -122,7 +127,7 @@ replacements:
     to: "export type JsonValue = unknown"
   - from: 'export const JsonValue = Schema.Json.annotate({ "expected": "JSON value", "identifier": "JsonValue" })'
     to: "export const JsonValue = Schema.Unknown"
-  - from: 'readonly "anthropic-beta"?: ReadonlyArray<AnthropicBeta>'
-    to: 'readonly "anthropic-beta"?: string | ReadonlyArray<AnthropicBeta>'
+  - from: 'readonly "anthropic-beta"?: globalThis.ReadonlyArray<AnthropicBeta>'
+    to: 'readonly "anthropic-beta"?: string | globalThis.ReadonlyArray<AnthropicBeta>'
   - from: '"anthropic-beta": Schema.optionalKey(Schema.Array(AnthropicBeta).annotate('
     to: '"anthropic-beta": Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(AnthropicBeta)]).annotate('
