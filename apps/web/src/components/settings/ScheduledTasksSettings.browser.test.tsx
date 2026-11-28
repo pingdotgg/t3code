@@ -70,6 +70,7 @@ const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
   settings: null as unknown as UnifiedSettings,
   upsert: vi.fn(),
+  monthDays: true,
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
@@ -95,6 +96,7 @@ function setup() {
   state.providers = Atom.make<ReadonlyArray<ServerProvider>>([]);
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
+  state.monthDays = true;
   permissions.clear();
   taskLists.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -118,7 +120,12 @@ function environment() {
     entry: { target: { _tag: "PrimaryConnectionTarget" } },
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities: { oneTimeSchedules: true, scheduledTaskMonthDays: state.monthDays },
+          },
+        }
       : null,
   };
 }
@@ -510,5 +517,19 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog).toHaveAttribute("data-open");
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("offers days of the month only when the server can store them", async () => {
+    setup();
+    const monthDaysToggle = async (monthDays: boolean) => {
+      state.monthDays = monthDays;
+      await using _screen = await render(<ScheduledTasksSettings />);
+      await userEvent.click(page.getByRole("button", { name: "New task" }));
+      const dialog = page.getByRole("dialog");
+      await expect.element(dialog.getByRole("button", { name: "Mon" })).toBeInTheDocument();
+      return dialog.getByRole("button", { name: "Days of the month" }).query() !== null;
+    };
+    expect(await monthDaysToggle(false)).toBe(false);
+    expect(await monthDaysToggle(true)).toBe(true);
   });
 });
