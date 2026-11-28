@@ -46,6 +46,7 @@ import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
+  isProviderSlashCommandInline,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -132,10 +133,10 @@ export function buildComposerSlashCommandItems(
       ]
     : [];
 
-  // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction, except `/clear`.
-  if (!input.atMessageStart) return items;
-  if (input.offersSideChat) {
+  // Providers expand commands only at the start of a message, except Claude's
+  // inline skills. T3 commands change local state, but `/side`, `/btw` and
+  // `/clear` act on the whole message.
+  if (input.atMessageStart && input.offersSideChat) {
     for (const [command, description] of [
       ["side", resolve(msg("Ask a side question in a new side chat"))],
       ["btw", resolve(msg("Same as /side"))],
@@ -150,7 +151,7 @@ export function buildComposerSlashCommandItems(
       });
     }
   }
-  if (input.offersFreshSession && "clear".includes(query)) {
+  if (input.atMessageStart && input.offersFreshSession && "clear".includes(query)) {
     items.push({
       id: "cmd:clear",
       type: "slash-command",
@@ -160,6 +161,12 @@ export function buildComposerSlashCommandItems(
     });
   }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+    if (
+      !input.atMessageStart &&
+      !isProviderSlashCommandInline(input.selectedProviderStatus?.driver, command)
+    ) {
+      continue;
+    }
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "clear" && input.offersFreshSession) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
