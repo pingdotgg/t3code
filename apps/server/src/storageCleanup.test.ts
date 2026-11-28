@@ -1999,6 +1999,33 @@ describe("deleted thread worktrees", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
+  it.effect("removes a deleted No project thread's scratch folder", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnDelete: true,
+        worktreeKeepWhen: "tracked-changes",
+      });
+      const scratchRoot = `${fixture.config.baseDir}/scratch`;
+      const folder = `${scratchRoot}/quiet-otter`;
+      yield* fixture.fs.makeDirectory(folder, { recursive: true });
+      yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+      fixture.setProjectRoots([scratchRoot]);
+      fixture.setStoredWorktreePaths([]);
+      fixture.setThreads([]);
+      fixture.setDeletedThreads([
+        shell({ worktreePath: folder, branch: null, deletedAt: at(-DAY_MS) }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ path: folder, outcome: "removed" }),
+      ]);
+      expect(yield* fixture.fs.exists(folder)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
   it.effect("removes a deleted thread's worktree once its session stops", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
