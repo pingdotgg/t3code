@@ -185,7 +185,7 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
-  it("offers Open preview unless a Markdown file is over the render limit", async () => {
+  it("offers Open preview only for Markdown files confirmed within the render limit", async () => {
     using _listing = withDirectoryListing([
       ...entries,
       ...["unknown.md", "oversized.md"].map((path): ProjectEntry => ({
@@ -211,7 +211,7 @@ describe("FileBrowserPanel", () => {
     for (const [path, offersPreview] of [
       ["README.md", true],
       ["oversized.md", false],
-      ["unknown.md", true],
+      ["unknown.md", false],
       ["src/", false],
     ] as const) {
       await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());

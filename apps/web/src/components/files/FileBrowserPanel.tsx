@@ -264,14 +264,15 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-      let canOpenPreview =
+      const isPreviewCandidate =
         onOpenFilePreview !== undefined &&
         entryKindsRef.current.get(relativePath) === "file" &&
         isMarkdownPreviewFile(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
-        if (canOpenPreview && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+        let canOpenPreview = false;
+        if (isPreviewCandidate && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
           const pending = new AbortController();
           pendingMenuRef.current = pending;
           const options = { capture: true, signal: pending.signal };
@@ -301,9 +302,8 @@ export default function FileBrowserPanel({
           pending.abort();
           if (pendingMenuRef.current === pending) pendingMenuRef.current = null;
           if (dismissed) return;
-          // An unknown size keeps the action: a slow link or older server should not lose it.
           canOpenPreview =
-            metadata._tag !== "Success" || metadata.value.byteLength <= FULL_TEXT_MAX_BYTES;
+            metadata._tag === "Success" && metadata.value.byteLength <= FULL_TEXT_MAX_BYTES;
         }
         const clicked = await api.contextMenu.show(
           [
