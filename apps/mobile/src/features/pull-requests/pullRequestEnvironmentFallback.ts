@@ -1,3 +1,4 @@
+import type { ConnectionAttemptError } from "@t3tools/client-runtime/connection";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 
@@ -14,18 +15,21 @@ export function pullRequestFallbackEnvironment(
   environments: ReadonlyArray<
     Pick<EnvironmentConnectionSummary, "environmentId" | "connectionState" | "isEnabled">
   >,
+  lastFailure?: ConnectionAttemptError | null,
 ) {
   const requested = environments.find(
     (environment) => environment.environmentId === target.environmentId,
   );
-  // Pending connections retain the requested target until an explicit failure, even before
-  // its project hydrates. Available includes the period before connection startup.
+  const timedOut =
+    lastFailure?._tag === "ConnectionTransientError" &&
+    (lastFailure.reason === "timeout" || lastFailure.httpStatus === 504);
+  // Keep the requested target during startup and retries until a connection times out.
   if (
     requested?.isEnabled &&
     (requested.connectionState === "connected" ||
       requested.connectionState === "available" ||
       requested.connectionState === "connecting" ||
-      requested.connectionState === "reconnecting")
+      (requested.connectionState === "reconnecting" && !timedOut))
   )
     return null;
   const connectedEnvironmentIds = new Set<string>(
