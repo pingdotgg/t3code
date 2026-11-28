@@ -28,11 +28,10 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
-  it("preserves literal percent characters in SCP paths", () => {
-    const key = normalizeGitRemoteUrl("git@forge.example:/home/me/project/%2Egit");
-    expect(key).toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/%252Egit"));
-    expect(key).not.toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/.git"));
-    expect(key).not.toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/.git.git"));
+  it("decodes percent-encoded SCP paths like their ssh:// spelling", () => {
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/Org/My%20Project/My%20Repo")).toBe(
+      normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com/v3/Org/My%20Project/My%20Repo"),
+    );
   });
 
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
