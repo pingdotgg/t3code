@@ -22,6 +22,7 @@ import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { CommandOutputHub } from "../orchestration-v2/CommandOutputHub.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ThreadIssueService } from "../orchestration-v2/ThreadIssueService.ts";
@@ -60,6 +61,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AnalyticsService)({}),
   Layer.mock(AssetSigner)({}),
+  Layer.mock(CommandOutputHub)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentThemeService)({}),
