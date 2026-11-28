@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -11,7 +12,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import {
+  OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
@@ -136,6 +142,78 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
   }
 }
 
+// Every event that can change what hasActiveWork reads.
+const TRIGGER_EVENT_TYPES = new Set<OrchestrationV2DomainEvent["type"]>([
+  "run.created",
+  "run.updated",
+  "subagent.updated",
+  "provider-thread.updated",
+  "thread.archived",
+  "thread.unarchived",
+  "thread.deleted",
+  "thread.provider-switched",
+]);
+
+const decodePendingTasksPayload = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)),
+    }),
+  ),
+);
+
+/**
+ * Active local work: non-waiting runs, active provider-native subagents (app-owned children hold
+ * via their own runs or run remotely), and awaited provider background tasks (not dev servers).
+ */
+export const hasActiveWork = Effect.fn("KeepAwake.hasActiveWork")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const activeRows = yield* sql<{ readonly active: number }>`
+    SELECT (
+      EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs
+        WHERE status IN ('preparing', 'starting', 'running')
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM orchestration_v2_projection_subagents AS subagent
+        JOIN orchestration_v2_projection_threads AS thread
+          ON thread.thread_id = subagent.thread_id
+        WHERE subagent.origin = 'provider_native'
+          AND subagent.status IN ('pending', 'running')
+          AND thread.deleted_at IS NULL
+          AND thread.archived_at IS NULL
+      )
+    ) AS active
+  `;
+  if (activeRows[0]?.active === 1) return true;
+
+  // The pendingBackgroundTasks condition matches migration 098's partial index; keep them identical.
+  const providerThreadRows = yield* sql<{ readonly payload_json: string }>`
+    SELECT pt.payload_json
+    FROM orchestration_v2_projection_provider_threads AS pt
+    JOIN orchestration_v2_projection_threads AS thread
+      ON thread.thread_id = pt.thread_id
+    WHERE CASE WHEN json_valid(pt.payload_json)
+        THEN json_array_length(pt.payload_json, '$.pendingBackgroundTasks') > 0
+        ELSE 0 END
+      AND thread.deleted_at IS NULL
+      AND thread.archived_at IS NULL
+      AND (
+        thread.active_provider_thread_id IS NULL
+        OR thread.active_provider_thread_id = pt.provider_thread_id
+      )
+  `;
+  return providerThreadRows.some((row) => {
+    const parsed = decodePendingTasksPayload(row.payload_json);
+    return (
+      Option.isSome(parsed) &&
+      backgroundWorkHoldsCompletion(parsed.value.pendingBackgroundTasks ?? [])
+    );
+  });
+});
+
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
@@ -154,16 +232,10 @@ export const layer = Layer.effectDiscard(
     const sql = yield* SqlClient.SqlClient;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-    const hasActiveRun = sql<{ readonly active: number }>`
-      SELECT EXISTS (
-        SELECT 1 FROM orchestration_v2_projection_runs
-        WHERE status IN ('preparing', 'starting', 'running')
-      ) AS active
-    `.pipe(
-      Effect.map((rows) => rows[0]?.active === 1),
-      retryWithBackoff("keep-awake could not read active runs"),
+    const checkActiveWork = hasActiveWork(sql).pipe(
+      retryWithBackoff("keep-awake could not read active work"),
     );
-    // Read the cursor before the snapshot so a run changing in between is replayed, not missed.
+    // Read the cursor before the snapshot so work changing in between is replayed, not missed.
     const active = Stream.unwrap(
       events.latestApplicationSequence.pipe(
         retryWithBackoff("keep-awake could not read the event cursor"),
@@ -174,20 +246,16 @@ export const layer = Layer.effectDiscard(
               .streamApplicationEvents({ afterSequence })
               .pipe(
                 Stream.filter(
-                  (stored) =>
-                    "event" in stored &&
-                    (stored.event.type === "run.created" || stored.event.type === "run.updated"),
+                  (stored) => "event" in stored && TRIGGER_EVENT_TYPES.has(stored.event.type),
                 ),
               ),
           ),
         ),
       ),
     ).pipe(
-      Stream.mapEffect(() => hasActiveRun),
+      Stream.mapEffect(() => checkActiveWork),
       // A failed subscription resubscribes, which re-reads the cursor and the snapshot.
-      Stream.tapCause((cause) =>
-        Effect.logWarning("keep-awake run event stream failed", { cause }),
-      ),
+      Stream.tapCause((cause) => Effect.logWarning("keep-awake event stream failed", { cause })),
       Stream.retry(backoff),
     );
     const enabled = Stream.unwrap(
