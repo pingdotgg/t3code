@@ -42,6 +42,9 @@ Usage aggregates history across Codex, Claude Code, Grok Build, OpenCode, Antigr
   - Pure API-key accounts generally do not report subscription limits.
 - **Mobile widget**: Add the **Subscription usage** widget on iOS or Android to monitor Codex and Claude quotas from your home screen.
 
+Claude accounts signed in with a `claude setup-token` token (`CLAUDE_CODE_OAUTH_TOKEN`) show their
+limits after their first turn, and keep the last reading between turns.
+
 ## Connect a CLIProxyAPI hub
 
 Open **Settings → Providers → Usage providers → Add hub**, choose the environment, and enter the hub URL and management key. Pools Codex, Claude, and Grok accounts under **Usage → Limits** (including Codex **Use reset**). Configure the provider's endpoint to the same URL if you want threads to display that hub's limits.
