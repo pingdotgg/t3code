@@ -1,5 +1,6 @@
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
+  type AgentFeedbackMode,
   ChatAttachment,
   CheckpointId,
   MessageId,
@@ -8,6 +9,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -118,6 +120,17 @@ export const ProviderAdapterV2Event = Schema.Union([
     sessionScoped: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
+  /** The agent changed selected options itself, such as leaving plan mode once its plan ran. */
+  Schema.Struct({
+    type: Schema.Literal("thread_model_selection.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    instanceId: ProviderInstanceId,
+    /** Applies only where the thread still holds `from`, so newer user picks win. */
+    changes: Schema.Array(
+      Schema.Struct({ id: Schema.String, from: Schema.String, to: Schema.String }),
+    ),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
     driver: ProviderDriverKind,
@@ -164,6 +177,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     providerTurnId: ProviderTurnId,
     pending: Schema.Boolean,
+  }),
+  // The query process exited under a live session before this work reported back.
+  Schema.Struct({
+    type: Schema.Literal("background_work.lost"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    tasks: Schema.Array(OrchestrationV2PendingBackgroundTask),
   }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({
@@ -213,6 +234,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     providerTurnId: ProviderTurnId,
     runOrdinal: PositiveInt,
     failureItemOrdinal: PositiveInt,
+    /** The row the failure lands on; defaults to the turn's `terminal-failure` row. */
+    failureItemId: Schema.optional(TurnItemId),
     status: Schema.Literal("failed"),
     failure: OrchestrationV2ProviderFailure,
     retry: Schema.optional(OrchestrationV2ProviderRetry),
@@ -383,6 +406,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     providerThreadId: ProviderThreadId,
     runId: RunId,
     cause: Schema.optional(Schema.Defect()),
+    /** The agent received no part of the turn, so context staged for it is still unsent. */
+    refusedBeforePrompt: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
@@ -562,6 +587,7 @@ export interface ProviderAdapterV2EnsureThreadInput {
 }
 
 export interface ProviderAdapterV2TurnInput {
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -578,7 +604,12 @@ export interface ProviderAdapterV2TurnInput {
   readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
-  readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  readonly appContext?: ReadonlyArray<{
+    readonly key: string;
+    readonly text: string;
+    /** ISO time the note was last set, so a resent note reads as earlier state, not news. */
+    readonly updatedAt?: string;
+  }>;
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<
@@ -626,7 +657,6 @@ export interface ProviderAdapterV2RuntimeRequestResponseInput {
 
 export interface ProviderAdapterV2ThreadSnapshot {
   readonly providerThread: OrchestrationV2ProviderThread;
-  readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
   /** Ids in `messages` that hold the agent's reasoning, not its reply. */
   readonly reasoningMessageIds?: ReadonlyArray<OrchestrationV2ConversationMessage["id"]>;
@@ -764,6 +794,14 @@ export interface ProviderAdapterV2SessionRuntime {
     cwd?: string | null,
   ) => number | undefined;
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
+  /**
+   * False when the native session no longer holds a cancelled turn's request. Set only by
+   * providers that can drop one, so a turn a restart cut off is settled like a Stop.
+   */
+  readonly nativeTurnKept?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly nativeTurnId: string;
+  }) => Effect.Effect<boolean, ProviderAdapterV2Error>;
   /** Excludes turn-scoped options from native thread load matching. */
   readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
   readonly ensureThread: (
@@ -829,6 +867,8 @@ export interface ProviderAdapterV2SessionRuntime {
   }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
   readonly unloadThread?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
+    /** Wait for native unload before another runtime takes over this thread. */
+    readonly awaitClosed?: boolean;
     /** Also hide it from the provider's own clients where it can; resuming it must restore it. */
     readonly archive?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;

@@ -213,6 +213,8 @@ export function cursorRuntimeAgentPolicy(
   };
 }
 
+const T3_MCP_SERVER = "t3-code";
+
 export function cursorMcpServers(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
 ): Record<string, McpServerConfig> | undefined {
@@ -220,7 +222,7 @@ export function cursorMcpServers(
     return undefined;
   }
   return {
-    "t3-code": {
+    [T3_MCP_SERVER]: {
       type: "http",
       url: session.endpoint,
       headers: {
@@ -309,6 +311,17 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/** Whether the checkout's own Cursor config (settings, hooks, MCP servers) may load: only unrestricted turns. */
+function cursorLoadsProjectConfig(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  platform: NodeJS.Platform,
+): boolean {
+  const policy = cursorRuntimeAgentPolicy(runtimePolicy, platform);
+  return (
+    runtimePolicy.runtimeMode === "full-access" && !policy.autoReview && !policy.sandboxEnabled
+  );
+}
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -316,11 +329,9 @@ export function makeCursorAgentOptions(input: {
   readonly sdkModels?: ReadonlyArray<SDKModel>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly threadId: ThreadId;
-  readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly platform: NodeJS.Platform;
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
-  const mcpServers = cursorMcpServers(input.mcpSession);
   return {
     model: cursorSdkModelSelection(input.modelSelection, input.models, input.sdkModels),
     name: `T3 Code ${input.threadId}`,
@@ -332,18 +343,14 @@ export function makeCursorAgentOptions(input: {
         ? {}
         : { dirs: [...input.runtimePolicy.workspace.extraRoots] }),
       autoReview: policy.autoReview,
-      settingSources:
-        input.runtimePolicy.runtimeMode === "full-access" &&
-        !policy.autoReview &&
-        !policy.sandboxEnabled
-          ? [...CURSOR_AGENT_SETTING_SOURCES]
-          : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
+      settingSources: cursorLoadsProjectConfig(input.runtimePolicy, input.platform)
+        ? [...CURSOR_AGENT_SETTING_SOURCES]
+        : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
       enableAgentRetries: true,
     },
-    ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }
 
@@ -357,6 +364,22 @@ class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavaila
   override get message(): string {
     return `Cursor cannot run the model "${this.model}". Cursor only runs models from your Cursor account. Choose one of those, or use OpenCode for OpenRouter and other API-key models.`;
   }
+}
+
+function cursorBlockedMcpServersNotice(servers: ReadonlyArray<string>): string {
+  const others = servers.filter((server) => server !== T3_MCP_SERVER);
+  return [
+    ...(servers.includes(T3_MCP_SERVER)
+      ? [
+          "Your Cursor team's MCP policy blocks T3 Code's MCP server, so Cursor runs in this thread without T3 Code tools such as delegation, thread tools, and device control. A Cursor team admin can allow the t3-code server.",
+        ]
+      : []),
+    ...(others.length === 0
+      ? []
+      : [
+          `Your Cursor team's MCP policy blocks ${others.join(", ")}, so Cursor runs without ${others.length === 1 ? "that server" : "those servers"}.`,
+        ]),
+  ].join("\n\n");
 }
 
 // Uncoded SDK model rejections are identifiable only by message prefix.
@@ -928,9 +951,11 @@ interface CursorProjectionTarget {
 const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 // After a turn ends, a retryable stream error can make Cursor's SDK resume from
 // an older checkpoint inside the same run. When those resumes save nothing, it
-// ends the run with this error even though the answer was already delivered.
-const CURSOR_RESUME_NO_PROGRESS_MESSAGE =
-  "Agent turn stopped after repeated resume attempts made no progress";
+// ends with either retry limit even though the answer was already delivered.
+const CURSOR_POST_TURN_RETRY_ERRORS = new Set([
+  "Agent turn stopped after repeated resume attempts made no progress",
+  "Connection failed repeatedly",
+]);
 
 interface ActiveCursorToolCall {
   readonly callId: string;
@@ -1095,6 +1120,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly backgroundWait: boolean;
           readonly runtime: string | undefined;
         } | null>(null);
+        // Servers the team MCP policy rejected, left out of later turns so they skip the failed start.
+        const blockedMcpServers = yield* Ref.make<ReadonlySet<string>>(new Set());
         // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
           readonly agent: string;
@@ -1149,6 +1176,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ]
               : [],
           ),
+        });
+
+        let startupPhase: string | undefined;
+        const emitStartupPhase = Effect.fn("CursorAdapterV2.emitStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (phase === startupPhase) return;
+          startupPhase = phase;
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerSession: {
+              ...session,
+              ...(phase === undefined ? {} : { startupPhase: phase }),
+              updatedAt: yield* DateTime.now,
+            },
+          });
         });
 
         const emitProviderThread = Effect.fn("CursorAdapterV2.emitProviderThread")(function* (
@@ -1260,6 +1304,41 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             context.itemOrdinals.set(nativeItemId, ordinal);
             return ordinal;
           });
+
+        const emitNotice = Effect.fnUntraced(function* (context: ActiveCursorTurn, text: string) {
+          const nativeItemId = `notice:${context.run.runId}:${context.itemOrdinals.size}`;
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeId: nativeItemId,
+                strength: "weak",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "system_notice",
+              level: "warning",
+              message: text,
+            },
+          });
+        });
 
         const resolvePlanId = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
@@ -2467,8 +2546,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 );
               }
               return;
+            case "shell-tool-call-delta":
             case "shell-output-delta": {
-              const toolCallId = update.event.toolCallId;
+              const toolCallId =
+                update.type === "shell-tool-call-delta" ? update.callId : update.event.toolCallId;
               const shell =
                 typeof toolCallId === "string"
                   ? context.tools.get(toolCallId)
@@ -2478,7 +2559,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               if (shell?.toolCall.type !== "shell") {
                 return;
               }
-              const chunk = shellOutputText(update.event);
+              const chunk =
+                update.type === "shell-tool-call-delta"
+                  ? update.content
+                  : shellOutputText(update.event);
               if (chunk.length === 0) return;
               // Persist output once; live hub deltas avoid quadratic event-store growth.
               shell.streamedOutput += chunk;
@@ -2690,7 +2774,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const isResumeFailureAfterTurnEnded = (context: ActiveCursorTurn, result: RunResult) =>
           context.turnEnded &&
           result.status === "error" &&
-          result.error?.message === CURSOR_RESUME_NO_PROGRESS_MESSAGE;
+          CURSOR_POST_TURN_RETRY_ERRORS.has(result.error?.message ?? "");
 
         const terminalStatus = (
           context: ActiveCursorTurn,
@@ -2712,10 +2796,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcpServers = (cwd: string | null) =>
-          cwd === null
+        const resolveWorkspaceMcpServers = (
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) => {
+          const { cwd } = runtimePolicy;
+          return cwd === null
             ? Effect.succeed({})
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
+            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment, {
+                includeProject: cursorLoadsProjectConfig(runtimePolicy, platform),
+              }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -2727,6 +2816,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   }).pipe(Effect.as({})),
                 ),
               );
+        };
 
         const openAgent = Effect.fnUntraced(function* (openInput: {
           readonly operation: "create" | "resume";
@@ -2766,7 +2856,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
           });
           if (
             platform === "win32" &&
@@ -2903,11 +2992,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           }
           const runtimeInstructions = buildRuntimeInstructions({
+            agentFeedback: mcpServers === undefined ? "off" : (turnInput.agentFeedback ?? "off"),
             harness: "Cursor",
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
           });
-          // Resend only on a new/compacted/rewound conversation or when the model changes.
+          // Resend only on a new/compacted/rewound conversation or when the instructions change.
           const sendRuntimeInstructions = delivered.runtime !== runtimeInstructions;
           const text = sendRuntimeInstructions
             ? userText.length === 0
@@ -2941,9 +3031,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const mcpServers = cursorMcpServers(mcpSession);
-            const hasDeviceTools =
-              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
             const delivered =
@@ -2981,65 +3068,126 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 providerThreadId: turnInput.providerThread.id,
               });
             }
-            const { message, prompt, runtimeInstructions } =
-              resume === "native"
-                ? {
-                    message: "",
-                    prompt: undefined,
-                    runtimeInstructions:
-                      interrupted?.agent === agent.nativeThreadId
-                        ? interrupted.runtimeInstructions
-                        : undefined,
-                  }
-                : resume === "replay"
-                  ? {
-                      message: dropped!.message,
-                      prompt: dropped!.text,
-                      runtimeInstructions: dropped!.runtimeInstructions,
-                    }
-                  : yield* resolveUserMessage(
-                      turnInput,
-                      mcpServers,
-                      hasDeviceTools,
-                      delivered,
-                      dropped?.text,
-                    );
-            const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            // A send-time set replaces the create-time set, so the workspace servers go only here and are
-            // read again each turn from mcp.json and mcp-disabled.json; both merge with settingSources.
-            const turnMcpServers = {
-              ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy.cwd)),
-              ...mcpServers,
-            };
-            const sdkRun = yield* agent.session
-              .send({
+            let starting = true;
+            // The message depends on which servers run, so a retry without blocked servers rebuilds it.
+            const sendWithout = Effect.fnUntraced(function* (blocked: ReadonlySet<string>) {
+              const mcpServers = blocked.has(T3_MCP_SERVER)
+                ? undefined
+                : cursorMcpServers(mcpSession);
+              const hasDeviceTools =
+                mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+              // A replay resends the stopped request as written, T3 instructions included.
+              const { message, prompt, runtimeInstructions } =
+                resume === "native"
+                  ? {
+                      message: "",
+                      prompt: undefined,
+                      runtimeInstructions:
+                        interrupted?.agent === agent.nativeThreadId
+                          ? interrupted.runtimeInstructions
+                          : undefined,
+                    }
+                  : resume === "replay"
+                    ? {
+                        message: dropped!.message,
+                        prompt: dropped!.text,
+                        runtimeInstructions: dropped!.runtimeInstructions,
+                      }
+                    : yield* resolveUserMessage(
+                        turnInput,
+                        mcpServers,
+                        hasDeviceTools,
+                        delivered,
+                        dropped?.text,
+                      );
+              const compacted = resume === undefined && prompt === undefined;
+              // Every inline server goes only here, read again each turn: Cursor checks an agent's own
+              // servers against team MCP policy on every run, even when a send replaces them.
+              const turnMcpServers: Record<string, McpServerConfig> = {
+                ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy)),
+                ...mcpServers,
+              };
+              for (const name of blocked) delete turnMcpServers[name];
+              const sdkRun = yield* agent.session
+                .send({
+                  message,
+                  summarize: compacted,
+                  resume: resume === "native",
+                  options: {
+                    model: cursorSdkModelSelection(
+                      turnInput.modelSelection,
+                      adapterOptions.getModels?.() ?? [],
+                      adapterOptions.getSdkModels?.() ?? [],
+                    ),
+                    mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+                    ...(Object.keys(turnMcpServers).length === 0
+                      ? {}
+                      : { mcpServers: turnMcpServers }),
+                  },
+                  onDelta: (update) => {
+                    if (context === null) {
+                      return Effect.sync(() => {
+                        pendingUpdates.push(update);
+                      });
+                    }
+                    return handleInteractionUpdate(context, update);
+                  },
+                  onBackgroundShell: (shell) => onBackgroundShell(turnInput, shell),
+                  onStartupPhase: (phase) => (starting ? emitStartupPhase(phase) : Effect.void),
+                })
+                .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+              return {
+                sdkRun,
+                mcpServers,
+                hasDeviceTools,
                 message,
-                summarize: compacted,
-                resume: resume === "native",
-                options: {
-                  model: cursorSdkModelSelection(
-                    turnInput.modelSelection,
-                    adapterOptions.getModels?.() ?? [],
-                    adapterOptions.getSdkModels?.() ?? [],
+                prompt,
+                runtimeInstructions,
+                compacted,
+              };
+            });
+            // The SDK names every blocked server at once, so one retry without them is enough.
+            let noticeServers: ReadonlyArray<string> = [];
+            const skipped = yield* Ref.get(blockedMcpServers);
+            const {
+              sdkRun,
+              mcpServers,
+              hasDeviceTools,
+              message,
+              prompt,
+              runtimeInstructions,
+              compacted,
+            } = yield* sendWithout(skipped).pipe(
+              Effect.catch((error) => {
+                const servers = CursorAgentSdk.blockedInlineMcpServers(error);
+                if (servers.length === 0) return Effect.fail(error);
+                const blocked = new Set([...skipped, ...servers]);
+                return Effect.logWarning("orchestration-v2.cursor-mcp-servers-blocked", {
+                  providerSessionId: input.providerSessionId,
+                  servers,
+                }).pipe(
+                  Effect.andThen(sendWithout(blocked)),
+                  // Kept only once a turn starts without them, so a failed retry still warns next time.
+                  Effect.tap(() =>
+                    Ref.set(blockedMcpServers, blocked).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          noticeServers = servers;
+                        }),
+                      ),
+                    ),
                   ),
-                  mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(Object.keys(turnMcpServers).length === 0
-                    ? {}
-                    : { mcpServers: turnMcpServers }),
-                },
-                onDelta: (update) => {
-                  if (context === null) {
-                    return Effect.sync(() => {
-                      pendingUpdates.push(update);
-                    });
-                  }
-                  return handleInteractionUpdate(context, update);
-                },
-                onBackgroundShell: (shell) => onBackgroundShell(turnInput, shell),
-              })
-              .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+                );
+              }),
+              Effect.ensuring(
+                Effect.suspend(() => {
+                  starting = false;
+                  return emitStartupPhase(undefined);
+                }),
+              ),
+            );
             // A resume sends no new instructions, and a native one still continues the stopped request.
             if (resume === undefined) {
               yield* Ref.set(told, {
@@ -3108,6 +3256,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               status: "active",
               updatedAt: startedAt,
             });
+            if (noticeServers.length > 0) {
+              yield* emitNotice(context, cursorBlockedMcpServersNotice(noticeServers));
+            }
             for (const update of pendingUpdates) {
               yield* handleInteractionUpdate(context, update);
             }
@@ -3323,6 +3474,41 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               ),
           ),
+          nativeTurnKept: Effect.fn("CursorAdapterV2.nativeTurnKept")(
+            function* (keptInput: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly nativeTurnId: string;
+            }) {
+              // This session still holds the stopped request and replays it on the next turn itself.
+              const interrupted = yield* Ref.get(interruptedPrompt);
+              if (
+                interrupted?.runId === keptInput.nativeTurnId &&
+                interrupted.agent === nativeThreadId(keptInput.providerThread)
+              )
+                return true;
+              const agent = yield* openAgent({
+                operation: "resume",
+                agentId: nativeThreadId(keptInput.providerThread),
+                storeCwd: keptInput.providerThread.nativeMetadata?.cursorStoreCwd,
+                threadId: keptInput.providerThread.appThreadId ?? input.threadId,
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+              });
+              if (agent.session.runCheckpointed === undefined) return true;
+              return yield* agent.session.runCheckpointed(keptInput.nativeTurnId);
+            },
+            (effect, keptInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      providerThreadId: keptInput.providerThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           startTurn,
           resumeTurn: (input) => startTurn(ProviderAdapter.resumeTurnInput(input)),
           compactThread: (turnInput) =>
@@ -3518,7 +3704,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   status: "idle" as const,
                   updatedAt: now,
                 },
-                providerTurns: [],
                 messages: projectedMessages,
                 runtimeRequests: [],
                 providerPayload: {
@@ -3599,7 +3784,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     status: "idle" as const,
                     updatedAt: now,
                   },
-                  providerTurns: [],
                   messages: [],
                   runtimeRequests: [],
                 };
@@ -3629,7 +3813,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   status: "idle" as const,
                   updatedAt: now,
                 },
-                providerTurns: [],
                 messages: [],
                 runtimeRequests: [],
               };

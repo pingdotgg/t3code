@@ -34,6 +34,7 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -74,7 +75,10 @@ const longRun = RunId.make("run:compact-transport:long");
 const bodiesRun = RunId.make("run:compact-transport:bodies");
 
 const store = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  ),
   SqlitePersistence.layerMemory,
 );
 const management = Layer.unwrap(

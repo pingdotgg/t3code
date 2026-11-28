@@ -36,8 +36,8 @@ export interface TranscriptParseResult {
   readonly records: readonly UsageRecord[];
   /** Unterminated tail records stay outside records/position so the next scan rereads them. */
   readonly tailRecords: readonly UsageRecord[];
-  /** Includes tentative tail diagnostics; position.state only includes committed lines. */
-  readonly malformedRecords: number;
+  /** Timestamps, including tentative tail diagnostics; position.state only includes committed lines. */
+  readonly malformedRecords: readonly number[];
   readonly position: TranscriptParsePosition;
   readonly resumed: boolean;
 }
@@ -464,7 +464,7 @@ export async function readTranscriptRecords<State>(
     return {
       records,
       tailRecords,
-      malformedRecords: format.readMalformedRecords?.(tailState) ?? 0,
+      malformedRecords: format.readMalformedRecords?.(tailState) ?? [],
       position: {
         resumeOffset: compressed ? 0 : resumeOffset,
         guardLength,

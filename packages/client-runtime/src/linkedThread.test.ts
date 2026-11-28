@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The probe fixture uses a Node macrotask boundary.
+import * as NodeTimersPromises from "node:timers/promises";
 import {
   EnvironmentId,
   EventId,
@@ -254,16 +256,22 @@ describe("connectLinkedEnvironment", () => {
     credential: "ONE-TIME",
     expiresAt: DateTime.makeUnsafe(0),
   };
+  const unsupported: PeerLinkClientPairingResult = {
+    type: "unsupported",
+    reason: "link_access",
+    ...target,
+  };
   const connect = (
     pairing: PeerLinkClientPairingResult | null,
-    reachable: ReadonlyArray<string>,
+    reachable: ReadonlyArray<string> | ((host: string) => Promise<boolean>),
     paired = true,
   ) => {
     const pairs: Array<{ host: string; pairingCode: string }> = [];
     return connectLinkedEnvironment({
       label: "vm (saved name)",
       requestPairing: async () => pairing,
-      reaches: async (host) => reachable.includes(host),
+      reaches:
+        typeof reachable === "function" ? reachable : async (host) => reachable.includes(host),
       pair: async (input) => {
         pairs.push(input);
         return paired;
@@ -279,6 +287,42 @@ describe("connectLinkedEnvironment", () => {
     expect((await connect(credential, [tailnet, lan])).pairs[0]?.host).toBe(lan);
   });
 
+  it.each([
+    {
+      name: "redeems at an alternate after the preferred probe fails",
+      pairing: credential,
+      preferredReachable: false,
+      expected: {
+        outcome: { type: "connected" },
+        pairs: [{ host: tailnet, pairingCode: "ONE-TIME" }],
+      },
+    },
+    {
+      name: "prefills the preferred address even when an alternate answers first",
+      pairing: unsupported,
+      preferredReachable: true,
+      expected: { outcome: { type: "manual", label: "VM", host: lan }, pairs: [] },
+    },
+  ])("$name without waiting for a silent last address", async (row) => {
+    const last = "https://other.example.test";
+    const preferred = Promise.withResolvers<boolean>();
+    const silent = Promise.withResolvers<boolean>();
+    const connecting = connect({ ...row.pairing, urls: [lan, tailnet, last] }, (host) => {
+      if (host === lan) return preferred.promise;
+      if (host === last) return silent.promise;
+      queueMicrotask(() => preferred.resolve(row.preferredReachable));
+      return Promise.resolve(true);
+    });
+    try {
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Let the already runnable probe continuations finish while the last probe stays pending.
+      const pending = NodeTimersPromises.setImmediate("still waiting for an address");
+      expect(await Promise.race([connecting, pending])).toEqual(row.expected);
+    } finally {
+      silent.resolve(false);
+      preferred.resolve(false);
+    }
+  });
+
   it("says the machine is out of reach, and spends nothing, when no address answers", async () => {
     expect(await connect(credential, [])).toEqual({
       outcome: { type: "unreachable", label: "VM" },
@@ -287,11 +331,6 @@ describe("connectLinkedEnvironment", () => {
   });
 
   it("leaves pairing to the user when the link cannot do it, with an address filled in", async () => {
-    const unsupported: PeerLinkClientPairingResult = {
-      type: "unsupported",
-      reason: "link_access",
-      ...target,
-    };
     const manual = (host: string | null) => ({
       outcome: { type: "manual", label: "VM", host },
       pairs: [],
