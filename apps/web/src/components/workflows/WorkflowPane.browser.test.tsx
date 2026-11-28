@@ -32,12 +32,13 @@ vi.mock("./WorkflowThreadPane", () => ({
   useOpenThreadPage: () => state.openThreadPage,
 }));
 
-const pane = (env: string | undefined) => (
+const pane = (env: string | undefined, electron = false) => (
   <WorkflowPane
     environmentId={environmentId}
     runId={null}
     state={{ pane: [{ thread: "thread-2", ...(env === undefined ? {} : { env }) }] }}
     onChange={vi.fn()}
+    electron={electron}
   />
 );
 
@@ -75,5 +76,27 @@ describe("WorkflowPane", () => {
     await expect
       .element(screen.getByRole("button", { name: "Open as a full thread" }))
       .not.toBeInTheDocument();
+  });
+
+  it("keeps its header buttons clear of Windows window controls in Electron", async () => {
+    state.linked = [];
+    state.openThreadPage = vi.fn();
+    document.documentElement.classList.add("wco");
+    document.documentElement.style.setProperty("--workspace-native-controls-inset", "140px");
+    try {
+      await using screen = await render(pane(undefined, true));
+      const tablist = screen.getByRole("tablist").element();
+      const header = tablist.parentElement;
+      expect(header).not.toBeNull();
+      expect(header!.classList.contains("drag-region")).toBe(true);
+      expect(tablist.classList.contains("[-webkit-app-region:no-drag]")).toBe(true);
+      const close = screen.getByRole("button", { name: "Close the pane" }).element();
+      expect(close.getBoundingClientRect().right).toBeLessThanOrEqual(
+        header!.getBoundingClientRect().right - 140,
+      );
+    } finally {
+      document.documentElement.classList.remove("wco");
+      document.documentElement.style.removeProperty("--workspace-native-controls-inset");
+    }
   });
 });
