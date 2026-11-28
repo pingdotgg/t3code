@@ -437,6 +437,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     ),
   );
 
+  it.effect("rejects tokens carrying a trailing segment", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "one-time-token" });
+      const ticket = yield* sessions.issueWebSocketToken(issued.sessionId);
+      expect((yield* Effect.flip(sessions.verify(`${issued.token}.extra`)))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      expect((yield* Effect.flip(sessions.verify(`${issued.token}.`)))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      expect(
+        (yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}.extra`)))._tag,
+      ).toBe("MalformedWebSocketTokenError");
+      expect((yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}.`)))._tag).toBe(
+        "MalformedWebSocketTokenError",
+      );
+      const renewable = { ttl: Duration.hours(1), renewalWindow: Duration.hours(2) };
+      const relay = yield* sessions.issue({ ...relaySessionInput, ...renewable });
+      const renewal = sessions.renew(`${relay.token}.extra`, {
+        proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+        consumeProof: Effect.void,
+        ...renewable,
+      });
+      expect((yield* Effect.flip(renewal))._tag).toBe("MalformedSessionTokenError");
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+
   it.effect("atomically replaces active sessions with the same subject and method", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
