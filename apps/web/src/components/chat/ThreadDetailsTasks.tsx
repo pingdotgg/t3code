@@ -1,4 +1,5 @@
 import type { OrchestrationV2PlanStep } from "@t3tools/contracts";
+import { taskListProgress } from "@t3tools/client-runtime/state/thread-execution";
 import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
 import { useState } from "react";
@@ -26,18 +27,34 @@ export function ThreadDetailsTasks({
   const gt = useGT();
   const m = useMessages();
   const [expanded, setExpanded] = useState(false);
-  const done = plan.steps.filter((step) => step.status === "completed").length;
+  const { completed: done, percentage } = taskListProgress(plan.steps);
   const current =
     plan.steps.find((step) => step.status === "running") ??
     plan.steps.find((step) => step.status === "pending");
   const count = (
     <span
       className={cn(
-        "text-2xs font-medium tabular-nums",
+        "flex shrink-0 items-center gap-1.5 text-2xs font-medium tabular-nums",
         done === plan.steps.length ? "text-success-foreground" : "text-muted-foreground",
       )}
     >
-      {done}/{plan.steps.length}
+      <svg
+        role="progressbar"
+        aria-label={gt("Tasks")}
+        aria-valuemin={0}
+        aria-valuemax={plan.steps.length}
+        aria-valuenow={done}
+        viewBox="0 0 16 16"
+        className="size-3.5 shrink-0 -rotate-90"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <circle cx="8" cy="8" r="6" className="opacity-20" />
+        <circle cx="8" cy="8" r="6" pathLength="100" strokeDasharray={`${percentage} 100`} />
+      </svg>
+      <span>{percentage}%</span>
+      <span className="text-muted-foreground">{done}/{plan.steps.length}</span>
     </span>
   );
 

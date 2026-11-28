@@ -1,4 +1,5 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
+import { taskListProgress, type TaskListPlan } from "@t3tools/client-runtime/state/thread-execution";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { useGT } from "gt-react-native";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingStatusAction, FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { TaskProgressRing } from "./ThreadTasksSheet";
 
 const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
@@ -69,6 +71,7 @@ export function FloatingWorkingControl(props: {
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
+  readonly tasks?: { readonly plan: TaskListPlan; readonly onPress: () => void } | null;
   readonly queuedCount: number;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
@@ -90,6 +93,9 @@ export function FloatingWorkingControl(props: {
         ? [props.status.action]
         : [];
   const [agentsWidth, setAgentsWidth] = useState(0);
+  const [tasksWidth, setTasksWidth] = useState(0);
+  const tasks = props.tasks ?? null;
+  const taskProgress = tasks === null ? null : taskListProgress(tasks.plan.steps);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
@@ -104,6 +110,7 @@ export function FloatingWorkingControl(props: {
       (actions.length > 0 ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
+      (tasks === null ? 0 : tasksWidth) -
       (hasPreview ? previewWidth : 0),
   );
   const labelWidth = Math.max(
@@ -141,7 +148,7 @@ export function FloatingWorkingControl(props: {
     capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
+  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview || tasks !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the Reanimated capsule width value and measured width when the status goes away
   useEffect(() => {
     if (!hasStatus) {
@@ -162,6 +169,7 @@ export function FloatingWorkingControl(props: {
 
   const previewCompact =
     hasStatus ||
+    tasks !== null ||
     hasAgents ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
@@ -173,6 +181,7 @@ export function FloatingWorkingControl(props: {
     statusInteractive ||
     extensionStatus !== null ||
     actions.length > 0 ||
+    tasks !== null ||
     hasQueue ||
     hasAgents ||
     hasPreview;
@@ -274,6 +283,24 @@ export function FloatingWorkingControl(props: {
           </Text>
         </Pressable>
       ) : null}
+      {tasks !== null && taskProgress !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={gt("Open tasks, {done} of {total} completed", {
+            done: taskProgress.completed,
+            total: taskProgress.total,
+          })}
+          onPress={tasks.onPress}
+          onLayout={(event) => setTasksWidth(settleWidth(event.nativeEvent.layout.width))}
+          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
+        >
+          {hasStatus || hasPreview || hasAgents ? (
+            <View className="absolute left-0 h-4 w-px bg-border" />
+          ) : null}
+          <TaskProgressRing percentage={taskProgress.percentage} />
+          <Text className="font-t3-medium text-xs tabular-nums">{taskProgress.percentage}%</Text>
+        </Pressable>
+      ) : null}
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
@@ -286,7 +313,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview || hasAgents ? (
+          {hasStatus || hasPreview || hasAgents || tasks !== null ? (
             <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
