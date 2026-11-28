@@ -1,4 +1,3 @@
-import { literalRecoveredListItemLines } from "./markdownListIndentation.ts";
 import type { mediaKindFromPath } from "./mediaPreview.ts";
 import {
   isNetworkPath,
@@ -532,6 +531,86 @@ function tableColumnCount(row: string): number {
   return columns;
 }
 
+function isTableDelimiter(header: string, line: string): boolean {
+  return (
+    header.trimEnd() !== "|" &&
+    /[|:]/.test(line) &&
+    TABLE_DELIMITER_PATTERN.test(line) &&
+    tableColumnCount(line) === tableColumnCount(header)
+  );
+}
+
+function expandMarkdownLine(line: string): string {
+  const source = line.endsWith("\r") ? line.slice(0, -1) : line;
+  if (!source.includes("\t")) return source;
+  let column = 0;
+  return source.replace(/\t|[^\t]+/g, (part) => {
+    const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
+    column += expanded.length;
+    return expanded;
+  });
+}
+
+function markdownIndent(source: string, position: number): number {
+  let indent = 0;
+  while (source[position + indent] === " ") indent += 1;
+  return indent;
+}
+
+function blockquoteContentStart(source: string, marker: number): number {
+  return marker + (source[marker + 1] === " " ? 2 : 1);
+}
+
+function matchMarkdownContainers(
+  source: string,
+  containers: readonly number[],
+  blankEndsItemAt = -1,
+) {
+  let position = 0;
+  let matched = 0;
+  for (const container of containers) {
+    const indent = markdownIndent(source, position);
+    const first = source[position + indent];
+    if (container === BLOCKQUOTE) {
+      if (indent > 3 || first !== ">") break;
+      position = blockquoteContentStart(source, position + indent);
+    } else if (first === undefined) {
+      if (matched === blankEndsItemAt) break;
+    } else if (indent >= Math.abs(container)) {
+      position += Math.abs(container);
+    } else {
+      break;
+    }
+    matched += 1;
+  }
+  return { position, matched };
+}
+
+// List recovery prefixes the first line as prose. A table delimiter or a setext underline
+// can still turn that first block into a table or heading, which the renderer leaves literal.
+function recoveredListStartsWithParagraph(
+  lines: readonly string[],
+  index: number,
+  header: string,
+  containers: readonly number[],
+): boolean {
+  for (let next = index + 1; next < lines.length; next += 1) {
+    const source = expandMarkdownLine(lines[next]!);
+    const { position, matched } = matchMarkdownContainers(source, containers);
+    if (matched < containers.length) break;
+    const indent = markdownIndent(source, position);
+    const content = source.slice(position + indent);
+    if (!content || indent < 4) break;
+    if (indent >= 8) continue;
+    if (SETEXT_UNDERLINE_PATTERN.test(content)) return false;
+    if (PARAGRAPH_INTERRUPTION_PATTERN.test(content) || FOOTNOTE_DEFINITION_PATTERN.test(content)) {
+      break;
+    }
+    if (next === index + 1 && isTableDelimiter(`x ${header}`, content)) return false;
+  }
+  return true;
+}
+
 // Normalize lone CR without changing offsets or splitting CRLF into two line endings.
 function normalizeLoneCarriageReturns(text: string): string {
   return text.replace(/\r(?!\n)/g, "\n");
@@ -568,52 +647,24 @@ function visitMarkdownLines(
   // Depth of an item that has only its marker so far; a blank line next ends it.
   let emptyItemDepth = 0;
   let lineStart = 0;
-  let literalListItems: ReadonlySet<number> | undefined;
-  for (const [index, line] of text.split("\n").entries()) {
+  const lines = text.split("\n");
+  for (const [index, line] of lines.entries()) {
     const previousTable = table;
     table = undefined;
     const start = lineStart;
     lineStart += line.length + 1;
-    let source = line.endsWith("\r") ? line.slice(0, -1) : line;
-    if (source.includes("\t")) {
-      let column = 0;
-      source = source.replace(/\t|[^\t]+/g, (part) => {
-        const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
-        column += expanded.length;
-        return expanded;
-      });
-    }
-    let position = 0;
+    const source = expandMarkdownLine(line);
+    const containerCount = containers.length;
+    const prefix = matchMarkdownContainers(source, containers, emptyItemDepth - 1);
+    const { matched } = prefix;
+    let { position } = prefix;
+    emptyItemDepth = 0;
     let indent = 0;
     let content = "";
     const readIndent = () => {
-      indent = 0;
-      while (source[position + indent] === " ") indent += 1;
+      indent = markdownIndent(source, position);
       content = source.slice(position + indent);
     };
-    const enterBlockquote = () => {
-      position += indent + 1;
-      if (source[position] === " ") position += 1;
-    };
-
-    const blankEndsItemAt = emptyItemDepth - 1;
-    emptyItemDepth = 0;
-    const containerCount = containers.length;
-    let matched = 0;
-    for (; matched < containers.length; matched += 1) {
-      const container = containers[matched]!;
-      readIndent();
-      if (container === BLOCKQUOTE) {
-        if (indent > 3 || content[0] !== ">") break;
-        enterBlockquote();
-      } else if (content === "") {
-        if (matched === blankEndsItemAt) break;
-      } else if (indent >= Math.abs(container)) {
-        position += Math.abs(container);
-      } else {
-        break;
-      }
-    }
     readIndent();
 
     if (fence) {
@@ -683,7 +734,7 @@ function visitMarkdownLines(
       }
       if (content[0] === ">") {
         containers.push(BLOCKQUOTE);
-        enterBlockquote();
+        position = blockquoteContentStart(source, position + indent);
         paragraph = false;
         readIndent();
         continue;
@@ -718,7 +769,7 @@ function visitMarkdownLines(
         if (
           !emptyItem &&
           padding > 5 &&
-          !(literalListItems ??= literalRecoveredListItemLines(text)).has(index + 1)
+          recoveredListStartsWithParagraph(lines, index, content, containers)
         ) {
           containers.push(RECOVERED_LIST_CODE);
           visit(line, start, false);
@@ -736,11 +787,7 @@ function visitMarkdownLines(
       } else if (
         previousTable?.depth === containers.length &&
         !closedContainer &&
-        (previousTable.header === undefined ||
-          (previousTable.header.trimEnd() !== "|" &&
-            /[|:]/.test(content) &&
-            TABLE_DELIMITER_PATTERN.test(content) &&
-            tableColumnCount(content) === tableColumnCount(previousTable.header)))
+        (previousTable.header === undefined || isTableDelimiter(previousTable.header, content))
       ) {
         table = { depth: containers.length };
         paragraph = false;

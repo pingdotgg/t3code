@@ -327,6 +327,14 @@ describe("extractMarkdownLinkHrefs", () => {
       ["src/b/index.ts", "src/notes.ts"],
     ],
     [
+      "-       first\n\n        -      [index.ts](src/a/index.ts) | heading\n              -- | --\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
+      "> -      [index.ts](src/a/index.ts)\n>       heading continuation\n>       ===\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
       "[^a\u00a0b]: Intro\n\n    [index.ts](src/a/index.ts)\n\nSee [^a\u00a0b] and [index.ts](src/b/index.ts)",
       ["src/a/index.ts", "src/b/index.ts"],
     ],
