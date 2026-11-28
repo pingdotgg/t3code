@@ -96,22 +96,21 @@ function LinkedIssueRow({
     <span
       role="img"
       aria-label={assigneeLabel}
-      // oxlint-disable-next-line t3code/no-native-title-tooltip -- Overflow names stay available inside the linked row's own tooltip.
-      title={singleAssignee ? undefined : assigneeLabel}
-      className={cn("flex shrink-0 items-center", singleAssignee ? "max-w-24 gap-1" : "-space-x-1")}
+      className={cn("flex shrink-0 items-center", !singleAssignee && "-space-x-1")}
     >
-      {assignedActors.slice(0, 3).map((assignee) => (
-        <PullRequestActorAvatar
-          key={assignee.login}
-          actor={assignee}
-          className="ring-1 ring-background"
-        />
-      ))}
       {singleAssignee ? (
-        <span className="truncate text-xs font-medium text-foreground">
-          {firstAssignee.name || firstAssignee.login}
-        </span>
-      ) : null}
+        <PullRequestActorLabel actor={firstAssignee} tooltip={false} className="max-w-24" />
+      ) : (
+        assignedActors
+          .slice(0, 3)
+          .map((assignee) => (
+            <PullRequestActorAvatar
+              key={assignee.login}
+              actor={assignee}
+              className="ring-1 ring-background"
+            />
+          ))
+      )}
     </span>
   ) : null;
   const status =

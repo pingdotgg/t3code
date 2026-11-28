@@ -287,7 +287,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     .getByRole("region", { name: "Linked issues" })
     .getByRole("link", { name: issueName });
   await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
-  await expect.element(issueRow.getByText("Alex Chen", { exact: true })).toBeVisible();
+  await expect.element(issueRow.getByText("alex", { exact: true })).toBeVisible();
   await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
   await expect.element(issueRow.getByRole("img", { name: "Linear" })).toBeVisible();
   await expect.element(issueRow.getByText(issue.scope, { exact: true })).toBeVisible();
