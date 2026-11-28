@@ -66,14 +66,13 @@ const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
 
-const LOW_SURROGATE = /[\uDC00-\uDFFF]/u;
+const DETACHED_MARK = /[\p{Mark}\p{Default_Ignorable_Code_Point}\uDC00-\uDFFF]/u;
 const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
 const EMOJI_MODIFIER_BASE_AT_END = /\p{Emoji_Modifier_Base}$/u;
 
 function isDetachedTailStart(character: string, text: string, end: number = text.length): boolean {
   return (
-    ZERO_WIDTH.test(character) ||
-    LOW_SURROGATE.test(character) ||
+    DETACHED_MARK.test(character) ||
     (EMOJI_MODIFIER.test(character) &&
       EMOJI_MODIFIER_BASE_AT_END.test(text.slice(Math.max(0, end - 2), end)))
   );
