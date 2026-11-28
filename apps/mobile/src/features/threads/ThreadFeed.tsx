@@ -124,7 +124,12 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { textDirection } from "@t3tools/shared/textDirection";
-import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
+import {
+  StackActions,
+  useFocusEffect,
+  useIsFocused,
+  useNavigation,
+} from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -3520,6 +3525,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
       });
+      return;
+    }
+
+    if (presentation.kind === "workflowRun") {
+      navigation.dispatch(
+        StackActions.push("WorkflowRun", {
+          environmentId: presentation.environmentId,
+          runId: presentation.runId,
+        }),
+      );
       return;
     }
 

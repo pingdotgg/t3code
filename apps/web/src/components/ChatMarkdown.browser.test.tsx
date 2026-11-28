@@ -471,6 +471,33 @@ describe("ChatMarkdown external link labels", () => {
   });
 });
 
+it("opens workflow run links inside the app", async () => {
+  setup();
+  await using screen = await render(
+    <ChatMarkdown
+      cwd={undefined}
+      text={`[Open workflow run](/workflows?env=environment-1&run=run-1)
+
+[Malformed workflow link](/workflows?env=%20&run=run-1)`}
+    />,
+  );
+  await expect.element(screen.getByText("Malformed workflow link")).toBeVisible();
+  await expect
+    .element(screen.getByRole("link", { name: "Malformed workflow link" }))
+    .not.toBeInTheDocument();
+  const link = screen.getByRole("link", { name: "Open workflow run" });
+  await expect.element(link).not.toHaveAttribute("target", "_blank");
+  await userEvent.click(link);
+
+  await vi.waitFor(() => {
+    expect(screen.router?.state.location.pathname).toBe("/workflows");
+    expect(screen.router?.state.location.search).toMatchObject({
+      env: "environment-1",
+      run: "run-1",
+    });
+  });
+});
+
 describe("ChatMarkdown link tooltips", () => {
   it("shows each link's address on one shared tooltip as the pointer moves between links", async () => {
     setup();

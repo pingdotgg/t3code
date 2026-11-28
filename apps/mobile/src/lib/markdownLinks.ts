@@ -6,6 +6,7 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseWorkflowRunHref } from "@t3tools/shared/workflowRunLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
@@ -26,6 +27,12 @@ export type MarkdownLinkPresentation =
       readonly path: string;
       readonly line?: number;
       readonly column?: number;
+    }
+  | {
+      readonly kind: "workflowRun";
+      readonly href: string;
+      readonly environmentId: string;
+      readonly runId: string;
     }
   | {
       readonly kind: "link";
@@ -309,6 +316,17 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
       };
     }
   } catch {}
+
+  const workflowRun = parseWorkflowRunHref(normalized);
+  if (workflowRun === "invalid-environment") return { kind: "link", href: null };
+  if (workflowRun) {
+    return {
+      kind: "workflowRun",
+      href: normalized,
+      environmentId: workflowRun.env,
+      runId: workflowRun.run,
+    };
+  }
 
   const target = parseMarkdownFileLink(normalized);
   if (target) {

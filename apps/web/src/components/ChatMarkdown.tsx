@@ -24,7 +24,9 @@ import {
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
 import { chatMarkdownImageSource } from "@t3tools/shared/markdownHast";
+import { parseWorkflowRunHref } from "@t3tools/shared/workflowRunLinks";
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -1361,6 +1363,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
         renderContextReference({ ...contextReference, label, leading, trailing })
       ) : (
         <span>{label}</span>
+      );
+    }
+    const workflowRun = parseWorkflowRunHref(href);
+    if (workflowRun === "invalid-environment") return <span>{children}</span>;
+    if (workflowRun) {
+      return (
+        <Link
+          to="/workflows"
+          search={workflowRun}
+          className={props.className}
+          data-markdown-image-link={!hastHasText(node) || undefined}
+        >
+          <MarkdownLinkContext value>{children}</MarkdownLinkContext>
+        </Link>
       );
     }
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";

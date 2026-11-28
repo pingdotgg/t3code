@@ -92,4 +92,13 @@ describe("resolveMarkdownLinkPresentation", () => {
       href: null,
     });
   });
+
+  it("opens workflow run links on the run's screen", () => {
+    expect(resolveMarkdownLinkPresentation("/workflows?env=environment-1&run=run-1")).toEqual({
+      kind: "workflowRun",
+      href: "/workflows?env=environment-1&run=run-1",
+      environmentId: "environment-1",
+      runId: "run-1",
+    });
+  });
 });

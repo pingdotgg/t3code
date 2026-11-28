@@ -331,6 +331,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./workflowRunLinks": {
+      "types": "./src/workflowRunLinks.ts",
+      "import": "./src/workflowRunLinks.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
