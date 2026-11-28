@@ -11,8 +11,12 @@ consume the runtime. Keeping retry and session ownership here prevents competing
   failures use jittered, capped exponential backoff that resets only after a connection stays up;
   offline and auth failures wait for an explicit wakeup.
 - Foregrounding, network changes, explicit retries, offline reports, and a request the socket
-  leaves unanswered probe the established session rather than blindly reconnecting (OS offline
-  reports are often wrong, especially for loopback). Only a failed probe replaces the socket.
+  leaves unanswered probe the established session rather than tearing it down (OS offline reports
+  are often wrong, especially for loopback). When the host answers a fresh request while the socket
+  stays silent, on non-loopback network changes, or when a better route appears, a replacement
+  connects beside the live session and takes over in place without showing a reconnect; a
+  non-upgrade replacement closes if the live socket proves alive, and a worse-route replacement
+  waits as fallback.
 - The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes connections by
   environment. An involuntary disconnect keeps the registration and cached projections; explicit
   removal closes the scope and clears credentials, caches, and drafts. Cloud-account changes apply
