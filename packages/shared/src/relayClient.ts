@@ -388,14 +388,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     const delimiter = platform === "win32" ? ";" : ":";
     const cwd = yield* HostProcess.WorkingDirectory;
     for (const directory of pathValue.split(delimiter)) {
-      // POSIX shells search the working directory for an empty entry. Resolve it now: the
-      // connector may be launched from elsewhere.
+      // POSIX shells search the working directory for an empty entry. Resolve empty and relative
+      // entries against cwd now: the connector may be launched from elsewhere.
       const workingDirectoryEntry = directory === "" && platform !== "win32";
       const entry = platform === "win32" ? directory.trim().replace(/^"|"$/gu, "") : directory;
       if (entry.length === 0 && !workingDirectoryEntry) continue;
-      const candidate = workingDirectoryEntry
-        ? path.resolve(cwd, executableFileName(platform))
-        : path.join(entry, executableFileName(platform));
+      const candidate = path.resolve(
+        cwd,
+        workingDirectoryEntry ? "." : entry,
+        executableFileName(platform),
+      );
       if (!(yield* isExecutableFile(candidate))) continue;
       const available = yield* compatibleCandidate(candidate, "path");
       if (available) return available;
