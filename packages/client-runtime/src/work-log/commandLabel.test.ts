@@ -88,6 +88,9 @@ describe("commandProgramName", () => {
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
     ["/bin/zsh -lc 'source ~/.nvm/nvm.sh && nvm use'", "nvm"],
+    ["sudo [ -f /etc/hosts ] && git status", "git"],
+    ["sudo -n [ -d /opt ] && pytest", "pytest"],
+    ["sudo [[ -f /etc/hosts ]] && git status", "git"],
   ])("skips shell setup commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });

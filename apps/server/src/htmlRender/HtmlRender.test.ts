@@ -63,8 +63,11 @@ describe("HtmlRender", () => {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
       const png = path.join(directory, "shot.png");
       const svg = path.join(directory, "logo.svg");
+      const encodedPng = path.join(directory, "sh%6Ft.png");
+      const literalPercent = path.join(directory, "100%25.png");
       const commented = `<!-- 📸\r\n<img src="/t3-missing/shot.png"> -->`;
       yield* fileSystem.writeFile(png, PNG_BYTES);
+      yield* fileSystem.writeFile(literalPercent, PNG_BYTES);
       yield* fileSystem.writeFileString(svg, "<svg/>");
       const kept = [
         "https://example.com/a.png",
@@ -76,9 +79,9 @@ describe("HtmlRender", () => {
       const prepared = yield* htmlRender.prepare(
         [
           "<!doctype html><html><head><title>Shots</title></head><body>",
-          `${commented}<img src="${png}"><img src="${svg}#svgView(viewBox(0,0,64,64))"><div style="background:url(${svg})"></div><div style="background:url(${svg}#mark)"></div>`,
+          `${commented}<img src="${png}"><img src="${encodedPng}"><img src="${svg}#svgView(viewBox(0,0,64,64))"><div style="background:url(${svg})"></div><div style="background:url(${svg}#mark)"></div>`,
           `<!--><img src="${png}"><!-- note --!><img src="${png}">`,
-          `<script>const marker = '<!--'; const shots = ['${png}', \`${svg}\`];</script>`,
+          `<script>const marker = '<!--'; const shots = ['${png}', \`${svg}\`, '${literalPercent}'];</script>`,
           ...kept.map((src) => `<img src="${src}">`),
           "</body></html>",
         ].join(""),
@@ -86,12 +89,12 @@ describe("HtmlRender", () => {
 
       const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
       const svgUri = `data:image/svg+xml;base64,${Base64.encode("<svg/>")}`;
-      expect(prepared).toContain(`${commented}<img src="${pngUri}">`);
+      expect(prepared).toContain(`${commented}<img src="${pngUri}"><img src="${pngUri}">`);
       expect(prepared).toContain(`<img src="${svgUri}#svgView(viewBox(0,0,64,64))">`);
       expect(prepared).toContain(`<!--><img src="${pngUri}"><!-- note --!><img src="${pngUri}">`);
       expect(prepared).toContain(`url(${svgUri})`);
       expect(prepared).toContain(`url(${svgUri}#mark)`);
-      expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
+      expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`, '${pngUri}']`);
       expect(prepared).not.toContain(directory);
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
       expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="t3-theme">'));
@@ -203,7 +206,7 @@ describe("HtmlRender", () => {
 
       const error = yield* htmlRender
         .prepare(
-          `<img title="<!--" src="${missing}"><img src="${missingSvg}#svgView(viewBox(0,0,64,64))"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
+          `<img title="<!--" src="${missing}"><img src="${missingSvg}#svgView(viewBox(0,0,64,64))"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}"><img src="/%2Fattacker/share/shot.png">`,
         )
         .pipe(Effect.flip);
 
@@ -220,6 +223,7 @@ describe("HtmlRender", () => {
         unclosed,
         upper,
         longer,
+        "/%2Fattacker/share/shot.png",
       ]);
     }).pipe(Effect.provide(layerTest)),
   );
