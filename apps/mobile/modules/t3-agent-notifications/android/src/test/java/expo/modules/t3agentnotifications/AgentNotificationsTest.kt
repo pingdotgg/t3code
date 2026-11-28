@@ -153,6 +153,18 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   }
 
   @Test
+  fun repeatedThreadAlertsReplaceOneNotificationAndClear() {
+    AgentNotifications.receive(context, update("first", false))
+    AgentNotifications.receive(context, update("second", false) + ("alert_body" to "Failed"))
+
+    val alert = manager.activeNotifications.single().notification
+    assertEquals("Failed", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+
+    AgentNotifications.clear(context)
+    assertTrue(manager.activeNotifications.isEmpty())
+  }
+
+  @Test
   fun groupedAlertDisplaysEveryThreadAndRetriesStaySilent() {
     val titles = (1..5).map { "Thread $it " + "x".repeat(111) }.joinToString(", ")
     val grouped = update("group-completion", false) + mapOf(
