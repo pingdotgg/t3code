@@ -166,7 +166,8 @@ interface FilePreviewPanelProps {
   openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
-  onOpenFile: (relativePath: string) => void;
+  onOpenFile: (relativePath: string, renderMarkdown?: boolean) => void;
+  markdownPreview?: { rendered: boolean; setRendered: (rendered: boolean) => void };
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
   /** Retained descendant breadcrumb path after navigating up; see navigateFolder. */
   folderTrail: string | undefined;
@@ -1299,6 +1300,7 @@ function FilePreviewPanelContent({
   revealLine,
   revealRequestId,
   onOpenFile,
+  markdownPreview,
   onNavigateFolder,
   folderTrail,
   onPendingChange,
@@ -1412,7 +1414,8 @@ function FilePreviewPanelContent({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const markdownRenderable = isMarkdown && (file.data?.byteLength ?? 0) <= FULL_TEXT_MAX_BYTES;
-  const renderMarkdown = markdownRenderable && renderMarkdownPreferred && revealHandled;
+  const renderMarkdown =
+    markdownRenderable && (markdownPreview?.rendered ?? renderMarkdownPreferred) && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
@@ -1525,7 +1528,7 @@ function FilePreviewPanelContent({
   const setRenderedPreferred = isMermaid
     ? setRenderMermaidPreferred
     : isMarkdown
-      ? setRenderMarkdownPreferred
+      ? (markdownPreview?.setRendered ?? setRenderMarkdownPreferred)
       : tableDelimiter
         ? setRenderTablePreferred
         : setRenderBrowserFilePreferred;
@@ -1996,10 +1999,7 @@ function FilePreviewPanelContent({
                 }
                 selectedPathRevealId={revealRequestId}
                 onOpenFile={onOpenFile}
-                onOpenFilePreview={(path) => {
-                  setRenderMarkdownPreferred(true);
-                  onOpenFile(path);
-                }}
+                onOpenFilePreview={(path) => onOpenFile(path, true)}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
                 {...(previewPath && !isMedia && !isPdf

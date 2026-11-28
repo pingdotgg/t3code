@@ -69,6 +69,7 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      renderMarkdown?: boolean;
       attachment?: ChatFileAttachment;
       /** Deepest workspace path retained for navigating back down after moving up. */
       folderTrail?: string;
@@ -198,7 +199,18 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    line?: number,
+    renderMarkdown?: boolean,
+  ) => void;
+  setFileMarkdownPreview: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    requestId: number,
+    rendered: boolean,
+  ) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
     ref: ScopedThreadRef,
@@ -313,12 +325,14 @@ const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  renderMarkdown?: boolean,
 ): RightPanelSurface => ({
   id: `file:${relativePath}`,
   kind: "file",
   relativePath,
   revealLine,
   revealRequestId,
+  ...(renderMarkdown ? { renderMarkdown: true } : {}),
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -408,8 +422,12 @@ export function pullRequestSurface(target: {
   };
 }
 
-/** A pending link belongs to the click that made it, not to a reload or a reopen. */
+/** A pending link or preview belongs to the click that made it, not to a reload or a reopen. */
 const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
+  if (surface.kind === "file" && surface.renderMarkdown !== undefined) {
+    const { renderMarkdown: _preview, ...rest } = surface;
+    return rest;
+  }
   if (surface.kind !== "pull-request" || surface.revealUrl === undefined) return surface;
   const { revealUrl: _pending, ...rest } = surface;
   return rest;
@@ -1008,7 +1026,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
-      openFile: (ref, requestedPath, line) =>
+      openFile: (ref, requestedPath, line, renderMarkdown) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             if (requestedPath === ".") {
@@ -1030,6 +1048,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               ++lastFileRevealRequestId,
+              renderMarkdown,
             );
             return {
               ...current,
@@ -1042,6 +1061,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [...withoutStandaloneExplorer, surface],
             };
           }),
+        ),
+      setFileMarkdownPreview: (ref, surfaceId, requestId, rendered) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.kind === "file" &&
+              surface.id === surfaceId &&
+              surface.revealRequestId === requestId &&
+              surface.renderMarkdown !== undefined
+                ? { ...surface, renderMarkdown: rendered }
+                : surface,
+            ),
+          })),
         ),
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
         set((state) =>
