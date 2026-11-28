@@ -195,6 +195,7 @@ const PRESSURE_INTERVAL = "5 seconds";
 const MAX_UNREAD_PRESSURE_SAMPLES = 6;
 const HEAVIEST_AGENT_COUNT = 3;
 const CPU_SAMPLE_MAX_AGE_MS = 30_000;
+const DISK_BUSY_WINDOW_MS = 60_000;
 
 /** Up to about an eighth coarser, so ordinary growth does not push an update every sample. */
 export function roundCoarsely(bytes: number): number {
@@ -256,10 +257,9 @@ const make = Effect.fn("makeHostResources")(function* () {
   const config = yield* Config.ServerConfig;
   const levels = yield* Ref.make(CALM);
   const unreadSamples = yield* Ref.make({ memory: 0, cpu: 0, io: 0, disk: 0 });
-  const lastDiskActivity = yield* Ref.make<{
-    readonly at: number;
-    readonly devices: ReturnType<typeof diskActivity>;
-  } | null>(null);
+  const diskReadings = yield* Ref.make<
+    ReadonlyArray<{ readonly at: number; readonly devices: ReturnType<typeof diskActivity> }>
+  >([]);
   const lastAgentCpu = yield* Ref.make<{
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
@@ -335,24 +335,24 @@ const make = Effect.fn("makeHostResources")(function* () {
     const disk = yield* diskSpace;
     const sampledAt = yield* Clock.currentTimeMillis;
     const devices = linux ? diskActivity(yield* readFile("/proc/diskstats")) : new Map();
-    const previousDisks = yield* Ref.getAndSet(
-      lastDiskActivity,
-      devices.size === 0 ? null : { at: sampledAt, devices },
+    const recentDisks = (yield* Ref.get(diskReadings)).filter(
+      (reading) => sampledAt - reading.at <= DISK_BUSY_WINDOW_MS,
     );
-    // An io_uring waiter (Ghostty) counts as PSI io full while no disk works, so the busiest
-    // disk's share of time doing I/O caps it; the first sample has only requests in flight.
-    const elapsedMs =
-      previousDisks === null || sampledAt - previousDisks.at > CPU_SAMPLE_MAX_AGE_MS
-        ? null
-        : sampledAt - previousDisks.at;
+    yield* Ref.set(
+      diskReadings,
+      devices.size === 0 ? [] : [...recentDisks, { at: sampledAt, devices }],
+    );
+    // An io_uring waiter (Ghostty) counts as PSI io full while no disk works, so the busiest disk's
+    // share of the minute PSI avg60 covers caps it; the first sample has only requests in flight.
+    const oldestDisks = recentDisks[0]?.devices;
     let diskBusyPercent: number | null = null;
     if (devices.size > 0) {
       diskBusyPercent = 0;
       for (const [name, device] of devices) {
-        const before = previousDisks?.devices.get(name);
+        const before = oldestDisks?.get(name);
         const busy =
-          elapsedMs !== null && elapsedMs > 0 && before !== undefined
-            ? (Math.max(0, device.ioTicks - before.ioTicks) / elapsedMs) * 100
+          before !== undefined
+            ? (Math.max(0, device.ioTicks - before.ioTicks) / DISK_BUSY_WINDOW_MS) * 100
             : device.inFlight > 0
               ? 100
               : 0;
