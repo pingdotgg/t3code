@@ -5,7 +5,7 @@ import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import {
   useCallback,
   useEffect,
@@ -28,7 +28,7 @@ import {
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -63,6 +63,8 @@ type NativeSelectionEvent = NativeSyntheticEvent<{
 type NativePasteImagesEvent = NativeSyntheticEvent<{
   readonly uris: ReadonlyArray<string>;
 }>;
+
+type NativePasteImagesPendingEvent = NativeSyntheticEvent<{ readonly delta: number }>;
 
 type NativePasteTextEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -107,6 +109,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  readonly onComposerPasteImagesPending?: (event: NativePasteImagesPendingEvent) => void;
   readonly onComposerContextPress?: (
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
   ) => void;
@@ -148,6 +151,7 @@ export function ComposerEditor({
   onChangeText,
   onSelectionChange,
   onPasteImages,
+  onPasteImagesPending,
   onPasteText,
   onFocus,
   onBlur,
@@ -158,6 +162,7 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const gt = useGT();
+  const messages = useMessages();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -182,7 +187,7 @@ export function ComposerEditor({
   }
   const bodyText = useComposerTextRole();
   const theme = useUniwindTheme();
-  const fontFamily = FONT_FAMILIES.regular;
+  const fontFamily = useAppearancePreferences().fontFamilies.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
@@ -223,7 +228,7 @@ export function ComposerEditor({
                   : token.type === "citation"
                     ? token.value
                     : basename(token.value).normalize("NFC"),
-          detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
+          detail: token.type === "context" ? composerChipSizeSuffix(record, messages) : "",
           iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
           tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
         };
@@ -238,6 +243,7 @@ export function ComposerEditor({
     modelTokens,
     theme,
     chipTextColor,
+    messages,
   ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
@@ -394,6 +400,7 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+      onComposerPasteImagesPending={(event) => onPasteImagesPending?.(event.nativeEvent.delta)}
       onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
       onComposerPasteContext={(event) => {
         const paste = event.nativeEvent;

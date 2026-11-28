@@ -237,9 +237,8 @@ export class SourceSelection {
     const range = selection?.getComposedRanges({ shadowRoots: [root] })[0];
     const { anchor: anchorOffset, focus: focusOffset } = this.#ends;
     const clipped =
-      anchorOffset !== focusOffset &&
-      (Math.min(anchorOffset, focusOffset) < mounted.start ||
-        Math.max(anchorOffset, focusOffset) > mounted.end);
+      Math.min(anchorOffset, focusOffset) < mounted.start ||
+      Math.max(anchorOffset, focusOffset) > mounted.end;
     if (this.#pressed && anchor.node === focus.node && anchor.offset === focus.offset) {
       // Chromium stops extending a drag once a script collapses its selection, so a drag whose
       // ends are both unmounted keeps what the browser has left of it.

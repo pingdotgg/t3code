@@ -7,9 +7,11 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -231,6 +233,7 @@ export const make = Effect.gen(function* () {
       issues: true,
       linkedThreadRefreshes: true,
       issueLinkedThreads: true,
+      issueTrackerAccounts: true,
       sideChats: true,
       vcsBranchStatus: true,
       inlineMessageContext: true,
@@ -305,13 +308,44 @@ export const make = Effect.gen(function* () {
       mcpHostedApproval: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,
+      agentFeedback: true,
     },
   };
 
+  // Publishing opt-in and relay links change at runtime (also from the `t3 connect` CLI), so the
+  // capability is read per request. The descriptor is the clients' liveness probe: when file I/O
+  // stalls, answer with the last value read and keep one shared read in flight instead of hanging.
+  const scope = yield* Effect.scope;
+  let lastAgentActivityPublishing = false;
+  let pendingRead: Deferred.Deferred<boolean> | undefined;
+  const startRead = Effect.suspend(() => {
+    if (pendingRead !== undefined) return Effect.succeed(pendingRead);
+    const read = Deferred.makeUnsafe<boolean>();
+    pendingRead = read;
+    return readAgentActivityPublishingActive(secrets).pipe(
+      Effect.tap((active) =>
+        Effect.sync(() => {
+          lastAgentActivityPublishing = active;
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          pendingRead = undefined;
+        }),
+      ),
+      Deferred.into(read),
+      Effect.forkIn(scope),
+      Effect.as(read),
+    );
+  }).pipe(Effect.uninterruptible);
+  const agentActivityPublishing = startRead.pipe(
+    Effect.flatMap((read) => Deferred.await(read).pipe(Effect.timeoutOption("1 second"))),
+    Effect.map(Option.getOrElse(() => lastAgentActivityPublishing)),
+  );
+
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
+    getDescriptor: agentActivityPublishing.pipe(
       Effect.map((agentActivityPublishing) => ({
         ...descriptor,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },

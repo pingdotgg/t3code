@@ -13,6 +13,7 @@ import {
   composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  imagesToAttachBesidePastedText,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
@@ -141,6 +142,12 @@ describe("composer attachment files", () => {
     expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
       true,
     );
+    // A QQ or WeChat message has its text beside an <img> in the HTML: the image attaches too.
+    const message = { files: [image], plainText: "Look at this", htmlHasImageAndText: true };
+    expect(shouldHandleComposerAttachmentPaste(message)).toBe(false);
+    expect(imagesToAttachBesidePastedText(message)).toEqual([image]);
+    expect(imagesToAttachBesidePastedText({ ...message, htmlHasImageAndText: false })).toEqual([]);
+    expect(imagesToAttachBesidePastedText({ ...message, bypassAutoAttachment: true })).toEqual([]);
   });
 
   it("preserves text when the clipboard also includes generic image files", () => {
