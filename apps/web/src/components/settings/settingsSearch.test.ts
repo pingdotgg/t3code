@@ -311,6 +311,15 @@ describe("searchSettings", () => {
     }
   });
 
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
+    }
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
