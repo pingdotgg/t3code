@@ -434,11 +434,10 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                     showSideChats={visible.sideChats}
                   />
                 ) : null}
+                {visible.tasks && props.taskList ? (
+                  <ThreadDetailsTasks plan={props.taskList} compact={false} />
+                ) : null}
               </div>
-
-              {visible.tasks && props.taskList ? (
-                <ThreadDetailsTasks plan={props.taskList} compact={density !== "full"} />
-              ) : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
               <div className="p-1 group-has-[section]/details-items:hidden">
