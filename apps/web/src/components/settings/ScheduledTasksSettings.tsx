@@ -117,6 +117,11 @@ import {
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
+import {
+  resolveCompatibleRuntimeMode,
+  resolveRuntimeModeOptions,
+  runtimeModeConfig,
+} from "../chat/runtimeModeConfig";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -1617,6 +1622,24 @@ function ScheduledTaskEditorForm({
     shownInstanceId,
     shownModel,
   );
+  const { modes: compatibleRuntimeModes, mode: providerRuntimeMode } = resolveCompatibleRuntimeMode(
+    draft.runtimeMode,
+    activeEntry?.snapshot.supportedRuntimeModes,
+  );
+  const managedPolicy = environment?.serverConfig?.managedPolicy;
+  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  const runtimeModeOptions = resolveRuntimeModeOptions(
+    compatibleRuntimeModes,
+    managedPolicy,
+    messages,
+  );
+  const runtimeMode =
+    clampManagedRuntimeMode(managedPolicy, providerRuntimeMode, compatibleRuntimeModes) ??
+    providerRuntimeMode;
+  const planModeAvailable = activeEntry?.snapshot.showInteractionModeToggle !== false;
+  const interactionMode = planModeAvailable ? draft.interactionMode : "default";
+  // A bound run uses its thread's modes, so the stored ones are kept as they are.
+  const boundToThread = draft.threadId !== "";
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1718,11 +1741,8 @@ function ScheduledTaskEditorForm({
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
       modelSelection: selection,
-      // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
-      runtimeMode:
-        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
-        draft.runtimeMode,
-      interactionMode: draft.interactionMode,
+      runtimeMode: boundToThread ? draft.runtimeMode : runtimeMode,
+      interactionMode: boundToThread ? draft.interactionMode : interactionMode,
       creationSource: "web",
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
@@ -2014,6 +2034,70 @@ function ScheduledTaskEditorForm({
               ) : null}
             </div>
           </Field>
+
+          {boundToThread ? (
+            <p className="text-sm text-muted-foreground">
+              {gt("Runs use the destination thread's workspace, permissions, and mode.")}
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={gt("Permissions")} htmlFor="scheduled-task-runtime-mode">
+                <Select
+                  value={runtimeMode}
+                  disabled={saving || !connected}
+                  onValueChange={(value) => {
+                    if (value) setDraft((current) => ({ ...current, runtimeMode: value }));
+                  }}
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
+                    <SelectValue>{messages(runtimeModeConfig[runtimeMode].label)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {runtimeModeOptions.map((option) => (
+                      <SelectItem
+                        key={option.mode}
+                        value={option.mode}
+                        label={option.label}
+                        disabled={option.disabledReason !== undefined}
+                      >
+                        <span className="block truncate">{option.label}</span>
+                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                          {option.disabledReason ?? option.description}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {messages(runtimeModeConfig[runtimeMode].description)}
+                </p>
+              </Field>
+
+              <Field label={gt("Mode", { $context: "interaction mode, build or plan" })}>
+                <ToggleGroup
+                  aria-label={gt("Interaction mode")}
+                  value={[interactionMode]}
+                  onValueChange={(values) => {
+                    const mode = values[0];
+                    if (mode === "default" || mode === "plan")
+                      setDraft((current) => ({ ...current, interactionMode: mode }));
+                  }}
+                >
+                  <Toggle value="default" disabled={saving || !connected || !planModeAvailable}>
+                    {gt("Build", { $context: "interaction mode" })}
+                  </Toggle>
+                  <Toggle value="plan" disabled={saving || !connected || !planModeAvailable}>
+                    {gt("Plan", { $context: "interaction mode" })}
+                  </Toggle>
+                </ToggleGroup>
+                <p className="text-xs text-muted-foreground">
+                  {planModeAvailable
+                    ? gt("Plan drafts a proposal before acting.")
+                    : gt("Plan is unavailable for this provider.")}
+                </p>
+              </Field>
+            </div>
+          )}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&

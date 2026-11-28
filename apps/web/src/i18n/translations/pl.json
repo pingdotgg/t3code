@@ -13102,5 +13102,12 @@
   "c63d942911808821": "Zielony",
   "75f923f6e3e41def": "Biały",
   "04cabf0f2aa08368": "Czarny",
-  "a992afd4cdaa1317": "Anuluj rysowanie"
+  "a992afd4cdaa1317": "Anuluj rysowanie",
+  "cb66aa6471c80179": "Budowanie",
+  "a15816b54dc2fd14": "Planowanie",
+  "3345dbc93147b56c": "Planowanie przygotowuje propozycję przed działaniem.",
+  "ac5d2d6d0215d5fc": "Planowanie jest niedostępne dla tego dostawcy.",
+  "ffb03f7e9c3d11ad": "Tryb interakcji",
+  "cbcf2f92931a93fd": "Uruchomienia korzystają z obszaru roboczego, uprawnień i trybu wątku docelowego.",
+  "8a3707795c8cbd54": "Tryb"
 }

@@ -1,5 +1,9 @@
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import {
+  runtimeModeChoicesForSupportedModes,
+  withManagedRuntimeModeLimits,
+} from "../threads/thread-settings-options";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -11,6 +15,9 @@ import { readEnvironmentScope } from "../../state/session";
 import type {
   EnvironmentId,
   ProjectId,
+  RuntimeMode,
+  ManagedPolicySummary,
+  ProviderInteractionMode,
   ScheduledTask,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
@@ -439,6 +446,97 @@ function PickerRow(props: {
   );
 }
 
+function TaskRuntimeRow({
+  draft,
+  provider,
+  managedPolicy,
+  setDraft,
+}: {
+  readonly draft: Draft;
+  readonly provider: { readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> } | null;
+  readonly managedPolicy: ManagedPolicySummary | undefined;
+  readonly setDraft: (update: (current: Draft) => Draft) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const providerChoices = runtimeModeChoicesForSupportedModes(provider?.supportedRuntimeModes);
+  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  const choices = withManagedRuntimeModeLimits(providerChoices, [managedPolicy], m);
+  const runtimeMode = taskRuntimeMode(draft.runtimeMode, providerChoices, managedPolicy);
+  const selected = choices.find((choice) => choice.mode === runtimeMode);
+  return (
+    <SelectRow
+      label={gt("Permissions")}
+      value={selected ? m(selected.label) : gt("Choose permissions")}
+      actions={choices.map((choice) => ({
+        id: choice.mode,
+        title: m(choice.label),
+        subtitle: choice.disabledReason ?? m(choice.description),
+        state: choice.mode === runtimeMode ? ("on" as const) : undefined,
+        attributes: { disabled: choice.disabledReason !== undefined },
+      }))}
+      onSelect={(id) => {
+        const choice = choices.find((candidate) => candidate.mode === id);
+        if (choice && choice.disabledReason === undefined)
+          setDraft((current) => ({ ...current, runtimeMode: choice.mode }));
+      }}
+    />
+  );
+}
+
+/** The mode an unbound task runs in: the provider's nearest mode, lowered to any managed ceiling. */
+function taskRuntimeMode(
+  mode: RuntimeMode,
+  providerChoices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
+  managedPolicy: ManagedPolicySummary | undefined,
+) {
+  const modes = providerChoices.map((choice) => choice.mode);
+  const supported = modes.includes(mode) ? mode : (modes[0] ?? mode);
+  return clampManagedRuntimeMode(managedPolicy, supported, modes) ?? supported;
+}
+
+function TaskInteractionRow({
+  draft,
+  planModeAvailable,
+  disabled,
+  setDraft,
+}: {
+  readonly draft: Draft;
+  readonly planModeAvailable: boolean;
+  readonly disabled: boolean;
+  readonly setDraft: (update: (current: Draft) => Draft) => void;
+}) {
+  const gt = useGT();
+  return (
+    <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+      <View className="min-w-0 flex-1">
+        <Text textRole="body" className="text-foreground">
+          {gt("Mode", { $context: "interaction mode, build or plan" })}
+        </Text>
+        <Text className="text-sm text-foreground-muted">
+          {planModeAvailable
+            ? gt("Plan drafts a proposal before acting.")
+            : gt("Plan is unavailable for this provider.")}
+        </Text>
+      </View>
+      <SegmentedControl
+        variant="card"
+        // Segments share the track's width, so without one the control collapses beside the text.
+        className="w-48 shrink-0"
+        options={[
+          { value: "default", label: gt("Build", { $context: "interaction mode" }) },
+          { value: "plan", label: gt("Plan", { $context: "interaction mode" }) },
+        ]}
+        selected={planModeAvailable ? draft.interactionMode : "default"}
+        onSelect={(mode: ProviderInteractionMode) => {
+          if (!disabled && planModeAvailable)
+            setDraft((current) => ({ ...current, interactionMode: mode }));
+        }}
+      />
+    </View>
+  );
+}
+
 export function SettingsScheduledTasksRouteScreen() {
   const gt = useGT();
   const [now, setNow] = useState(Date.now);
@@ -805,6 +903,12 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const providerForDraft =
+    config?.providers.find(
+      (provider) => provider.instanceId === draft.modelSelection?.instanceId,
+    ) ?? null;
+  const planModeAvailable = providerForDraft?.showInteractionModeToggle !== false;
+  const boundToThread = draft.threadId !== null;
   const save = async () => {
     const current = readEditor();
     if (!current || current.environmentId !== environmentId) return;
@@ -901,10 +1005,15 @@ function TaskForm({
                 baseRef: worktreeBaseRef,
                 startFromOrigin: draft.startFromOrigin,
               },
-      // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
-      runtimeMode:
-        clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
-      interactionMode: draft.task?.interactionMode ?? "default",
+      // A bound run uses its thread's modes, so the stored ones are kept as they are.
+      runtimeMode: boundToThread
+        ? draft.runtimeMode
+        : taskRuntimeMode(
+            draft.runtimeMode,
+            runtimeModeChoicesForSupportedModes(providerForDraft?.supportedRuntimeModes),
+            config?.managedPolicy,
+          ),
+      interactionMode: boundToThread || planModeAvailable ? draft.interactionMode : "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
     submissionPending.current = true;
@@ -1087,6 +1196,27 @@ function TaskForm({
             />
           ) : null}
         </SettingsSection>
+
+        {boundToThread ? (
+          <Text className="px-1 text-sm text-foreground-muted">
+            {gt("Runs use the destination thread's workspace, permissions, and mode.")}
+          </Text>
+        ) : (
+          <SettingsSection>
+            <TaskRuntimeRow
+              draft={draft}
+              provider={providerForDraft}
+              managedPolicy={config?.managedPolicy}
+              setDraft={setDraft}
+            />
+            <TaskInteractionRow
+              draft={draft}
+              planModeAvailable={planModeAvailable}
+              disabled={saving || dictationPending || environmentUnavailable}
+              setDraft={setDraft}
+            />
+          </SettingsSection>
+        )}
 
         <SettingsSection title={gt("Workspace")}>
           <SelectRow

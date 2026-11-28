@@ -1,6 +1,7 @@
 import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
 import type {
   ModelSelection,
+  ProviderInteractionMode,
   ServerConfig,
   ProjectId,
   RuntimeMode,
@@ -214,6 +215,7 @@ export type ScheduledTaskDraft = {
   readonly enabled: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
 };
 
 function draftSignature(draft: ScheduledTaskDraft): string {
@@ -244,6 +246,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.enabled,
     draft.startFromOrigin,
     draft.runtimeMode,
+    draft.interactionMode,
   ]);
 }
 
@@ -306,6 +309,7 @@ export function createDraft(
     enabled: true,
     startFromOrigin: true,
     runtimeMode: "full-access",
+    interactionMode: "default",
   };
 }
 
@@ -332,5 +336,6 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
     runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
   };
 }
