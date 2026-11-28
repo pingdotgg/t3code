@@ -644,6 +644,84 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
   );
 });
 
+it.layer(NodeServices.layer)("t3 update with a service whose home it cannot read", (it) => {
+  it.effect("says the service's home could not be determined, not that it serves another", () =>
+    Effect.gen(function* () {
+      yield* withoutTerminals;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const targetVersion = "99.0.0";
+      const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
+      yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+      yield* fs.writeFileString(runtime.entryPath, "");
+      yield* fs.writeFileString(runtime.sentinelPath, `${targetVersion}\n`);
+      const unitPath = path.join(baseDir, "t3code.service");
+      // A unit that names no home T3 Code can read, such as a quoted Environment= line.
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: true,
+          current: false,
+          problems: [],
+          unitPath,
+          logPath: path.join(baseDir, "boot-service.log"),
+        }),
+      });
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          input.args?.includes("__service-preflight") === true
+            ? unrelatedLsof.run(input).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  stdout: JSON.stringify({
+                    status: "ready",
+                    version: targetVersion,
+                    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                  }),
+                })),
+              )
+            : unrelatedLsof.run(input),
+      });
+
+      const output = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        databasePath: path.join(baseDir, "statev2.sqlite"),
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: targetVersion,
+        allowDowngrade: false,
+        assumeYes: true,
+      }).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, runner),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      assert.notInclude(output, "another T3 home");
+      assert.include(
+        output,
+        `A background service definition was found, but its T3 home could not be determined, so it was left unchanged. Check ${unitPath}.`,
+      );
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
+  );
+});
+
 it.layer(NodeServices.layer)("t3 update checks the database before switching", (it) => {
   const preflightOutput = (stdout: string, code = 0) => ({
     stdout,
