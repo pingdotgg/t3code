@@ -38,9 +38,9 @@ export function queuedRunsInDeliveryOrder(
     if (completion === undefined || message === undefined) {
       return [...ordered, ...completions.slice(completionIndex), ...messages.slice(messageIndex)];
     }
-    if (
-      DateTime.toEpochMillis(completion.requestedAt) <= DateTime.toEpochMillis(message.requestedAt)
-    ) {
+    const requestTimeOrder =
+      DateTime.toEpochMillis(completion.requestedAt) - DateTime.toEpochMillis(message.requestedAt);
+    if ((requestTimeOrder || completion.ordinal - message.ordinal) <= 0) {
       ordered.push(completion);
       completionIndex += 1;
     } else {
