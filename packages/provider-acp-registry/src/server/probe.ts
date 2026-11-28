@@ -104,6 +104,7 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
 }
 
 function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
+  const group = candidate.group ? boundedText(candidate.group, MAX_NAME_LENGTH) : "";
   return {
     id,
     name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
@@ -111,6 +112,7 @@ function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegis
       candidate.description === null
         ? null
         : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+    ...(group ? { group } : {}),
   };
 }
 
@@ -223,7 +225,7 @@ export function acpRegistryLiveCatalogKey(
 ): string {
   if (configuration.models.length === 0) return "";
   return `${configuration.modelsFromModelSelect ? "select" : "list"}:${configuration.models
-    .map((model) => `${model.id}\0${model.name}`)
+    .map((model) => `${model.id}\0${model.name}\0${model.group ?? ""}`)
     .join("\u001f")}`;
 }
 
@@ -247,6 +249,7 @@ export function normalizeAcpRegistryLiveConfiguration(
           id: model.value,
           name: model.name,
           description: model.description ?? null,
+          ...(model.groupName ? { group: model.groupName } : {}),
         }));
   const boundedCurrentModelId =
     currentModelId === undefined

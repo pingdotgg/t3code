@@ -7,6 +7,7 @@ import {
   type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSubProvider,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -198,11 +199,25 @@ function modelsFromDiscovery(
       : discovered.map((model) => ({
           slug: model.id,
           name: model.name,
+          ...(model.group ? { subProvider: model.group } : {}),
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
           capabilities: capabilitiesFor(model),
         }));
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
+}
+
+function subProvidersFromModels(
+  models: ReadonlyArray<Pick<ServerProviderModel, "subProvider">>,
+): ReadonlyArray<ServerProviderSubProvider> | undefined {
+  const seen = new Set<string>();
+  const subProviders: Array<ServerProviderSubProvider> = [];
+  for (const model of models) {
+    if (!model.subProvider || seen.has(model.subProvider)) continue;
+    seen.add(model.subProvider);
+    subProviders.push({ name: model.subProvider });
+  }
+  return subProviders.length > 0 ? subProviders : undefined;
 }
 
 function acpRegistrySnapshotReadiness(
@@ -288,6 +303,8 @@ function baseSnapshot(
       ? null
       : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
         officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
+  const models = modelsFromDiscovery(input.probe?.probe, input.settings.customModels);
+  const subProviders = subProvidersFromModels(models);
   return {
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
@@ -313,7 +330,8 @@ function baseSnapshot(
             : input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
-    models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+    models,
+    ...(subProviders ? { subProviders } : {}),
     ...(input.probe === undefined
       ? {}
       : {
@@ -346,7 +364,7 @@ export function applyAcpRegistryLiveConfiguration(
   customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
 ): ServerProvider {
-  const { message: _staleProbeMessage, ...snapshot } = provider;
+  const { message: _staleProbeMessage, subProviders: _staleSubProviders, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
   // and apply any live option descriptors to it.
   const probedModels = provider.models.filter((model) => !model.isCustom);
@@ -374,20 +392,24 @@ export function applyAcpRegistryLiveConfiguration(
           id: model.slug,
           name: model.name,
           description: null,
+          ...(model.subProvider ? { group: model.subProvider } : {}),
         })),
         currentModelId: selectedProbedModelId,
       };
+  const models =
+    !useLiveCatalog && configuration.configOptions.length === 0
+      ? withAcpRegistryDefaultModel(provider.models, selectedProbedModelId)
+      : modelsFromDiscovery(
+          discovery,
+          customModels,
+          previousModels.filter((model) => !model.isCustom),
+        );
+  const subProviders = subProvidersFromModels(models);
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models:
-      !useLiveCatalog && configuration.configOptions.length === 0
-        ? withAcpRegistryDefaultModel(provider.models, selectedProbedModelId)
-        : modelsFromDiscovery(
-            discovery,
-            customModels,
-            previousModels.filter((model) => !model.isCustom),
-          ),
+    models,
+    ...(subProviders ? { subProviders } : {}),
   };
 }
 

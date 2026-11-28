@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "./sessionConfig.ts";
+import {
+  ACP_SESSION_MODE_OPTION_ID,
+  acpProviderOptionDescriptors,
+  flattenSelectChoices,
+} from "./sessionConfig.ts";
 
 describe("acpProviderOptionDescriptors", () => {
   it("maps non-model select options and excludes model and collaboration categories", () => {
@@ -230,5 +234,31 @@ describe("acpProviderOptionDescriptors", () => {
       currentValue: exactValue,
       options: [{ id: exactValue, label: "Exact" }],
     });
+  });
+});
+
+describe("flattenSelectChoices", () => {
+  it("preserves trimmed group names on grouped choices and omits them when ungrouped or blank", () => {
+    expect(
+      flattenSelectChoices([
+        {
+          groupId: "nodecode",
+          name: " nodecode ",
+          options: [{ value: "nodecode/cyber-v1", name: "Cyber v1" }],
+        },
+        {
+          groupId: "blank",
+          name: "   ",
+          options: [{ value: "other/model", name: "Other" }],
+        },
+      ]),
+    ).toEqual([
+      { value: "nodecode/cyber-v1", name: "Cyber v1", groupName: "nodecode" },
+      { value: "other/model", name: "Other" },
+    ]);
+
+    expect(flattenSelectChoices([{ value: "flat", name: "Flat" }])).toEqual([
+      { value: "flat", name: "Flat" },
+    ]);
   });
 });
