@@ -556,6 +556,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("ad-hoc signs unsigned macOS builds so the app keeps its bundle identifier", () =>
+    Effect.gen(function* () {
+      for (const signed of [false, true]) {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dir",
+          "0.0.33",
+          signed,
+          false,
+          undefined,
+          undefined,
+        );
+        const { sign, identity, hardenedRuntime, notarize } = config.mac as Record<string, unknown>;
+        if (signed) {
+          assert.isString(sign);
+          assert.isUndefined(identity);
+          assert.isUndefined(hardenedRuntime);
+          assert.isUndefined(notarize);
+        } else {
+          assert.isUndefined(sign);
+          assert.equal(identity, "-");
+          assert.equal(hardenedRuntime, false);
+          assert.equal(notarize, false);
+        }
+      }
+    }),
+  );
+
   it.effect("names the Electron window class in the Linux desktop entry", () =>
     Effect.gen(function* () {
       const linux = yield* createBuildConfig(

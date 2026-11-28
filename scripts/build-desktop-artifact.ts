@@ -2923,7 +2923,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : {
+            // Unsigned builds are only linker-signed (identifier "Electron"), so macOS applies TCC, including
+            // Local Network, to "Electron" instead of the bundle id. Ad-hoc sign for the bundle identifier;
+            // hardened runtime stays off because its library validation rejects the pre-signed Electron Framework.
+            identity: "-",
+            hardenedRuntime: false,
+            notarize: false,
+          }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
