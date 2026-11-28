@@ -101,4 +101,22 @@ describe("parseGrepOutput", () => {
     expect(results?.[0]).toEqual({ fileName: "a.ts", line: 1, preview: "x" });
     expect(results?.[1]?.preview?.length).toBe(500);
   });
+
+  it.each([
+    [498, `(${"x".repeat(498)}`],
+    [497, `(${"x".repeat(497)}🚀`],
+  ])("keeps whole characters when truncating a note with %i padding units", (padding, preview) => {
+    expect(parseGrepOutput(`a.ts:1:hit\n(${"x".repeat(padding)}🚀)`, ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: "hit" },
+      { fileName: ".", preview },
+    ]);
+  });
+
+  it("charges only retained note characters against the preview budget", () => {
+    const text = "m".repeat(7_501);
+    expect(parseGrepOutput(`a.ts:1:${text}\n(${"x".repeat(498)}🚀)`, ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: text },
+      { fileName: ".", preview: `(${"x".repeat(498)}` },
+    ]);
+  });
 });

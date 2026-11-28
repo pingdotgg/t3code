@@ -81,7 +81,12 @@ export function parseGrepOutput(
   if (matches.length === 0 || matches.some((match) => match.line < 1 || !match.fileName.trim())) {
     return undefined;
   }
-  const note = notes.join("\n").slice(0, NOTE_MAX_CHARS);
+  const joinedNotes = notes.join("\n");
+  let noteEnd = NOTE_MAX_CHARS;
+  const before = joinedNotes.charCodeAt(noteEnd - 1);
+  const after = joinedNotes.charCodeAt(noteEnd);
+  if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) noteEnd--;
+  const note = joinedNotes.slice(0, noteEnd);
   let budget = PREVIEW_BUDGET_CHARS - note.length;
   const results: GrepOutputResult[] = matches.map((match) => {
     const fits = match.text.length <= budget;
