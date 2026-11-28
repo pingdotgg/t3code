@@ -1244,6 +1244,23 @@ interface MarkdownLinkHandlers {
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
 }
 
+function withUnavailableThreadLinks(
+  handlers: MarkdownLinkHandlers,
+  unavailable: ReadonlySet<string>,
+): MarkdownLinkHandlers {
+  if (unavailable.size === 0) return handlers;
+  return {
+    ...handlers,
+    onLinkPress: (href, reply) => {
+      if (!unavailable.has(href)) handlers.onLinkPress(href, reply);
+    },
+    onFileContextMenuAction: (href, actionId, reply) => {
+      if (actionId === "open-thread" && unavailable.has(href)) return;
+      handlers.onFileContextMenuAction(href, actionId, reply);
+    },
+  };
+}
+
 interface MarkdownStyleSets {
   readonly user: MarkdownStyleSet;
   readonly assistant: MarkdownStyleSet;
@@ -1322,7 +1339,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const gt = useGT();
-  const liveMarkdown = useLiveThreadLinkLabels(
+  const live = useLiveThreadLinkLabels(
     props.markdown,
     props.environmentId,
     useLinkedEnvironments(
@@ -1330,6 +1347,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       linkedThreadEnvironmentIds(props.markdown, props.environmentId),
     ),
   );
+  const liveMarkdown = live.markdown;
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
     selectors: ReturnType<typeof collectMobileAssistantTextSelectors>;
@@ -1351,13 +1369,22 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const withGallery = useFilePreviewGallery();
   const onImagePress = props.linkHandlers.onImagePress;
   const linkHandlers: MarkdownLinkHandlers = {
-    ...props.linkHandlers,
-    ...(onImagePress ? { onImagePress: (href: string) => onImagePress(href, withGallery) } : {}),
-    onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
-    onFileContextMenuAction: (href, actionId) =>
-      props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
+    ...withUnavailableThreadLinks(
+      {
+        ...props.linkHandlers,
+        ...(onImagePress
+          ? { onImagePress: (href: string) => onImagePress(href, withGallery) }
+          : {}),
+        onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
+        onFileContextMenuAction: (href, actionId) =>
+          props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
+      },
+      live.unavailable,
+    ),
     linkCustomization: (href) =>
-      withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
+      live.unavailable.has(href)
+        ? enrichedThreadLinkCustomization(href, false)
+        : withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
 
   return (
@@ -2774,7 +2801,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   const navigation = useNavigation();
   const openThreadLink = useOpenThreadLink(props.environmentId);
   const { selectedThread } = useThreadSelection();
-  const liveText = useLiveThreadLinkLabels(
+  const live = useLiveThreadLinkLabels(
     props.text,
     props.environmentId,
     useLinkedEnvironments(
@@ -2782,6 +2809,8 @@ function UserMessageContent(props: UserMessageContentProps) {
       linkedThreadEnvironmentIds(props.text, props.environmentId),
     ),
   );
+  const liveText = live.markdown;
+  const linkHandlers = withUnavailableThreadLinks(props.linkHandlers, live.unavailable);
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const displayLabel = (label: string, contextId: string) => {
     const record = props.context?.records.find((item) => item.contextId === contextId);
@@ -2798,7 +2827,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   });
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
-    if (!reference) return props.linkHandlers.onLinkPress?.(href);
+    if (!reference) return linkHandlers.onLinkPress(href);
     const record = props.context?.records.find(
       (record) => record.contextId === reference.contextId,
     );
@@ -2833,7 +2862,7 @@ function UserMessageContent(props: UserMessageContentProps) {
         {...props}
         text={text}
         linkHandlers={{
-          ...props.linkHandlers,
+          ...linkHandlers,
           onLinkPress,
           fileContextMenu: (href) => {
             const reference = parseComposerContextHref(href);
@@ -2851,7 +2880,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           },
           onFileContextMenuAction: (href, actionId) => {
             const reference = parseComposerContextHref(href);
-            if (!reference) return props.linkHandlers.onFileContextMenuAction(href, actionId);
+            if (!reference) return linkHandlers.onFileContextMenuAction(href, actionId);
             if (actionId === "open-context") return onLinkPress(href);
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
@@ -2875,11 +2904,13 @@ function UserMessageContent(props: UserMessageContentProps) {
             }
           },
           linkCustomization: (href) =>
-            withChipIcon(
-              enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
-                props.linkHandlers.linkCustomization?.(href),
-              threadIcons.get(href),
-            ),
+            live.unavailable.has(href)
+              ? enrichedThreadLinkCustomization(href, false)
+              : withChipIcon(
+                  enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+                    props.linkHandlers.linkCustomization?.(href),
+                  threadIcons.get(href),
+                ),
         }}
       />
       {selected ? (
