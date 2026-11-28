@@ -90,6 +90,7 @@ const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
 const SHELL_NON_CODE =
   /\\[\s\S]|\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<sep>^|[\s;&|(])#[^\n]*|<<-?[ \t]*(?<q>['"]?)(?<tag>\w+)\k<q>[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\k<tag>[ \t]*(?=\n|$)|[\s\S]*$)/gu;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
+const COMMAND_SEPARATORS = new RegExp(COMMAND_SEPARATOR, "gu");
 // Commands that print other change requests' URLs, so output beside them proves nothing.
 const LISTS_CHANGE_REQUESTS =
   /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
@@ -107,52 +108,31 @@ function shellScript(input: string): string {
       ).join("");
 }
 
-/** A script split at command separators that sit outside quotes and comments. */
-function shellSegments(script: string): ReadonlyArray<string> {
-  const segments: Array<string> = [];
-  let current = "";
-  let quote: string | null = null;
-  let wordStart = true;
-  for (let index = 0; index < script.length; index++) {
-    const char = script[index] ?? "";
-    if (quote !== null) {
-      current += char;
-      if (char === "\\" && quote === '"') current += script[++index] ?? "";
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "#" && wordStart) {
-      const end = script.indexOf("\n", index);
-      current += script.slice(index, end === -1 ? undefined : end);
-      index = end === -1 ? script.length : end - 1;
-      continue;
-    }
-    wordStart = /[\s;&|(]/u.test(char);
-    if (char === "'" || char === '"') quote = char;
-    if (char === "\\") {
-      current += char + (script[++index] ?? "");
-      continue;
-    }
-    const pair = script.slice(index, index + 2);
-    if (pair === "&&" || pair === "||" || char === ";" || char === "|" || char === "\n") {
-      segments.push(current);
-      current = "";
-      if (pair === "&&" || pair === "||") index++;
-      continue;
-    }
-    current += char;
-  }
-  segments.push(current);
-  return segments;
-}
+/** Replaces each piece of text a script carries; a comment keeps the separator it starts after. */
+const replaceNonCode = (script: string, replace: (text: string) => string) =>
+  script.replace(SHELL_NON_CODE, (match, ...args: ReadonlyArray<unknown>) => {
+    const { sep } = args.at(-1) as { readonly sep: string | undefined };
+    return sep === undefined ? replace(match) : sep + replace(match.slice(sep.length));
+  });
 
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
-  script.replace(SHELL_NON_CODE, (match, ...args: ReadonlyArray<unknown>) => {
-    const { sep } = args.at(-1) as { readonly sep: string | undefined };
-    if (sep !== undefined) return `${sep}''`;
-    return match.startsWith("\\") ? match : match.startsWith("<<") ? "<<" : "''";
-  });
+  replaceNonCode(script, (text) =>
+    text.startsWith("\\") ? text : text.startsWith("<<") ? "<<" : "''",
+  );
+
+/** A script split at the command separators in its code, leaving carried text intact. */
+function shellSegments(script: string): ReadonlyArray<string> {
+  const masked = replaceNonCode(script, (text) => "_".repeat(text.length));
+  const segments: Array<string> = [];
+  let start = 0;
+  for (const separator of masked.matchAll(COMMAND_SEPARATORS)) {
+    segments.push(script.slice(start, separator.index));
+    start = separator.index + separator[0].length;
+  }
+  segments.push(script.slice(start));
+  return segments;
+}
 
 const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
 

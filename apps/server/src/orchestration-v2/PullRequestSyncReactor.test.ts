@@ -2335,6 +2335,13 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create beside a named read after heredoc text with an apostrophe",
+      input:
+        "echo '<<FAKE'; cat <<EOF\n'\nEOF\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "<<FAKE\n'\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
       name: "a create command after a comment that starts at a separator",
       input: "gh pr view --json url --jq .url;# note; gh pr create --fill",
       output: "https://github.com/owner/repository/pull/124",
