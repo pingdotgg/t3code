@@ -3055,6 +3055,36 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect(
+    "removes a deleted No project thread's scratch folder when deletion cleanup is on",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fixture = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: null,
+            worktreeOnDelete: true,
+          });
+          const scratchRoot = `${fixture.config.baseDir}/scratch`;
+          const folder = `${scratchRoot}/quiet-otter`;
+          yield* fixture.fs.makeDirectory(folder, { recursive: true });
+          yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+          fixture.setProjectRoots([scratchRoot]);
+          fixture.setStoredWorktreePaths([folder]);
+          fixture.setPolicy("tracked-changes");
+          fixture.setThreads([]);
+          fixture.setDeletedThreads([
+            shell({ worktreePath: folder, deletedAt: at(-DAY_MS), status: "completed" }),
+          ]);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries).toEqual([
+            expect.objectContaining({ path: folder, outcome: "removed" }),
+          ]);
+          expect(yield* fixture.fs.exists(folder)).toBe(false);
+        }),
+      ),
+  );
   it.effect.each([
     {
       name: "a Git repository in a subfolder",
