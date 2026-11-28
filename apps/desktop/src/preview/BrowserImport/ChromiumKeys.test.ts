@@ -148,6 +148,13 @@ describe("Linux Chromium secrets", () => {
     ),
   );
 
+  it.effect("returns every key a KDE wallet holds for the browser", () =>
+    readLinuxSecret("chrome").pipe(
+      Effect.tap((secrets) => Effect.sync(() => expect(secrets).toEqual(["stale", "live é"]))),
+      Effect.provide(layerHelper({ stdout: "stale\0live é\0", exitCode: 5 })),
+    ),
+  );
+
   it.effect("reports an unconfigured helper without searching PATH", () =>
     readLinuxSecret("chromium").pipe(
       Effect.flip,
@@ -171,7 +178,9 @@ describe("Linux Chromium secrets", () => {
         linuxSecretApplication: source.linuxSecretApplication,
       });
       expect(captured?.args).toEqual(["chrome"]);
-      expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
+      expect(keys.cbcV11?.map((key) => key.toString("hex"))).toEqual([
+        "95aa769d6a5beca14d5d90ae655db112",
+      ]);
     }).pipe(
       Effect.provide(
         layerHelper({ stdout: "linux-secret \t\n", capture: (value) => (captured = value) }),
@@ -193,7 +202,7 @@ describe("Linux Chromium secrets", () => {
         Effect.provide(layerHelper({ stdoutStream: stdout, stderrStream: stderr })),
       );
 
-      expect(secret).toBe("linux-secret");
+      expect(secret).toEqual(["linux-secret"]);
     }),
   );
 

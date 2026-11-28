@@ -39,7 +39,8 @@ export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("Ch
 
 export interface ChromiumKeyMaterial {
   readonly cbcV10?: Buffer;
-  readonly cbcV11?: Buffer;
+  /** A KDE wallet can hold stale copies of the key, so each candidate is tried. */
+  readonly cbcV11?: ReadonlyArray<Buffer>;
   readonly cbcV11Error?: ChromiumKeyError;
   /** Linux clients can encrypt with an empty passphrase; retry it on failure (crbug.com/1195256). */
   readonly cbcEmpty?: Buffer;
@@ -105,6 +106,11 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
       ).pipe(
         Effect.mapError((cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause })),
       );
+      // Exit 5: several wallet items matched; each secret is followed by a NUL byte.
+      if (Number(exitCode) === 5) {
+        const secrets = secret.split("\0").filter((candidate) => candidate !== "");
+        if (secrets.length > 0) return secrets;
+      }
       if (Number(exitCode) !== 0) {
         return yield* new ChromiumKeyError({
           reason:
@@ -118,7 +124,7 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
       if (secret === "") {
         return yield* new ChromiumKeyError({ reason: "keychainItemMissing" });
       }
-      return secret;
+      return [secret];
     }),
   );
 });
@@ -262,8 +268,8 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
       : undefined;
     return {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
-      ...(typeof keyringSecret === "string"
-        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
+      ...(Array.isArray(keyringSecret)
+        ? { cbcV11: keyringSecret.map((secret) => derive(secret, LINUX_KEY_ITERATIONS)) }
         : keyringSecret
           ? { cbcV11Error: keyringSecret }
           : {}),
