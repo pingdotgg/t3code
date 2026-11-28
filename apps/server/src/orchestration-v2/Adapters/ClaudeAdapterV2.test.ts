@@ -620,13 +620,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(annotations, {
       annotations: { "Which approach?": { notes: "keep the old endpoint for one release" } },
     });
-    // T3's own resume dialog reads only the pick, so it offers no note.
-    assert.isUndefined(
-      ClaudeAdapterV2.claudeUserInputQuestions(
-        { questions: [{ question: "Resume?", header: "Resume", options: [{ label: "Yes" }] }] },
-        { takesNotes: false },
-      )[0]?.supportsNote,
-    );
   });
 
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {

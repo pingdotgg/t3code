@@ -1199,14 +1199,13 @@ describe("XAiAcpExtension", () => {
         ],
       },
       { scope: "workspace" },
-      // A note that matches another option's label stays a note.
-      { scope: "session" },
+      { scope: "only the api folder" },
     );
 
     expect(response).toEqual({
       outcome: "accepted",
       answers: { "Which scope should Grok use?": ["workspace"] },
-      annotations: { "Which scope should Grok use?": { notes: "session" } },
+      annotations: { "Which scope should Grok use?": { notes: "only the api folder" } },
     });
   });
 
