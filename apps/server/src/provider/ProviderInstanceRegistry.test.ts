@@ -13,6 +13,7 @@ import {
   type ClaudeSettings,
   type CodexSettings,
   ProviderDriverKind,
+  type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   type ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
@@ -22,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -382,6 +384,30 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("restores the default Pi name after clearing a saved custom label", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("pi-account");
+      const entry = {
+        driver: PiDriver.driverKind,
+        enabled: true,
+        config: { ...PiDriver.defaultConfig(), binaryPath: "unused-pi" },
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [PiDriver],
+        configMap: { [instanceId]: { ...entry, displayName: "My Pi account" } },
+      });
+      const initial = yield* registry.getInstance(instanceId);
+      const before = yield* initial!.snapshot.getSnapshot;
+      expect(before.displayName).toBe("My Pi account");
+
+      yield* mutator.reconcile({ [instanceId]: entry });
+
+      const updated = yield* registry.getInstance(instanceId);
+      const after = yield* updated!.snapshot.getSnapshot;
+      expect(after.displayName).toBe("Pi");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
@@ -653,6 +679,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           [claudeId]: {
             driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
+            usageAccess: "allowed",
             config: makeClaudeConfig({
               enabled: true,
               binaryPath: fixtures.claudeBinaryPath,
@@ -733,12 +760,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
+  const makeClaudeResetRegistry = (
+    claim: { result: string; usageFailsAfterClaim: boolean },
+    usageAccess: "allowed" | undefined,
+  ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const fixtures = yield* makeTildeProviderFixtures();
       const marker = path.join(fixtures.claudeHomePath, "redeemed");
+      let usageReads = 0;
       yield* fs.writeFileString(
         path.join(fixtures.claudeHomePath, ".credentials.json"),
         '{"claudeAiOauth":{"accessToken":"fake-token"}}',
@@ -750,6 +781,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (request.url.endsWith("/api/oauth/usage")) {
+            usageReads += 1;
             return HttpClientResponse.fromWeb(
               request,
               Response.json({
@@ -769,26 +801,32 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         }),
       );
       const instanceId = ProviderInstanceId.make("claude_reset");
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const entry: ProviderInstanceConfig = {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+        ...(usageAccess === undefined ? {} : { usageAccess }),
+        environment: [
+          { name: "T3_CLAUDE_RESET_MARKER", value: marker, sensitive: false },
+          ...(claim.usageFailsAfterClaim
+            ? [{ name: "T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM", value: "1", sensitive: false }]
+            : []),
+        ],
+        config: makeClaudeConfig({
+          enabled: true,
+          binaryPath: fixtures.claudeBinaryPath,
+          homePath: fixtures.claudeHomePath,
+        }),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
         drivers: [ClaudeDriver],
-        configMap: {
-          [instanceId]: {
-            driver: ProviderDriverKind.make("claudeAgent"),
-            enabled: true,
-            environment: [
-              { name: "T3_CLAUDE_RESET_MARKER", value: marker, sensitive: false },
-              ...(claim.usageFailsAfterClaim
-                ? [{ name: "T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM", value: "1", sensitive: false }]
-                : []),
-            ],
-            config: makeClaudeConfig({
-              enabled: true,
-              binaryPath: fixtures.claudeBinaryPath,
-              homePath: fixtures.claudeHomePath,
-            }),
-          },
-        },
+        configMap: { [instanceId]: entry },
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      return { registry, mutator, instanceId, entry, usageReads: () => usageReads };
+    });
+
+  const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
+    Effect.gen(function* () {
+      const { registry, instanceId } = yield* makeClaudeResetRegistry(claim, "allowed");
       const instance = yield* registry.getInstance(instanceId);
       expect(instance).toBeDefined();
       const before = yield* instance!.snapshot.refresh;
@@ -801,6 +839,37 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide(layerTest),
     );
+
+  it.live.skipIf(windowsHost)(
+    "reads Claude's sign-in for its organization and reset credits only once usage access is allowed",
+    () =>
+      Effect.gen(function* () {
+        const { registry, mutator, instanceId, entry, usageReads } = yield* makeClaudeResetRegistry(
+          { result: "reset", usageFailsAfterClaim: false },
+          undefined,
+        );
+        const instance = yield* registry.getInstance(instanceId);
+        const before = yield* instance!.snapshot.refresh;
+        expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
+        expect(before.usageLimits?.resetCredits).toBeUndefined();
+        expect(before.auth.workspaceId).toBeUndefined();
+        expect(usageReads()).toBe(0);
+
+        // The limits-only refresh waits for usage access too.
+        yield* instance!.snapshot.refreshUsage!;
+        const limitsOnly = yield* instance!.snapshot.getSnapshot;
+        expect(limitsOnly.usageLimits?.resetCredits).toBeUndefined();
+        expect(limitsOnly.auth.workspaceId).toBeUndefined();
+        expect(usageReads()).toBe(0);
+
+        yield* mutator.reconcile({ [instanceId]: { ...entry, usageAccess: "allowed" } });
+        // Granting access keeps the running instance, so its sessions survive.
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        const after = yield* instance!.snapshot.refresh;
+        expect(after.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
+        expect(after.auth.workspaceId).toBe("fake-org");
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
 
   it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
     Effect.gen(function* () {

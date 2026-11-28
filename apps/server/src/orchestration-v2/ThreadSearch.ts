@@ -24,6 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
+  EXACT_PHRASE_GAP,
   messageSearchTokens,
   foldSearchQuery,
   rankMessageMatches,
@@ -77,7 +78,9 @@ const SearchRequest = Schema.Struct({
   ),
   /** For each short word outside ASCII, the spellings a hit must contain one of. */
   shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
-  projectId: Schema.NullOr(ProjectId),
+  /** How many of the newest hits to read. */
+  hitLimit: Schema.Number,
+  projectIds: Schema.NullOr(TokenList),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
 });
@@ -164,14 +167,24 @@ function accentInsensitiveGlob(token: string): string {
 function buildMessageSearch(
   query: string,
   hasIndex: boolean,
-): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds"> | null {
-  const { long, short } = messageSearchTokens(query);
+): Omit<typeof SearchRequest.Type, "projectIds" | "excludedThreadIds"> | null {
+  const { long, short, words, exact } = messageSearchTokens(query);
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
+  const phrases = long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ");
+  // An exact query's words sit together, so the index reads only hits that hold them that
+  // close. The distance covers the widest phrase the matcher accepts, so it never drops a match.
+  const near =
+    exact && long.length > 1
+      ? words.join(" ").length + (words.length - 1) * EXACT_PHRASE_GAP
+      : null;
   return {
-    match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
+    match: !indexed ? null : near === null ? phrases : `NEAR(${phrases}, ${near})`,
+    // The matcher drops most hits that hold a phrase's words but not together, so a
+    // phrase reads every candidate: the newest ones would otherwise hide an older match.
+    hitLimit: exact && words.length > 1 ? MESSAGE_CANDIDATE_LIMIT : MESSAGE_HIT_LIMIT,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
       token,
       accentInsensitive: accentInsensitiveGlob(token),
@@ -221,7 +234,14 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  {
+    match,
+    substrings,
+    shortSpellings,
+    hitLimit,
+    projectIds,
+    excludedThreadIds,
+  }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -231,7 +251,8 @@ export const messageHitsQuery = (
       WHERE threads.deleted_at IS NULL
         AND threads.archived_at IS NULL
         AND projects.deleted_at IS NULL
-        AND (${projectId} IS NULL OR threads.project_id = ${projectId})
+        AND (${projectIds} IS NULL
+          OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
@@ -328,7 +349,7 @@ export const messageHitsQuery = (
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
     ORDER BY "messageRowid" DESC
-    LIMIT ${MESSAGE_HIT_LIMIT}
+    LIMIT ${hitLimit}
   `;
 
 const TitleCandidateRow = Schema.Struct({
@@ -351,7 +372,8 @@ export class ThreadSearch extends Context.Service<
   {
     /** Message text matches, for clients that rank their own thread list. */
     readonly search: (
-      input: OrchestrationSearchThreadsInput,
+      input: OrchestrationSearchThreadsInput &
+        Pick<OrchestrationV2SearchThreadsInput, "projectIds">,
     ) => Effect.Effect<OrchestrationSearchThreadsResult, ThreadSearchError>;
     /**
      * Title, branch, pull request, and project matches ranked as the command
@@ -511,7 +533,7 @@ export const make = Effect.gen(function* () {
   // cannot use up the limit.
   const searchMessages = Effect.fn("ThreadSearch.search")(function* (
     input: OrchestrationSearchThreadsInput & {
-      readonly projectId: ProjectId | null;
+      readonly projectIds: ReadonlyArray<ProjectId> | null;
       /** Threads the caller already lists, which must not use up the limit. */
       readonly excludedThreadIds?: ReadonlySet<ThreadId>;
       /** Off for an agent's search, which has no use for the user's picks. */
@@ -545,7 +567,7 @@ export const make = Effect.gen(function* () {
           ? []
           : yield* searchRows({
               ...messageSearch,
-              projectId: input.projectId,
+              projectIds: input.projectIds,
               excludedThreadIds: [...(input.excludedThreadIds ?? [])],
             });
       }),
@@ -612,7 +634,7 @@ export const make = Effect.gen(function* () {
   });
 
   const search: ThreadSearch["Service"]["search"] = (input) =>
-    searchMessages({ ...input, projectId: null });
+    searchMessages({ ...input, projectIds: input.projectIds ?? null });
 
   const searchThreads: ThreadSearch["Service"]["searchThreads"] = Effect.fn(
     "ThreadSearch.searchThreads",
@@ -640,25 +662,26 @@ export const make = Effect.gen(function* () {
         },
       ]),
     );
-    const titleHits: ThreadSearchHit[] = rankSearchItems(candidates, (row, options) =>
+    const titleRanked = rankSearchItems(candidates, (row, options) =>
       // An agent's search has no use for the user's palette picks.
       scoreThreadSearch(normalizedQuery, subjectById.get(row.thread.id)!, now, {
         ...options,
         picks: false,
       }),
-    )
-      .slice(0, limit)
-      .map(({ item }) => ({
-        threadId: item.thread.id,
-        projectId: item.thread.projectId,
-        title: item.thread.title,
-        source: "title",
-      }));
-    const shown = new Set(titleHits.map((hit) => hit.threadId));
+    );
+    const titleHits: ThreadSearchHit[] = titleRanked.slice(0, limit).map(({ item }) => ({
+      threadId: item.thread.id,
+      projectId: item.thread.projectId,
+      title: item.thread.title,
+      source: "title",
+    }));
+    // The message slots are for threads the titles miss: a weaker title match
+    // found again by its messages would push out a better one.
+    const shown = new Set(titleRanked.map(({ item }) => item.thread.id));
     const { matches } = yield* searchMessages({
       query: input.query,
       limit: 50,
-      projectId: input.projectId ?? null,
+      projectIds: input.projectId === undefined ? null : [input.projectId],
       excludedThreadIds: shown,
       picks: false,
     });
@@ -739,7 +762,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
 )(function* <E1, E2, E3, E4, E5>(input: {
   readonly request: OrchestrationV2SearchThreadsInput;
   readonly search: (
-    input: OrchestrationSearchThreadsInput,
+    input: Parameters<ThreadSearch["Service"]["search"]>[0],
   ) => Effect.Effect<OrchestrationSearchThreadsResult, E1>;
   readonly searchOlderSettled: (
     input: Parameters<ThreadSearch["Service"]["searchOlderSettled"]>[0],
@@ -750,8 +773,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
   ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E4>, E3>;
   readonly latestSequence: Effect.Effect<number, E5>;
 }) {
-  const { olderSettledBefore, projectIds, environmentLabel, titlesOnly, ...request } =
-    input.request;
+  const { olderSettledBefore, environmentLabel, titlesOnly, ...request } = input.request;
   const messages: OrchestrationV2SearchThreadsResult =
     titlesOnly === true ? { matches: [] } : yield* input.search(request);
   if (olderSettledBefore === undefined) return messages;
@@ -759,7 +781,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
   const threadIds = yield* input.searchOlderSettled({
     query: request.query,
     before: olderSettledBefore,
-    projectIds,
+    projectIds: request.projectIds,
     environmentLabel,
     messageThreadIds: messages.matches.map((match) => match.threadId),
   });

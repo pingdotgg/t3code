@@ -13,6 +13,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -440,6 +441,56 @@ it.layer(layerTest)("ProjectService", (it) => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "checks tracked folder containment and duplicates across symlinks",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const projectId = ProjectId.make("project:tracked-folders-symlink");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const work = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-symlink-" }),
+        );
+        yield* fileSystem.makeDirectory(`${work}/parent/child`, { recursive: true });
+        yield* fileSystem.makeDirectory(`${work}/api`);
+        yield* fileSystem.symlink(`${work}/parent/child`, `${work}/project-link`);
+        yield* fileSystem.symlink(`${work}/api`, `${work}/api-link`);
+        const folder = (folderPath: string) => ({ path: folderPath, name: "Folder" });
+        const expectInvalid = (error: ProjectService.ProjectServiceError, detail: string) => {
+          assert.equal(error._tag, "ProjectInvalidError");
+          assert.include(error.message, detail);
+        };
+        const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
+          service.create({
+            commandId: CommandId.make(`command:tracked-symlink:create:${key}`),
+            projectId,
+            title: "Symlinked",
+            workspaceRoot: `${work}/project-link`,
+            trackedFolders,
+          });
+
+        for (const [key, trackedFolders, detail] of [
+          ["own-folder", [folder(`${work}/parent/child`)], "always part of it"],
+          ["parent", [folder(`${work}/parent`)], "contains the project's own folder"],
+          ["duplicate", [folder(`${work}/api`), folder(`${work}/api-link`)], "listed twice"],
+        ] as const) {
+          expectInvalid(yield* create(key, trackedFolders).pipe(Effect.flip), detail);
+        }
+
+        yield* create("valid", [folder(`${work}/api-link`)]);
+        expectInvalid(
+          yield* service
+            .update({
+              commandId: CommandId.make("command:tracked-symlink:update"),
+              projectId,
+              trackFolders: [folder(`${work}/api`)],
+            })
+            .pipe(Effect.flip),
+          "listed twice",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("records the outcome and duration of a committed project command", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
@@ -631,6 +682,37 @@ it.layer(layerTest)("ProjectService", (it) => {
         (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
         [script],
       );
+    }),
+  );
+
+  it.effect("saves a project's default model in its Settings overrides", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:default-model");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      };
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:default-model:create"),
+        projectId,
+        title: "Default model",
+        workspaceRoot: "/work/default-model",
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:default-model:update"),
+        projectId,
+        defaultModelSelection: modelSelection,
+      });
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultThreadEnvMode: "worktree",
+        defaultModelSelection: modelSelection,
+      });
     }),
   );
 

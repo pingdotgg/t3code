@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   composerParagraphDirections,
   fieldDirection,
+  hasRightToLeftLetter,
   markdownCodeParts,
   markdownPreview,
   markdownProseDirection,
@@ -55,6 +56,12 @@ describe("textDirection", () => {
 
   it("leaves text without letters to its surroundings", () => {
     expect(textDirection("42 — 7 ✓")).toBeUndefined();
+  });
+});
+
+describe("hasRightToLeftLetter", () => {
+  it("does not count a byte order mark as a right-to-left letter", () => {
+    expect(hasRightToLeftLetter("\uFEFFHello")).toBe(false);
   });
 });
 

@@ -13,6 +13,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -63,6 +64,8 @@ function catalogWithInspection(
   return {
     search: () => Effect.die("unused search"),
     prepare: () => Effect.die("unused prepare"),
+    refreshIndex: () => Effect.succeed(false),
+    invalidateIndex: () => Effect.void,
     inspect: () => Effect.succeed(inspection),
     resolve: () => Effect.die("unused resolve"),
     uninstallManagedBinary: () => Effect.die("unused uninstall"),
@@ -529,7 +532,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
 
     expect(snapshot.auth).toEqual({ status: "unknown", canLogout: false });
-    expect(snapshot.supportsTextGeneration).toBe(false);
+    expect(snapshot.supportsTextGeneration).toBeUndefined();
     expect(
       snapshot.models.map(({ slug, name, isCustom, isDefault }) => ({
         slug,
@@ -863,6 +866,36 @@ describe("acpRegistryEnrichmentCache", () => {
 
     expect(updated.generation).toBe(5);
     expect(updated.entry).toBeNull();
+  });
+
+  it("preserves cache generation and expiry on options-only live updates", () => {
+    const optionsOnly = {
+      models: [],
+      currentModelId: "qmodel",
+      configOptions: [],
+      modelsFromModelSelect: false,
+    };
+    const emptyCache = { generation: 4, entry: null };
+    expect(
+      updateAcpRegistryEnrichmentCache({
+        cache: emptyCache,
+        configuration: optionsOnly,
+        customModels: [],
+        now: 5_000,
+      }),
+    ).toBe(emptyCache);
+
+    const provider = providerWithModels(settledConfiguration.models, "auto");
+    const populatedCache = { generation: 2, entry: { provider, expiresAt: 1_000 } };
+    const updated = updateAcpRegistryEnrichmentCache({
+      cache: populatedCache,
+      configuration: optionsOnly,
+      customModels: [],
+      now: 5_000,
+    });
+    expect(updated.generation).toBe(2);
+    expect(updated.entry?.expiresAt).toBe(1_000);
+    expect(updated.entry?.provider.models.find((m) => m.slug === "qmodel")?.isDefault).toBe(true);
   });
 });
 
@@ -1465,4 +1498,241 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(yield* agent.modelSwitches).toEqual(["other", "default", "other", "default"]);
     }),
   );
+
+  it.effect(
+    "refreshes stale registry indexes in the background for installed and uninstalled agents",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-upd-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-v1", "other-model"]));
+
+        let inspection: AcpRegistrySupport.AcpRegistryInspection = {
+          status: "unsupported",
+          agentId: "test-agent",
+          version: "1.0.0",
+        };
+        let invalidations = 0;
+        let refreshes = 0;
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: ProviderInstanceId.make("acpRegistry_refresh_index"),
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection(inspection),
+            inspect: () => Effect.sync(() => inspection),
+            invalidateIndex: () =>
+              Effect.sync(() => {
+                invalidations += 1;
+              }),
+            refreshIndex: () =>
+              Effect.sync(() => {
+                refreshes += 1;
+                if (inspection.status === "unsupported") {
+                  inspection = {
+                    status: "ready",
+                    agentId: "test-agent",
+                    version: "1.0.0",
+                    distribution: "npx",
+                    launchIdentity: "v1",
+                  };
+                  return true;
+                }
+                if (
+                  invalidations > 0 &&
+                  inspection.status === "ready" &&
+                  inspection.version === "1.0.0"
+                ) {
+                  inspection = {
+                    status: "ready",
+                    agentId: "test-agent",
+                    version: "2.0.0",
+                    distribution: "npx",
+                    launchIdentity: "v2",
+                  };
+                  return true;
+                }
+                return false;
+              }),
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              }),
+          }),
+        );
+
+        const waitForVersion = (version: string) =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) =>
+                snapshot.installed &&
+                snapshot.version === version &&
+                snapshot.models.some((model) => model.slug === `model-v${version[0]}`),
+            ),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+        const recovered = yield* waitForVersion("1.0.0");
+        yield* instance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(recovered))).toBe(true);
+        expect(refreshes).toBeGreaterThanOrEqual(1);
+
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-v2", "other-model"]));
+        const upgraded = yield* waitForVersion("2.0.0");
+        yield* instance.invalidateCaches ?? Effect.void;
+        expect(invalidations).toBe(1);
+        yield* instance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(upgraded))).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "supersedes stale live session models on a fresh probe while letting newer live sessions win",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-live-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-a", "new-b"]));
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acpRegistry_periodic_supersede");
+
+        let resolveGate:
+          | {
+              readonly entered: Deferred.Deferred<void>;
+              readonly release: Deferred.Deferred<void>;
+            }
+          | undefined;
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.gen(function* () {
+                const gate = resolveGate;
+                if (gate !== undefined) {
+                  yield* Deferred.succeed(gate.entered, undefined);
+                  yield* Deferred.await(gate.release);
+                }
+                return {
+                  distribution: "npx" as const,
+                  spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+                };
+              }),
+          }),
+        );
+
+        const waitForModels = (expected: ReadonlyArray<string>) =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.map((snapshot) => snapshot.models.map((model) => model.slug)),
+            Stream.filter((slugs) => slugs.join() === expected.join()),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+        // Stale session catalog already present before a fresh probe runs.
+        yield* coordinator.publishLiveConfiguration(
+          instanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "old-a",
+            availableModels: [
+              { modelId: "old-a", name: "old-a" },
+              { modelId: "old-b", name: "old-b" },
+            ],
+          }),
+        );
+
+        const superseded = yield* waitForModels(["old-a", "new-b"]);
+        yield* instance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(superseded))).toBe(true);
+        expect(Option.isNone(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
+
+        // Next readiness check keeps the accepted catalog after live config was cleared.
+        yield* instance.snapshot.refresh;
+        expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
+          "old-a",
+          "new-b",
+        ]);
+
+        // A newer live update published while a probe is in flight is preserved after probe reconciliation.
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-a", "probed-c"]));
+        resolveGate = {
+          entered: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        yield* instance.invalidateCaches ?? Effect.void;
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(resolveGate.entered);
+
+        const optionsOnlyLive = normalizeAcpRegistryLiveConfiguration(
+          [],
+          undefined,
+          {
+            currentModelId: "probed-c",
+            availableModels: [
+              { modelId: "old-a", name: "old-a" },
+              { modelId: "probed-c", name: "probed-c" },
+            ],
+          },
+          { includeCatalog: false },
+        );
+        yield* coordinator.publishLiveConfiguration(instanceId, optionsOnlyLive);
+
+        const reconciled = yield* waitForModels(["old-a", "probed-c"]);
+        yield* Deferred.succeed(resolveGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(reconciled))).toBe(true);
+        // The live update that arrived mid-probe was not cleared by the older probe.
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
+        expect(
+          (yield* instance.snapshot.getSnapshot).models.find((m) => m.slug === "probed-c")
+            ?.isDefault,
+        ).toBe(true);
+      }),
+  );
+
+  it("invalidates cached enrichment when launchIdentity changes at the same version", () => {
+    const provider = providerWithModels([{ id: "m1", name: "M1", description: null }], "m1");
+    expect(
+      isAcpRegistryCacheValid(
+        { provider, launchIdentity: "id-a", expiresAt: 1000 },
+        "1.0.0",
+        false,
+        500,
+        "id-a",
+      ),
+    ).toBe(true);
+    expect(
+      isAcpRegistryCacheValid(
+        { provider, launchIdentity: "id-a", expiresAt: 1000 },
+        "1.0.0",
+        false,
+        500,
+        "id-b",
+      ),
+    ).toBe(false);
+  });
 });

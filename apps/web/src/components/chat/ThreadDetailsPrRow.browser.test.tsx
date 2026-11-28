@@ -455,6 +455,8 @@ it("names the first linked issue and reveals more issues on demand", async () =>
   await expect.element(extra).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Show 1 more" }).click();
   await expect.element(extra).toBeVisible();
+  // The details card leaves this list out of its density measurement.
+  expect(extra.element().closest("[data-thread-details-issue-list]")).not.toBeNull();
   await screen.getByRole("button", { name: "Show less" }).click();
   await expect.element(extra).not.toBeInTheDocument();
 });

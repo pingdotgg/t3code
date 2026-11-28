@@ -34,11 +34,26 @@ import {
   deriveMessagesTimelineRowsWithState,
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHitStrip,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
   workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
+
+describe("resolveTimelineMinimapHitStrip", () => {
+  it.each([
+    { gutter: 256, left: 32, width: 40 },
+    { gutter: 48, left: 32, width: 16 },
+    { gutter: 32, left: 0, width: 8 },
+    { gutter: 24, left: 0, width: 8 },
+    { gutter: 6, left: 0, width: 6 },
+    { gutter: 0, left: 0, width: 0 },
+    { gutter: -4, left: 0, width: 0 },
+  ])("keeps the minimap inside a $gutter px gutter", ({ gutter, left, width }) => {
+    expect(resolveTimelineMinimapHitStrip(gutter)).toEqual({ left, width });
+  });
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {
@@ -2367,13 +2382,20 @@ describe("deriveMessagesTimelineRows", () => {
       completedAt: at(ordinal),
       updatedAt: at(ordinal),
     });
-    const read = (id: string, ordinal: number, filePath: string) => ({
+    const read = (
+      id: string,
+      ordinal: number,
+      filePath: string,
+      status: "completed" | "failed" = "completed",
+    ) => ({
       ...base(id, ordinal),
+      status,
       type: "dynamic_tool" as const,
       toolName: "Read",
-      // The Claude adapter tags reads of image files.
+      // Claude and ACP adapters tag reads of image files even when the read fails.
       ...(filePath.endsWith(".png") ? { viewedImagePath: filePath } : {}),
       input: { file_path: filePath },
+      ...(status === "failed" ? { output: "Error: File does not exist." } : {}),
     });
     const items = (settled: boolean) =>
       [
@@ -2389,18 +2411,19 @@ describe("deriveMessagesTimelineRows", () => {
         },
         read("read-sidebar", 1, "/repo/docs/sidebar.png"),
         read("read-notes", 2, "/repo/docs/notes.md"),
-        read("read-sidebar-again", 3, "/repo/docs/sidebar.png"),
-        read("read-topbar", 4, "/repo/docs/topbar.png"),
+        read("read-missing", 3, "/repo/docs/missing.png", "failed"),
+        read("read-sidebar-again", 4, "/repo/docs/sidebar.png"),
+        read("read-topbar", 5, "/repo/docs/topbar.png"),
         settled
           ? {
-              ...base("answer", 5),
+              ...base("answer", 6),
               type: "assistant_message" as const,
               messageId: MessageId.make("answer"),
               text: "Here are both layouts",
               streaming: false,
             }
           : {
-              ...base("ask-again", 5),
+              ...base("ask-again", 6),
               status: "waiting" as const,
               completedAt: null,
               type: "user_input_request" as const,
@@ -2434,7 +2457,9 @@ describe("deriveMessagesTimelineRows", () => {
         supportsConversationRollback: false,
       });
       return rows.flatMap((row, index) =>
-        row.kind === "viewed-images" ? [{ after: rows[index - 1]?.kind, paths: row.paths }] : [],
+        row.kind === "viewed-images"
+          ? [{ after: rows[index - 1]?.kind, paths: row.images.map(({ path }) => path) }]
+          : [],
       );
     };
     const paths = ["/repo/docs/sidebar.png", "/repo/docs/topbar.png"];
@@ -5235,4 +5260,43 @@ describe("workEntryReadOutput", () => {
       ),
     ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
   });
+});
+
+it("updates cached rows whose spacing or setup handoff changed without new content", () => {
+  const working: MessagesTimelineRow = {
+    kind: "working",
+    id: "working",
+    createdAt: "2026-01-01T00:00:00Z",
+    continuesWorkLog: true,
+  };
+  const snapshot: WorktreeSetupSnapshot = {
+    threadId: ThreadId.make("thread-setup"),
+    phase: "failed",
+    startedAt: "2026-01-01T00:00:00Z",
+    endedAt: "2026-01-01T00:01:00Z",
+    branch: "feature",
+    baseRef: "main",
+    worktreePath: null,
+    setupScript: null,
+    stages: [],
+    error: null,
+    sequence: 3,
+  };
+  const setup: MessagesTimelineRow = {
+    kind: "worktree-setup",
+    id: "setup",
+    createdAt: snapshot.startedAt,
+    snapshot,
+    embedded: false,
+  };
+  const cached = computeStableMessagesTimelineRows([setup, working], {
+    result: [],
+    byId: new Map(),
+  });
+  const { continuesWorkLog: _continued, ...settledWorking } = working;
+  const next = computeStableMessagesTimelineRows(
+    [{ ...setup, embedded: true }, settledWorking],
+    cached,
+  );
+  expect(next.result).toEqual([{ ...setup, embedded: true }, settledWorking]);
 });

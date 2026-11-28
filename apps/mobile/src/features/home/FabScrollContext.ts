@@ -8,3 +8,6 @@ export const FabScrollContext = createContext<
 export function useFabScroll() {
   return useContext(FabScrollContext);
 }
+
+/** The New thread FAB's top edge, so the undo toast can sit above it instead of covering it. */
+export const FabTopContext = createContext<number | undefined>(undefined);
