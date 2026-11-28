@@ -4,7 +4,6 @@ import { EnvironmentId, ThreadId, type WorkflowRunReference } from "@t3tools/con
 import { useGT } from "gt-react";
 import { BotIcon, Maximize2Icon, XIcon } from "lucide-react";
 
-import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -36,7 +35,7 @@ export default function WorkflowPane({
   runId,
   state,
   onChange,
-  electron = isElectron,
+  electron = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly runId: string | null;
