@@ -377,12 +377,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         prefix: "t3-server-environment-stalled-secrets-test-",
       });
       let stalled = false;
+      let stalledReads = 0;
       const layerStallableSecretStore = Layer.effect(
         ServerSecretStore.ServerSecretStore,
         Effect.map(ServerSecretStore.ServerSecretStore, (secrets) =>
           ServerSecretStore.ServerSecretStore.of({
             ...secrets,
-            get: (name) => (stalled ? Effect.never : secrets.get(name)),
+            get: (name) =>
+              stalled
+                ? Effect.sync(() => {
+                    stalledReads++;
+                  }).pipe(Effect.andThen(Effect.never))
+                : secrets.get(name),
           }),
         ),
       ).pipe(Layer.provide(ServerSecretStore.layer));
@@ -391,12 +397,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         yield* serverEnvironment.getDescriptor;
         stalled = true;
-        const pending = yield* serverEnvironment.getDescriptor.pipe(
-          Effect.timeoutOption("10 seconds"),
-          Effect.forkChild,
-        );
-        yield* TestClock.adjust("10 seconds");
-        return yield* Fiber.join(pending);
+        const probe = Effect.gen(function* () {
+          const pending = yield* serverEnvironment.getDescriptor.pipe(
+            Effect.timeoutOption("10 seconds"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("10 seconds");
+          return yield* Fiber.join(pending);
+        });
+        yield* probe;
+        return yield* probe;
       }).pipe(
         Effect.provide(
           ServerEnvironment.layer.pipe(
@@ -407,6 +417,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       );
 
       expect(Option.isSome(descriptor)).toBe(true);
+      // Both probes wait on the one stalled read instead of each starting another.
+      expect(stalledReads).toBe(1);
     }),
   );
 });

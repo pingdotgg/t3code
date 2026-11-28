@@ -7,8 +7,8 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -317,19 +317,29 @@ export const make = Effect.gen(function* () {
   // stalls, answer with the last value read and keep one shared read in flight instead of hanging.
   const scope = yield* Effect.scope;
   let lastAgentActivityPublishing = false;
-  const refreshAgentActivityPublishing = yield* Effect.cachedWithTTL(
-    readAgentActivityPublishingActive(secrets).pipe(
+  let pendingRead: Deferred.Deferred<boolean> | undefined;
+  const startRead = Effect.suspend(() => {
+    if (pendingRead !== undefined) return Effect.succeed(pendingRead);
+    const read = Deferred.makeUnsafe<boolean>();
+    pendingRead = read;
+    return readAgentActivityPublishingActive(secrets).pipe(
       Effect.tap((active) =>
         Effect.sync(() => {
           lastAgentActivityPublishing = active;
         }),
       ),
-    ),
-    0,
-  );
-  const agentActivityPublishing = refreshAgentActivityPublishing.pipe(
-    Effect.forkIn(scope),
-    Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.timeoutOption("1 second"))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          pendingRead = undefined;
+        }),
+      ),
+      Deferred.into(read),
+      Effect.forkIn(scope),
+      Effect.as(read),
+    );
+  });
+  const agentActivityPublishing = startRead.pipe(
+    Effect.flatMap((read) => Deferred.await(read).pipe(Effect.timeoutOption("1 second"))),
     Effect.map(Option.getOrElse(() => lastAgentActivityPublishing)),
   );
 
