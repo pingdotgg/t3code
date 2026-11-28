@@ -294,8 +294,11 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   }
   const routeThreadShown = selectedThread !== null && selectedThreadKey === routeThreadKey;
   const [shownThreadKey, setShownThreadKey] = useState<string | null>(null);
-  if (routeThreadShown && shownThreadKey !== routeThreadKey) {
-    setShownThreadKey(routeThreadKey);
+  // The screen is reused across threads, so a thread shown on an earlier visit doesn't count.
+  const nextShownThreadKey =
+    routeThreadShown || shownThreadKey === routeThreadKey ? routeThreadKey : null;
+  if (nextShownThreadKey !== shownThreadKey) {
+    setShownThreadKey(nextShownThreadKey);
   }
   const [unreachableThreadKey, setUnreachableThreadKey] = useState<string | null>(null);
   const attemptWait = routeThreadShown
