@@ -4,12 +4,13 @@
 import {
   closeThreadSurface,
   closeThreadSurfaces,
+  readThreadSurfaceTerminalTitles,
   terminalTitlesForThreadSurface,
 } from "../components/ThreadSurfaceTab";
-import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
   canCloseLayoutTab,
@@ -235,94 +236,133 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
  * one layout store update with active remembered last for Cmd+Shift+T reopen.
  */
 export function closeLayoutTabsByUser(tabIds: readonly string[]): void {
-  clearPaneTabSelection();
   if (tabIds.length === 0) return;
   if (tabIds.length === 1) {
     closeLayoutTabByUser(tabIds[0]!);
     return;
   }
-  const store = useLayoutStore.getState();
-  const layout = store.layout;
-  const locations = tabIds.flatMap((id) => {
-    const location = findLayoutTab(layout, (tab) => tab.id === id);
-    return location && canCloseLayoutTab(layout, id) ? [location] : [];
+  const initialLayout = useLayoutStore.getState().layout;
+  const initialLocations = tabIds.flatMap((id) => {
+    const location = findLayoutTab(initialLayout, (tab) => tab.id === id);
+    return location && canCloseLayoutTab(initialLayout, id) ? [location] : [];
   });
-  if (locations.length === 0) return;
-  if (locations.length === 1) {
-    closeLayoutTabByUser(locations[0]!.tab.id);
+  if (initialLocations.length === 0) return;
+  if (initialLocations.length === 1) {
+    closeLayoutTabByUser(initialLocations[0]!.tab.id);
     return;
   }
-  const surfacesByThread = new Map<string, { threadRef: ScopedThreadRef; surfaceIds: string[] }>();
-  const nonSurfaceLocations: typeof locations = [];
-  for (const location of locations) {
+  const initialSurfacesByThread = new Map<
+    string,
+    { threadRef: ScopedThreadRef; surfaceIds: string[] }
+  >();
+  for (const location of initialLocations) {
     const { tab } = location;
-    if (tab.content.kind === "surface") {
-      const key = scopedThreadKey(tab.content.threadRef);
-      const entry = surfacesByThread.get(key) ?? {
-        threadRef: tab.content.threadRef,
-        surfaceIds: [],
-      };
-      entry.surfaceIds.push(tab.content.surfaceId);
-      surfacesByThread.set(key, entry);
-    } else {
-      nonSurfaceLocations.push(location);
-    }
+    if (tab.content.kind !== "surface") continue;
+    const key = scopedThreadKey(tab.content.threadRef);
+    const entry = initialSurfacesByThread.get(key) ?? {
+      threadRef: tab.content.threadRef,
+      surfaceIds: [],
+    };
+    entry.surfaceIds.push(tab.content.surfaceId);
+    initialSurfacesByThread.set(key, entry);
   }
-  // Remember non-surface tabs with the active tab last so Cmd+Shift+T reopens it first.
-  const orderedNonSurfaces = nonSurfaceLocations.toSorted(
-    (left, right) =>
-      Number(left.pane.activeTabId === left.tab.id) -
-      Number(right.pane.activeTabId === right.tab.id),
-  );
-  for (const location of orderedNonSurfaces) {
-    const { tab } = location;
-    if (tab.content.kind === "chat") {
-      const target = tab.content.target;
-      const draft =
-        target.kind === "draft"
-          ? useComposerDraftStore.getState().getDraftSession(target.draftId)
-          : null;
-      const threadRef =
-        target.kind === "server"
-          ? target.threadRef
-          : draft
-            ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
+
+  const finish = () => {
+    clearPaneTabSelection();
+    const store = useLayoutStore.getState();
+    const layout = store.layout;
+    const locations = tabIds.flatMap((id) => {
+      const location = findLayoutTab(layout, (tab) => tab.id === id);
+      return location && canCloseLayoutTab(layout, id) ? [location] : [];
+    });
+    if (locations.length === 0) return;
+    const surfacesByThread = new Map<
+      string,
+      { threadRef: ScopedThreadRef; surfaceIds: string[] }
+    >();
+    const nonSurfaceLocations: typeof locations = [];
+    for (const location of locations) {
+      const { tab } = location;
+      if (tab.content.kind === "surface") {
+        const key = scopedThreadKey(tab.content.threadRef);
+        const entry = surfacesByThread.get(key) ?? {
+          threadRef: tab.content.threadRef,
+          surfaceIds: [],
+        };
+        entry.surfaceIds.push(tab.content.surfaceId);
+        surfacesByThread.set(key, entry);
+      } else {
+        nonSurfaceLocations.push(location);
+      }
+    }
+    // Remember non-surface tabs with the active tab last so Cmd+Shift+T reopens it first.
+    const orderedNonSurfaces = nonSurfaceLocations.toSorted(
+      (left, right) =>
+        Number(left.pane.activeTabId === left.tab.id) -
+        Number(right.pane.activeTabId === right.tab.id),
+    );
+    for (const location of orderedNonSurfaces) {
+      const { tab } = location;
+      if (tab.content.kind === "chat") {
+        const target = tab.content.target;
+        const draft =
+          target.kind === "draft"
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)
             : null;
-      if (threadRef) {
+        const threadRef =
+          target.kind === "server"
+            ? target.threadRef
+            : draft
+              ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
+              : null;
+        if (threadRef) {
+          useClosedViewStore.getState().remember({
+            kind: "chat",
+            threadRef,
+            paneId: location.pane.id,
+            index: location.tabIndex,
+            ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
+          });
+        }
+      } else if (
+        tab.content.kind === "issues" ||
+        tab.content.kind === "pull-requests" ||
+        tab.content.kind === "workflows"
+      ) {
         useClosedViewStore.getState().remember({
-          kind: "chat",
-          threadRef,
+          kind: "page",
+          threadRef:
+            tab.content.kind === "issues"
+              ? ISSUES_PANEL_REF
+              : tab.content.kind === "pull-requests"
+                ? PULL_REQUESTS_PANEL_REF
+                : WORKFLOWS_PAGE_REF,
+          page: tab.content.kind,
+          ...(tab.content.href === undefined ? {} : { href: tab.content.href }),
           paneId: location.pane.id,
           index: location.tabIndex,
-          ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
         });
       }
-    } else if (
-      tab.content.kind === "issues" ||
-      tab.content.kind === "pull-requests" ||
-      tab.content.kind === "workflows"
-    ) {
-      useClosedViewStore.getState().remember({
-        kind: "page",
-        threadRef:
-          tab.content.kind === "issues"
-            ? ISSUES_PANEL_REF
-            : tab.content.kind === "pull-requests"
-              ? PULL_REQUESTS_PANEL_REF
-              : WORKFLOWS_PAGE_REF,
-        page: tab.content.kind,
-        ...(tab.content.href === undefined ? {} : { href: tab.content.href }),
-        paneId: location.pane.id,
-        index: location.tabIndex,
-      });
     }
+    for (const { threadRef, surfaceIds } of surfacesByThread.values()) {
+      void closeThreadSurfaces(threadRef, surfaceIds, { bulk: true });
+    }
+    if (nonSurfaceLocations.length > 0) {
+      store.closeTabsByUser(nonSurfaceLocations.map((location) => location.tab.id));
+    }
+  };
+
+  const terminalLabels = [...initialSurfacesByThread.values()].flatMap(
+    ({ threadRef, surfaceIds }) => readThreadSurfaceTerminalTitles(threadRef, surfaceIds),
+  );
+  const [firstTerminalLabel, ...restTerminalLabels] = terminalLabels;
+  if (firstTerminalLabel !== undefined) {
+    void confirmTerminalClose([firstTerminalLabel, ...restTerminalLabels]).then((confirmed) => {
+      if (confirmed) finish();
+    });
+    return;
   }
-  for (const { threadRef, surfaceIds } of surfacesByThread.values()) {
-    void closeThreadSurfaces(threadRef, surfaceIds, { bulk: true });
-  }
-  if (nonSurfaceLocations.length > 0) {
-    store.closeTabsByUser(nonSurfaceLocations.map((location) => location.tab.id));
-  }
+  finish();
 }
 
 /** Close all selected tabs in the tab's pane when `tabId` is selected, otherwise close `tabId`. */

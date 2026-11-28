@@ -1,10 +1,23 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { DEFAULT_CLIENT_SETTINGS, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const environmentId = EnvironmentId.make("local");
 const parentRef = scopeThreadRef(environmentId, ThreadId.make("parent"));
 const subagentRef = scopeThreadRef(environmentId, ThreadId.make("subagent"));
+
+const dialogsConfirmMock = vi.fn<(message: string, options?: unknown) => Promise<boolean>>();
+const readLocalApiMock = vi.fn(() => ({ dialogs: { confirm: dialogsConfirmMock } }));
+
+vi.mock(import("../localApi"), async (original) => ({
+  ...(await original()),
+  readLocalApi: (() => readLocalApiMock()) as never,
+}));
+
+vi.mock(import("../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: (() => true) as never,
+}));
 
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
@@ -16,6 +29,7 @@ vi.mock(import("../state/entities"), async (original) => ({
 
 import { useClosedViewStore } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import * as terminalCloseConfirm from "../lib/terminalCloseConfirm";
 import { planNextReopen, reopenClosedView } from "../reopenClosedView";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
@@ -194,6 +208,106 @@ describe("closeLayoutTabByUser", () => {
       kind: "chat",
       threadRef: parentRef,
     });
+  });
+
+  it("confirms once before closing selected panel and thread terminal tabs, and closes nothing when declined", async () => {
+    const previousSettings = getClientSettings();
+    const previousPanels = useRightPanelStore.getState().byThreadKey;
+    const previousTerminals = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, confirmTerminalClose: true });
+    dialogsConfirmMock.mockReset();
+
+    const parentKey = scopedThreadKey(parentRef);
+    useRightPanelStore.getState().openTerminal(parentRef, "panel-term-1");
+    const panelTerminalId = useRightPanelStore
+      .getState()
+      .byThreadKey[parentKey]!.surfaces.find((surface) => surface.kind === "terminal")!.id;
+    useTerminalUiStateStore.getState().setTerminalOpen(parentRef, true);
+
+    const panelTerminalContent: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: panelTerminalId,
+    };
+    const threadTerminalContent: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: THREAD_TERMINAL_SURFACE_ID,
+    };
+
+    try {
+      using layout = setup([other, panelTerminalContent, threadTerminalContent]);
+      const otherTab = layout.tabOf(other)!;
+      const panelTerminalTab = layout.tabOf(panelTerminalContent)!;
+      const threadTerminalTab = layout.tabOf(threadTerminalContent)!;
+
+      dialogsConfirmMock.mockResolvedValueOnce(false);
+      closeLayoutTabsByUser([otherTab.id, panelTerminalTab.id, threadTerminalTab.id]);
+      await vi.waitFor(() => expect(dialogsConfirmMock).toHaveBeenCalledTimes(1));
+      expect(dialogsConfirmMock.mock.calls[0]![0]).toContain("2 terminals");
+      // Declining closes neither the terminals nor the non-surface tab.
+      expect(layout.tabOf(other)).toBeDefined();
+      expect(
+        useRightPanelStore
+          .getState()
+          .byThreadKey[parentKey]?.surfaces.some((surface) => surface.id === panelTerminalId),
+      ).toBe(true);
+      expect(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey[parentKey]?.terminalOpen,
+      ).toBe(true);
+
+      // Accepting closes all selected tabs after a single prompt.
+      dialogsConfirmMock.mockResolvedValueOnce(true);
+      closeLayoutTabsByUser([otherTab.id, panelTerminalTab.id, threadTerminalTab.id]);
+      await vi.waitFor(() => {
+        expect(layout.tabOf(other)).toBeUndefined();
+        expect(
+          useRightPanelStore
+            .getState()
+            .byThreadKey[parentKey]?.surfaces.some((surface) => surface.id === panelTerminalId) ??
+            false,
+        ).toBe(false);
+        expect(
+          useTerminalUiStateStore.getState().terminalUiStateByThreadKey[parentKey]?.terminalOpen ??
+            false,
+        ).toBe(false);
+      });
+      expect(dialogsConfirmMock).toHaveBeenCalledTimes(2);
+
+      // With confirmTerminalClose off, closing selected terminals skips the prompt.
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, confirmTerminalClose: false });
+      useRightPanelStore.getState().openTerminal(parentRef, "panel-term-2");
+      const secondPanelTerminalId = useRightPanelStore
+        .getState()
+        .byThreadKey[parentKey]!.surfaces.find((surface) => surface.kind === "terminal")!.id;
+      const secondTerminalContent: LayoutTabContent = {
+        kind: "surface",
+        threadRef: parentRef,
+        surfaceId: secondPanelTerminalId,
+      };
+      useLayoutStore
+        .getState()
+        .openTab(other, { placement: "active-pane", position: "end" });
+      useLayoutStore
+        .getState()
+        .openTab(secondTerminalContent, { placement: "active-pane", position: "end" });
+      closeLayoutTabsByUser([layout.tabOf(other)!.id, layout.tabOf(secondTerminalContent)!.id]);
+      await vi.waitFor(() => {
+        expect(layout.tabOf(other)).toBeUndefined();
+        expect(
+          useRightPanelStore
+            .getState()
+            .byThreadKey[parentKey]?.surfaces.some(
+              (surface) => surface.id === secondPanelTerminalId,
+            ) ?? false,
+        ).toBe(false);
+      });
+      expect(dialogsConfirmMock).toHaveBeenCalledTimes(2);
+    } finally {
+      __setClientSettingsForTests(previousSettings);
+      useRightPanelStore.setState({ byThreadKey: previousPanels });
+      useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: previousTerminals });
+    }
   });
 });
 

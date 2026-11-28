@@ -1191,6 +1191,14 @@ export function terminalTitlesForThreadSurface(
   return titles.length > 0 ? titles : [m(msg("Terminal"))];
 }
 
+/** Collect terminal tab labels for any panel or thread terminal surfaces in `surfaceIds`. */
+export function readThreadSurfaceTerminalTitles(
+  threadRef: ScopedThreadRef,
+  surfaceIds: readonly string[],
+): string[] {
+  return surfaceIds.flatMap((surfaceId) => terminalTitlesForThreadSurface(threadRef, surfaceId));
+}
+
 /** Close a batch of surfaces belonging to one thread atomically via `rightPanelStore.closeSurfaces`. */
 export async function closeThreadSurfaces(
   threadRef: ScopedThreadRef,
@@ -1219,6 +1227,12 @@ export async function closeThreadSurfaces(
         .catch(() => false);
       if (!confirmed) return;
     }
+  }
+  if (!options.bulk) {
+    const [first, ...rest] = readThreadSurfaceTerminalTitles(threadRef, surfaceIds);
+    if (first !== undefined && !(await confirmTerminalClose([first, ...rest]))) return;
+  }
+  if (surfaces.length > 0) {
     surfaceServices?.cleanup(threadRef, surfaces);
     useRightPanelStore.getState().closeSurfaces(
       threadRef,
