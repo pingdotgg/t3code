@@ -394,17 +394,17 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      if (
-        shellInline &&
-        flag.startsWith("--") &&
-        (program === "bash" || program === "dash" || program === "sh")
-      ) {
-        return { scripts, scriptFromFile: true };
+      if (interpreter === SHELL) {
+        // bash, dash, and sh accept `--long` options only before `-c`.
+        if (shellInline && name.startsWith("--") && LONG_OPTIONS_FIRST.has(program)) {
+          return { scripts, scriptFromFile: true };
+        }
+        // `-c` makes the first operand the script, so more options may follow it.
+        if (interpreter.inline(name)) shellInline = true;
+        if (value === undefined) index += shellOptionValues(program, flag);
+        continue;
       }
-      if (interpreter === SHELL && interpreter.inline(name)) {
-        // POSIX shells treat `-c` as a flag for the first operand; bash, dash, and sh reject `--long` after it.
-        shellInline = true;
-      } else if (interpreter.inline(name)) {
+      if (interpreter.inline(name)) {
         const next = args[index + 1];
         if (value !== undefined) scripts.push({ word: arg, inValue: true });
         else if (next) scripts.push(whole(next));
@@ -412,22 +412,7 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      const attachedShellOption = program === "zsh" || program === "ksh";
-      const isShellValueOption =
-        interpreter === SHELL &&
-        (((program === "bash" || program === "sh") && interpreter.valueOptions?.has(flag)) ||
-          (attachedShellOption
-            ? /^[-+][a-zA-Z]*[oO]$/u.test(flag)
-            : /^[-+][a-zA-Z]*[oO][a-zA-Z]*$/u.test(flag)));
-      if (
-        value === undefined &&
-        (isShellValueOption || (interpreter !== SHELL && interpreter.valueOptions?.has(flag)))
-      ) {
-        index +=
-          interpreter === SHELL && !attachedShellOption && !flag.startsWith("--")
-            ? (flag.match(/[oO]/gu)?.length ?? 1)
-            : 1;
-      }
+      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
       continue;
     }
     if (shellInline) return { scripts: [whole(arg)], scriptFromFile: false };
@@ -447,6 +432,18 @@ function interpreterArgs(
   if (interpreter.stdin === "always") return { scripts, scriptFromFile };
   const first = positionals[0];
   return { scripts, scriptFromFile: first !== undefined && first.value !== "-" };
+}
+
+const LONG_OPTIONS_FIRST = new Set(["bash", "dash", "sh"]);
+
+/** How many following words a shell option consumes as values. */
+function shellOptionValues(program: string, flag: string): number {
+  if (flag.startsWith("--")) {
+    return (program === "bash" || program === "sh") && SHELL.valueOptions?.has(flag) ? 1 : 0;
+  }
+  // zsh and ksh take an `-o` value attached (`-oextendedglob`); other shells read one word per o or O in a bundle (`-oe pipefail`).
+  if (program === "zsh" || program === "ksh") return /^[-+][a-zA-Z]*[oO]$/u.test(flag) ? 1 : 0;
+  return /^[-+][a-zA-Z]+$/u.test(flag) ? (flag.match(/[oO]/gu)?.length ?? 0) : 0;
 }
 
 function sliceMapped(mapped: MappedText, start: number): MappedText {

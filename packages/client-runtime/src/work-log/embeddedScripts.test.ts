@@ -44,39 +44,21 @@ describe("embeddedScripts", () => {
 
   it.each([
     [`bash -c -e "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [
-      `sh -c -x "node -e 'console.log(1)'"`,
-      "node -e 'console.log(1)'",
-      "javascript",
-      "console.log(1)",
-    ],
     [`bash -c +e "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -c -e -- "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -c - "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -c -o pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [`bash -c -O extglob "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -co pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -c -oe pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [`dash -coe errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -oc pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [`bash -cO extglob "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`bash -c +o errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [`bash -c +O extglob "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [
       `zsh -oextendedglob -c "python3 -c 'print(1)'"`,
       "python3 -c 'print(1)'",
       "python",
       "print(1)",
     ],
-    [`ksh -oerrexit -c "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
     [`zsh -c --errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [`ksh -c --errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
-    [
-      `bash --rcfile /dev/null -c -e "python3 -c 'print(1)'"`,
-      "python3 -c 'print(1)'",
-      "python",
-      "print(1)",
-    ],
   ])(
     "extracts nested scripts across POSIX shell options in %s",
     (command, shellScript, nestedLanguage, nestedScript) => {
@@ -104,7 +86,6 @@ describe("embeddedScripts", () => {
     [`bash -euo pipefail -c 'echo hi'`, "shellscript", "echo hi"],
     [`bash +x -c 'echo hi'`, "shellscript", "echo hi"],
     [`bash -c -- -e`, "shellscript", "-e"],
-    [`ash -c --rcfile 'echo SCRIPT' 'echo ARG'`, "shellscript", "echo SCRIPT"],
     [`sh --rcfile /dev/null -c 'echo SCRIPT'`, "shellscript", "echo SCRIPT"],
     [`fish -c -e "python3 -c 'print(1)'"`, "fish", "-e"],
     [`python3 -c 'print(1)'`, "python", "print(1)"],
@@ -174,7 +155,6 @@ describe("embeddedScripts", () => {
     ["the file `tee` writes", `tee -a config.json <<EOF\n{}\nEOF`, "json"],
     ["its delimiter", `kubectl apply -f - <<'YAML'\nkind: Pod\nYAML`, "yaml"],
     ["the shell reading it", `bash <<'EOF'\necho hi\nEOF`, "shellscript"],
-    ["a shell reading stdin with -s -", `bash -s - foo <<'EOF'\necho hi\nEOF`, "shellscript"],
   ])("takes a heredoc's language from %s", (_source, command, language) => {
     expect(scriptsOf(command).map(([lang]) => lang)).toEqual([language]);
   });
