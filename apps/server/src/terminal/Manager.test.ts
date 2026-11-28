@@ -269,6 +269,7 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  browserCommand?: string;
 }
 
 interface ManagerFixture {
@@ -328,6 +329,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
+        ...(options.browserCommand === undefined ? {} : { browserCommand: options.browserCommand }),
       }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => command));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -2995,6 +2997,37 @@ it.layer(
           }
         }
         expect(env).toEqual(originalEnv);
+      }),
+  );
+
+  it.effect.each([
+    { platform: "linux", parentEnv: { BROWSER: "firefox" }, runtimeEnv: { BROWSER: "" } },
+    { platform: "win32", parentEnv: { Browser: "firefox" }, runtimeEnv: { browser: "" } },
+  ] as const)(
+    "opens pages in T3's browser unless BROWSER is already set on $platform",
+    ({ platform, parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const browserCommand = "/home/me/.t3/userdata/bin/t3-browser";
+        const browserValues = (env: NodeJS.ProcessEnv) =>
+          Object.entries(env)
+            .filter(([key]) => key.toUpperCase() === "BROWSER")
+            .map(([, value]) => value);
+        for (const [env, terminalEnv, expected] of [
+          [{}, undefined, [browserCommand]],
+          [parentEnv, undefined, ["firefox"]],
+          [{}, runtimeEnv, [""]],
+        ] as const) {
+          const { manager, ptyAdapter } = yield* createManager(5, { env, browserCommand }).pipe(
+            Effect.provide(layerWithHostPlatform(platform)),
+          );
+          yield* manager.open(openInput(terminalEnv === undefined ? {} : { env: terminalEnv }));
+          expect
+            .soft(
+              browserValues(ptyAdapter.spawnInputs[0]!.env),
+              JSON.stringify({ env, terminalEnv }),
+            )
+            .toEqual(expected);
+        }
       }),
   );
 

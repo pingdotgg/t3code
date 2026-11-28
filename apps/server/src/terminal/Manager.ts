@@ -76,6 +76,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { writeTerminalBrowserCommand } from "./browserCommand.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -1735,6 +1736,7 @@ function createTerminalSpawnEnv(
   platform: NodeJS.Platform,
   home: string,
   threadId: string,
+  browserCommand: string | undefined,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1764,6 +1766,15 @@ function createTerminalSpawnEnv(
     }
   }
   spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadId;
+  // A BROWSER the user or provider set, even an empty one, wins over T3's browser.
+  if (
+    browserCommand !== undefined &&
+    !Object.keys(spawnEnv).some((key) =>
+      platform === "win32" ? key.toUpperCase() === "BROWSER" : key === "BROWSER",
+    )
+  ) {
+    spawnEnv.BROWSER = browserCommand;
+  }
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
@@ -1799,6 +1810,8 @@ interface TerminalManagerOptions {
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  /** What integrated terminals get as BROWSER unless they already have one. */
+  browserCommand?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
@@ -1872,7 +1885,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 export const make = Effect.fn("TerminalManager.make")(function* (
   deriveConfigMap: typeof deriveProviderInstanceConfigMap,
 ) {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir } = config;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1889,6 +1903,13 @@ export const make = Effect.fn("TerminalManager.make")(function* (
       env,
     }),
   );
+  const browserCommand = yield* writeTerminalBrowserCommand(config).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("terminal BROWSER command unavailable", { cause }).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
@@ -1899,6 +1920,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
     ),
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
+    ...(browserCommand === undefined ? {} : { browserCommand }),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
@@ -3037,6 +3059,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               yield* HostProcess.HomeDirectory,
               session.threadId,
+              options.browserCommand,
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (

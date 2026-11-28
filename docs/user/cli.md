@@ -47,6 +47,7 @@ See [Install T3 Code](./install.md#command-line) for installation (`curl -fsSL h
 | ------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `t3 doctor`        | Inspect database size and reclaim disk space (`--dry-run`, `--fix`).                                       |
 | `t3 browser setup` | One-time Linux host setup (AppArmor sandbox profile, libraries, fonts) for the headless preview browser.   |
+| `t3 browser open`  | Open a URL in the browser of the thread whose terminal runs it; terminals use it as `BROWSER`.             |
 | `t3 trace summary` | Summarize local server trace latency and errors (`--since 30m`, `--limit 50`).                             |
 | `t3 triage`        | Launch Claude Code, Codex, or Antigravity in your terminal with the T3 triage playbook.                    |
 | `t3 feedback`      | Send or inspect agent feedback reports (`list [--json]`, `--kind`, `--subject`, `--expected`, `--actual`). |

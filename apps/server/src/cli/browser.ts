@@ -1,18 +1,34 @@
+import { AuthPreviewOperateScope, EnvironmentPreviewOpenUrl, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/cli";
+import { Argument, Command, GlobalFlag } from "effect/cli";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
+import { AGENT_THREAD_ENV } from "../preview/PortScanner.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { resolveBaseDir } from "../os-jank.ts";
-import { baseDirFlag } from "./config.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  authLocationFlags,
+  baseDirFlag,
+  type CliAuthLocationFlags,
+  resolveCliAuthConfig,
+} from "./config.ts";
 import { resolveRootCliCommand } from "./invocation.ts";
+import { serverClient } from "./runningServer.ts";
+import { ThreadServerNotRunningError } from "./thread.ts";
 
 export class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepError>()(
   "BrowserSetupStepError",
@@ -253,7 +269,86 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
   ),
 );
 
+const isPreviewOpenUrl = Schema.is(EnvironmentPreviewOpenUrl);
+// Past this the server may still open the page, so the fallback can show it twice.
+const OPEN_IN_THREAD_TIMEOUT = "30 seconds";
+
+/**
+ * Opens `url` in the browser of the thread whose terminal runs this command. Anything T3's
+ * browser can't take, or a failure to reach it, goes to this host's browser, and failing that
+ * the URL is printed, so callers waiting on the browser command still see success.
+ */
+export const openBrowserUrl = Effect.fn("cli.browser.open")(function* <E1, R1, E2, R2>(input: {
+  readonly url: string;
+  readonly openInThread: (threadId: ThreadId, url: string) => Effect.Effect<void, E1, R1>;
+  readonly openOnHost: (url: string) => Effect.Effect<void, E2, R2>;
+}) {
+  const env = yield* HostProcess.Environment;
+  const threadId = env[AGENT_THREAD_ENV]?.trim();
+  if (threadId && isPreviewOpenUrl(input.url)) {
+    const opened = yield* Effect.exit(input.openInThread(ThreadId.make(threadId), input.url));
+    if (Exit.isSuccess(opened)) return;
+    yield* Console.error("Could not open this in T3 Code's browser, so it opens on this device.");
+  }
+  // xdg-open hands URLs to $BROWSER, which is this command.
+  const hostEnv = Object.fromEntries(
+    Object.entries(env).filter(([key]) => key.toUpperCase() !== "BROWSER"),
+  );
+  const launched = yield* Effect.exit(
+    input.openOnHost(input.url).pipe(Effect.provideService(HostProcess.Environment, hostEnv)),
+  );
+  if (Exit.isFailure(launched)) {
+    yield* Console.error(`Open this URL in a browser: ${input.url}`);
+  }
+});
+
+const openInThread = Effect.fn("cli.browser.openInThread")(function* (
+  flags: CliAuthLocationFlags,
+  threadId: ThreadId,
+  url: string,
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { quietLogs: true });
+  return yield* Effect.gen(function* () {
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+    if (Option.isNone(runtimeState)) {
+      return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
+    }
+    const client = yield* serverClient(runtimeState.value.origin, [AuthPreviewOperateScope]);
+    yield* client.preview.open({ headers: {}, payload: { threadId, url } });
+  }).pipe(
+    Effect.timeout(OPEN_IN_THREAD_TIMEOUT),
+    Effect.scoped,
+    Effect.provideService(References.MinimumLogLevel, "Error"),
+    Effect.provide(
+      EnvironmentAuth.layerRuntime.pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
+      ),
+    ),
+  );
+});
+
+const browserOpenCommand = Command.make("open", {
+  ...authLocationFlags,
+  url: Argument.String("url").pipe(Argument.withDescription("The page to open.")),
+}).pipe(
+  Command.withDescription(
+    "Open a URL in the browser of the thread whose terminal runs this, or else in this host's browser.",
+  ),
+  Command.withHandler(({ url, ...flags }) =>
+    Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* openBrowserUrl({
+        url,
+        openInThread: (threadId, target) => openInThread(flags, threadId, target),
+        openOnHost: launcher.launchBrowser,
+      });
+    }).pipe(Effect.provide(ExternalLauncher.layer)),
+  ),
+);
+
 export const browserCommand = Command.make("browser").pipe(
-  Command.withDescription("Manage T3's headless browser on this host."),
-  Command.withSubcommands([browserSetupCommand]),
+  Command.withDescription("Open pages in T3's browser and set it up on this host."),
+  Command.withSubcommands([browserSetupCommand, browserOpenCommand]),
 );

@@ -148,6 +148,7 @@ export const T3_CLI_COMMANDS: ReadonlyArray<string> = [
   "t3 environment list",
   "t3 environment unlink",
   "t3 browser",
+  "t3 browser open",
   "t3 browser setup",
   "t3 project",
   "t3 project add",
