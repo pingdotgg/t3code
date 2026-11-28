@@ -583,6 +583,73 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
+  // Windows treats `\` as a path separator and rejects it in file names.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "finds POSIX executables with a literal backslash in their name on PATH",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-backslash-path-" });
+        const command = "lint\\fast";
+        const executable = path.join(directory, command);
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const env = { PATH: directory };
+
+        expect(
+          yield* resolveCommandPath(command, { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          ),
+        ).toBe(executable);
+        const resolveExecutable = yield* SpawnExecutableResolution;
+        expect(yield* Effect.promise(async () => resolveExecutable(command, "linux", env))).toBe(
+          executable,
+        );
+
+        // Forward slashes remain explicit paths on POSIX and skip PATH search.
+        const nestedCommand = "sub/lint\\fast";
+        yield* fs.makeDirectory(path.join(directory, "sub"));
+        const nestedExecutable = path.join(directory, nestedCommand);
+        yield* fs.writeFileString(nestedExecutable, "#!/bin/sh\n");
+        yield* fs.chmod(nestedExecutable, 0o755);
+        expect(
+          yield* resolveCommandPath(nestedCommand, { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          ),
+        ).toBeNull();
+        expect(
+          yield* Effect.promise(async () => resolveExecutable(nestedCommand, "linux", env)),
+        ).toBeUndefined();
+      }),
+  );
+
+  it.effect("treats backslash as an explicit path separator on Windows", () =>
+    Effect.gen(function* () {
+      const probed: Array<string> = [];
+      const result = yield* resolveCommandPath("sub\\tool", {
+        env: { PATH: "C:\\bin", PATHEXT: ".EXE" },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provide(
+          FileSystem.layerNoop({
+            stat: (filePath) =>
+              Effect.sync(() => {
+                probed.push(filePath);
+                return { type: "Directory", mtime: Option.none() } as FileSystem.File.Info;
+              }),
+          }),
+        ),
+      );
+
+      expect(result).toBeNull();
+      expect(probed).toEqual(["sub\\tool.EXE", "sub\\tool.exe"]);
+    }),
+  );
+
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];

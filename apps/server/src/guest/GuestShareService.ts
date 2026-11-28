@@ -490,6 +490,12 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const endsShareFor = (shareId: GuestShareId) => (event: OrchestrationV2DomainEvent) => {
+    if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
+    const updated = threadOf(event);
+    return updated !== null && updated.guestShare?.id !== shareId;
+  };
+
   /** Completes once the session no longer opens its share, so open reads end with it. */
   const untilRevoked = (session: string) =>
     authorize(session, "session").pipe(
@@ -559,11 +565,7 @@ const make = Effect.gen(function* () {
     if (initialView === null) return yield* inactive;
 
     const ended: GuestStreamEvent = { type: "ended" };
-    const endsShare = (event: OrchestrationV2DomainEvent) => {
-      if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
-      const updated = threadOf(event);
-      return updated !== null && updated.guestShare?.id !== share.id;
-    };
+    const endsShare = endsShareFor(share.id);
     const live = orchestrator
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
@@ -655,7 +657,7 @@ const make = Effect.gen(function* () {
     session: string,
     itemId: string,
   ) {
-    const { thread } = yield* authorize(session, "session");
+    const { thread, share } = yield* authorize(session, "session");
     const id = TurnItemId.make(itemId);
     const item =
       (yield* orchestrator
@@ -668,7 +670,7 @@ const make = Effect.gen(function* () {
             Effect.map((page) => page.items[0]?.item ?? null),
             Effect.mapError(() => unavailable),
           ));
-    return item === null ? yield* unavailable : { thread, item };
+    return item === null ? yield* unavailable : { thread, share, item };
   });
 
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
@@ -708,12 +710,29 @@ const make = Effect.gen(function* () {
     session: string,
     itemId: string,
   ) {
-    const { item } = yield* threadItem(session, itemId);
+    const { thread, share, item } = yield* threadItem(session, itemId);
     if (item.type !== "command_execution") return yield* unavailable;
+    const afterSequence = yield* orchestrator
+      .getThreadEventSequence(thread.id)
+      .pipe(Effect.mapError(() => unavailable));
+    // A share that ends before the cursor is read fails this check; one that ends after it ends
+    // `shareEnded`.
+    yield* authorize(session, "session");
+    const endsShare = endsShareFor(share.id);
+    const shareEnded = orchestrator
+      .streamStoredEventsFrom({ threadId: thread.id, afterSequence })
+      .pipe(
+        Stream.filter((stored) => endsShare(stored.event)),
+        Stream.runHead,
+        Effect.ignore,
+      );
+    const untilExpiry = Effect.sleep(
+      Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
+    );
     return commandOutputs.subscribe({ threadId: item.threadId, itemId: item.id }).pipe(
       // A lost hub stream ends the output; the row reloads it when reopened.
       Stream.catchCause(() => Stream.empty),
-      Stream.interruptWhen(untilRevoked(session)),
+      Stream.interruptWhen(Effect.raceAll([shareEnded, untilExpiry, untilRevoked(session)])),
     );
   });
 
