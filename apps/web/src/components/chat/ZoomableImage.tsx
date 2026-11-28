@@ -1,5 +1,13 @@
 import { useGT } from "gt-react";
-import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import {
+  createContext,
+  type ReactNode,
+  type Ref,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { flushSync } from "react-dom";
 
 import {
@@ -7,6 +15,7 @@ import {
   windowControlsOverlayHeight,
 } from "../../lib/windowControlsOverlay";
 
+import { cn } from "~/lib/utils";
 import { AttachmentImage } from "../media/AttachmentImage";
 
 const MAX_ZOOM = 8;
@@ -35,6 +44,9 @@ function subscribeViewerSize(onChange: () => void) {
   };
 }
 
+/** The shown image's natural size, for an overlay drawn in its pixel space. */
+export const ZoomableImageNaturalSize = createContext({ width: 0, height: 0 });
+
 export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
 }
@@ -44,19 +56,23 @@ export function ZoomableImage({
   name,
   mimeType,
   onError,
+  overlay,
   ref,
 }: {
   src: string;
   name: string;
   mimeType?: string | undefined;
   onError: () => void;
+  /** Covers the image at its fitted size; zoom and pan are off while it is shown. */
+  overlay?: ReactNode;
   ref?: Ref<ZoomableImageHandle>;
 }) {
   const gt = useGT();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const viewerSize = useSyncExternalStore(subscribeViewerSize, getViewerSize);
-  const [zoom, setZoom] = useState(1);
+  const [zoomState, setZoom] = useState(1);
+  const zoom = overlay ? 1 : zoomState;
   // A resized viewer refits the image.
   const [zoomViewerSize, setZoomViewerSize] = useState(viewerSize);
   if (zoomViewerSize !== viewerSize) {
@@ -119,7 +135,7 @@ export function ZoomableImage({
   const changeZoom = (next: number, point?: { x: number; y: number }) => {
     const viewport = viewportRef.current;
     const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
-    if (!viewport || zoom === clamped) return;
+    if (!viewport || overlay || zoom === clamped) return;
     const bounds = viewport.getBoundingClientRect();
     const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
     const y = point ? point.y - bounds.top : viewport.clientHeight / 2;
@@ -157,7 +173,7 @@ export function ZoomableImage({
   };
 
   return (
-    <div className="min-w-0">
+    <div className={cn("min-w-0", overlay && "relative")}>
       <div
         ref={attachViewport}
         role="region"
@@ -260,6 +276,9 @@ export function ZoomableImage({
       <span className="sr-only" aria-live="polite">
         {gt("{percent}% zoom", { percent: Math.round(zoom * 100) })}
       </span>
+      {overlay && naturalSize.width ? (
+        <ZoomableImageNaturalSize value={naturalSize}>{overlay}</ZoomableImageNaturalSize>
+      ) : null}
     </div>
   );
 }

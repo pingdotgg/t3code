@@ -222,7 +222,7 @@ export function MarkdownCodeBlock({
       language={language}
       fenceTitle={fenceTitle}
       theme={theme}
-      wrapped={wrapped}
+      wrapped={canWrap && wrapped}
       headerProps={THREAD_FIND_IGNORE_PROPS}
       actions={
         <span
