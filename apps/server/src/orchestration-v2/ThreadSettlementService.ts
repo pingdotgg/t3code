@@ -43,7 +43,6 @@ import {
   legacyThreadPullRequestKey,
   threadPullRequestKeyOf,
 } from "../sourceControl/threadPullRequests.ts";
-import { isActiveRun } from "./CommandPolicy.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as PendingSettleScripts from "./PendingSettleScripts.ts";
@@ -831,16 +830,10 @@ export const make = Effect.gen(function* () {
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // A background wake runs on a settled thread without reopening it; while queued, its work
       // started after this settle and must not be torn down under it.
-      const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
-      if (
-        runs.some(
-          (run) =>
-            (run.status === "queued" || isActiveRun(run)) &&
-            DateTime.toEpochMillis(run.requestedAt) > settledAtMs,
-        )
-      ) {
-        return;
-      }
+      const { runs } = yield* projections.getThreadRecords(threadId, ["runs"], {
+        runStatuses: ["queued", "preparing", "starting", "running", "waiting"],
+      });
+      if (runs.some((run) => DateTime.toEpochMillis(run.requestedAt) > settledAtMs)) return;
       // The parent's worktree belongs to the parent; shared-worktree children
       // (subagents, forks, side chats) skip duplicate cleanup there.
       if (thread.lineage.parentThreadId !== null) {

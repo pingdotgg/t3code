@@ -714,9 +714,18 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               .map((thread) => ({ ...thread, pullRequests: thread.pullRequests ?? [] })),
           ),
         ),
-      getThreadRecords: ((threadId: string) =>
+      getThreadRecords: ((
+        threadId: string,
+        _fields: unknown,
+        filter?: { readonly runStatuses?: ReadonlyArray<OrchestrationV2Run["status"]> },
+      ) =>
         Effect.succeed({
-          runs: options.currentRuns?.filter((run) => run.threadId === threadId) ?? [],
+          runs:
+            options.currentRuns?.filter(
+              (run) =>
+                run.threadId === threadId &&
+                (filter?.runStatuses === undefined || filter.runStatuses.includes(run.status)),
+            ) ?? [],
         })) as unknown as ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"],
       ...options.projections,
       getSettlementCandidates: (threadId) =>
