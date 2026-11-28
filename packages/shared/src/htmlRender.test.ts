@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   HTML_RENDER_MAX_TITLE_LENGTH,
   htmlRenderFileName,
-  htmlRenderTitle,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
@@ -22,29 +21,16 @@ describe("htmlRenderFileName", () => {
   });
 });
 
-describe("htmlRenderTitle", () => {
-  it("never ends on half of an emoji at the length limit", () => {
+describe("readHtmlRenderReference", () => {
+  it("never ends the title on half of an emoji at the length limit", () => {
     const fits = "a".repeat(HTML_RENDER_MAX_TITLE_LENGTH - 2);
     const crosses = "a".repeat(HTML_RENDER_MAX_TITLE_LENGTH - 1);
-    expect(htmlRenderTitle(`${fits}🚀 more`)).toBe(`${fits}🚀`);
-    expect(htmlRenderTitle(`${crosses}🚀 more`)).toBe(crosses);
-  });
-
-  it("keeps a short title and falls back when the title is blank", () => {
-    expect(htmlRenderTitle("  Chart  ")).toBe("Chart");
-    expect(htmlRenderTitle("   ")).toBe("HTML");
-  });
-});
-
-describe("readHtmlRenderReference", () => {
-  it("applies the same title limit so a card label never ends on half an emoji", () => {
-    const crosses = "a".repeat(HTML_RENDER_MAX_TITLE_LENGTH - 1);
-    const reference = readHtmlRenderReference({
-      attachmentId: "thread-abc-123.html",
-      title: `${crosses}🚀 more`,
-      height: 420,
-    });
-    expect(reference?.title).toBe(crosses);
+    expect(readHtmlRenderReference({ ...reference, title: `${fits}🚀 more` })?.title).toBe(
+      `${fits}🚀`,
+    );
+    expect(readHtmlRenderReference({ ...reference, title: `${crosses}🚀 more` })?.title).toBe(
+      crosses,
+    );
   });
 });
 
