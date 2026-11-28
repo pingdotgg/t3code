@@ -26,6 +26,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   de: () => require("./translations/de.json"),
   ja: () => require("./translations/ja.json"),
   ko: () => require("./translations/ko.json"),
+  pl: () => require("./translations/pl.json"),
   ru: () => require("./translations/ru.json"),
   sv: () => require("./translations/sv.json"),
 };

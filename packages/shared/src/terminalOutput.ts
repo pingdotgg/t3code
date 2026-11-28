@@ -27,7 +27,7 @@ interface TerminalScreen {
   readonly row: number;
   readonly col: number;
   readonly pen: string;
-  readonly saved: { readonly row: number; readonly col: number } | null;
+  readonly saved: { readonly row: number; readonly col: number; readonly pen?: string } | null;
 }
 
 export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
@@ -312,7 +312,7 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-/** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
+/** Length of a complete escape sequence whose introducer follows `index`, or -1 if unfinished. */
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
   if (next === undefined) return -1;
@@ -326,6 +326,15 @@ function escapeLength(input: string, index: number): number {
       // CAN and SUB cancel the CSI and are consumed.
       if (code === 0x18 || code === 0x1a) return cursor - index + 1;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
+      // Like xterm.js, a non-ASCII code point aborts the CSI and is consumed, both halves of a surrogate pair.
+      if (code >= 0x80) {
+        if (code >= 0xd800 && code <= 0xdbff) {
+          if (cursor + 1 >= input.length) return -1;
+          const low = input.charCodeAt(cursor + 1);
+          if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+        }
+        return cursor - index + 1;
+      }
     }
     return -1;
   }
@@ -418,7 +427,7 @@ class Terminal {
   row: number;
   col: number;
   pen: string;
-  saved: { row: number; col: number } | null;
+  saved: { row: number; col: number; pen?: string } | null;
   /** Output was discarded on purpose (scrollback cleared or window over budget). */
   dropped = false;
   readonly maxChars: number;
@@ -580,12 +589,23 @@ class Terminal {
     if (sequence[1] === "[") {
       this.csi(sequence.slice(2, -1), sequence.at(-1)!);
     } else if (sequence === `${ESC}7`) {
-      this.saved = { row: this.row, col: this.col };
+      this.saved = { row: this.row, col: this.col, pen: this.pen };
     } else if (sequence === `${ESC}8`) {
-      if (this.saved !== null) this.moveTo(this.saved.row, this.saved.col);
+      if (this.saved !== null) {
+        this.moveTo(this.saved.row, this.saved.col);
+        if (this.saved.pen !== undefined) this.pen = this.saved.pen;
+      }
     } else if (sequence === `${ESC}M`) {
       this.moveTo(this.row - 1, this.col);
     }
+  }
+
+  private control(code: number): boolean {
+    if (code === 0x0a) this.newline();
+    else if (code === 0x0d) this.col = 0;
+    else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+    else return code === 0x07; // BEL has no screen effect.
+    return true;
   }
 
   /** Applies `input`; returns the unfinished escape left at its end. */
@@ -601,23 +621,32 @@ class Terminal {
       }
       flush(index);
       printable = index + 1;
-      if (code === 0x0a) this.newline();
-      else if (code === 0x0d) this.col = 0;
-      else if (code === 0x08) this.col = Math.max(0, this.col - 1);
-      else if (code === 0x1b) {
-        const length = escapeLength(input, index);
-        if (length === -1) {
-          const fragment = input.slice(index);
-          if (fragment.length <= MAX_PENDING_ESCAPE) return fragment;
+      if (code === 0x1b) {
+        let start = index + 1;
+        while (this.control(input.charCodeAt(start))) start += 1;
+        const length = escapeLength(input, start - 1);
+        const end = length === -1 ? -1 : start - 1 + length;
+        let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
+        if (sequence[1] === "[") {
+          // Apply controls now and leave them out of the CSI, including any pending fragment.
+          sequence = sequence.replace(/[\u0007\b\n\r]/gu, (control) => {
+            this.control(control.charCodeAt(0));
+            return "";
+          });
+        }
+        if (end === -1) {
+          if (sequence.length <= MAX_PENDING_ESCAPE) return sequence;
           // Retain the introducer and possible ST prefix so long string payloads stay hidden until termination.
-          if (STRING_SEQUENCE_INTRODUCERS.has(fragment[1]!)) {
-            return fragment.slice(0, 2) + (fragment.endsWith(ESC) ? ESC : "");
+          if (STRING_SEQUENCE_INTRODUCERS.has(sequence[1]!)) {
+            return sequence.slice(0, 2) + (sequence.endsWith(ESC) ? ESC : "");
           }
           return "";
         }
-        this.escape(input.slice(index, index + length));
-        index += length - 1;
-        printable = index + 1;
+        this.escape(sequence);
+        index = end - 1;
+        printable = end;
+      } else {
+        this.control(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
@@ -764,15 +793,21 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
+  let pen = "";
   if (screen.saved !== null) {
+    const save = screen.saved.pen === undefined ? `${ESC}[s` : `${ESC}7`;
+    if (screen.saved.pen !== undefined && screen.saved.pen !== "") {
+      suffix += sgr(screen.saved.pen);
+      pen = screen.saved.pen;
+    }
     if (screen.saved.row > lastRow) {
       const extra = screen.saved.row - lastRow;
       suffix +=
         "\n".repeat(extra) +
-        `${ESC}[${screen.saved.col + 1}G${ESC}7` +
+        `${ESC}[${screen.saved.col + 1}G${save}` +
         `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
     } else {
-      suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${save}`;
       if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
     }
   }
@@ -783,7 +818,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   ) {
     suffix += goTo(screen.row, screen.col);
   }
-  if (screen.pen !== "") suffix += sgr(screen.pen);
+  if (screen.pen !== pen) suffix += sgr(screen.pen);
   return replay + suffix + state.pending;
 }
 

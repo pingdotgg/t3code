@@ -155,6 +155,10 @@ it("asks environments that omit older settled threads for their rows, with the c
   inputs.length = 0;
   registry.get(search.results(makeThreadSearchKey([envB], "needle")));
   expect(inputs).toEqual([[envB, { query: "needle" }]]);
+  inputs.length = 0;
+  // Message hits stay in the caller's projects without an older settled cut too.
+  registry.get(search.results(makeThreadSearchKey([envB], "needle", scope)));
+  expect(inputs).toEqual([[envB, { query: "needle", projectIds: scope.projectIds }]]);
 
   registry.dispose();
 });

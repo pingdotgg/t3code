@@ -364,6 +364,10 @@ describe("pull request timeline", () => {
       ["Keep `[!NOTE]` in the file.", "Keep [!NOTE] in the file."],
       ["> [!NOTE]\n> Real alert.", "Real alert."],
       ["Keep [!WARNING] in prose.", "Keep [!WARNING] in prose."],
+      [
+        "Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.",
+        "Checked the cache first and it was stale.",
+      ],
     ] as const) {
       expect(
         pullRequestLinkSubject(`${pr}#issuecomment-5`, {
@@ -825,6 +829,32 @@ describe("fix findings handoff", () => {
     expect(texts).not.toContain("reviewer: finding 0");
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
+  });
+
+  it("counts only threads with readable text toward the findings limit", () => {
+    const reviewThreads = Array.from({ length: 21 }, (_, index) =>
+      thread(index === 0 ? "Fix wrong total" : "<!-- marker -->", { id: `t${index}` }),
+    );
+    const handoff = buildFixFindingsHandoff({ ...base, reviewThreads, checks: [] });
+    expect(handoff.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
+      "reviewer: Fix wrong total",
+    ]);
+    expect(handoff.prompt).not.toContain("further findings were omitted");
+
+    const hiddenRoot = reviewThreads[1]!;
+    const withReply = buildFixFindingsHandoff({
+      ...base,
+      reviewThreads: [
+        {
+          ...hiddenRoot,
+          comments: [...hiddenRoot.comments, ...thread("Fix wrong total").comments],
+        },
+      ],
+      checks: [],
+    });
+    expect(withReply.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
+      "reviewer: Fix wrong total",
+    ]);
   });
 
   it("names a GitLab merge request as one", () => {
@@ -1724,18 +1754,34 @@ describe("pull request panel context beside a thread", () => {
     expect(pullRequestPanelContext(thread, surface(2))).toBe("page");
   });
 
-  it("falls back to the legacy fields only for a thread with no link list", () => {
+  it("falls back to the legacy fields only for a thread with no link list and matches the repository case-insensitively", () => {
     const legacy = {
       projectId: "proj-a",
       repository: "pingdotgg/t3code",
       number: 3,
       url: "https://github.com/pingdotgg/t3code/pull/3",
     };
+    const mixedCaseLegacy = {
+      ...legacy,
+      repository: "PingDotGG/T3Code",
+    };
     expect(
       pullRequestPanelContext({ projectId: "proj-a", linkedPullRequest: legacy }, surface(3)),
     ).toBe("thread");
     expect(
       pullRequestPanelContext({ projectId: "proj-a", branchPullRequest: legacy }, surface(3)),
+    ).toBe("thread");
+    expect(
+      pullRequestPanelContext(
+        { projectId: "proj-a", linkedPullRequest: legacy },
+        surface(3, { repository: "PingDotGG/T3Code" }),
+      ),
+    ).toBe("thread");
+    expect(
+      pullRequestPanelContext(
+        { projectId: "proj-a", branchPullRequest: mixedCaseLegacy },
+        surface(3),
+      ),
     ).toBe("thread");
     expect(pullRequestPanelContext({ projectId: "proj-a", pullRequests: [] }, surface(3))).toBe(
       "page",

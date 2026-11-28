@@ -63,6 +63,7 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: false,
   events: true,
   search: true,
+  internalComments: true,
 };
 
 const EVERYTHING: IssueViewerPermissions = {
@@ -155,6 +156,7 @@ function toComment(comment: JiraApi.JiraComment, issueUrl: string): IssueComment
     body: adfToMarkdown(comment.body),
     createdAt: iso(comment.created),
     url: `${issueUrl}?focusedCommentId=${comment.id}`,
+    ...(comment.jsdPublic === false ? { internal: true } : {}),
   };
 }
 
@@ -273,6 +275,17 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       return key;
     });
 
+    const assignableBeyondPages = Effect.fn("JiraIssueTracker.assignableBeyondPages")(function* (
+      project: string,
+      named: string,
+    ) {
+      const byName = (yield* jira.findUsers(named)).find((user) => matchesUser(user, named));
+      // A picker search past the pages read sends an account id, which user search does not match.
+      if (byName !== undefined || /[\s@]/u.test(named)) return byName;
+      const { users } = yield* jira.assignable(project, { accountId: named });
+      return users.find((user) => user.accountId === named);
+    });
+
     /** The account a client named by display name, email or id, among those the project assigns. */
     const accountId = Effect.fn("JiraIssueTracker.accountId")(function* (
       operation: string,
@@ -284,11 +297,12 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       if (rest.length > 0) {
         return yield* JiraApi.fail(operation, "failed", "A Jira issue has one assignee at most.");
       }
-      const { users } = yield* jira.assignable(projectKey(scope));
+      const project = projectKey(scope);
+      const { users } = yield* jira.assignable(project);
       // Jira hides users after paging, so the pages read never prove someone is missing.
       const found =
         users.find((user) => matchesUser(user, first)) ??
-        (yield* jira.findUsers(first)).find((user) => matchesUser(user, first));
+        (yield* assignableBeyondPages(project, first));
       if (found === undefined) {
         return yield* JiraApi.fail(
           operation,
@@ -415,6 +429,9 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
                 },
           states: toStates(issue),
           comments: page.comments.map((comment) => toComment(comment, summary.url)),
+          ...(issue.fields.project?.projectTypeKey === "service_desk"
+            ? { commentAudiences: true }
+            : {}),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
           linkedPullRequests: [],
@@ -471,7 +488,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       comment: Effect.fn("JiraIssueTracker.comment")(function* (input) {
         const key = yield* requireProjectKey("comment", input);
-        yield* jira.addComment(key, markdownToAdf(input.body));
+        yield* jira.addComment(key, markdownToAdf(input.body), input.audience);
       }),
 
       update: Effect.fn("JiraIssueTracker.update")(function* (input) {
@@ -527,14 +544,26 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       }),
 
       listCandidates: (input) =>
-        Effect.all([jira.labels, jira.assignable(projectKey(input.scope))], {
-          concurrency: 2,
-        }).pipe(
+        Effect.all(
+          [
+            // A person search does not need the label catalogue.
+            input.query === undefined
+              ? jira.labels
+              : Effect.succeed({ names: [], truncated: false }),
+            jira.assignable(
+              projectKey(input.scope),
+              input.query === undefined ? undefined : { query: input.query },
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
           Effect.map(([labels, people]) => ({
             labels: labels.names.flatMap((name) =>
               name.trim() ? [{ name, color: null, description: null }] : [],
             ),
             assignees: people.users.map((user) => ({ ...toActor(user), id: user.accountId })),
+            // Jira filters each assignable page after reading it, so no page shows the list ended.
+            assigneeSearch: true,
             truncated: labels.truncated || people.truncated,
           })),
         ),

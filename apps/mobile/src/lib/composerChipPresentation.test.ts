@@ -1,12 +1,36 @@
+import { decodeOptions } from "gt-react-native";
 import { describe, expect, it } from "vite-plus/test";
 
-import { contextChipAccent, contextChipPresentation } from "./composerChipPresentation";
+import type { MessageResolver } from "../i18n/messages";
+
+import {
+  composerChipSizeSuffix,
+  contextChipAccent,
+  contextChipPresentation,
+} from "./composerChipPresentation";
 import {
   flattenThemeColor,
   getMobileThemeVariables,
   MOBILE_THEME_IDS,
   type MobileThemeVariables,
 } from "./mobileTheme";
+
+describe("composerChipSizeSuffix", () => {
+  it("shows a file chip's size in the app language", () => {
+    const french = ((message: string, options?: Record<string, unknown>) => {
+      const vars = { ...decodeOptions(message), ...options };
+      const units: Record<string, string> = { "{size} KB": "{size} Ko", "{size} MB": "{size} Mo" };
+      return (units[String(vars.$_source)] ?? String(vars.$_source)).replace(
+        "{size}",
+        String(vars.size),
+      );
+    }) as MessageResolver;
+    expect(composerChipSizeSuffix({ kind: "file", sizeBytes: 12 * 1024 }, french)).toBe("12 Ko");
+    expect(composerChipSizeSuffix({ kind: "image", sizeBytes: 3 * 1024 * 1024 }, french)).toBe(
+      "3.0 Mo",
+    );
+  });
+});
 
 const CHIP_ACCENTS = [
   ...new Set(

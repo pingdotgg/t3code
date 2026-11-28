@@ -156,6 +156,12 @@ it("keeps fence paths literal and indexes file-chip labels in user messages", ()
 
 it.each([
   {
+    source: "assistant",
+    cwd: undefined,
+    text: "**已返回总部工作。**据美联社报道 and ~~删除。~~后续",
+    expected: ["已返回总部工作。据美联社报道 and 删除。后续"],
+  },
+  {
     source: "user",
     cwd: "/workspace/repo",
     text: "See [src/notes.ts](src/notes.ts#L42-L64) and [src/notes.ts](src/notes.ts#L42-L70)",

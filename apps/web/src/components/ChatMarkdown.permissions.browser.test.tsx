@@ -106,6 +106,26 @@ vi.mock(import("../hooks/useFileMetadata"), async (original) => ({
 }));
 vi.mock(import("./files/useFileDownload"), () => ({ useFileDownload: () => state.download }));
 vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
+// Desktop can forward this environment's ports: it runs on another machine.
+vi.mock(import("../state/portForwards"), async (original) => ({
+  ...(await original()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => "remote" as const,
+  usePortForwards: () => [],
+  forwardPort: (async (environmentId: string, remotePort: number) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  })) as never,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -364,4 +384,21 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
     expect(state.openExternal).toHaveBeenLastCalledWith(href);
   }
   expect(state.openExternal).toHaveBeenCalledTimes(2);
+});
+
+it("opens a remote environment's localhost link in the system browser through a forward", async () => {
+  using _setup = setup();
+  await using screen = await renderMarkdown("[App](http://localhost:3000/docs?x=1#top)");
+  // Keeps the test page from following the link; React's handlers run before this.
+  const stopNavigation = (event: Event) => event.preventDefault();
+  window.addEventListener("click", stopNavigation);
+  try {
+    await userEvent.click(screen.anchor(), { modifiers: ["ControlOrMeta"] });
+  } finally {
+    window.removeEventListener("click", stopNavigation);
+  }
+  await vi.waitFor(() =>
+    expect(state.openExternal).toHaveBeenCalledWith("http://localhost:45000/docs?x=1#top"),
+  );
+  expect(state.openExternal).not.toHaveBeenCalledWith("http://localhost:3000/docs?x=1#top");
 });

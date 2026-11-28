@@ -3867,6 +3867,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("returns from a plugin command that waits on its own question", () =>
+    Effect.gen(function* () {
+      // A plugin command that prompts and waits holds the session.command reply until its question is answered.
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "askwait" }] }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", { data: [], cursor: {} }),
+        out("session.command", { sessionID: SESSION, name: "askwait", text: "" }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("form.created", { form: colorForm }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime
+        .startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "/askwait" },
+        })
+        .pipe(Effect.forkScoped);
+      assert.isDefined(yield* Fiber.join(requested));
+      const returned = yield* Fiber.join(started).pipe(
+        Effect.timeoutOption("10 seconds"),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(
+        Option.isSome(yield* Fiber.join(returned)),
+        "startTurn must return once the command is admitted, or the answer queues behind it",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends a command from execution events that arrive after its reply", () =>
     Effect.gen(function* () {
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
@@ -4679,6 +4711,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "provider_session.updated"
+            ? [event.providerSession.startupPhase ?? null]
+            : [],
+        ),
+        [null, "connecting", null, null],
+      );
     }),
   );
 
