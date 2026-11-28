@@ -58,7 +58,7 @@ const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 // Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
 const COMMAND_START =
-  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+  "(?:^|[;&|({`\\n])\\s*(?:(?:do|then|else)\\s+)?(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
@@ -204,8 +204,8 @@ function replaceCarriedText(script: string, replace: (piece: CarriedText) => str
 
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
-  replaceCarriedText(script, ({ start, end, kind }) =>
-    kind === "escape" ? script.slice(start, end) : kind === "heredoc" ? "<<" : "''",
+  replaceCarriedText(script, ({ start, kind }) =>
+    kind === "escape" ? (script[start + 1] === "\n" ? "" : "_") : kind === "heredoc" ? "<<" : "''",
   );
 
 /** A script split at the command separators in its code, leaving carried text intact. */

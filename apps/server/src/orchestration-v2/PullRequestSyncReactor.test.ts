@@ -2380,6 +2380,24 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create after a conditional then",
+      input: "if true; then gh pr create --fill; fi",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create command after then used as an ordinary argument",
+      input: "echo example then gh pr create; printf '%s\\n' \"$PR\"",
+      output: "example then gh pr create\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after an escaped semicolon",
+      input: "echo example\\;gh pr create; printf '%s\\n' \"$PR\"",
+      output: "example;gh pr create\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
       name: "an existing pull request quoted in another command",
       input:
         "printf '%s\\n' 'https://github.com/owner/repository/pull/120'; gh pr create --fill > /dev/null",
