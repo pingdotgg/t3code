@@ -1,5 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  resolveEnvironmentMachineKind,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -11,7 +17,8 @@ import { serverEnvironment } from "../../state/server";
 import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { EnvironmentUsageStatus } from "../../state/usage";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   Dialog,
   DialogDescription,
@@ -42,7 +49,9 @@ import {
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
 
-const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
+type PriceTarget = UsagePriceTarget & { readonly machine: EnvironmentMachineKind };
+
+const priceTargetsAtom = Atom.make((get): readonly PriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     const session = get(environmentSession.sessionStateAtom(environmentId));
@@ -60,6 +69,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
     return {
       environmentId,
       label: environment.entry.target.label,
+      machine: resolveEnvironmentMachineKind(environment.serverConfig),
       prices: settings?.usagePriceOverrides ?? null,
       aliases:
         environment.serverConfig?.environment.capabilities.usageModelAliases === true
@@ -315,16 +325,23 @@ export function UsagePriceOverrides({
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2 text-sm">
               <Label id="usage-prices-apply-label" className="shrink-0">
                 <T>Apply to</T>
               </Label>
               <Menu>
                 <MenuTrigger
-                  render={<Button variant="outline" size="sm" className="min-w-0" />}
+                  render={<InlineButton tone="picker" className="min-w-0" />}
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
                 >
+                  {selectedIds !== null && selected.length === 1 && (
+                    <EnvironmentMachineIcon
+                      kind={selected[0]!.machine}
+                      className="size-3.5 shrink-0"
+                      aria-hidden
+                    />
+                  )}
                   <span id="usage-prices-selection" className="truncate">
                     {selectionLabel}
                   </span>

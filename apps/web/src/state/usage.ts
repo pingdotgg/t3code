@@ -2,8 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthProvidersManageScope,
   AuthDiagnosticsReadScope,
+  resolveEnvironmentMachineKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type UsageBucket,
   type UsageAccessRequest,
   type UsageSummary,
@@ -29,6 +31,7 @@ import { m } from "../i18n/messages";
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly machine: EnvironmentMachineKind;
   readonly isPending: boolean;
   readonly canReadDiagnostics: boolean;
   /** Agents still waiting for a usage access answer that this session may save. */
@@ -46,6 +49,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const isConnected = presentation.connection.phase === "connected";
+      const machine = resolveEnvironmentMachineKind(presentation.serverConfig);
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const access = resolveUsageAccess(
         {
@@ -59,6 +63,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         statuses.push({
           environmentId,
           label: presentation.entry.target.label,
+          machine,
           isConnected,
           ...access,
           accessRequests: [],
@@ -79,6 +84,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
+        machine,
         isPending: result.waiting,
         canReadDiagnostics: true,
         accessRequests: unansweredUsageAccessRequests({

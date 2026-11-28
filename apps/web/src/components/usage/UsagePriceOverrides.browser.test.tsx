@@ -12,7 +12,10 @@ vi.mock(import("~/state/presentation"), async (original) => {
     entry: { target: { label: "workstation" } },
     connection: { phase: "connected" },
     serverConfig: {
-      environment: { capabilities: { usagePriceOverrides: true, usageModelAliases: true } },
+      environment: {
+        capabilities: { usagePriceOverrides: true, usageModelAliases: true },
+        platform: { machine: "desktop" },
+      },
     },
   };
   return {
