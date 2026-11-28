@@ -39,6 +39,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
+        <PlanModeRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -50,6 +51,29 @@ export function LabsSettingsPanel() {
         <AgentFeedbackRow />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function PlanModeRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  return (
+    <SettingsRow
+      {...searchableSetting("plan-mode")}
+      devicePreference
+      description={gt(
+        "Show a Plan mode toggle in the composer for agents that support it. Off sends every message in build mode.",
+      )}
+      control={
+        <Switch
+          checked={settings.planModeEnabled}
+          onCheckedChange={(checked) => updateSettings({ planModeEnabled: Boolean(checked) })}
+          aria-label={gt("Plan mode")}
+        />
+      }
+    />
   );
 }
 

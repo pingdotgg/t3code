@@ -13056,5 +13056,7 @@
   "5807c08e225c6b3d": "Ladda ned",
   "0d50b5bfe7151ece": "Det gick inte att ladda ned filen",
   "eb1fd384ad5919dd": "Intern anteckning",
-  "b45f0b467e9406d0": "Svara kunden"
+  "b45f0b467e9406d0": "Svara kunden",
+  "e18f183d8feb3c21": "Visar en växel för planeringsläge i meddelandefältet för agenter som stöder det. Av skickar varje meddelande i byggläge.",
+  "a24f29cdd04997d7": "beta bygg plan planeringsläge meddelandefält växel"
 }

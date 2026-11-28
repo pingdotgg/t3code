@@ -13057,5 +13057,7 @@
   "5807c08e225c6b3d": "Download",
   "0d50b5bfe7151ece": "Could not download file",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "e18f183d8feb3c21": "Show a Plan mode toggle in the composer for agents that support it. Off sends every message in build mode.",
+  "a24f29cdd04997d7": "beta build plan composer toggle"
 }

@@ -30,6 +30,10 @@ Files upload to the environment's machine as soon as you attach them, and all up
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Plan mode (beta)
+
+Turn on **Settings → Labs → Plan mode** to get a **Plan mode** toggle in the web and desktop composer. It shows only for agents that support planning. The choice applies to your next message and is remembered per thread. While the setting is off, every message is sent in build mode.
+
 ## Send while the agent is working
 
 Choose your default follow-up behavior in **Settings → Chat → Follow-up behavior** (per client):

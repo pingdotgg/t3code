@@ -13049,5 +13049,7 @@
   "5807c08e225c6b3d": "Télécharger",
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
   "eb1fd384ad5919dd": "Note interne",
-  "b45f0b467e9406d0": "Répondre au client"
+  "b45f0b467e9406d0": "Répondre au client",
+  "e18f183d8feb3c21": "Affiche dans le compositeur un bouton de mode planification pour les agents qui le prennent en charge. Désactivé envoie chaque message en mode build.",
+  "a24f29cdd04997d7": "beta build plan planification compositeur bouton"
 }

@@ -265,6 +265,7 @@ import { assistantCitationNavigation } from "../../lib/assistantCitationNavigati
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { useManagedPolicy } from "../../state/managedPolicy";
+import { useClientSettings } from "../../hooks/useSettings";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -679,6 +680,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
+  const planModeEnabled = useClientSettings((settings) => settings.planModeEnabled);
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
@@ -1012,6 +1014,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
   const supportsPlanMode =
+    planModeEnabled &&
     selectedProviderEntry !== undefined &&
     selectedProviderEntry.snapshot.showInteractionModeToggle !== false &&
     multipleModelSelections === null;
