@@ -415,6 +415,17 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        const apostropheCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          apostropheCwd,
+          "src/routes/__root.tsx",
+          `const links = [{ rel: "icon", href: "/brand/chef's-hat.svg#mark" }];`,
+        );
+        yield* writeTextFile(apostropheCwd, "public/brand/chef's-hat.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(apostropheCwd)).toBe(
+          (yield* Path.Path).join(apostropheCwd, "public", "brand", "chef's-hat.svg"),
+        );
       }),
     );
 
