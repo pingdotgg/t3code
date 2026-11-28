@@ -332,10 +332,24 @@ export function WorkspaceBrowserPreview(props: {
       ? ""
       : `${url?.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
 
+  const pdfSaveAction = pdf ? (
+    <WorkspacePdfSaveAction
+      environmentId={props.environmentId}
+      resource={largeFileResource(
+        props.threadRef,
+        props.absolutePath,
+        props.draft ? props.workspaceRoot : null,
+      )}
+      name={props.title}
+    />
+  ) : null;
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        <T>Unable to load file preview.</T>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-xs leading-relaxed">
+        <p className="text-destructive">
+          <T>Unable to load file preview.</T>
+        </p>
+        {pdfSaveAction}
       </div>
     );
   }
@@ -358,13 +372,7 @@ export function WorkspaceBrowserPreview(props: {
       title={props.title}
       pdf={pdf}
       threadRef={props.threadRef}
-      pdfActions={
-        <WorkspacePdfSaveAction
-          environmentId={props.environmentId}
-          resource={resource}
-          name={props.title}
-        />
-      }
+      pdfActions={pdfSaveAction}
     />
   );
 }
