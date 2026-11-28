@@ -658,6 +658,22 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a link that lost its credential is not listed as reachable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* a.sql`UPDATE peer_environment_links SET secret_name = 'missing-secret'`;
+
+      const lost = yield* probe(a).pipe(Effect.flip);
+      expect(lost.message).toContain("lost its credential");
+      expect((yield* a.links.list).map((link) => link.status)).not.toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -624,10 +624,14 @@ const make = Effect.gen(function* () {
         `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
 
   const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
-    link: PeerLink,
+    row: PeerLinkRow,
     now: DateTime.Utc,
-  ): Effect.fn.Return<PeerLinkSummary> {
+  ): Effect.fn.Return<PeerLinkSummary, PeerLinkError> {
+    const link = yield* toLink(row);
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
+    // Without its token the link can make no call; like an expired one, only linking again helps.
+    const stored = yield* secrets.get(row.secret_name).pipe(Effect.catch(failStorage));
+    if (Option.isNone(stored)) return { ...link, status: "expired" };
     // A race over no addresses never settles.
     if (link.urls.length === 0) return { ...link, status: "unreachable" };
     const answered = yield* Effect.raceAll(
@@ -640,9 +644,9 @@ const make = Effect.gen(function* () {
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
-    const links = yield* Effect.forEach(yield* readRows, toLink);
+    const rows = yield* readRows;
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
+    return yield* Effect.forEach(rows, (row) => statusOf(row, now), {
       concurrency: "unbounded",
     });
   });
