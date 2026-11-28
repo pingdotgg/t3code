@@ -85,9 +85,9 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
 // Use the taller neighboring measurement because breakpoints can select either height.
 function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
-  const high = above === -1 ? heights.length - 1 : above;
-  const low = heights[high]![0] === width ? high : Math.max(0, high - 1);
-  return Math.max(heights[low]![1], heights[high]![1]);
+  if (above === -1) return heights[heights.length - 1]![1];
+  const low = heights[above]![0] === width ? above : Math.max(0, above - 1);
+  return Math.max(heights[low]![1], heights[above]![1]);
 }
 
 /**

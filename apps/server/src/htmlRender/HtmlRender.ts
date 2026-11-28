@@ -101,20 +101,42 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
   }
 }
 
-// Check only stylesheets and style attributes, even inside scripts; skip comments whole.
-// Consume unclosed comments, tags, or quotes through EOF to keep both patterns linear.
-const CSS_SOURCE =
-  /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
+// Check stylesheets, style attributes, and scripts (which may write either); skip comments whole.
+// Consume unclosed comments, tags, or quotes through EOF to keep every pattern linear.
+const HTML_CSS_SOURCE =
+  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)|[^>])*)(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)|[^>])*)/gi;
+// Inside a tag, skip other attributes' quoted values, such as a title that mentions style=.
+// A quote opens a value only right after `=`; an unquoted value such as `it's` or `a="b` runs to a space.
+const TAG_STYLE =
+  /\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))|=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)/gi;
+// A script is not markup, so take any style block or attribute it spells out.
+const SCRIPT_STYLE =
+  /<!--[\s\S]*?(?:-->|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // vb and vmax follow the frame height too; vmin stays, as the frame width caps it.
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh",
 // and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
   /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
 
+const findViewportHeight = (source: string, pattern: RegExp) => {
+  for (const [, ...captures] of source.matchAll(pattern)) {
+    for (const css of captures) {
+      const found = css === undefined ? undefined : VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+};
+
 const rejectViewportHeight = (html: string) => {
-  for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
-    const css = sheet ?? doubleQuoted ?? singleQuoted ?? unquoted ?? "";
-    const found = VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+  for (const [, scriptTag, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
+    const found =
+      script !== undefined
+        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE) ??
+          findViewportHeight(script, SCRIPT_STYLE))
+        : tag !== undefined
+          ? findViewportHeight(tag, TAG_STYLE)
+          : VIEWPORT_HEIGHT_UNIT.exec(sheet ?? "")?.[0];
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
