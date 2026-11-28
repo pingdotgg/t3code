@@ -6208,6 +6208,10 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  readonly onModelAuthentication?: (
+    state: "rejected" | "accepted",
+    cwd: string | null,
+  ) => Effect.Effect<void>;
   /**
    * Called with the requested cwd on a process's first init message, after its synchronous
    * SessionStart hooks have run, so cwd-keyed workspace scans can be refreshed.
@@ -13151,6 +13155,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
+            if (
+              adapterOptions.onModelAuthentication &&
+              !interrupted &&
+              message.subtype === "success"
+            ) {
+              const rejected =
+                resultFailure !== null &&
+                (message.api_error_status === 401 ||
+                  (message.api_error_status == null &&
+                    context.authenticationFailureMessage !== undefined &&
+                    /\bAPI Error: 401\b/i.test(message.result)));
+              if (
+                rejected ||
+                (resultFailure === null && message.duration_api_ms > 0 && !message.local_command)
+              ) {
+                yield* adapterOptions.onModelAuthentication(
+                  rejected ? "rejected" : "accepted",
+                  context.input.runtimePolicy.cwd,
+                );
+              }
+            }
             const resultResetAt =
               resultFailure?.class === "usage_limit" ? resultFailure.resetAt : null;
             // An untyped rejection without a reset is the gateway's own 429; its text names the reset.
@@ -16234,7 +16259,12 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
     hooks: Pick<
       ClaudeAdapterV2Options,
-      "scopedLimitNames" | "onUsageLimits" | "onSessionInit" | "modelCatalog" | "routeModelCatalog"
+      | "scopedLimitNames"
+      | "onUsageLimits"
+      | "onModelAuthentication"
+      | "onSessionInit"
+      | "modelCatalog"
+      | "routeModelCatalog"
     > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;

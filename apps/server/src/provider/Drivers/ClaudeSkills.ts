@@ -742,6 +742,57 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
+const authOverrideKeys = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_API_KEY_HELPER",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+  "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+
+const hasAuthEnvironment = (environment: Readonly<Record<string, unknown>>) =>
+  authOverrideKeys.some((key) => {
+    const value = environment[key];
+    return typeof value === "string" ? Boolean(value.trim()) : Boolean(value);
+  });
+
+const decodeAuthSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.Struct({
+      apiKeyHelper: Schema.optional(Schema.String),
+      env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+);
+
+export const hasClaudeAuthenticationOverride = Effect.fn("hasClaudeAuthenticationOverride")(
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    cwd: string | undefined,
+    environment: NodeJS.ProcessEnv,
+  ) {
+    if (hasAuthEnvironment(environment)) return true;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const configDir = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+    const root = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
+    for (const file of claudeSettingsPaths(path, configDir, cwd, platform, environment, root)) {
+      const settings = yield* fileSystem.readFileString(file).pipe(
+        Effect.flatMap(decodeAuthSettings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (settings?.apiKeyHelper?.trim() || hasAuthEnvironment(settings?.env ?? {})) return true;
+    }
+    return false;
+  },
+);
+
 const SettingsEnv = Schema.Struct({
   ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
   CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),

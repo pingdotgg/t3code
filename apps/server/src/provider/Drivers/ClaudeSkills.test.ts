@@ -5,7 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { discoverClaudeSkills as discoverSkills } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkills as discoverSkills,
+  hasClaudeAuthenticationOverride,
+} from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
 // Windows makes the managed directory fixture-controlled without reading host policy or skills.
@@ -1465,6 +1468,59 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["user-only-yes", true, false],
         ],
       );
+    }),
+  );
+
+  it.effect("finds credentials that replace the saved sign-in", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-auth-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const workspace = path.join(repo, "packages", "app");
+      const sibling = path.join(repo, "packages", "other");
+      const plain = path.join(tempDir, "plain");
+      for (const directory of [
+        configDir,
+        path.join(repo, ".git"),
+        path.join(repo, ".claude"),
+        path.join(workspace, ".claude"),
+        sibling,
+        plain,
+      ]) {
+        yield* fs.makeDirectory(directory, { recursive: true });
+      }
+      const overrides = (cwd: string | undefined, environment: NodeJS.ProcessEnv = {}) =>
+        hasClaudeAuthenticationOverride({ homePath: configDir }, cwd, environment).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+
+      assert.isFalse(yield* overrides(plain, { ANTHROPIC_API_KEY: " " }));
+      assert.isTrue(yield* overrides(plain, { ANTHROPIC_API_KEY: "key" }));
+      assert.isTrue(yield* overrides(plain, { CLAUDE_CODE_USE_BEDROCK: "1" }));
+
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.json"),
+        '{ "env": { "ANTHROPIC_AUTH_TOKEN": "token" } }',
+      );
+      assert.isTrue(yield* overrides(workspace));
+      assert.isFalse(yield* overrides(sibling));
+
+      yield* fs.writeFileString(
+        path.join(repo, ".claude", "settings.local.json"),
+        '{ "apiKeyHelper": "echo key" }',
+      );
+      assert.isTrue(yield* overrides(sibling));
+      assert.isFalse(yield* overrides(plain));
+      assert.isFalse(yield* overrides(undefined));
+
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{ "env": { "ANTHROPIC_BASE_URL": "https://gateway.example" } }',
+      );
+      assert.isTrue(yield* overrides(plain));
+      assert.isTrue(yield* overrides(undefined));
     }),
   );
 });

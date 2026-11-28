@@ -11,7 +11,9 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
@@ -68,6 +70,7 @@ import {
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hasClaudeAuthenticationOverride } from "./ClaudeSkills.ts";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -187,6 +190,44 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Retain reports until the registry subscribes; end its listener on teardown.
     const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
     yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
+    // The account whose saved sign-in a model request last rejected.
+    const rejectedSignIn = yield* SubscriptionRef.make<
+      Pick<ServerProvider["auth"], "email" | "workspaceId"> | undefined
+    >(undefined);
+    const authenticationUpdates = yield* Semaphore.make(1);
+    const inheritedHome = processEnv.CLAUDE_CONFIG_DIR?.trim();
+    const canReportSavedLogin =
+      !/--settings(?:[=\s]|$)/.test(effectiveConfig.launchArgs) &&
+      (effectiveConfig.homePath.trim().length > 0 ||
+        !inheritedHome ||
+        path.isAbsolute(inheritedHome));
+    const withModelAuthentication = (provider: ServerProvider): ServerProvider => {
+      const rejected = rejectedSignIn.value;
+      const differs = (a: string | undefined, b: string | undefined) =>
+        a !== undefined && b !== undefined && a.toLowerCase() !== b.toLowerCase();
+      if (
+        rejected === undefined ||
+        // Another account's rejection says nothing about the one now signed in.
+        differs(rejected.email, provider.auth.email) ||
+        differs(rejected.workspaceId, provider.auth.workspaceId) ||
+        provider.status !== "ready" ||
+        provider.auth.type === undefined ||
+        provider.auth.type === "apiKey" ||
+        provider.auth.type === "bedrock" ||
+        provider.auth.type === "customEndpoint"
+      )
+        return provider;
+      // Usage limits and account metadata can still load after a model request returns 401.
+      return {
+        ...provider,
+        status: "warning",
+        auth: { ...provider.auth, status: "unknown" },
+        modelsRetained: true,
+        // No probe can confirm a new sign-in, so this must stay true until a request succeeds.
+        message:
+          "Claude rejected the saved sign-in on the last request. Run `claude auth login`, then send a message to confirm.",
+      };
+    };
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -199,6 +240,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       {
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        ...(canReportSavedLogin
+          ? {
+              onModelAuthentication: Effect.fn("ClaudeDriver.onModelAuthentication")(
+                function* (state, cwd) {
+                  if (state === "accepted" && rejectedSignIn.value === undefined) return;
+                  if (
+                    yield* hasClaudeAuthenticationOverride(
+                      effectiveConfig,
+                      cwd ?? undefined,
+                      processEnv,
+                    )
+                  )
+                    return;
+                  const auth = (yield* readCurrentSnapshot)?.auth;
+                  yield* SubscriptionRef.set(
+                    rejectedSignIn,
+                    state === "rejected"
+                      ? { email: auth?.email, workspaceId: auth?.workspaceId }
+                      : undefined,
+                  );
+                },
+                (effect) => authenticationUpdates.withPermit(effect),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+            }
+          : {}),
         onSessionInit: (cwd) => Queue.offer(workspaceRescans, cwd).pipe(Effect.asVoid),
         modelCatalog,
         routeModelCatalog: modelRoutes.route,
@@ -510,6 +578,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const getSnapshot = snapshot.getSnapshot.pipe(Effect.map(withModelAuthentication));
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -520,7 +589,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       displayName,
       accentColor,
       enabled,
-      snapshot,
+      snapshot: {
+        ...snapshot,
+        getSnapshot,
+        refresh: snapshot.refresh.pipe(Effect.map(withModelAuthentication)),
+        streamChanges: Stream.merge(
+          snapshot.streamChanges.pipe(Stream.map(withModelAuthentication)),
+          SubscriptionRef.changes(rejectedSignIn).pipe(
+            // The ref replays its value to each subscriber. Before the first check that would
+            // publish the placeholder over the cached status the registry is showing.
+            Stream.filterEffect(() =>
+              Effect.map(
+                snapshot.isAwaitingFirstCheck ?? Effect.succeed(false),
+                (awaiting) => !awaiting,
+              ),
+            ),
+            Stream.mapEffect(() => getSnapshot),
+          ),
+        ),
+      },
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       // Unreadable settings report no limit; the thread's own notice covers a refused mode.
