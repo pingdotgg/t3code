@@ -1648,46 +1648,53 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Best-effort: a trigger job read that fails, or a full page that may have left out the one
+  // Best-effort: an unanswered trigger job read, or a full page that may have left out the one
   // whose pipeline failed, adds no rows and leaves the detail as it was.
   const triggerJobChecks = (input: {
     readonly cwd: string;
+    readonly host?: string | undefined;
     readonly pipeline: { readonly id: number; readonly projectId: number };
-  }): Effect.Effect<ReadonlyArray<PullRequestCheck>> =>
-    api({
-      cwd: input.cwd,
-      // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
-      // older self-managed installs know no other name.
-      path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
-        ["per_page", String(MAX_PAGE_SIZE)],
-      ])}`,
-    }).pipe(
-      Effect.map((result) => {
-        const decoded = decodeTriggerJobChecksJson(result.stdout.trim());
-        return Result.isSuccess(decoded) && decoded.success.rawCount < MAX_PAGE_SIZE
-          ? decoded.success.checks
-          : [];
-      }),
-      Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
+  }): Effect.Effect<ReadonlyArray<PullRequestCheck>, GitLabPullRequestCliError> =>
+    orWhenUnanswered(
+      api({
+        cwd: input.cwd,
+        host: input.host,
+        // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
+        // older self-managed installs know no other name.
+        path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
+          ["per_page", String(MAX_PAGE_SIZE)],
+        ])}`,
+      }).pipe(
+        Effect.map((result) => {
+          const decoded = decodeTriggerJobChecksJson(result.stdout.trim());
+          return Result.isSuccess(decoded) && decoded.success.rawCount < MAX_PAGE_SIZE
+            ? decoded.success.checks
+            : [];
+        }),
+      ),
+      [],
     );
 
-  // Best-effort: stages that can't be read keep the merge request's single pipeline check.
+  // Best-effort: an unanswered stage read keeps the merge request's single pipeline check.
   const pipelineStageChecks = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
     readonly repository: string;
     readonly number: number;
     readonly url: string;
-  }): Effect.Effect<ReadonlyArray<ProviderCheck> | null> =>
+  }): Effect.Effect<ReadonlyArray<ProviderCheck> | null, GitLabPullRequestCliError> =>
     URL.canParse(input.url)
-      ? graphqlRead({
-          cwd: input.cwd,
-          host: input.host,
-          operation: "getPipelineStageChecks",
-          query: PIPELINE_STAGES_GRAPHQL_QUERY,
-          variables: { fullPath: input.repository, iid: String(input.number) },
-          decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
-        }).pipe(Effect.orElseSucceed(() => null))
+      ? orWhenUnanswered(
+          graphqlRead({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "getPipelineStageChecks",
+            query: PIPELINE_STAGES_GRAPHQL_QUERY,
+            variables: { fullPath: input.repository, iid: String(input.number) },
+            decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
+          }),
+          null,
+        )
       : Effect.succeed(null);
 
   const projectUsers = (input: {
@@ -2344,6 +2351,15 @@ export const make = Effect.gen(function* () {
             timeoutMs: 60_000,
           }).pipe(
             Effect.map((response) => {
+              if (response.stdout === "" && !response.stdoutTruncated) {
+                return {
+                  name,
+                  url,
+                  log: null,
+                  truncated: false,
+                  detail: "GitLab returned an empty log for this job.",
+                };
+              }
               const tail = tailLogLines(response.stdout, input.tailLines);
               return {
                 name,
@@ -2479,6 +2495,7 @@ export const make = Effect.gen(function* () {
         if (stages !== null) return { ...detail, checks: stages };
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
+          host: input.host,
           pipeline: detail.headPipeline,
         });
         return downstream.length === 0
