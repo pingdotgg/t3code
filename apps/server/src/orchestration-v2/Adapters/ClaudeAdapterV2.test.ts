@@ -1366,6 +1366,155 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
     ),
   );
 
+  it.effect("shows the Edit and Write diffs in file change approval prompts", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-file-approval-",
+      });
+      let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path: yield* Path.Path,
+        random: yield* SecureRandom.SecureRandom,
+        idAllocator,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-file-approval"),
+          open: (input) =>
+            Effect.sync(() => {
+              openedOptions = input.options;
+              return {
+                messages: Stream.never,
+                offer: () => Effect.void,
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
+                backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
+                stopTask: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              };
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentModel: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      const threadId = ThreadId.make("thread-claude-file-approval");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-file-approval"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-file-approval"),
+          text: "Edit math.ts.",
+          attachments: [],
+          runtimePolicy,
+        }),
+      );
+      const canUseTool = openedOptions?.canUseTool;
+      assert.isFunction(canUseTool);
+
+      const cases = [
+        {
+          toolName: "Edit",
+          input: {
+            file_path: "/workspace/src/math.ts",
+            old_string: "  return a - b;",
+            new_string: "  return a + b;",
+          },
+          expected: ["-  return a - b;", "+  return a + b;"],
+        },
+        {
+          toolName: "Write",
+          input: { file_path: "/workspace/notes.md", content: "# Notes\nSome body.\n" },
+          expected: ["Write replaces /workspace/notes.md with:", "# Notes\nSome body."],
+        },
+      ];
+      for (const [index, testCase] of cases.entries()) {
+        const requestEvent = yield* runtime.events.pipe(
+          Stream.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const decision = yield* Effect.promise(() =>
+          canUseTool!(testCase.toolName, testCase.input, {
+            signal: new AbortController().signal,
+            toolUseID: `tool-file-approval-${index}`,
+            requestId: `request-file-approval-${index}`,
+            title: `${testCase.toolName} file`,
+          }),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Fiber.join(requestEvent).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(first.type, "request", `${testCase.toolName} ran without asking`);
+        if (first.type !== "request") return;
+        const request = first.event.find((event) => event.type === "runtime_request.updated");
+        assert.equal(request?.runtimeRequest.kind, "file-change");
+        const approval = first.event.findLast((event) => event.type === "turn_item.updated");
+        const prompt =
+          approval?.turnItem.type === "approval_request" ? approval.turnItem.prompt : undefined;
+        assert.isDefined(prompt);
+        for (const line of testCase.expected) assert.include(prompt, line);
+
+        yield* runtime.respondToRuntimeRequest({
+          requestId: request!.runtimeRequest.id,
+          decision: "accept",
+        });
+        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps an MCP approval prompt on a code point boundary", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

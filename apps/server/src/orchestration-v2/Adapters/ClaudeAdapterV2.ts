@@ -4532,6 +4532,49 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
+// Same bound as stored file-change diffs: the prompt is persisted and sent on every snapshot.
+const MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH = 32_768;
+
+const ClaudeFileEditApprovalInput = Schema.Struct({
+  file_path: Schema.String,
+  old_string: Schema.String,
+  new_string: Schema.String,
+});
+const ClaudeFileWriteApprovalInput = Schema.Struct({
+  file_path: Schema.String,
+  content: Schema.String,
+});
+const decodeClaudeFileEditApprovalInput = Schema.decodeUnknownOption(ClaudeFileEditApprovalInput);
+const decodeClaudeFileWriteApprovalInput = Schema.decodeUnknownOption(ClaudeFileWriteApprovalInput);
+
+// The approval card is shown before the tool result, so the diff has to come from the tool input.
+function claudeFileChangeApprovalPrompt(
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string | undefined {
+  const normalizedName = classifyClaudeNativeTool(toolName).normalizedName;
+  if (normalizedName !== "edit" && normalizedName !== "write") return undefined;
+  const value = input.type === "record" ? input.value : undefined;
+  if (value === undefined) return undefined;
+  const bound = (text: string) =>
+    text.length <= MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH
+      ? text
+      : `${withoutTrailingHighSurrogate(text.slice(0, MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH))}\n… ${(text.length - MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH).toLocaleString("en-US")} more characters are not shown`;
+  if (normalizedName === "write") {
+    const decoded = decodeClaudeFileWriteApprovalInput(value);
+    // Write can replace an existing file: its new body is the preview, not a diff from an empty file.
+    return Option.isSome(decoded) && decoded.value.content.length > 0
+      ? bound(`Write replaces ${decoded.value.file_path} with:\n${decoded.value.content}`)
+      : undefined;
+  }
+  const decoded = decodeClaudeFileEditApprovalInput(value);
+  if (Option.isNone(decoded)) return undefined;
+  const { file_path, old_string, new_string } = decoded.value;
+  const patch = structuredPatch(file_path, file_path, old_string, new_string);
+  if (patch.hunks.length === 0) return undefined;
+  return bound(formatPatch(patch, FILE_HEADERS_ONLY));
+}
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -13661,10 +13704,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          // The user approves the command itself; Claude's title and description only summarize it.
+          const fileChangePrompt =
+            requestKind === "file-change"
+              ? claudeFileChangeApprovalPrompt(toolName, nativeToolInput)
+              : undefined;
+          // The user approves the change itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
             (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
+            fileChangePrompt ??
             callbackOptions.title ??
             callbackOptions.description ??
             callbackOptions.decisionReason ??
