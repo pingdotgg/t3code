@@ -68,7 +68,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
-  CopyIcon,
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -109,7 +108,6 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
-import { copyThreadMarkdown } from "../lib/copyThreadMarkdown";
 import { moveDraftToProject } from "../lib/moveDraftToProject";
 import {
   queueWorkspaceFocusFromPalette,
@@ -1549,17 +1547,6 @@ function OpenCommandPaletteDialog(props: {
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
       run: copyActiveThreadReference,
-    });
-  }
-
-  if (activeThread !== null) {
-    actionItems.push({
-      kind: "action",
-      value: "action:copy-thread-markdown",
-      searchTerms: ["copy", "thread", "markdown", "export", "conversation"],
-      title: gt("Copy thread as Markdown"),
-      icon: <CopyIcon className={ITEM_ICON_CLASS} />,
-      run: () => copyThreadMarkdown(scopeThreadRef(activeThread.environmentId, activeThread.id)),
     });
   }
 
