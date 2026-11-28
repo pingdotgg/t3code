@@ -3640,7 +3640,7 @@
   "3623415b5324335d": "Clique para revelar a conta",
   "198ebc7ab395b090": "Clique para ocultar a conta",
   "6df4c22a9ae17336": "Gerenciar uso",
-  "0469747f4bb9caac": "{additions} adições, {deletions} remoções",
+  "3920accacc91683e": "{additions, plural, one {{additions} adição} other {{additions} adições}}, {deletions, plural, one {{deletions} remoção} other {{deletions} remoções}}",
   "a0e0e2640219f1b0": "Escolha um projeto",
   "074db680e148e829": "Adicione um projeto",
   "1bbfd30a652f7e0f": "ou comece sem projeto",
