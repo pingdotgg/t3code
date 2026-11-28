@@ -34,6 +34,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  imagePath?: string;
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -104,6 +105,9 @@ interface AnnotatableCodeViewProps {
   /** Told each time a comment from this view lands in the composer draft. */
   onCommentAdded?: (commentId: string) => void;
   onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
+  /** Git sends no patch for an image, so its row can show the file at this path instead. */
+  imagePreviewPath?: (fileDiff: FileDiffMetadata) => string | null;
+  renderImagePreview?: (path: string) => ReactNode;
 }
 
 interface DiffSelectionContext {
@@ -130,6 +134,8 @@ export function AnnotatableCodeView({
   renderHeaderPrefix,
   onCommentAdded,
   onFileCollapsedChange,
+  imagePreviewPath,
+  renderImagePreview,
 }: AnnotatableCodeViewProps) {
   const gt = useGT();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
@@ -185,7 +191,14 @@ export function AnnotatableCodeView({
             createdAt: comment.createdAt,
           });
         }, []);
-      const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+      const imagePath = imagePreviewPath?.(fileDiff) ?? null;
+      const annotations = [
+        ...persisted,
+        ...(draft?.fileKey === fileKey ? [draft.annotation] : []),
+        ...(imagePath === null
+          ? []
+          : [{ side: "additions" as const, lineNumber: 0, metadata: { entries: [], imagePath } }]),
+      ];
       return {
         id: fileKey,
         type: "diff",
@@ -193,7 +206,7 @@ export function AnnotatableCodeView({
         annotations,
         collapsed,
         version: fnv1a32(
-          `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
+          `${fileVersion}:${collapsed ? "1" : "0"}:${imagePath ?? ""}:${annotations
             .flatMap((annotation) =>
               annotation.metadata.entries.map(
                 (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -302,6 +315,9 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(...[annotation]) => {
+        if (annotation.metadata.imagePath !== undefined) {
+          return renderImagePreview?.(annotation.metadata.imagePath) ?? null;
+        }
         return (
           <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
             {annotation.metadata.entries.map((entry) => (

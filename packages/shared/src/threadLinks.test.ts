@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   formatHostedThreadLink,
@@ -327,6 +329,15 @@ describe("thread links", () => {
       ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
       ["> ```", ` > ${hidden}`, "> ```", after],
       ["- ```bash", "  echo hi", "  ```", "", after],
+      ["- ```text", `  ${hidden}`, "", after],
+      ["- item", "", "  ```text", `  ${hidden}`, "", after],
+      ["[^note]: - ```text", "      https://app.t3.codes/threads/local/in-code", "", after],
+      [
+        "[^outer]: [^inner]: - ```text",
+        "          https://app.t3.codes/threads/local/in-code",
+        "",
+        after,
+      ],
       ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
       [">> ```md", `> > ${hidden}`, ">> ```", `> ${after}`],
       ["> > ~~~", `>> ${hidden}`, ">> ~~~", after],
@@ -530,5 +541,23 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+
+  it("keeps relabeled links navigable when the thread id contains a space", () => {
+    const linkUrl = (markdown: string) => {
+      const paragraph = unified().use(remarkParse).parse(markdown).children[0];
+      const node = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+      return node?.type === "link" ? node.url : undefined;
+    };
+    const thread = ref("local", "work item");
+    const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
+
+    const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual(thread);
+    expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
+
+    const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
+    expect(linkUrl(v1Relabeled)).toBe("t3-thread://v1/work%20item");
+    expect(formatThreadLink(v1("work item"))).toBe("<t3-thread://v1/work%20item>");
   });
 });

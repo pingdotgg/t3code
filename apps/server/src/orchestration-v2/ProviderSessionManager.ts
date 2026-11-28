@@ -822,6 +822,35 @@ export const layerWithOptions = (
         }
       });
 
+      const writeIdleDetachEvent = Effect.fn("ProviderSessionManager.writeIdleDetachEvent")(
+        function* (input: {
+          readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          readonly threadId: ThreadId;
+        }) {
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({
+                  threadId: input.threadId,
+                  providerSessionId: input.runtime.providerSessionId,
+                }),
+                type: "provider-session.detached",
+                threadId: input.threadId,
+                driver: input.runtime.driver,
+                providerInstanceId: input.runtime.instanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: input.runtime.providerSessionId,
+                  detachedAt: now,
+                  reason: "Idle thread unloaded from the shared provider session.",
+                },
+              },
+            ],
+          });
+        },
+      );
+
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
       )(function* (input: {
@@ -830,12 +859,15 @@ export const layerWithOptions = (
         readonly detail?: string;
       }) {
         const now = yield* DateTime.now;
+        const {
+          startupPhase: _startupPhase,
+          startupPhaseThreadId: _startupPhaseThreadId,
+          ...providerSession
+        } = input.entry.runtime.providerSession;
         const payload: OrchestrationV2ProviderSession = {
-          ...input.entry.runtime.providerSession,
+          ...providerSession,
           status: releaseStatusFor(input.reason),
-          ...(input.entry.runtime.providerSession.extensionStatuses === undefined
-            ? {}
-            : { extensionStatuses: [] }),
+          ...(providerSession.extensionStatuses === undefined ? {} : { extensionStatuses: [] }),
           updatedAt: now,
           lastError:
             input.reason === "runtime_error" ? (input.detail ?? "Provider runtime failed.") : null,
@@ -2285,14 +2317,41 @@ export const layerWithOptions = (
                       }).pipe(Effect.andThen(unload(false)))
                     : Effect.fail(cause),
                 ),
-                Effect.tap(() =>
-                  Ref.update(sessions, (current) => {
+                Effect.andThen(() =>
+                  Ref.modify(sessions, (current) => {
                     const latest = current.get(key);
-                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) return current;
+                    if (latest?.runtime !== entry.runtime || !unloadsLoadedThread) {
+                      return [false, current] as const;
+                    }
                     const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
                     linkedEnvironmentsByThread.delete(input.threadId);
-                    return new Map(current).set(key, { ...latest, linkedEnvironmentsByThread });
+                    // Session updates go to every attached thread, so a shared process that kept
+                    // its finished threads attached wrote each update once per thread ever run.
+                    const detach =
+                      latest.supportsMultipleProviderThreads &&
+                      !latest.loadedProviderThreadKeyByThread.has(input.threadId) &&
+                      ![...latest.idleThreadUnloads.values()].some(
+                        (other) => other.threadId === input.threadId,
+                      );
+                    const attachedThreadIds = new Set(latest.attachedThreadIds);
+                    if (detach) attachedThreadIds.delete(input.threadId);
+                    return [
+                      detach,
+                      new Map(current).set(key, {
+                        ...latest,
+                        attachedThreadIds,
+                        linkedEnvironmentsByThread,
+                      }),
+                    ] as const;
                   }),
+                ),
+                Effect.flatMap((detached) =>
+                  detached
+                    ? writeIdleDetachEvent({
+                        runtime: entry.runtime,
+                        threadId: input.threadId,
+                      })
+                    : Effect.void,
                 ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
@@ -3707,8 +3766,26 @@ export const layerWithOptions = (
                     ) {
                       return;
                     }
-                    yield* unloadThread({ providerThread }).pipe(
-                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    // Detaching cancels the idle unload, so archive a delivered child here instead.
+                    const archive = (yield* delegatedChildArchive(ownerThreadId)) === "ready";
+                    const unload = (archiveThread: boolean) =>
+                      unloadThread({ providerThread, archive: archiveThread }).pipe(
+                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      );
+                    yield* unload(archive).pipe(
+                      Effect.catch((cause) =>
+                        archive
+                          ? Effect.logWarning(
+                              "orchestration-v2.driver-session.detach-archive-failed",
+                              {
+                                providerSessionId: input.providerSessionId,
+                                threadId: ownerThreadId,
+                                providerThreadId: providerThread.id,
+                                cause,
+                              },
+                            ).pipe(Effect.andThen(unload(false)))
+                          : Effect.fail(cause),
+                      ),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
                           providerSessionId: input.providerSessionId,

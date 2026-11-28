@@ -94,6 +94,18 @@ describe("reading qualifiers out of a typed query", () => {
     expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
     expect(parsed.filters.author).toBe("x".repeat(200));
     expect(parsed.text).toBe("fix ".repeat(50).trim());
+
+    const prefix = "x".repeat(199);
+    const split = `${prefix}😀`;
+    expect(parsePullRequestQuery(split).text).toBe(prefix);
+    expect(parsePullRequestQuery(`${"x".repeat(198)}😀x`).text).toBe(`${"x".repeat(198)}😀`);
+    expect(parsePullRequestQuery(`label:${split} -label:${split} author:${split}`).filters).toEqual(
+      {
+        labels: [[prefix]],
+        excludedLabels: [prefix],
+        author: prefix,
+      },
+    );
   });
 });
 
