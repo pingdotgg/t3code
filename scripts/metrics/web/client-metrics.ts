@@ -1579,7 +1579,7 @@ const measureFlags = {
   renders: Flag.Boolean("renders").pipe(
     Flag.withDefault(false),
     Flag.withDescription(
-      "Count React commits and component renders per measured step, with their top components and causes. Near-deterministic, so compare gates on them; the probe slows commits a little, so compare like with like. Pair with --unminified for readable names.",
+      "Count React commits and component renders per measured step and per window that samples renderer CPU while a thread streams, with their top components and causes. Near-deterministic, so compare gates on them; the probe slows commits a little, so compare like with like. Pair with --unminified for readable names.",
     ),
   ),
   slotDiff: Flag.String("slot-diff").pipe(

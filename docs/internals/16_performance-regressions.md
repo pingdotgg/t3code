@@ -90,7 +90,8 @@ install --only-shell chromium`.
 
 `--renders` counts React commits and component renders per step, the subtrees React bailed out
 of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,
-`props:<changed keys>`, `parent-same-props<-Parent`, `context`). Counts barely move between runs,
+`props:<changed keys>`, `parent-same-props<-Parent`, `context`). It also counts them in the two
+streaming windows, where nothing is clicked or typed. Counts barely move between runs,
 so `compare` gates on them and they catch what timing noise hides. The probe slows commits, so
 compare renders runs with renders runs. Names need `--unminified`; `--slot-diff A,B` diffs those
 components' changed hook slots into `renders.ndjson`.
