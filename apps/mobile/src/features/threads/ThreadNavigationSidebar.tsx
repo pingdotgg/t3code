@@ -216,7 +216,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     [projectScopes],
   );
   const selectedProjectScope = resolveHomeProjectFilterScope(projectScopes, projects, options);
-  const excludedProjectKey = projectFilterOptions.some((project) => project.key === options.excludedProjectKey)
+  const excludedProjectKey = projectFilterOptions.some(
+    (project) => project.key === options.excludedProjectKey,
+  )
     ? options.excludedProjectKey
     : undefined;
   const projectFilterRefs = homeProjectFilterRefs(

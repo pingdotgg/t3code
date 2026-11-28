@@ -13132,5 +13132,8 @@
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",
   "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
-  "51aa7700c1f967d2": "Historique de sessions"
+  "51aa7700c1f967d2": "Historique de sessions",
+  "af6316c6a69d1235": "Tous sauf {project}",
+  "765a04f285557f48": "Exclure {project}",
+  "78538faec079d111": "Aucun fil ne correspond à ce filtre."
 }

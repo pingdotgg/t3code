@@ -5751,5 +5751,8 @@
   "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
   "8380d6f1828fe191": "Konversationshistorik",
   "1f2036cf25caaf16": "Kontots användning från Cursor",
-  "51aa7700c1f967d2": "Sessionshistorik"
+  "51aa7700c1f967d2": "Sessionshistorik",
+  "78538faec079d111": "Inga trådar matchar detta filter.",
+  "af6316c6a69d1235": "Alla utom {project}",
+  "f13741001d86c7cd": "Uteslut projekt"
 }

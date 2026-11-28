@@ -1150,9 +1150,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const excludedProject = scopeGroups.find((project) =>
     excludedProjectKeys.includes(project.projectKey),
   );
-  const chosenProjectGroups = (excludedProject
-    ? [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-    : scopeGroups).filter((project) =>
+  const chosenProjectGroups = (
+    excludedProject
+      ? [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+      : scopeGroups
+  ).filter((project) =>
     excludedProject
       ? project.projectKey !== excludedProject.projectKey
       : chosenProjectScopeKeys.includes(project.projectKey),

@@ -5753,5 +5753,8 @@
   "bb9866823586b67a": "Baza danych użycia i klucz Go",
   "8380d6f1828fe191": "Historia konwersacji",
   "1f2036cf25caaf16": "Użycie konta z Cursor",
-  "51aa7700c1f967d2": "Historia sesji"
+  "51aa7700c1f967d2": "Historia sesji",
+  "78538faec079d111": "Żaden wątek nie pasuje do tego filtra.",
+  "af6316c6a69d1235": "Wszystkie oprócz {project}",
+  "f13741001d86c7cd": "Wyklucz projekt"
 }

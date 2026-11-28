@@ -150,7 +150,9 @@ export function HomeRouteScreen() {
   );
   const selectedProjectKey =
     resolveHomeProjectFilterScope(projectScopes, projects, listOptions)?.key ?? null;
-  const excludedProjectKey = projectFilterOptions.some((project) => project.key === listOptions.excludedProjectKey)
+  const excludedProjectKey = projectFilterOptions.some(
+    (project) => project.key === listOptions.excludedProjectKey,
+  )
     ? listOptions.excludedProjectKey
     : undefined;
 
@@ -178,9 +180,7 @@ export function HomeRouteScreen() {
           }}
           filter={{
             customized:
-              selectedEnvironmentId !== null ||
-              selectedProjectKey !== null ||
-              !!excludedProjectKey,
+              selectedEnvironmentId !== null || selectedProjectKey !== null || !!excludedProjectKey,
             items: buildHomeListFilterMenuItems(
               {
                 environments,

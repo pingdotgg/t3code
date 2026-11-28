@@ -5745,5 +5745,8 @@
   "bb9866823586b67a": "Base de datos de uso y clave de Go",
   "8380d6f1828fe191": "Historial de conversaciones",
   "1f2036cf25caaf16": "Uso de la cuenta desde Cursor",
-  "51aa7700c1f967d2": "Historial de sesiones"
+  "51aa7700c1f967d2": "Historial de sesiones",
+  "78538faec079d111": "Ningún hilo coincide con este filtro.",
+  "af6316c6a69d1235": "Todos excepto {project}",
+  "f13741001d86c7cd": "Excluir proyecto"
 }

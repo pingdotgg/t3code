@@ -5745,5 +5745,8 @@
   "bb9866823586b67a": "Banco de dados de uso e chave do Go",
   "8380d6f1828fe191": "Histórico de conversas",
   "1f2036cf25caaf16": "Uso da conta obtido da Cursor",
-  "51aa7700c1f967d2": "Histórico de sessões"
+  "51aa7700c1f967d2": "Histórico de sessões",
+  "78538faec079d111": "Nenhuma conversa corresponde a este filtro.",
+  "af6316c6a69d1235": "Todos exceto {project}",
+  "f13741001d86c7cd": "Excluir projeto"
 }

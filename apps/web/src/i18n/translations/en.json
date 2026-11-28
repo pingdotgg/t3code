@@ -13140,5 +13140,8 @@
   "bb9866823586b67a": "Usage database and Go key",
   "8380d6f1828fe191": "Conversation history",
   "1f2036cf25caaf16": "Account usage from Cursor",
-  "51aa7700c1f967d2": "Session history"
+  "51aa7700c1f967d2": "Session history",
+  "af6316c6a69d1235": "All except {project}",
+  "765a04f285557f48": "Exclude {project}",
+  "78538faec079d111": "No threads match this filter."
 }

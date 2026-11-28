@@ -13132,5 +13132,8 @@
   "bb9866823586b67a": "Nutzungsdatenbank und Go-Schlüssel",
   "8380d6f1828fe191": "Gesprächsverlauf",
   "1f2036cf25caaf16": "Kontonutzung von Cursor",
-  "51aa7700c1f967d2": "Sitzungsverlauf"
+  "51aa7700c1f967d2": "Sitzungsverlauf",
+  "af6316c6a69d1235": "Alle außer {project}",
+  "765a04f285557f48": "{project} ausschließen",
+  "78538faec079d111": "Keine Threads entsprechen diesem Filter."
 }
