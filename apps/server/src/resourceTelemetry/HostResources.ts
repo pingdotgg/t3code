@@ -97,25 +97,29 @@ export function psiAverage(
 }
 
 /**
- * `/proc/diskstats` summed over whole devices: milliseconds with I/O in flight (`io_ticks`)
- * and requests in flight now. Partitions repeat their device's time, so they are left out.
+ * `/proc/diskstats` over whole devices (partitions repeat theirs): an upper bound on the
+ * milliseconds with I/O in flight. Before Linux 6.10 `io_ticks` drops time when a request starts
+ * beside a running one, so the time completed requests took stands in: looser, never below.
  */
 export function blockDeviceActivity(
   diskstats: string,
   devices: ReadonlySet<string>,
+  kernelRelease: string,
 ): { readonly busyMs: number; readonly inFlight: boolean } | null {
+  const [major = 0, minor = 0] = kernelRelease.split(".").map((part) => Number.parseInt(part, 10));
+  const busyField = major > 6 || (major === 6 && minor >= 10) ? 12 : 13;
   let found = false;
   let busyMs = 0;
   let inFlight = false;
   for (const line of diskstats.split("\n")) {
     const fields = line.trim().split(/\s+/);
     const requests = Number(fields[11]);
-    const ioTicks = Number(fields[12]);
-    if (!devices.has(fields[2] ?? "") || !Number.isFinite(requests) || !Number.isFinite(ioTicks)) {
+    const deviceMs = Number(fields[busyField]);
+    if (!devices.has(fields[2] ?? "") || !Number.isFinite(requests) || !Number.isFinite(deviceMs)) {
       continue;
     }
     found = true;
-    busyMs += ioTicks;
+    busyMs += deviceMs;
     inFlight ||= requests > 0;
   }
   return found ? { busyMs, inFlight } : null;
@@ -211,9 +215,9 @@ export function blockBusyPercent(readings: ReadonlyArray<BlockReading>): number 
     if (!before || before.busyMs === null) continue;
     // A removed device or a counter reset.
     if (reading.busyMs < before.busyMs) return null;
-    // `io_ticks` counts a request when it completes, so a hung disk never advances it.
-    busyMs +=
-      before.inFlight && reading.inFlight ? reading.at - before.at : reading.busyMs - before.busyMs;
+    // Neither counter moves while a lone request hangs, so one in flight may fill the interval.
+    const elapsed = reading.at - before.at;
+    busyMs += reading.inFlight ? elapsed : Math.min(elapsed, reading.busyMs - before.busyMs);
   }
   return Math.min(100, (busyMs / (last.at - first.at)) * 100);
 }
@@ -374,6 +378,7 @@ const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const kernelRelease = yield* HostProcess.KernelRelease;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope.AgentScope;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -437,7 +442,11 @@ const make = Effect.fn("makeHostResources")(function* () {
 
   const readBlockDevices = Effect.gen(function* () {
     const devices = yield* fs.readDirectory("/sys/block").pipe(Effect.orElseSucceed(() => []));
-    const activity = blockDeviceActivity(yield* readFile("/proc/diskstats"), new Set(devices));
+    const activity = blockDeviceActivity(
+      yield* readFile("/proc/diskstats"),
+      new Set(devices),
+      kernelRelease,
+    );
     const offBlock = mountsOffBlockDevices(
       yield* readFile("/proc/self/mountinfo"),
       environment.APPDIR,

@@ -123,6 +123,7 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
             ]),
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.succeed(HostProcess.KernelRelease, "6.8.0-117-generic"),
         NativeTelemetryClient.layerTest(),
         layerConfig,
         Layer.succeed(
@@ -315,18 +316,22 @@ describe("pressure levels", () => {
   });
 
   it("bounds storage stalls by the time block devices had I/O in flight", () => {
-    const disk = (name: string, inFlight: number, ioTicks: number) =>
-      `   8       0 ${name} 5 0 9 1 7 0 3 2 ${inFlight} ${ioTicks} 4 0 0 0 0 0 0\n`;
+    const disk = (name: string, inFlight: number, requestMs: number, ioTicks = requestMs) =>
+      `   8       0 ${name} 5 0 9 1 7 0 3 2 ${inFlight} ${ioTicks} ${requestMs} 0 0 0 0 0 0\n`;
     const devices = new Set(["sda", "sdb"]);
-    const reading = (at: number, stats: string) => ({
+    const reading = (at: number, stats: string, kernel = "6.8.0-117-generic") => ({
       at,
-      ...HostResources.blockDeviceActivity(stats, devices)!,
+      ...HostResources.blockDeviceActivity(stats, devices, kernel)!,
     });
     // A partition repeats its device's time.
     expect(
-      HostResources.blockDeviceActivity(disk("sda", 0, 500) + disk("sda1", 0, 500), devices),
+      HostResources.blockDeviceActivity(
+        disk("sda", 0, 500) + disk("sda1", 0, 500),
+        devices,
+        "6.8.0",
+      ),
     ).toEqual({ busyMs: 500, inFlight: false });
-    expect(HostResources.blockDeviceActivity("", devices)).toBeNull();
+    expect(HostResources.blockDeviceActivity("", devices, "6.8.0")).toBeNull();
     // Two disks that stalled at different times add up.
     expect(
       HostResources.blockBusyPercent([
@@ -335,13 +340,23 @@ describe("pressure levels", () => {
         reading(60_000, disk("sda", 0, 12_000) + disk("sdb", 0, 12_000)),
       ]),
     ).toBe(40);
-    // A hung request never completes, so it never reaches io_ticks.
+    // A request still in flight has not been counted yet.
     expect(
       HostResources.blockBusyPercent([
-        reading(0, disk("sda", 1, 700)),
+        reading(0, disk("sda", 0, 700)),
         reading(5_000, disk("sda", 1, 700)),
       ]),
     ).toBe(100);
+    // Before Linux 6.10 a short request starting beside a 4.6 s one leaves io_ticks near 100 ms,
+    // so the time requests took is read instead. From 6.10 on io_ticks is the tighter bound.
+    const overlapped = (kernel: string) =>
+      HostResources.blockBusyPercent([
+        reading(0, disk("sda", 0, 0, 0), kernel),
+        reading(5_000, disk("sda", 0, 4_650, 100), kernel),
+      ]);
+    expect(overlapped("6.9.12-arch1-1")).toBe(93);
+    expect(overlapped("6.10.0")).toBe(2);
+    expect(overlapped("7.3.6-arch1-1")).toBe(2);
     expect(
       HostResources.blockBusyPercent([
         { at: 0, busyMs: null, inFlight: false },
@@ -563,9 +578,9 @@ describe("HostResources pressure on Linux", () => {
 
   const calmCpu = "some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n";
   const ioStalled = "some avg10=45.00 avg60=42.00\nfull avg10=44.00 avg60=40.00\n";
-  const diskstats = (ioTicks: number) =>
-    ` 259       0 nvme0n1 5 0 9 1 7 0 3 2 0 ${ioTicks} 4 0 0 0 0 0 0\n` +
-    ` 259       2 nvme0n1p2 5 0 9 1 7 0 3 2 0 ${ioTicks} 4 0 0 0 0 0 0\n`;
+  const diskstats = (requestMs: number) =>
+    ` 259       0 nvme0n1 5 0 9 1 7 0 3 2 0 4 ${requestMs} 0 0 0 0 0 0\n` +
+    ` 259       2 nvme0n1p2 5 0 9 1 7 0 3 2 0 4 ${requestMs} 0 0 0 0 0 0\n`;
   const localMounts =
     "22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw\n" +
     "23 22 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n" +
