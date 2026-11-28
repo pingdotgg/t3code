@@ -496,7 +496,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   } as const;
 });
 
-// In WSL2 mirrored mode, eth0 matches a host IP; use loopback for the renderer.
+// In WSL2 mirrored mode, eth0 matches a host IP, so loopback needs no fallback.
 const isLocalHostIpv4 = (ip: string): boolean => {
   const interfaces = NodeOS.networkInterfaces();
   for (const list of Object.values(interfaces)) {
@@ -616,7 +616,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const fileSystem = yield* FileSystem.FileSystem;
   const env = yield* HostProcess.Environment;
 
-  // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
+  // Listen on every interface so both wslhost loopback and the distro IP can reach the backend.
   const wslBindHost = "0.0.0.0";
 
   const bootstrap = {
@@ -673,15 +673,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
-  const usesSharedNetworkStack = Option.match(distroIp, {
-    onNone: () => false,
-    onSome: (ip) => isLocalHostIpv4(ip),
-  });
-  const rendererHost = usesSharedNetworkStack
-    ? "127.0.0.1"
-    : Option.getOrElse(distroIp, () => "127.0.0.1");
-  const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  // wslhost loopback forwarding fails on some Windows hosts and the distro IP is blocked on others.
+  const httpBaseUrl = new URL(`http://127.0.0.1:${input.port}`);
+  const fallbackHttpBaseUrl = (yield* wslEnvironment.getDistroIp(distroForConfig)).pipe(
+    Option.filter((ip) => !isLocalHostIpv4(ip)),
+    Option.map((ip) => new URL(`http://${ip}:${input.port}`)),
+  );
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = { [DESKTOP_HOST_SCOPE_ENV]: input.hostScope };
@@ -719,6 +716,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     httpBaseUrl,
     // wsl.exe carries no control channel, so the backend proves over HTTP that it is this launch.
     readinessProbe: input.readiness.probe,
+    ...Option.match(fallbackHttpBaseUrl, {
+      onNone: () => ({}),
+      onSome: (url) => ({ fallbackHttpBaseUrl: url }),
+    }),
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };
