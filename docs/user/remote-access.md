@@ -57,6 +57,7 @@ Browser tabs belong to the host environment so you and your agents share them fr
 - **Open on this device (mobile)**: Tap **Open on this device** on a streamed `localhost` tab or long-press a `localhost` link in chat for native touch scrolling.
 - **Disable preview tunnel**: Turn off **Settings → Sharing & access → Preview tunnel** on the host (or via [managed policy](./managed-policy.md#other-capabilities)) to disable port forwarding and **Open on this device** (streamed tabs continue working).
 - **Take control**: Click **Take control** before typing into an agent's tab, and release control when done.
+- **Copying**: While you control a streamed tab, text you copy or cut goes to your clipboard. Text a page copies after you click it (such as a Copy button) waits for you to choose **Copy**.
 - **Local servers**: T3 Code lists listening ports from your terminals and agents as `http://localhost:<port>` (set a script's **Preview URL** for HTTPS or subpaths). Disable discovery with `T3CODE_PORT_DISCOVERY=0`.
 
 ### Browser host setup
