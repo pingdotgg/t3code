@@ -150,6 +150,33 @@ it.effect("reads maintainer edits and changes them through the update command", 
   }),
 );
 
+it.effect("keeps the host's access hint on a pull request it cannot find", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "getChangeRequest",
+                reason: "not-found",
+                detail: "GitHub could not find the requested resource.",
+                accessHint: "Your gh login (GitHub account account-a) can't see it.",
+              }),
+            ),
+        }),
+      ],
+    });
+    const error = yield* Effect.flip(
+      service.detail({ projectId: "p1" as ProjectId, repository: "acme/web", number: 1 }),
+    );
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.include(error.message, "GitHub account account-a");
+  }),
+);
+
 it.effect("refuses maintainer edits on a host without the capability", () =>
   Effect.gen(function* () {
     let writes = 0;
