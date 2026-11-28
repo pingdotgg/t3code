@@ -120,10 +120,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     (session) => session.target.terminalId,
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
-  const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
-  const storeSplitTerminalVertical = useTerminalUiStateStore(
-    (state) => state.splitTerminalVertical,
-  );
   const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
@@ -155,23 +151,24 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     storeSetTerminalHeight(threadRef, height);
   };
 
-  const launchDrawerTerminal = (place: (terminalId: string) => void) => {
+  const launchSplit = (direction: "horizontal" | "vertical") => {
     if (!cwd) return;
-    const terminalId = terminalActions.launchDrawerTerminal({
-      place,
+    const launched = terminalActions.launchSplitTerminal({
+      direction,
       location: { cwd, worktreePath: effectiveWorktreePath },
     });
-    if (visible && terminalId !== null) focusTerminal(threadRef, terminalId);
+    if (visible && launched) focusTerminal(threadRef, launched.terminalId);
   };
-  const splitTerminal = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeSplitTerminal(threadRef, terminalId)),
-  );
-  const splitTerminalVertical = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeSplitTerminalVertical(threadRef, terminalId)),
-  );
-  const createNewTerminal = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeNewTerminal(threadRef, terminalId)),
-  );
+  const splitTerminal = useStableCallback(() => launchSplit("horizontal"));
+  const splitTerminalVertical = useStableCallback(() => launchSplit("vertical"));
+  const createNewTerminal = useStableCallback(() => {
+    if (!cwd) return;
+    const launched = terminalActions.launchTerminal({
+      place: (terminalId) => storeNewTerminal(threadRef, terminalId),
+      location: { cwd, worktreePath: effectiveWorktreePath },
+    });
+    if (visible && launched) focusTerminal(threadRef, launched.terminalId);
+  });
 
   const activateTerminal = (terminalId: string) => {
     storeSetActiveTerminal(threadRef, terminalId);

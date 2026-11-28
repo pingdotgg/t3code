@@ -235,7 +235,13 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     surfaceId: string,
     terminalId: string,
-    direction?: "horizontal" | "vertical",
+    direction?: "horizontal" | "vertical" | null,
+  ) => void;
+  setTerminalSplitDirection: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    terminalId: string,
+    direction: "horizontal" | "vertical",
   ) => void;
   activateTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
@@ -1102,9 +1108,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ? surface.terminalIds
                   : [...surface.terminalIds, terminalId],
                 activeTerminalId: terminalId,
-                ...(direction === "vertical" ? { splitDirection: "vertical" as const } : {}),
+                ...((direction ?? _splitDirection) === "vertical"
+                  ? { splitDirection: "vertical" as const }
+                  : {}),
               };
             }),
+          })),
+        ),
+      setTerminalSplitDirection: (ref, surfaceId, terminalId, direction) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId &&
+              surface.kind === "terminal" &&
+              surface.terminalIds.includes(terminalId) &&
+              surface.terminalIds.length > 1
+                ? { ...surface, splitDirection: direction }
+                : surface,
+            ),
           })),
         ),
       activateTerminal: (ref, surfaceId, terminalId) =>

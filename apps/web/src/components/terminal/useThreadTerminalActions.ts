@@ -1,10 +1,16 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -17,6 +23,7 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { closingTerminalIds, holdTerminalIdWhileClosing } from "./closingTerminals";
 
 /** Where a new terminal starts. Omitted fields fall back to the thread's project and worktree. */
@@ -45,22 +52,20 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     environmentId: threadRef?.environmentId ?? null,
     threadId: threadRef?.threadId ?? null,
   });
-  const drawerTerminalIds = useTerminalUiStateStore(
-    (state) => selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalIds,
-  );
-  const panelSurfaces = useRightPanelStore(
-    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
-  );
-
   const canWrite = () =>
     threadRef !== null && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
 
   // Server lists lag and colliding ids share a PTY; without read access, suffix ids to avoid unseen sessions.
   const allocateTerminalId = () => {
+    const drawer = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    );
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
-      ...drawerTerminalIds,
-      ...panelSurfaces.flatMap((surface) =>
+      ...drawer.terminalIds,
+      ...panel.surfaces.flatMap((surface) =>
         surface.kind === "terminal" ? surface.terminalIds : [],
       ),
       ...(threadRef ? closingTerminalIds(threadRef) : []),
@@ -85,7 +90,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
 
   /** place mounts the destination before the server open resolves. */
   const launchTerminal = (input: {
-    readonly place: (terminalId: string) => void;
+    readonly place: (terminalId: string) => void | (() => void);
+    readonly reportRejection?: boolean;
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
@@ -96,7 +102,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     const location = input.location ?? defaultLaunchLocation();
     if (!location) return null;
     const terminalId = input.terminalId ?? allocateTerminalId();
-    input.place(terminalId);
+    const onOpened = input.place(terminalId);
     const result = openTerminalCommand({
       environmentId: threadRef.environmentId,
       input: {
@@ -112,26 +118,56 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         ...input.size,
         ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
+    }).then((outcome) => {
+      if (outcome._tag === "Success") {
+        onOpened?.();
+      } else if (!isAtomCommandInterrupted(outcome)) {
+        // A supplied ID refers to a reusable session. A rejected reopen does not delete it.
+        if (input.terminalId === undefined) {
+          useTerminalUiStateStore.getState().discardTerminalPlacement(threadRef, terminalId);
+          const panel = useRightPanelStore.getState();
+          const surface = selectThreadRightPanelState(panel.byThreadKey, threadRef).surfaces.find(
+            (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
+          );
+          if (surface) panel.closeTerminal(threadRef, surface.id, terminalId);
+        }
+        if (input.reportRejection !== false) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title:
+                thrownErrorMessage(squashAtomCommandFailure(outcome), m) ||
+                m(msg("An unexpected error occurred.")),
+            }),
+          );
+        }
+      }
+      return outcome;
     });
     return { terminalId, result };
   };
 
-  const launchDrawerTerminal = (
-    input: Pick<Parameters<typeof launchTerminal>[0], "place" | "location">,
-  ) => {
+  const launchSplitTerminal = (input: {
+    readonly direction: "horizontal" | "vertical";
+    readonly surfaceId?: string;
+    readonly location?: TerminalLaunchLocation;
+  }) => {
     if (!threadRef) return null;
-    const launched = launchTerminal(input);
-    if (!launched) return null;
-    const { terminalId, result } = launched;
-    void result.then((outcome) => {
-      if (outcome._tag !== "Failure") return;
-      const store = useTerminalUiStateStore.getState();
-      const drawer = selectThreadTerminalUiState(store.terminalUiStateByThreadKey, threadRef);
-      if (drawer.terminalIds.includes(terminalId)) {
-        store.closeTerminal(threadRef, terminalId);
-      }
+    const { direction, surfaceId, location } = input;
+    return launchTerminal({
+      ...(location === undefined ? {} : { location }),
+      place: (terminalId) => {
+        // Mount the new pane immediately. Keep the surviving panes' layout until the open succeeds.
+        if (surfaceId !== undefined) {
+          const panel = useRightPanelStore.getState();
+          panel.splitTerminal(threadRef, surfaceId, terminalId, null);
+          return () => panel.setTerminalSplitDirection(threadRef, surfaceId, terminalId, direction);
+        }
+        const drawer = useTerminalUiStateStore.getState();
+        drawer.splitTerminal(threadRef, terminalId, null);
+        return () => drawer.setSplitDirection(threadRef, terminalId, direction);
+      },
     });
-    return terminalId;
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
@@ -164,9 +200,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
 
   return {
     canWrite: useStableCallback(canWrite),
-    allocateTerminalId: useStableCallback(allocateTerminalId),
     launchTerminal: useStableCallback(launchTerminal),
-    launchDrawerTerminal: useStableCallback(launchDrawerTerminal),
+    launchSplitTerminal: useStableCallback(launchSplitTerminal),
     closeTerminalSession: useStableCallback(closeTerminalSession),
     writeToTerminal: useStableCallback(writeToTerminal),
   };

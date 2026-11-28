@@ -247,7 +247,7 @@ function upsertTerminalIntoGroups(
   state: ThreadTerminalUiState,
   terminalId: string,
   mode: "split" | "new",
-  splitDirection: "horizontal" | "vertical" = "horizontal",
+  splitDirection: "horizontal" | "vertical" | null = "horizontal",
 ): ThreadTerminalUiState {
   const normalized = normalizeThreadTerminalUiState(state);
   const effectiveMode: "split" | "new" = normalized.terminalIds.length === 0 ? "new" : mode;
@@ -325,7 +325,7 @@ function upsertTerminalIntoGroups(
   }
   if (splitDirection === "vertical") {
     destinationGroup.splitDirection = "vertical";
-  } else {
+  } else if (splitDirection === "horizontal") {
     delete destinationGroup.splitDirection;
   }
 
@@ -362,7 +362,7 @@ function setThreadTerminalHeight(
 function splitThreadTerminal(
   state: ThreadTerminalUiState,
   terminalId: string,
-  direction: "horizontal" | "vertical" = "horizontal",
+  direction: "horizontal" | "vertical" | null = "horizontal",
 ): ThreadTerminalUiState {
   return upsertTerminalIntoGroups(state, terminalId, "split", direction);
 }
@@ -590,7 +590,16 @@ interface TerminalUiStateStoreState {
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;
-  splitTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  splitTerminal: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    direction?: "horizontal" | "vertical" | null,
+  ) => void;
+  setSplitDirection: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    direction: "horizontal" | "vertical",
+  ) => void;
   splitTerminalVertical: (threadRef: ScopedThreadRef, terminalId: string) => void;
   newTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   ensureTerminal: (
@@ -600,6 +609,7 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  discardTerminalPlacement: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (
     threadRef: ScopedThreadRef,
     serverIds: string[],
@@ -707,11 +717,20 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         },
         setTerminalHeight: (threadRef, height) =>
           updateTerminal(threadRef, (state) => setThreadTerminalHeight(state, height)),
-        splitTerminal: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId), {
+        splitTerminal: (threadRef, terminalId, direction) =>
+          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId, direction), {
             terminalId,
             suppressed: false,
           }),
+        setSplitDirection: (threadRef, terminalId, direction) =>
+          updateTerminal(threadRef, (state) => ({
+            ...state,
+            terminalGroups: state.terminalGroups.map((group) =>
+              group.terminalIds.length > 1 && group.terminalIds.includes(terminalId)
+                ? { ...group, splitDirection: direction }
+                : group,
+            ),
+          })),
         splitTerminalVertical: (threadRef, terminalId) =>
           updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId, "vertical"), {
             terminalId,
@@ -754,6 +773,8 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
+        discardTerminalPlacement: (threadRef, terminalId) =>
+          updateTerminal(threadRef, (state) => closeThreadTerminal(state, terminalId)),
         reconcileTerminalIds: (threadRef, serverIds, snapshotId) => {
           if (threadRef.threadId.length === 0) return;
           const threadKey = terminalThreadKey(threadRef);

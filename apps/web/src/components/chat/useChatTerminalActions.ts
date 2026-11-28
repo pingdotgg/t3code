@@ -118,8 +118,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   );
   const storeSetTerminalOpen = useTerminalUiStateStore((s) => s.setTerminalOpen);
   const storeEnsureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
-  const storeSplitTerminal = useTerminalUiStateStore((s) => s.splitTerminal);
-  const storeSplitTerminalVertical = useTerminalUiStateStore((s) => s.splitTerminalVertical);
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const terminalActions = useThreadTerminalActions(activeThreadRef);
@@ -167,7 +165,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         focusActiveDrawerTerminal(activeThreadRef);
         return;
       }
-      terminalActions.launchDrawerTerminal({
+      terminalActions.launchTerminal({
         place: (terminalId) => storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
       });
       focusActiveDrawerTerminal(activeThreadRef);
@@ -178,21 +176,16 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
-    const terminalId = terminalActions.launchDrawerTerminal({
-      place: (terminalId) =>
-        direction === "vertical"
-          ? storeSplitTerminalVertical(activeThreadRef, terminalId)
-          : storeSplitTerminal(activeThreadRef, terminalId),
-    });
-    if (terminalId !== null) focusTerminal(activeThreadRef, terminalId);
+    const launched = terminalActions.launchSplitTerminal({ direction });
+    if (launched) focusTerminal(activeThreadRef, launched.terminalId);
   };
   const splitTerminalStable = useStableCallback(splitTerminal);
   const createNewTerminal = () => {
     if (!activeThreadRef) return;
-    const terminalId = terminalActions.launchDrawerTerminal({
+    const launched = terminalActions.launchTerminal({
       place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId),
     });
-    if (terminalId !== null) focusTerminal(activeThreadRef, terminalId);
+    if (launched) focusTerminal(activeThreadRef, launched.terminalId);
   };
   const createNewTerminalStable = useStableCallback(createNewTerminal);
   const closeTerminal = (terminalId: string) => {
@@ -260,6 +253,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         : { terminalId: reusableTerminalId }),
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       stopOnSettle: script.stopOnSettle ?? false,
+      reportRejection: false,
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
     if (!launched) return;
@@ -341,7 +335,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     });
     if (!launched) return;
     focusTerminal(activeThreadRef, launched.terminalId);
-    void launched.result;
   };
   const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
   const splitPanelTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
@@ -352,16 +345,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     ) {
       return;
     }
-    const surfaceId = activeRightPanelSurface.id;
-    const launched = terminalActions.launchTerminal({
-      place: (terminalId) =>
-        useRightPanelStore
-          .getState()
-          .splitTerminal(activeThreadRef, surfaceId, terminalId, direction),
+    const launched = terminalActions.launchSplitTerminal({
+      direction,
+      surfaceId: activeRightPanelSurface.id,
     });
-    if (!launched) return;
-    focusTerminal(activeThreadRef, launched.terminalId);
-    void launched.result;
+    if (launched) focusTerminal(activeThreadRef, launched.terminalId);
   };
   const splitPanelTerminalStable = useStableCallback(splitPanelTerminal);
   const splitPanelTerminalVertical = () => {
@@ -409,9 +397,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     });
   };
   const requestClosePanelTerminalStable = useStableCallback(requestClosePanelTerminal);
-  const openTerminalIfClosed = () => {
-    if (!terminalUiState.terminalOpen) setTerminalOpen(true);
-  };
   // A focused right-panel terminal takes the split/new/close chords; otherwise they act on the drawer.
   const shortcuts = {
     "terminal.toggle": () => {
@@ -434,13 +419,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     "terminal.split": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal();
-      openTerminalIfClosed();
       splitTerminal();
     },
     "terminal.splitVertical": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal("vertical");
-      openTerminalIfClosed();
       splitTerminal("vertical");
     },
     "terminal.close": ({ terminalFocusOwner }) => {
@@ -454,7 +437,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     "terminal.new": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;
       if (terminalFocusOwner === "right-panel") return void addTerminalSurface();
-      openTerminalIfClosed();
       createNewTerminal();
     },
   } satisfies ChatShortcutCommands;
