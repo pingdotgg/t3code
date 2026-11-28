@@ -70,7 +70,8 @@ function deriveRepositoryRelativeProjectPath(
     return null;
   }
 
-  return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
+  const relativePath = normalizedProjectPath.slice(rootPrefix.length);
+  return separator === "\\" ? relativePath.replaceAll("\\", "/") : relativePath;
 }
 
 /** The project's workspace root is its repository's git top-level, not a sub-folder. */
