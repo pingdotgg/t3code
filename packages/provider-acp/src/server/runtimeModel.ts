@@ -1111,13 +1111,494 @@ export interface AcpMcpToolCallIdentity {
 
 const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
 
+const WINDOWS_ACP_MCP_ENV_LAUNCHER =
+  /^(?:\$(?:env:)?T3_ACP_MCP_CALL|\$\{(?:env:)?T3_ACP_MCP_CALL\}|%T3_ACP_MCP_CALL%)$/iu;
+const WINDOWS_ACP_MCP_CMD_LAUNCHER = /^(?:.+[/\\])?acp-mcp-call\.cmd$/iu;
+const SHELL_ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+const POWERSHELL_VARIABLE_NAME = /^\$[A-Za-z_][A-Za-z0-9_:]*$/u;
+const CMD_EXE_NAME = /^(?:.+[/\\])?cmd(?:\.exe)?$/iu;
+const CMD_EXE_FLAG = /^\/[a-z](?::\S+)?$/iu;
+const POWERSHELL_EXE_NAME = /^(?:.+[/\\])?(?:powershell|pwsh)(?:\.exe)?$/iu;
+const POWERSHELL_VALUE_FLAG = /^-(?:executionpolicy|ep|windowstyle|w|inputformat|outputformat)$/iu;
+const POSIX_SHELL_NAME = /^(?:.+[/\\])?(?:ba|z)?sh(?:\.exe)?$/iu;
+const POSIX_SHELL_FLAG = /^-[a-z]+$/iu;
+const SHELL_INPUT_REDIRECTION = /^\d*<(?:<<)?$/u;
+const SHELL_INPUT_REDIRECTION_ATTACHED = /^\d*<(?!<<).+$/u;
+
+interface ShellToken {
+  readonly raw: string;
+  readonly value: string;
+  readonly quoted: boolean;
+  readonly singleQuoted: boolean;
+  readonly redirection: boolean;
+  readonly start: number;
+  readonly end: number;
+}
+
+function decodePowerShellSingleQuoted(raw: string): string | undefined {
+  if (raw.length < 2 || !raw.startsWith("'") || !raw.endsWith("'")) return undefined;
+  const inner = raw.slice(1, -1);
+  if (inner.replaceAll("''", "").includes("'")) return undefined;
+  return inner.replaceAll("''", "'");
+}
+
+function isLineContinuation(command: string, index: number): number {
+  const ch = command[index];
+  if (ch !== "`" && ch !== "\\" && ch !== "^") return 0;
+  if (command[index + 1] === "\n") return 2;
+  if (command[index + 1] === "\r" && command[index + 2] === "\n") return 3;
+  return 0;
+}
+
+function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
+  const segments: Array<Array<ShellToken>> = [];
+  let currentSegment: Array<ShellToken> = [];
+  const pendingHeredocs: Array<{ readonly delimiter: string; readonly stripTabs: boolean }> = [];
+  let index = 0;
+  const length = command.length;
+
+  const flushSegment = () => {
+    if (currentSegment.length === 0) return;
+    segments.push(currentSegment);
+    currentSegment = [];
+  };
+
+  const consumePendingHeredocs = () => {
+    while (pendingHeredocs.length > 0 && index < length) {
+      const { delimiter, stripTabs } = pendingHeredocs.shift()!;
+      while (index < length) {
+        const lineEnd = command.indexOf("\n", index);
+        const rawLine = lineEnd === -1 ? command.slice(index) : command.slice(index, lineEnd);
+        index = lineEnd === -1 ? length : lineEnd + 1;
+        const normalized = (stripTabs ? rawLine.replace(/^\t+/u, "") : rawLine).replace(/\r$/u, "");
+        if (normalized === delimiter) break;
+      }
+    }
+  };
+
+  while (index < length) {
+    const ch = command[index]!;
+    if (ch === "\n") {
+      flushSegment();
+      index += 1;
+      consumePendingHeredocs();
+      continue;
+    }
+    if (/\s/u.test(ch)) {
+      index += 1;
+      continue;
+    }
+    const continuation = isLineContinuation(command, index);
+    if (continuation > 0) {
+      index += continuation;
+      continue;
+    }
+    if (ch === "#") {
+      const lineEnd = command.indexOf("\n", index);
+      index = lineEnd === -1 ? length : lineEnd;
+      continue;
+    }
+    if (ch === "<" && command[index + 1] === "#") {
+      const commentEnd = command.indexOf("#>", index + 2);
+      index = commentEnd === -1 ? length : commentEnd + 2;
+      continue;
+    }
+    if (ch === ";" || ch === "(" || ch === ")") {
+      flushSegment();
+      index += 1;
+      continue;
+    }
+    if (ch === "$" && command[index + 1] === "(") {
+      flushSegment();
+      index += 2;
+      continue;
+    }
+    if (ch === "|" || ch === "&") {
+      flushSegment();
+      index += command[index + 1] === ch ? 2 : 1;
+      continue;
+    }
+    // Keep PowerShell here-strings (`@'...'@` / `@"..."@`) opaque so quoted examples never parse as commands.
+    if (ch === "@" && (command[index + 1] === "'" || command[index + 1] === '"')) {
+      const quote = command[index + 1]!;
+      let probe = index + 2;
+      while (probe < length && (command[probe] === " " || command[probe] === "\t")) probe += 1;
+      if (command[probe] === "\n" || (command[probe] === "\r" && command[probe + 1] === "\n")) {
+        const start = index;
+        index = probe + (command[probe] === "\r" ? 2 : 1);
+        const closing = `${quote}@`;
+        let closedAt: number | undefined;
+        while (index < length) {
+          if (
+            command.startsWith(closing, index) &&
+            (index + 2 === length || /[\s;|&()]/u.test(command[index + 2]!))
+          ) {
+            closedAt = index + 2;
+            break;
+          }
+          const lineEnd = command.indexOf("\n", index);
+          if (lineEnd === -1) break;
+          index = lineEnd + 1;
+        }
+        index = closedAt ?? length;
+        const raw = command.slice(start, index);
+        currentSegment.push({
+          raw,
+          value: raw,
+          quoted: true,
+          singleQuoted: quote === "'",
+          redirection: false,
+          start,
+          end: index,
+        });
+        continue;
+      }
+    }
+    if (ch === "<" && command[index + 1] === "<" && command[index + 2] === "<") {
+      currentSegment.push({
+        raw: "<<<",
+        value: "<<<",
+        quoted: false,
+        singleQuoted: false,
+        redirection: true,
+        start: index,
+        end: index + 3,
+      });
+      index += 3;
+      continue;
+    }
+    if (ch === "<" && command[index + 1] === "<") {
+      const start = index;
+      index += 2;
+      const stripTabs = command[index] === "-";
+      if (stripTabs) index += 1;
+      while (
+        index < length &&
+        command[index] !== "\n" &&
+        command[index] !== "\r" &&
+        /\s/u.test(command[index]!)
+      ) {
+        index += 1;
+      }
+      let delimiter = "";
+      while (index < length && !/[\s;|&()<>]/u.test(command[index]!)) {
+        const c = command[index]!;
+        if (c === "'" || c === '"') {
+          index += 1;
+          while (index < length && command[index] !== c) {
+            delimiter += command[index]!;
+            index += 1;
+          }
+          if (index < length) index += 1;
+        } else if (c === "\\" && index + 1 < length) {
+          delimiter += command[index + 1]!;
+          index += 2;
+        } else {
+          delimiter += c;
+          index += 1;
+        }
+      }
+      if (delimiter.length > 0) pendingHeredocs.push({ delimiter, stripTabs });
+      const raw = command.slice(start, index);
+      currentSegment.push({
+        raw,
+        value: raw,
+        quoted: false,
+        singleQuoted: false,
+        redirection: true,
+        start,
+        end: index,
+      });
+      continue;
+    }
+
+    const start = index;
+    let value = "";
+    let quoted = false;
+    let allSingleQuoted = true;
+    let redirection = false;
+    while (index < length) {
+      const c = command[index]!;
+      if (
+        /[\s;|()]/u.test(c) ||
+        (c === "&" && command[index - 1] !== ">" && command[index - 1] !== "<") ||
+        (c === "$" && command[index + 1] === "(") ||
+        (c === "<" && (command[index + 1] === "#" || command[index + 1] === "<"))
+      ) {
+        break;
+      }
+      if (c === ">" || c === "<") {
+        if (redirection) {
+          if (c === ">" && /^(?:\d+|\*)?>$/u.test(command.slice(start, index))) {
+            value += c;
+            index += 1;
+            continue;
+          }
+          break;
+        }
+        if (index === start || (!quoted && /^(?:\d+|\*)$/u.test(command.slice(start, index)))) {
+          redirection = true;
+          allSingleQuoted = false;
+          value += c;
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      const wordContinuation = isLineContinuation(command, index);
+      if (wordContinuation > 0) {
+        if (c === "\\") {
+          index += wordContinuation;
+          continue;
+        }
+        break;
+      }
+      if (c === "'") {
+        quoted = true;
+        index += 1;
+        while (index < length && command[index] !== "'") {
+          value += command[index]!;
+          index += 1;
+        }
+        if (index < length) index += 1;
+      } else if (c === '"') {
+        quoted = true;
+        allSingleQuoted = false;
+        index += 1;
+        while (index < length) {
+          const inner = command[index]!;
+          if (inner === '"') {
+            index += 1;
+            break;
+          }
+          if (inner === "\\") {
+            const quotedContinuation = isLineContinuation(command, index);
+            if (quotedContinuation > 0) {
+              index += quotedContinuation;
+              continue;
+            }
+          }
+          if ((inner === "\\" || inner === "`") && index + 1 < length) {
+            const next = command[index + 1]!;
+            if (next === '"' || next === inner) {
+              value += next;
+              index += 2;
+              continue;
+            }
+          }
+          value += inner;
+          index += 1;
+        }
+      } else {
+        allSingleQuoted = false;
+        if (
+          (c === "\\" || c === "`" || c === "^") &&
+          index + 1 < length &&
+          (/[;|&\s'"()<>]/u.test(command[index + 1]!) || (c === "^" && command[index + 1] === "^"))
+        ) {
+          value += command[index + 1]!;
+          index += 2;
+        } else {
+          value += c;
+          index += 1;
+        }
+      }
+    }
+    currentSegment.push({
+      raw: command.slice(start, index),
+      value,
+      quoted,
+      singleQuoted: quoted && allSingleQuoted,
+      redirection,
+      start,
+      end: index,
+    });
+  }
+
+  flushSegment();
+  return segments;
+}
+
+const BARE_REDIRECTION_OPERATOR = /^(?:<<<|(?:\d+|\*)?(?:>>?|<<?-?|[<>]&))$/u;
+
+function unwrapShellWrapper(
+  command: string,
+  tokens: ReadonlyArray<ShellToken>,
+  index: number,
+  depth: number,
+):
+  | { readonly kind: "nested"; readonly command: string }
+  | { readonly kind: "advance"; readonly index: number }
+  | { readonly kind: "stop" }
+  | undefined {
+  const token = tokens[index]!;
+  if (CMD_EXE_NAME.test(token.value)) {
+    let next = index + 1;
+    let sawCommandFlag = false;
+    while (
+      next < tokens.length &&
+      !tokens[next]!.quoted &&
+      CMD_EXE_FLAG.test(tokens[next]!.value)
+    ) {
+      const flag = tokens[next]!.value.toLowerCase();
+      next += 1;
+      if (flag === "/c" || flag === "/k") {
+        sawCommandFlag = true;
+        break;
+      }
+    }
+    if (!sawCommandFlag) return undefined;
+    if (depth === 0 && next < tokens.length) {
+      let lastCmdIndex = next - 1;
+      for (let cursor = next; cursor < tokens.length; cursor += 1) {
+        if (tokens[cursor]!.redirection) break;
+        lastCmdIndex = cursor;
+      }
+      if (lastCmdIndex === next && tokens[next]!.quoted) {
+        return { kind: "nested", command: tokens[next]!.value };
+      }
+      if (
+        lastCmdIndex > next &&
+        command[tokens[next]!.start] === '"' &&
+        command[tokens[lastCmdIndex]!.end - 1] === '"' &&
+        (!tokens[next]!.raw.endsWith('"') || tokens[next]!.raw.startsWith('""'))
+      ) {
+        return {
+          kind: "nested",
+          command: command.slice(tokens[next]!.start + 1, tokens[lastCmdIndex]!.end - 1),
+        };
+      }
+    }
+    return { kind: "advance", index: next };
+  }
+  if (POWERSHELL_EXE_NAME.test(token.value)) {
+    let next = index + 1;
+    while (next < tokens.length && !tokens[next]!.quoted && tokens[next]!.value.startsWith("-")) {
+      const flag = tokens[next]!.value.toLowerCase();
+      next += 1;
+      if (flag === "-c" || flag === "-command") {
+        if (depth === 0 && next < tokens.length && tokens[next]!.quoted) {
+          const parts: Array<string> = [];
+          for (let cursor = next; cursor < tokens.length; cursor += 1) {
+            const arg = tokens[cursor]!;
+            if (arg.redirection) {
+              if (BARE_REDIRECTION_OPERATOR.test(arg.raw)) cursor += 1;
+              continue;
+            }
+            parts.push(
+              arg.singleQuoted ? (decodePowerShellSingleQuoted(arg.raw) ?? arg.value) : arg.value,
+            );
+          }
+          if (parts.length > 0) {
+            return { kind: "nested", command: parts.join(" ") };
+          }
+        }
+        return { kind: "advance", index: next };
+      }
+      if (POWERSHELL_VALUE_FLAG.test(flag)) next += 1;
+    }
+    return undefined;
+  }
+  if (POSIX_SHELL_NAME.test(token.value)) {
+    let next = index + 1;
+    while (
+      next < tokens.length &&
+      !tokens[next]!.quoted &&
+      POSIX_SHELL_FLAG.test(tokens[next]!.value)
+    ) {
+      const flag = tokens[next]!.value.toLowerCase();
+      next += 1;
+      if (flag.endsWith("c")) {
+        return depth === 0 && next < tokens.length
+          ? { kind: "nested", command: tokens[next]!.value }
+          : { kind: "stop" };
+      }
+    }
+  }
+  return undefined;
+}
+
+// Windows ACP agents invoke the generated wrapper via T3_ACP_MCP_CALL or acp-mcp-call.cmd;
+// check executable command position so print/inspection commands stay ordinary shell items.
+function extractWindowsAcpMcpFallbackCall(
+  command: string,
+  depth = 0,
+): AcpMcpToolCallIdentity | undefined {
+  for (const tokens of splitShellCommandSegments(command)) {
+    let index = 0;
+    while (index < tokens.length) {
+      const token = tokens[index]!;
+      if (
+        (!token.quoted && (token.value === "." || token.value.toLowerCase() === "call")) ||
+        (token.redirection && SHELL_INPUT_REDIRECTION_ATTACHED.test(token.raw)) ||
+        SHELL_ENV_ASSIGNMENT.test(token.raw)
+      ) {
+        index += 1;
+        continue;
+      }
+      if (
+        (token.redirection && SHELL_INPUT_REDIRECTION.test(token.raw)) ||
+        (!token.quoted &&
+          POWERSHELL_VARIABLE_NAME.test(token.raw) &&
+          tokens[index + 1]?.raw === "=" &&
+          !tokens[index + 1]!.quoted)
+      ) {
+        index += 2;
+        continue;
+      }
+      const unwrapped = unwrapShellWrapper(command, tokens, index, depth);
+      if (unwrapped !== undefined) {
+        if (unwrapped.kind === "nested") {
+          const nested = extractWindowsAcpMcpFallbackCall(unwrapped.command, depth + 1);
+          if (nested !== undefined) return nested;
+          index = tokens.length;
+          break;
+        }
+        if (unwrapped.kind === "stop") {
+          index = tokens.length;
+          break;
+        }
+        index = unwrapped.index;
+        continue;
+      }
+      break;
+    }
+    const launcher = tokens[index];
+    const toolToken = tokens[index + 1];
+    if (launcher === undefined || toolToken === undefined) continue;
+    const isLauncher =
+      (!launcher.singleQuoted && WINDOWS_ACP_MCP_ENV_LAUNCHER.test(launcher.value)) ||
+      WINDOWS_ACP_MCP_CMD_LAUNCHER.test(launcher.value);
+    if (!isLauncher || !T3_MCP_TOOL_NAMES.has(toolToken.value)) continue;
+    const argTokens: Array<ShellToken> = [];
+    for (let argIndex = index + 2; argIndex < tokens.length; argIndex += 1) {
+      const arg = tokens[argIndex]!;
+      if (arg.redirection) break;
+      argTokens.push(arg);
+    }
+    const rawArg =
+      argTokens.length === 0
+        ? undefined
+        : command.slice(argTokens[0]!.start, argTokens.at(-1)!.end);
+    const input =
+      acpMcpFallbackInput(rawArg) ??
+      (argTokens.length === 1
+        ? acpMcpFallbackInput(argTokens[0]!.value)
+        : (acpMcpFallbackInput(argTokens[0]?.raw) ?? acpMcpFallbackInput(argTokens[0]?.value)));
+    return {
+      server: "t3-code",
+      tool: toolToken.value,
+      ...(input === undefined ? {} : { input }),
+    };
+  }
+  return undefined;
+}
+
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
-  const candidates = [
-    trimmed,
-    ...(trimmed.startsWith("'") && trimmed.endsWith("'") ? [trimmed.slice(1, -1)] : []),
-  ];
+  const decodedSingleQuoted = decodePowerShellSingleQuoted(trimmed);
+  const candidates = decodedSingleQuoted === undefined ? [trimmed] : [decodedSingleQuoted];
   for (const candidate of candidates) {
     try {
       const parsed: unknown = JSON.parse(candidate);
@@ -1306,6 +1787,10 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
+    const windowsIdentity = extractWindowsAcpMcpFallbackCall(command);
+    if (windowsIdentity !== undefined) {
+      return windowsIdentity;
+    }
     const match = ACP_MCP_FALLBACK_CALL.exec(command);
     if (match?.[1] !== undefined) {
       const input = acpMcpFallbackInput(match[2]);
