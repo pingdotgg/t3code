@@ -138,6 +138,24 @@ describe("appendTerminalOutput", () => {
     expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
+  it("keeps the first complete line when output exactly fills the tail", () => {
+    const exactDefault = `ok\n${"x".repeat(TERMINAL_OUTPUT_TAIL_CHARS - 3)}`;
+    expect(normalizeTerminalOutput(`junk\n${exactDefault}`)).toEqual({
+      text: exactDefault,
+      truncated: true,
+    });
+
+    // Cut landing right between a settled part ending in "\n", an empty settledTail, and the window.
+    const seeded = feed([`${"old\n".repeat(70)}`], 20);
+    const nextWindow =
+      seeded.screen.lines.map((line) => line.map((run) => run.text).join("")).join("\n") + "z";
+    const exactWindow = appendTerminalOutput(seeded, "z", nextWindow.length);
+    expect(seeded.screen.settled[0].endsWith("\n")).toBe(true);
+    expect(seeded.screen.settled[1]).toBe("");
+    expect(exactWindow.text).toBe(nextWindow);
+    expect(exactWindow.truncated).toBe(true);
+  });
+
   it("keeps Unicode tails bounded without shifting saved cursor columns", () => {
     const source = feed(["界界e\u0301\u001b7ab"], 4);
     expect(source.text).toBe("e\u0301ab");
@@ -175,6 +193,15 @@ describe("appendTerminalOutput", () => {
     expect(feed([input]).text).toBe("ab");
     expect(feed(["a\u001b]0;", "t".repeat(100), "\u0007b"]).text).toBe("ab");
     expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
+  });
+
+  it("keeps a DCS payload hidden past a BEL until ST, wherever the chunk splits", () => {
+    const dcs = "\u001bPqA\u0007BBB\u001b\\OK";
+    for (let cut = 0; cut <= dcs.length; cut += 1) {
+      const state = feed([dcs.slice(0, cut)]);
+      expect(appendTerminalOutput(state, dcs.slice(cut)).text).toBe("OK");
+      expect(feed([terminalOutputResumeText(state), dcs.slice(cut)]).text).toBe("OK");
+    }
   });
 
   it("drops an escape sequence that never terminates and resumes after it", () => {
@@ -449,10 +476,54 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
 });
 
 describe("terminalOutputTail", () => {
+  it("drops a detached emoji skin tone at the start of a command tail", () => {
+    const output = normalizeTerminalOutput("before👍🏽done", 6);
+    expect(terminalOutputPlainText(output.text)).toBe("done");
+  });
+
+  it("drops a detached skin tone from serialized output and keeps its active style", () => {
+    const tail = terminalOutputTail("before👍\u001b[0;31m🏽done\u001b[0m", 10);
+    expect(tail).toEqual({ text: "\u001b[0;31mdone\u001b[0m", truncated: true });
+  });
+
+  it.each([
+    ["tone: 🏽", 2, 2, "🏽"],
+    ["\u001b[31m🖐️\u001b[0m🏽X", 3, 3, "X"],
+    ["✌️🏽X", 4, 4, "X"],
+    ["✌️🏽X", 3, 3, "X"],
+    ["✌\u001b[0;31m️\u001b[0m🏽X", 3, 8, "X"],
+    ["xx\u001b[0;31m🇺\u001b[0m🇸🇫🇷", 6, 6, "🇫🇷"],
+    ["xx🇺🇸🇫🇷", 4, 4, "🇫🇷"],
+  ] as const)("keeps complete glyphs in %j", (text, live, saved, expected) => {
+    expect(terminalOutputPlainText(normalizeTerminalOutput(text, live).text)).toBe(expected);
+    expect(terminalOutputPlainText(terminalOutputTail(text, saved).text)).toBe(expected);
+  });
+
   it("never begins on a lone low surrogate", () => {
     const text = `${"a".repeat(10)}😀${"b".repeat(4)}`;
     const tail = terminalOutputTail(text, 5);
     expect(tail.text).toBe("bbbb");
+  });
+
+  it("never begins a styled tail on a detached combining mark", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const output = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
+    expect(terminalOutputSpans(output.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: `${"e\u0301".repeat(5)}A`, style: red },
+    ]);
+
+    const crossStyle = terminalOutputTail("\u001b[0;32me\u001b[0;31m\u0301A\u001b[0m", 13);
+    expect(terminalOutputSpans(crossStyle.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "A", style: red },
+    ]);
+  });
+
+  it("keeps the first complete line when the cut falls immediately after a newline", () => {
+    const expected = `abc\n${"x".repeat(30)}`;
+    expect(terminalOutputTail(`junk\n${expected}`, 34)).toEqual({
+      text: expected,
+      truncated: true,
+    });
   });
 });
 

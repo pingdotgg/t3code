@@ -46,6 +46,7 @@ function createEditor(value: string, extra: Extensions = []) {
         listItem: false,
         orderedList: false,
         trailingNode: false,
+        listKeymap: false,
       }),
       ComposerCodeBlockExtension,
       ...ComposerBlockExtensions,
@@ -109,6 +110,19 @@ describe("Tiptap's block shortcuts", () => {
     const result = press(value, spec);
     expect(result.changed).toBe(false);
     expect(result.value).toBe(value);
+  });
+});
+
+describe("modified Backspace in a list", () => {
+  it.each(["1. a\n2. ", "- a\n- ", "- [ ] a\n- [ ] "])(
+    "Mod-Backspace removes the empty last item of %j",
+    (value) => {
+      expect(press(value, "Mod-Backspace").value).toBe(value.split("\n")[0]);
+    },
+  );
+
+  it("leaves an item with text before the caret to the browser", () => {
+    expect(press("1. a\n2. b", "Mod-Backspace").handled).toBe(false);
   });
 });
 

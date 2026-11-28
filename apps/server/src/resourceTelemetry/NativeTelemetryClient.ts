@@ -47,6 +47,7 @@ const CONSTRAINED_SAMPLE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT = Duration.seconds(5);
 const SAMPLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const PROCESS_TABLE_REQUEST_TIMEOUT = Duration.seconds(5);
+const MEMORY_PRESSURE_REQUEST_TIMEOUT = Duration.seconds(1);
 const HISTORY_REQUEST_TIMEOUT = Duration.seconds(15);
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -79,7 +80,7 @@ export class NativeTelemetryHandshakeTimedOut extends Schema.TaggedError<NativeT
 class NativeTelemetryRequestTimedOut extends Schema.TaggedError<NativeTelemetryRequestTimedOut>()(
   "NativeTelemetryRequestTimedOut",
   {
-    operation: Schema.Literals(["processTable", "readHistory", "sampleNow"]),
+    operation: Schema.Literals(["memoryPressure", "processTable", "readHistory", "sampleNow"]),
     timeoutMs: Schema.Number,
   },
 ) {
@@ -203,6 +204,8 @@ export class NativeTelemetryClient extends Context.Service<
       ReadonlyArray<ResourceMonitorProcessTableEntry>,
       NativeTelemetryClientError
     >;
+    /** macOS pressure level (1, 2 or 4), or null where the sidecar cannot read it. */
+    readonly memoryPressureLevel: Effect.Effect<number | null, NativeTelemetryClientError>;
     readonly retry: Effect.Effect<boolean>;
     readonly health: Effect.Effect<NativeTelemetryClientHealth>;
     readonly subscribeHealth: Effect.Effect<
@@ -420,6 +423,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       Deferred.Deferred<ReadonlyArray<ResourceMonitorProcessTableEntry>, NativeTelemetryClientError>
     >(),
   );
+  const pendingPressureLevels = yield* Ref.make(
+    new Map<string, Deferred.Deferred<number | null, NativeTelemetryClientError>>(),
+  );
   const pendingHistories = yield* Ref.make(new Map<string, PendingHistoryRequest>());
   const snapshots = yield* PubSub.sliding<NativeTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<NativeTelemetryClientHealth>(4);
@@ -439,11 +445,15 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   ) {
     const samples = yield* Ref.getAndSet(pendingSamples, new Map());
     const processTables = yield* Ref.getAndSet(pendingProcessTables, new Map());
+    const pressureLevels = yield* Ref.getAndSet(pendingPressureLevels, new Map());
     const histories = yield* Ref.getAndSet(pendingHistories, new Map());
     yield* Effect.forEach(samples.values(), (deferred) => Deferred.fail(deferred, error), {
       discard: true,
     });
     yield* Effect.forEach(processTables.values(), (deferred) => Deferred.fail(deferred, error), {
+      discard: true,
+    });
+    yield* Effect.forEach(pressureLevels.values(), (deferred) => Deferred.fail(deferred, error), {
       discard: true,
     });
     yield* Effect.forEach(histories.values(), (request) => Deferred.fail(request.deferred, error), {
@@ -535,6 +545,21 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
             Option.match({
               onNone: () => Effect.void,
               onSome: (deferred) => Deferred.succeed(deferred, event.processes),
+            }),
+          ),
+          Effect.asVoid,
+        );
+      case "memoryPressure":
+        return Ref.modify(pendingPressureLevels, (pending) => {
+          const next = new Map(pending);
+          const deferred = next.get(event.requestId);
+          next.delete(event.requestId);
+          return [Option.fromUndefinedOr(deferred), next] as const;
+        }).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (deferred) => Deferred.succeed(deferred, event.level),
             }),
           ),
           Effect.asVoid,
@@ -1043,6 +1068,53 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     );
   });
 
+  const memoryPressureLevel: NativeTelemetryClient["Service"]["memoryPressureLevel"] = Effect.gen(
+    function* () {
+      const current = yield* Ref.get(state);
+      if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
+        return yield* new NativeTelemetryUnavailable({
+          reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
+        });
+      }
+      const requestId = yield* random
+        .uuidV4()
+        .pipe(
+          Effect.mapError(
+            (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
+          ),
+        );
+      const deferred = yield* Deferred.make<number | null, NativeTelemetryClientError>();
+      yield* Ref.update(pendingPressureLevels, (pending) =>
+        new Map(pending).set(requestId, deferred),
+      );
+      // The timeout covers the write too: another command can hold the pipe under backpressure.
+      return yield* writeCommand(Option.getOrThrow(current.handle), {
+        version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+        type: "memoryPressure",
+        requestId,
+      }).pipe(
+        Effect.andThen(Deferred.await(deferred)),
+        Effect.timeoutOrElse({
+          duration: MEMORY_PRESSURE_REQUEST_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new NativeTelemetryRequestTimedOut({
+                operation: "memoryPressure",
+                timeoutMs: Duration.toMillis(MEMORY_PRESSURE_REQUEST_TIMEOUT),
+              }),
+            ),
+        }),
+        Effect.ensuring(
+          Ref.update(pendingPressureLevels, (pending) => {
+            const next = new Map(pending);
+            next.delete(requestId);
+            return next;
+          }),
+        ),
+      );
+    },
+  );
+
   const health = currentHealth;
 
   return NativeTelemetryClient.of({
@@ -1066,6 +1138,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     sampleNow,
     processTable: processTable(false),
     processIdentities: processTable(true),
+    memoryPressureLevel,
     retry: Ref.get(state).pipe(
       Effect.flatMap((current) =>
         !canRequestNativeTelemetryRetry(current.status, Option.isSome(current.handle))
@@ -1129,6 +1202,7 @@ export const layerTest = (
           reason: "No resource monitor process table was configured for this test.",
         }),
       ),
+      memoryPressureLevel: Effect.succeed(null),
       retry: Effect.succeed(false),
       health,
       subscribeHealth:

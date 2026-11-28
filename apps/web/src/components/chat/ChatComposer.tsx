@@ -58,6 +58,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
@@ -289,7 +290,11 @@ import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
-import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  usePreparedConnection,
+} from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import {
@@ -487,6 +492,8 @@ export interface ChatComposerProps {
   removedEditingQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
   onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
+  canMoveEditingQueuedMessageToStash?: boolean | undefined;
+  onMoveEditingQueuedMessageToStash?: (() => void) | undefined;
 
   onCompactContext: () => void;
   onSend: (
@@ -630,6 +637,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedEditingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
     onRestoreEditingQueuedAttachment,
+    canMoveEditingQueuedMessageToStash,
+    onMoveEditingQueuedMessageToStash,
   } = props;
   const {
     activePendingProgress: incomingPendingProgress,
@@ -2697,6 +2706,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerTrigger,
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
+    editingQueuedMessage:
+      activeEditingQueuedAttachments !== null && onMoveEditingQueuedMessageToStash
+        ? {
+            canMoveToStash: canMoveEditingQueuedMessageToStash === true,
+            onMovedToStash: onMoveEditingQueuedMessageToStash,
+          }
+        : null,
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
@@ -2793,8 +2809,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const replyTo = composerDraft?.replyTo ?? null;
+  // A send waits for compressing images, so they count as attached.
   const holdsNoAttachedContext =
-    composerImages.length + composerFiles.length === 0 &&
+    composerImages.length + composerFiles.length + allPreparingComposerImages.length === 0 &&
     composerSendState.sendableTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0 &&
@@ -2803,6 +2820,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const codexFeedbackOffered = selectedProvider === "codex" && multipleModelSelections === null;
   const commandRunsLocally = composerRunsDraftLocally({
     text: prompt,
+    commandText: composerSendState.trimmedPrompt,
     holdsOnlyText: holdsNoAttachedContext && replyTo === null,
     sideChat: props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null,
     usageLimits: props.onUsageLimitsCommand !== undefined,
@@ -2811,7 +2829,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // `/feedback` runs with a pending reply too, which then stays in the bar.
   const feedbackRunsLocally =
-    codexFeedbackOffered && holdsNoAttachedContext && parseCodexFeedbackCommand(prompt) !== null;
+    codexFeedbackOffered &&
+    holdsNoAttachedContext &&
+    parseCodexFeedbackCommand(composerSendState.trimmedPrompt) !== null;
   const draftRunsLocally = commandRunsLocally || feedbackRunsLocally;
   const replyBannerItems: readonly ComposerBannerStackItem[] = replyTo
     ? [
@@ -3006,18 +3026,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
   const insertComposerFolders = async (
-    folders: File[],
+    folders: readonly { readonly name: string; readonly path: string | null }[],
     target: FolderDropTarget,
     draftKey: string,
   ) => {
     const bridge = window.desktopBridge;
     for (const folder of folders) {
-      const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
       const path =
-        droppedPath === null || typeof target === "string"
-          ? droppedPath
+        folder.path === null || typeof target === "string"
+          ? folder.path
           : ((await bridge
-              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              ?.toLocalBackendPath(target.wslBackendId, folder.path)
               .catch(() => null)) ?? null);
       // ChatView is reused across threads, so a slow conversion must not land in the next draft.
       if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) return;
@@ -3044,8 +3063,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     focusComposer();
   };
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
+  const resolveFolderTarget = () =>
+    folderDropTarget({
       localEnvironmentDisabled: isLocalEnvironmentDisabled(),
       environmentId,
       primaryEnvironmentId,
@@ -3060,6 +3079,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               typeof bootstrap.runningDistro === "string",
           ) === true,
     });
+
+  const addFolderPaths = (
+    folders: readonly { readonly name: string; readonly path: string | null }[],
+    target: FolderDropTarget,
+    draftKey: string,
+  ) => {
+    // Hold send until every conversion lands, or the folder misses the message.
+    pendingDraftWork.begin(draftKey);
+    void insertComposerFolders(folders, target, draftKey).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
+  };
+
+  const addComposerFolders = (folders: File[]) => {
+    const target = resolveFolderTarget();
     if (target === "remote") {
       toastManager.add({
         type: "error",
@@ -3067,14 +3101,50 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    const draftKey = attachmentTargetKeyRef.current;
-    // Hold send until every conversion lands, or the folder misses the message.
-    pendingDraftWork.begin(draftKey);
-    void insertComposerFolders(folders, target, draftKey).finally(() =>
-      pendingDraftWork.end(draftKey),
+    const getPathForFile = window.desktopBridge?.getPathForFile;
+    addFolderPaths(
+      folders.map((folder) => ({
+        name: folder.name,
+        path: resolveDroppedFolderPath(folder, getPathForFile),
+      })),
+      target,
+      attachmentTargetKeyRef.current,
     );
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
+
+  // A synchronous IPC read on desktop; the setting only changes with a restart, so read it once.
+  const [localEnvironmentDisabledAtMount] = useState(isLocalEnvironmentDisabled);
+  const preparedConnection = usePreparedConnection(environmentId);
+  const pickFolder = window.desktopBridge?.pickFolder;
+  // The picker returns a path on this computer, so it is offered under the same rule as dropped
+  // folders. It refuses to open while the local environment is off, even for a loopback server.
+  const canPickLocalFolder =
+    pickFolder !== undefined &&
+    !localEnvironmentDisabledAtMount &&
+    folderDropTarget({
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
+      environmentId,
+      primaryEnvironmentId,
+      connection: Option.getOrNull(preparedConnection),
+      isDesktopRenderer: true,
+      // Only "remote" or not matters here; WSL conversion is decided when a folder is picked.
+      primaryRunsInWsl: false,
+    }) !== "remote";
+  const pickComposerFolder = async () => {
+    const target = resolveFolderTarget();
+    if (!pickFolder || target === "remote") return;
+    const draftKey = attachmentTargetKeyRef.current;
+    // gitCwd is a path on the backend; it only names a folder here when no WSL conversion applies.
+    const initialPath = target === "local" ? gitCwd : null;
+    const path = await pickFolder(initialPath ? { initialPath } : undefined).catch(() => {
+      toastManager.add({ type: "error", title: gt("Couldn't open the folder picker") });
+      return null;
+    });
+    if (path === null) return;
+    addFolderPaths([{ name: path, path }], target, draftKey);
+  };
+  const pickComposerFolderStable = useStableCallback(pickComposerFolder);
 
   const onComposerPaste = (
     event: React.ClipboardEvent<HTMLElement>,
@@ -3698,7 +3768,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       />
     ) : null;
   const composerAttachButton = showComposerAttachAction ? (
-    <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
+    <ComposerAttachButton
+      onOpenPicker={() => composerAttachInputRef.current?.click()}
+      onPickFolder={canPickLocalFolder ? pickComposerFolderStable : undefined}
+    />
   ) : null;
   return (
     <form

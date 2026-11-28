@@ -25,6 +25,10 @@ const WORDPROCESSINGML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
   "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ]);
+const WORD_DRAWING_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+  "http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing",
+]);
 const WORD_STYLE_ELEMENTS = new Set([
   "styles",
   "docDefaults",
@@ -48,9 +52,11 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 ]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const SVG_NS = "http://www.w3.org/2000/svg";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+const XML_SCHEMA_TRUE = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u;
 type TextPart =
   | string
   | typeof CELL_START
@@ -108,9 +114,12 @@ interface XmlNode {
   children: Array<XmlNode | string>;
   imageDescription?: string;
   pptxHidden?: boolean;
+  docxHidden?: boolean;
+  docxHiddenContent?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   wordMergeCovered?: boolean;
+  wordHorizontalMerge?: string;
   wordStyleAttrs?: Record<string, string>;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -196,12 +205,13 @@ interface OdfTextStyle {
 }
 
 // ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
-interface OdfTextStyles {
+interface OdfStyleFamily {
   common: Map<string, OdfTextStyle>;
   automatic: Map<string, OdfTextStyle>;
 }
+type OdfTextStyles = Record<"text" | "paragraph", OdfStyleFamily>;
 
-function odfTextStyleHidden(styles: OdfTextStyles, name: string) {
+function odfTextStyleHidden(styles: OdfStyleFamily, name: string) {
   const automatic = styles.automatic.get(name);
   if (!automatic) return odfCommonTextStyleHidden(styles.common, name);
   if (automatic.hidden !== undefined) return automatic.hidden;
@@ -230,9 +240,7 @@ function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: strin
 }
 
 function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
-  return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
-    odfAttribute(attributes, "is-hidden", scope) ?? "",
-  );
+  return XML_SCHEMA_TRUE.test(odfAttribute(attributes, "is-hidden", scope) ?? "");
 }
 
 function isHiddenOdfSection(
@@ -320,7 +328,7 @@ function xml(
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
           return (extension === ".epub" &&
             (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
-            ((extension === ".odt" || wordStyles !== undefined) && local === "xmlns")
+            ((odf || extension === ".docx") && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -354,13 +362,14 @@ function xml(
     }
     if (odfTextStyles) {
       if (parent.odfSpanHidden) node.odfSpanHidden = true;
+      const styles = odfTextStyles[node.name === "span" ? "text" : "paragraph"];
       if (
-        node.name === "span" &&
-        odfTextStyles.common.size + odfTextStyles.automatic.size > 0 &&
+        (node.name === "span" || node.name === "p" || node.name === "h") &&
+        styles.common.size + styles.automatic.size > 0 &&
         namespaceOf(tag.name, stack) === ODF_TEXT_NS
       ) {
         const style = odfAttribute(tag.attributes, "style-name", stack);
-        const hidden = style === undefined ? undefined : odfTextStyleHidden(odfTextStyles, style);
+        const hidden = style === undefined ? undefined : odfTextStyleHidden(styles, style);
         if (hidden !== undefined) node.odfSpanHidden = hidden;
       }
       if (
@@ -402,7 +411,7 @@ function xml(
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      ["nav", "main", "details", "summary"].includes(node.name) &&
+      ["nav", "main", "details", "summary", "center"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
       node.epubBlock = true;
@@ -415,6 +424,27 @@ function xml(
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "hMerge" && parent.name === "tcPr") {
+      const scope = [...stack, node];
+      if (WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, scope) ?? "")) {
+        const value = Object.entries(tag.attributes).find(
+          ([name]) =>
+            name.endsWith(":val") &&
+            WORDPROCESSINGML_NAMESPACES.has(namespaceOf(name, scope) ?? ""),
+        )?.[1];
+        parent.wordHorizontalMerge ??= value?.trim() ?? "continue";
+      }
+    }
+    if (
+      extension === ".docx" &&
+      node.wordHorizontalMerge !== undefined &&
+      parent.name === "tc" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      parent.wordHorizontalMerge ??= node.wordHorizontalMerge;
+      const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+      if (table) wordMergeTables.add(table);
+    }
     if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
       const table = stack.findLast((ancestor) => ancestor.name === "tbl");
       if (table) wordMergeTables.add(table);
@@ -426,13 +456,14 @@ function xml(
       (parent.name === "styles" || parent.name === "automatic-styles")
     ) {
       const scope = [...stack, node];
+      const family = odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS);
       if (
         namespaceOf(tag.name, scope) === ODF_STYLE_NS &&
-        odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS) === "text"
+        (family === "text" || family === "paragraph")
       ) {
         const name = odfAttribute(tag.attributes, "name", scope, ODF_STYLE_NS);
         if (name !== undefined) {
-          odfTextStyles[parent.name === "styles" ? "common" : "automatic"].set(name, {
+          odfTextStyles[family][parent.name === "styles" ? "common" : "automatic"].set(name, {
             parent: odfAttribute(tag.attributes, "parent-style-name", scope, ODF_STYLE_NS),
             hidden: node.odfStyleHidden,
           });
@@ -454,6 +485,15 @@ function xml(
       ) {
         drawing.pptxHidden = true;
       }
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "docPr" &&
+      (parent.name === "anchor" || parent.name === "inline") &&
+      ["true", "1"].includes(tag.attributes.hidden?.trim() ?? "") &&
+      WORD_DRAWING_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      parent.docxHidden = true;
     }
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
       const owner = stack.at(-2);
@@ -487,15 +527,21 @@ function xml(
       parent.name === "AlternateContent" &&
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
+    // Keep compatibility fallbacks suppressed when a hidden drawing is omitted from a branch.
+    if (node.docxHidden) parent.docxHiddenContent = true;
     // Hidden spans may contain a nested style that explicitly makes its text visible.
     if (
       node.pptxHidden ||
+      node.docxHidden ||
       (node.odfSpanHidden && node.children.length === 0) ||
       (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
       (extension === ".epub" &&
         node.name === "template" &&
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
+      (extension === ".epub" &&
+        node.name === "metadata" &&
+        namespaceOf(tag.name, [...stack, node]) === SVG_NS) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         ((Object.hasOwn(tag.attributes, "hidden") &&
@@ -516,6 +562,10 @@ function xml(
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
         stack.some((ancestor) => ancestor.name === "notes")) ||
+      // Calc anchors floating shapes inside cells; their text is not cell data.
+      (extension === ".ods" &&
+        parent.name === "table-cell" &&
+        namespaceOf(tag.name, [...stack, node]) === ODF_DRAW_NS) ||
       (isCompatibilityChoice && parent.hasSelectedChoice)
     ) {
       parent.children.pop();
@@ -573,8 +623,10 @@ function xml(
       node.imageDescription = alt;
       node.hasText = true;
     }
-    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
-    parent.hasText = true;
+    const hasContent = node.hasText || node.name === "noBreakHyphen";
+    if (HIDDEN.has(node.name) || (!hasContent && !node.docxHiddenContent)) return;
+    if (hasContent) parent.hasText = true;
+    if (node.docxHiddenContent) parent.docxHiddenContent = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
     if (isCompatibilityChoice) {
       parent.hasSelectedChoice = true;
@@ -907,8 +959,10 @@ function* inCell(parts: Iterable<TextPart>): Generator<TextPart, void> {
 }
 function repeatCount(value: string | undefined): number {
   if (value === undefined) return 1;
-  if (!/^[0-9]+$/.test(value) || Number(value) < 1) throw new Error("Invalid repeat count");
-  return Number(value);
+  const count = Number(value);
+  if (!/^[ \t\r\n]*\+?[0-9]+[ \t\r\n]*$/.test(value) || count < 1)
+    throw new Error("Invalid repeat count");
+  return count;
 }
 function odfValue(cell: XmlNode): string {
   const type = cell.attrs["office:value-type"] ?? cell.attrs["value-type"];
@@ -948,6 +1002,7 @@ function markWordMergeContinuations(table: XmlNode) {
   // Empty cells and rows still participate in the Word table grid.
   for (const row of all(table, "tr")) {
     let column = wordSkippedColumns(row);
+    let horizontalMerge = false;
     for (const cell of all(row, "tc")) {
       const properties = childNamed(cell, "tcPr");
       const span = wordColumnSpan(properties);
@@ -957,6 +1012,12 @@ function markWordMergeContinuations(table: XmlNode) {
         if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
         if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
       }
+      const value = cell.wordHorizontalMerge;
+      if (value === "continue" && horizontalMerge) {
+        cell.wordMergeCovered = true;
+      } else {
+        horizontalMerge = value === "restart";
+      }
       column += span;
     }
     previous.clear();
@@ -964,10 +1025,18 @@ function markWordMergeContinuations(table: XmlNode) {
   }
 }
 
+function* wordNoteParagraphs(node: XmlNode): Generator<XmlNode, void> {
+  for (const child of children(node)) {
+    if (child.wordMergeCovered) continue;
+    if (child.name === "p") yield child;
+    else yield* wordNoteParagraphs(child);
+  }
+}
+
 // PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
 const drawingMergeCovered = (cell: XmlNode) =>
   cell.name === "tc" &&
-  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => XML_SCHEMA_TRUE.test(flag ?? ""));
 const covered = (cell: XmlNode) =>
   cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
@@ -1642,7 +1711,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         if (!notePath || !has(notePath)) continue;
         const bodies = new Map<string, string>();
         for (const note of all(read(notePath, styleRunHidden), kind)) {
-          const body = Array.from(all(note, "p"), (paragraph) =>
+          const body = Array.from(wordNoteParagraphs(note), (paragraph) =>
             [...text(paragraph)].filter((part) => typeof part === "string").join(""),
           )
             .join("\n")
@@ -1683,8 +1752,9 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
       yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
+      const odfFamily = (): OdfStyleFamily => ({ common: new Map(), automatic: new Map() });
       const odfTextStyles: OdfTextStyles | undefined =
-        extension === ".odt" ? { common: new Map(), automatic: new Map() } : undefined;
+        extension === ".odt" ? { text: odfFamily(), paragraph: odfFamily() } : undefined;
       if (odfTextStyles) {
         const namedStyles = files.get(part("styles.xml"));
         if (namedStyles !== undefined) {
@@ -1692,8 +1762,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             xml(namedStyles, extension, undefined, odfTextStyles);
           } catch {
             // A partial or oversized optional styles part must not hide otherwise readable text.
-            odfTextStyles.common.clear();
-            odfTextStyles.automatic.clear();
+            odfTextStyles.text = odfFamily();
+            odfTextStyles.paragraph = odfFamily();
           }
         }
       }
@@ -1735,7 +1805,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
         return resolveWorkbookPart(target || `${part}.xml`);
       };
-      const dateSystem = ["1", "true"].includes(
+      const dateSystem = /^[ \t\r\n]*(?:1|true)[ \t\r\n]*$/.test(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
       )
         ? "1904"

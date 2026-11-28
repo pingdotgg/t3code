@@ -209,6 +209,25 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
     ],
   },
   {
+    name: "paragraphs separated by carriage-return line endings",
+    steps: [
+      { at: 0, text: "Intro\r\rBody", shows: "Intro\r\r" },
+      { dueAt: 800 },
+      { idle: 800, shows: ["Intro\r\rBody"] },
+      { at: 1_200, text: "Intro\r\rBody\r\rNext", shows: "Intro\r\rBody\r\r" },
+    ],
+  },
+  {
+    name: "CRLF split across snapshots",
+    steps: [
+      { at: 0, text: "Intro\r", shows: null },
+      { at: 400, text: "Intro\r\nBody", shows: null },
+      { at: 800, text: "Intro\r\nBody\r\n\r", shows: "Intro\r\nBody\r\n\r" },
+      { at: 1_200, text: "Intro\r\nBody\r\n\r\nNext", shows: "Intro\r\nBody\r\n\r\n" },
+      { idle: 2_000, shows: ["Intro\r\nBody\r\n\r\nNext"] },
+    ],
+  },
+  {
     name: "turn mode",
     mode: "turn",
     steps: [{ at: 0, text: "A\n\nB", shows: null }, { dueAt: null }],

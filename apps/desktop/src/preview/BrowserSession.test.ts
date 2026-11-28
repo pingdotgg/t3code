@@ -809,6 +809,27 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("cuts a long certificate name without splitting an emoji", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValue(1);
+      const longName = `${"a".repeat(119)}\u{1F600} dev certificate`;
+      const prompt = certificateError(browserSession, {
+        url: "https://localhost:18443/",
+        certificate: { ...selfSignedCertificate, subjectName: longName },
+      });
+      assert.isFalse(yield* prompt.trusted);
+      const detail = showMessageBox.mock.calls[0]?.[0].detail ?? "";
+      const issuedTo = detail.split("\n").find((line) => line.startsWith("Issued to: "));
+      assert.strictEqual(issuedTo, `Issued to: ${"a".repeat(119)}…`);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("asks before trusting an untrusted certificate and remembers the approval", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;

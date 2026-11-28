@@ -138,6 +138,28 @@ describe("thread links", () => {
       );
       expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
     }
+    for (const threadId of ["mcp:launch:qa(1)", "feature(a(b))"]) {
+      const thread = ref("there", threadId);
+      const unbracketed = `[Original](t3-thread://v2/there/${threadId})`;
+      expect(threadLinkRefs(unbracketed, local)).toEqual([thread]);
+      expect(relabelThreadLinks(unbracketed, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(unbracketed, local, () => undefined)).toBe("Original");
+    }
+    expect(threadLinkRefs("[Original](t3-thread://v2/there/feature\\(test\\))", local)).toEqual([
+      ref("there", "feature(test)"),
+    ]);
+    expect(
+      relabelThreadLinks(
+        "[Original](t3-thread://v2/there/feature\\(test\\))",
+        local,
+        () => undefined,
+      ),
+    ).toBe("Original");
+    const unbalanced = "[Original](t3-thread://v2/there/feature(test)";
+    expect(threadLinkRefs(unbalanced, local)).toEqual([]);
+    expect(relabelThreadLinks(unbalanced, local, () => "Renamed")).toBe(unbalanced);
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -319,6 +341,20 @@ describe("thread links", () => {
     for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
       expect(threadLinkRefs(escaped, local)).toEqual([]);
     }
+    const indented = "    <t3-thread://v2/local/demo>\n\nSee <t3-thread://v2/local/prose>";
+    expect(threadLinkRefs(indented, local)).toEqual([ref("local", "prose")]);
+    expect(relabelThreadLinks(indented, local, () => "New")).toBe(
+      "    <t3-thread://v2/local/demo>\n\nSee [New](t3-thread://v2/local/prose)",
+    );
+    expect(relabelThreadLinks("\t<t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      "\t<t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks(">     <t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      ">     <t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks("Intro\n    <t3-thread://v2/local/prose>", local, () => "New")).toBe(
+      "Intro\n    [New](t3-thread://v2/local/prose)",
+    );
   });
 
   it("ends code where CommonMark does, so a link after it stays live", () => {
@@ -490,6 +526,11 @@ describe("hosted thread links", () => {
       ...ref("env-1", "thread-1"),
       hosted: true,
     });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env.1/task.foo")).toEqual({
+      ...ref("env.1", "task.foo"),
+      hosted: true,
+    });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/local/task.")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
@@ -505,15 +546,18 @@ describe("hosted thread links", () => {
   });
 
   it("titles hosted links in every Markdown form and writes them as v2 links", () => {
-    const title = titlesIn({ there: { t1: "There" } });
+    const title = titlesIn({ there: { t1: "There" }, local: { "task.foo": "Dotted" } });
     expect(
       relabelThreadLinks(
         [
           "See https://app.t3.codes/threads/there/t1.",
+          "See https://app.t3.codes/threads/local/task.foo.",
           "[old](https://app.t3.codes/threads/there/t1)",
           "<https://app.t3.codes/threads/there/t1>",
           "`https://app.t3.codes/threads/there/t1`",
           "https://app.t3.codes/threads/there/t1?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo/extra",
         ].join("\n"),
         local,
         title,
@@ -521,10 +565,13 @@ describe("hosted thread links", () => {
     ).toBe(
       [
         "See [There](t3-thread://v2/there/t1).",
+        "See [Dotted](t3-thread://v2/local/task.foo).",
         "[There](t3-thread://v2/there/t1)",
         "[There](t3-thread://v2/there/t1)",
         "`https://app.t3.codes/threads/there/t1`",
         "https://app.t3.codes/threads/there/t1?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo/extra",
       ].join("\n"),
     );
     expect(
@@ -533,6 +580,12 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo", local)).toEqual([
+      ref("local", "task.foo"),
+    ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo?prompt=go", local)).toEqual(
+      [],
+    );
   });
 
   it("leaves a hosted link that is part of another link as written", () => {
@@ -544,6 +597,7 @@ describe("hosted thread links", () => {
       [`[Example](https://example.com/?next=${hosted})`],
       [`[ ${hosted} ](https://example.com)`],
       [`[${hosted}](<https://example.com/a b> "Title")`],
+      [`[${hosted}](t3-thread://v2/local/id "Title")`],
       [`[a](https://example.com/x_(y)) ${hosted}`, `[a](https://example.com/x_(y)) ${relabeled}`],
       [`(${hosted}) **${hosted}**`, `(${relabeled}) **${relabeled}**`],
       [`[[[ [old](${hosted})`, `[[[ ${relabeled}`],
