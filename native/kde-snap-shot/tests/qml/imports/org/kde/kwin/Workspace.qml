@@ -3,12 +3,10 @@ import QtQml
 
 QtObject {
     property list<QtObject> screens: [QtObject { property rect geometry: Qt.rect(-100, 0, 400, 300) }]
-    property list<QtObject> windows: [QtObject {
-        property int pid: 123
-        property string caption: "Draft"
-        property bool minimized: false
-        property rect clientGeometry: Qt.rect(-100, 0, 400, 300)
-        signal closed()
+    property list<Window> windows: [Window {
+        pid: 123
+        caption: "Draft"
+        clientGeometry: Qt.rect(-100, 0, 400, 300)
     }]
     signal virtualScreenGeometryChanged()
     signal currentDesktopChanged()
