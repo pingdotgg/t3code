@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The Playwright fixture bundles and launches a temporary Electron app.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
