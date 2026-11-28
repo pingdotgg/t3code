@@ -212,9 +212,11 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
       return Option.isSome(entry.profile) && entry.profile.value._tag === "BearerConnectionProfile"
         ? entry.profile.value.httpBaseUrl
         : null;
-    case "SshConnectionTarget":
-      return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
-        ? `${entry.profile.value.target.username}@${entry.profile.value.target.hostname}`
-        : null;
+    case "SshConnectionTarget": {
+      if (!Option.isSome(entry.profile) || entry.profile.value._tag !== "SshConnectionProfile")
+        return null;
+      const { username, hostname } = entry.profile.value.target;
+      return username ? `${username}@${hostname}` : hostname;
+    }
   }
 }
