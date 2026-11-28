@@ -1,6 +1,7 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { Match, pipe } from "effect"
 import { strictEqual } from "./utils/assert.ts"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 describe("Match", () => {
   it("fn keeps the selector arguments", () => {
@@ -33,6 +34,44 @@ describe("Match", () => {
     )
 
     strictEqual(formatTodo({ status: "Active", title: "Write tests" }), "Active: Write tests")
+  })
+
+  it("fn passes its arguments to record handlers", () => {
+    const describe = Match.fn((_prefix: string, event: { readonly _tag: "Opened" } | { readonly _tag: "Closed" }) =>
+      event
+    ).pipe(
+      Match.tagsExhaustive({
+        Opened: (_event, prefix) => `${prefix} opened`,
+        Closed: (_event, prefix) => `${prefix} closed`
+      })
+    )
+    strictEqual(describe("door", { _tag: "Closed" }), "door closed")
+
+    const label = Match.fn((_suffix: string, value: "a" | "b") => value).pipe(
+      Match.literalsExhaustive({ a: (value, suffix) => value + suffix, b: (value, suffix) => value + suffix })
+    )
+    strictEqual(label("!", "b"), "b!")
+  })
+
+  it("type passes handlers the input alone", () => {
+    const argCount = (...args: Array<unknown>) => args.length
+
+    const single = Match.type<string | number>().pipe(
+      Match.when(Match.string, parseInt),
+      Match.orElse(argCount)
+    )
+    strictEqual(single("8"), 8)
+    strictEqual(single(1), 1)
+
+    const multi = Match.type<string | number>().pipe(
+      Match.when(Match.string, argCount),
+      Match.when(Match.number, argCount),
+      Match.exhaustive
+    )
+    strictEqual(multi(1), 1)
+
+    const tags = Match.typeTags<{ readonly _tag: "A" }>()({ A: argCount })
+    strictEqual(tags({ _tag: "A" }), 1)
   })
 
   it("tag matches an exact _tag and falls through for null", () => {
@@ -82,17 +121,40 @@ describe("Match", () => {
     strictEqual(match(null), "miss")
   })
 
-  it("checks symbol-keyed object pattern properties", () => {
-    const key = Symbol("key")
-    const match = pipe(
-      Match.type<{ readonly [key]: "expected" | "other" }>(),
-      Match.when({ [key]: "expected" }, () => "hit"),
+  it("tags and discriminators skip undefined handlers", () => {
+    const tags = pipe(
+      Match.type<{ readonly _tag: "A" } | { readonly _tag: "B" }>(),
+      Match.tags({ A: undefined, B: () => "B" }),
+      Match.orElse(() => "miss")
+    )
+    const discriminators = pipe(
+      Match.type<{ readonly kind: "A" } | { readonly kind: "B" }>(),
+      Match.discriminators("kind")({ A: undefined, B: () => "B" }),
       Match.orElse(() => "miss")
     )
 
-    strictEqual(match({ [key]: "expected" }), "hit")
-    strictEqual(match({ [key]: "other" }), "miss")
-    strictEqual(match({} as any), "miss")
+    strictEqual(tags({ _tag: "B" }), "B")
+    strictEqual(tags({ _tag: "A" }), "miss")
+    strictEqual(discriminators({ kind: "B" }), "B")
+    strictEqual(discriminators({ kind: "A" }), "miss")
+  })
+
+  it("discovers enumerable own pattern fields and reads non-enumerable input fields", () => {
+    const key = Symbol("key")
+    const match = pipe(
+      Match.type<unknown>(),
+      Match.when(withIgnoredProperties({ a: 1, [key]: "expected" }), () => "hit"),
+      Match.orElse(() => "miss")
+    )
+    const input = Object.defineProperties({ a: 1, [key]: "expected" }, {
+      a: { enumerable: false },
+      [key]: { enumerable: false }
+    })
+
+    assert.strictEqual(match(input), "hit")
+    assert.strictEqual(match({ a: 1, [key]: "other" }), "miss")
+    assert.strictEqual(match({ a: 2, [key]: "expected" }), "miss")
+    assert.strictEqual(match({}), "miss")
   })
 
   it("array patterns match prefixes and reject shorter arrays", () => {

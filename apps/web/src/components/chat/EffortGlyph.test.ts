@@ -16,17 +16,25 @@ describe("resolveEffortGlyph", () => {
     ["ultrathink"],
   );
 
+  const codex = descriptor(["low", "medium", "high", "xhigh", "max", "ultra"]);
+
   it("fills bars up to the current level and leaves max and workflow levels off the scale", () => {
-    expect(resolveEffortGlyph(claude, "xhigh")).toEqual({
-      count: 4,
-      filled: 4,
-      special: null,
-      label: "Xhigh",
-    });
+    for (const model of [claude, codex]) {
+      expect(resolveEffortGlyph(model, "xhigh")).toEqual({
+        count: 4,
+        filled: 4,
+        special: null,
+        label: "Xhigh",
+      });
+    }
   });
 
-  it("names max instead of drawing it", () => {
+  it("names Max, Default, and Ultra instead of drawing them", () => {
     expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
+    const reported = descriptor(["default", "low", "medium", "high", "xhigh", "max"]);
+    expect(resolveEffortGlyph(reported, "default")?.special).toBe("Default");
+    expect(resolveEffortGlyph(reported, "low")).toMatchObject({ count: 4, filled: 1 });
+    expect(resolveEffortGlyph(codex, "ultra")?.special).toBe("Ultra");
   });
 
   it("names Ultracode and Ultrathink instead of drawing a level", () => {
@@ -43,6 +51,14 @@ describe("resolveEffortGlyph", () => {
       special: null,
       label: "Off",
     });
+  });
+
+  it("rises with effort when an agent lists its levels high to low, ending at off", () => {
+    const descending = descriptor(["xhigh", "high", "low", "none"]);
+    expect(resolveEffortGlyph(descending, "xhigh")).toMatchObject({ count: 3, filled: 3 });
+    expect(resolveEffortGlyph(descending, "high")).toMatchObject({ count: 3, filled: 2 });
+    expect(resolveEffortGlyph(descending, "low")).toMatchObject({ count: 3, filled: 1 });
+    expect(resolveEffortGlyph(descending, "none")).toMatchObject({ count: 3, filled: 0 });
   });
 
   it("falls back to the word when the value is unknown or the scale is too short or long", () => {

@@ -12,6 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -34,7 +35,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "guest-share" },
@@ -111,6 +112,19 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       guestMessageId,
       text: "Why not keep the old cache?",
     });
+    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
+
+    const now = yield* DateTime.now;
+    const replacement = orchestrator.dispatch({
+      type: "thread.guest-share.open",
+      commandId: CommandId.make("replace-pending-share"),
+      threadId,
+      shareId: GuestShareId.make("share:replacement"),
+      host: "env.t3.test",
+      expiresAt: DateTime.formatIso(DateTime.add(now, { hours: 24 })),
+    });
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(replacement)));
+    assert.equal((yield* projections.getThread(threadId)).guestShare?.id, shareId);
     assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
 
     yield* sendGuestMessage(orchestrator, "send-1");

@@ -1,0 +1,2150 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url(inter.woff2) format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: JB;
+        src: url(jbmono.woff2) format("woff2");
+        font-weight: 100 800;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --primary: #346bf1;
+        --primary2: #6e9bfb;
+        --text: #f1f3f7;
+        --muted: #8e8e93;
+        --dim: #636368;
+        --line: #1d1d20;
+        --pop: #0f0f10;
+        --orange: #f07a4a;
+        --orange2: #ffa27c;
+        --blue: #4f8cff;
+        --blue2: #8ab4ff;
+        --green: #4ade80;
+        --teal: #5ccfa3;
+      }
+      html,
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: #000;
+        font-family: Inter, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .canvas {
+        position: relative;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background:
+          radial-gradient(1000px 520px at 50% 0%, rgba(52, 107, 241, 0.13), transparent 70%), #000;
+      }
+      svg.i {
+        width: 1em;
+        height: 1em;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      .abs {
+        position: absolute;
+      }
+
+      .win {
+        position: absolute;
+        left: 40px;
+        top: 26px;
+        width: 1520px;
+        height: 760px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #000;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.12),
+          0 40px 120px rgba(0, 0, 0, 0.7);
+      }
+      .stage {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 2000px;
+        height: 1000px;
+        transform: scale(0.76);
+        transform-origin: 0 0;
+        font-size: 19px;
+      }
+
+      /* sidebar */
+      .side {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 360px;
+        background: #070707;
+        border-right: 1px solid var(--line);
+      }
+      .lights {
+        position: absolute;
+        left: 22px;
+        top: 26px;
+        display: flex;
+        gap: 13px;
+      }
+      .lights b {
+        width: 18px;
+        height: 18px;
+        border-radius: 99px;
+        background: #ff5f57;
+      }
+      .lights b:nth-child(2) {
+        background: #febc2e;
+      }
+      .lights b:nth-child(3) {
+        background: #28c840;
+      }
+      .tb-icons {
+        position: absolute;
+        top: 25px;
+        color: var(--muted);
+        font-size: 21px;
+      }
+      .brandt {
+        position: absolute;
+        left: 177px;
+        top: 22px;
+        font-size: 19.5px;
+      }
+      .brandt b {
+        font-weight: 650;
+      }
+      .search {
+        position: absolute;
+        left: 22px;
+        top: 92px;
+        right: 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--muted);
+      }
+      .search .sp {
+        margin-left: auto;
+        display: flex;
+        gap: 18px;
+        font-size: 20px;
+      }
+      .threads {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        top: 146px;
+      }
+      .th {
+        padding: 10px 14px 12px;
+        border-radius: 12px;
+        height: 113px;
+      }
+      .th.on {
+        background: #161618;
+      }
+      .th .l1 {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 16.5px;
+        color: var(--muted);
+      }
+      .th .l1 .t {
+        margin-left: auto;
+      }
+      .pav {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        font-size: 10.5px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .th .l2 {
+        margin-top: 6px;
+        font-size: 19px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .th .l3 {
+        margin-top: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 16px;
+        color: var(--muted);
+      }
+      .th .l3 .r {
+        margin-left: auto;
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .ast {
+        color: var(--orange);
+        font-size: 18px;
+        line-height: 1;
+      }
+      .pr {
+        color: var(--teal);
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .sidefoot {
+        position: absolute;
+        left: 24px;
+        bottom: 26px;
+        display: flex;
+        gap: 30px;
+        color: var(--muted);
+        font-size: 21px;
+      }
+
+      /* main header */
+      .mhead {
+        position: absolute;
+        left: 362px;
+        top: 0;
+        width: 698px;
+        height: 70px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-left: 26px;
+      }
+      .mhead .muted {
+        color: var(--muted);
+      }
+      .mhead .tt {
+        font-weight: 500;
+      }
+      .dtoggle {
+        position: absolute;
+        left: 1003px;
+        top: 16px;
+        width: 38px;
+        height: 38px;
+        border-radius: 9px;
+        background: #1a1a1c;
+        display: grid;
+        place-items: center;
+        color: #d0d0d4;
+        font-size: 21px;
+      }
+
+      /* chat */
+      .chat {
+        position: absolute;
+        left: 433px;
+        top: 92px;
+        width: 560px;
+        line-height: 1.62;
+      }
+      .bubble {
+        margin-left: auto;
+        width: fit-content;
+        max-width: 400px;
+        background: #1d1d1f;
+        padding: 14px 19px;
+        border-radius: 20px;
+        line-height: 1.55;
+      }
+      .mut {
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--muted);
+      }
+      .row .w {
+        color: var(--text);
+      }
+      code {
+        font-family: JB;
+        font-size: 16.5px;
+        background: #1a1a1c;
+        padding: 2px 7px;
+        border-radius: 6px;
+        color: var(--text);
+      }
+      .swap {
+        position: relative;
+        height: 31px;
+      }
+      .swap > * {
+        position: absolute;
+        left: 0;
+        top: 0;
+        white-space: nowrap;
+      }
+      .composer {
+        position: absolute;
+        left: 428px;
+        top: 832px;
+        width: 564px;
+        height: 148px;
+        border-radius: 22px;
+        background: #0e0e0f;
+        box-shadow: inset 0 0 0 1.5px #232326;
+      }
+      .composer .ph {
+        position: absolute;
+        left: 22px;
+        top: 22px;
+        color: #7c7c82;
+      }
+      .composer .typing {
+        position: absolute;
+        left: 22px;
+        top: 22px;
+        right: 22px;
+      }
+      .composer .ft {
+        position: absolute;
+        left: 20px;
+        right: 14px;
+        bottom: 14px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        color: var(--muted);
+      }
+      .composer .model {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text);
+      }
+      .composer .send {
+        width: 44px;
+        height: 44px;
+        border-radius: 99px;
+        background: #e9e9ec;
+        color: #000;
+        display: grid;
+        place-items: center;
+        font-size: 21px;
+        position: relative;
+      }
+      .composer .send .stop {
+        position: absolute;
+        inset: 0;
+        border-radius: 99px;
+        background: #e5484d;
+        display: grid;
+        place-items: center;
+      }
+      .composer .send .stop b {
+        width: 13px;
+        height: 13px;
+        border-radius: 3px;
+        background: #fff;
+      }
+      .reveal {
+        display: inline-block;
+        white-space: nowrap;
+      }
+
+      /* popover */
+      .pop {
+        position: absolute;
+        left: 660px;
+        top: 82px;
+        width: 381px;
+        border-radius: 22px;
+        background: var(--pop);
+        box-shadow:
+          0 0 0 1px #2a2a2d,
+          0 30px 80px rgba(0, 0, 0, 0.7);
+        padding: 12px 0 10px;
+        transform-origin: 92% 0;
+        z-index: 5;
+      }
+      .prow {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 44px;
+        padding: 0 26px 0 37px;
+        gap: 14px;
+      }
+      .prow .ic {
+        color: var(--muted);
+        font-size: 20px;
+      }
+      .prow .end {
+        margin-left: auto;
+        color: var(--muted);
+      }
+      .psep {
+        height: 1px;
+        background: #1f1f22;
+        margin: 10px 0;
+      }
+      .plabel {
+        font-size: 15.5px;
+        color: var(--muted);
+        padding: 10px 26px 6px;
+      }
+      .srv {
+        position: relative;
+        height: 66px;
+        display: flex;
+        align-items: center;
+        padding: 0 20px 0 37px;
+        gap: 14px;
+        overflow: visible;
+      }
+      .srv .ic {
+        color: var(--muted);
+        font-size: 21px;
+      }
+      .srv .t {
+        font-size: 19px;
+      }
+      .srv .s {
+        position: relative;
+        height: 22px;
+        font-size: 15.5px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .srv .s span {
+        position: absolute;
+        left: 0;
+        top: 0;
+        white-space: nowrap;
+      }
+      .srv .s .fw {
+        color: var(--primary2);
+      }
+      .srv .hl {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        top: 2px;
+        bottom: 2px;
+        border-radius: 12px;
+        background: #1b1b1d;
+        opacity: 0;
+      }
+      .srv .acts {
+        position: absolute;
+        right: 22px;
+        top: 15px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        opacity: 0;
+      }
+      .fwd {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        font-size: 19px;
+        color: var(--text);
+        background: #2a2a2d;
+      }
+      .stopsq {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        background: #e5484d;
+      }
+      .tip {
+        position: absolute;
+        right: 50px;
+        top: 15px;
+        transform-origin: right center;
+        background: #0b0b0c;
+        color: var(--text);
+        font-size: 15.5px;
+        padding: 8px 12px;
+        border-radius: 9px;
+        box-shadow:
+          0 0 0 1px #2c2c30,
+          0 10px 30px rgba(0, 0, 0, 0.6);
+        white-space: nowrap;
+        opacity: 0;
+        z-index: 6;
+      }
+
+      /* browser */
+      .bpanel {
+        position: absolute;
+        left: 1060px;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        border-left: 1px solid var(--line);
+      }
+      .tabs {
+        position: absolute;
+        left: 14px;
+        top: 16px;
+        height: 38px;
+        display: flex;
+        gap: 6px;
+      }
+      .tab {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 38px;
+        padding: 0 14px;
+        border-radius: 9px;
+        background: #19191b;
+        font-size: 17px;
+        color: #d6d6da;
+        min-width: 210px;
+      }
+      .tab .x {
+        margin-left: auto;
+        color: var(--dim);
+        font-size: 15px;
+      }
+      .tab .alt {
+        position: absolute;
+        left: 14px;
+        top: 0;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .brr {
+        position: absolute;
+        right: 18px;
+        top: 18px;
+        display: flex;
+        gap: 20px;
+        color: var(--muted);
+        font-size: 21px;
+        align-items: center;
+      }
+      .brr .on {
+        background: #1a1a1c;
+        border-radius: 9px;
+        padding: 8px;
+        margin: -8px;
+        color: #d0d0d4;
+      }
+      .urlrow {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 70px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 19px;
+      }
+      .urlrow .u {
+        position: relative;
+        flex: 1;
+        color: var(--text);
+        height: 26px;
+      }
+      .urlrow .u > span {
+        position: absolute;
+        left: 0;
+        top: 0;
+        white-space: nowrap;
+      }
+      .urlrow .u .ph {
+        color: var(--dim);
+      }
+      .urlrow .rr {
+        display: flex;
+        gap: 20px;
+      }
+      .lbar {
+        position: absolute;
+        left: 0;
+        top: 116px;
+        height: 3px;
+        background: var(--primary);
+        width: 0;
+      }
+      .bblank {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 120px;
+        bottom: 0;
+        display: grid;
+        place-items: center;
+        color: var(--dim);
+        font-size: 17px;
+        text-align: center;
+      }
+      .page {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 120px;
+        bottom: 0;
+        background: #f6f4ef;
+        color: #1c1b18;
+        padding: 40px 48px;
+        opacity: 0;
+      }
+      .page .nav {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 720;
+        font-size: 21px;
+      }
+      .page .nav .logo {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        background: #1c1b18;
+      }
+      .page .nav .r {
+        margin-left: auto;
+        font-size: 16px;
+        font-weight: 500;
+        color: #8a857b;
+      }
+      .page h3 {
+        margin-top: 40px;
+        font-size: 44px;
+        letter-spacing: -0.035em;
+        font-weight: 750;
+      }
+      .stats {
+        margin-top: 24px;
+        display: flex;
+        gap: 18px;
+      }
+      .stat {
+        flex: 1;
+        background: white;
+        border-radius: 18px;
+        padding: 22px 24px;
+        box-shadow: 0 0 0 1px #e8e3d9;
+      }
+      .stat .k {
+        font-size: 16px;
+        color: #8a857b;
+        font-weight: 550;
+      }
+      .stat .v {
+        margin-top: 8px;
+        font-size: 42px;
+        font-weight: 750;
+        letter-spacing: -0.03em;
+      }
+      .stat .v small {
+        font-size: 17px;
+        color: #2f9e5b;
+        font-weight: 600;
+        margin-left: 8px;
+        letter-spacing: 0;
+      }
+      .table {
+        margin-top: 20px;
+        background: white;
+        border-radius: 18px;
+        box-shadow: 0 0 0 1px #e8e3d9;
+        font-size: 17.5px;
+        overflow: hidden;
+      }
+      .table div {
+        display: flex;
+        padding: 15px 24px;
+        border-top: 1px solid #f0ece4;
+      }
+      .table div:first-child {
+        border-top: 0;
+        color: #8a857b;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .table span:nth-child(1) {
+        width: 210px;
+        font-weight: 550;
+      }
+      .table span:nth-child(2) {
+        flex: 1;
+        color: #6c685f;
+      }
+      .table span:nth-child(3) {
+        color: #8a857b;
+        font-family: JB;
+        font-size: 15px;
+      }
+
+      .toast {
+        position: absolute;
+        right: 26px;
+        bottom: 26px;
+        width: 470px;
+        display: flex;
+        gap: 14px;
+        padding: 20px 22px;
+        border-radius: 18px;
+        background: #141416;
+        box-shadow:
+          0 0 0 1px #2a2a2d,
+          0 24px 60px rgba(0, 0, 0, 0.6);
+        z-index: 8;
+        opacity: 0;
+      }
+      .toast .ok {
+        width: 28px;
+        height: 28px;
+        border-radius: 99px;
+        background: #1f3d2a;
+        color: var(--green);
+        display: grid;
+        place-items: center;
+        font-size: 16px;
+        flex: none;
+      }
+      .toast .tt {
+        font-weight: 600;
+      }
+      .toast .td {
+        margin-top: 4px;
+        font-size: 17px;
+        color: var(--muted);
+      }
+      .toast code {
+        font-size: 15px;
+      }
+
+      /* local database client */
+      .db {
+        position: absolute;
+        left: 110px;
+        top: 300px;
+        width: 760px;
+        height: 420px;
+        border-radius: 13px;
+        overflow: hidden;
+        background: #161618;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.16),
+          0 40px 100px rgba(0, 0, 0, 0.8);
+        z-index: 6;
+        opacity: 0;
+        font-size: 14px;
+      }
+      .dtb {
+        height: 40px;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        gap: 8px;
+        background: #222225;
+        border-bottom: 1px solid #2c2c30;
+        font-size: 13.5px;
+        color: #d5d5da;
+      }
+      .dtb .name {
+        flex: 1;
+        text-align: center;
+        margin-right: 96px;
+        font-weight: 600;
+      }
+      .lights2 {
+        display: flex;
+        gap: 8px;
+      }
+      .lights2 b {
+        width: 12px;
+        height: 12px;
+        border-radius: 99px;
+        background: #ff5f57;
+      }
+      .lights2 b:nth-child(2) {
+        background: #febc2e;
+      }
+      .lights2 b:nth-child(3) {
+        background: #28c840;
+      }
+      .dbody {
+        position: absolute;
+        inset: 40px 0 0 0;
+        display: flex;
+      }
+      .dside {
+        width: 170px;
+        background: #1b1b1d;
+        border-right: 1px solid #2a2a2e;
+        padding: 12px 8px;
+      }
+      .dh {
+        font-size: 11.5px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #77777d;
+        padding: 2px 8px 8px;
+      }
+      .dt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 7px;
+        color: #c8c8cd;
+        font-family: JB;
+        font-size: 13.5px;
+      }
+      .dt svg {
+        color: #77777d;
+      }
+      .dt.on {
+        background: #2d4fa8;
+        color: #fff;
+      }
+      .dt.on svg {
+        color: #cfe0ff;
+      }
+      .dmain {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .dbar {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        border-bottom: 1px solid #2a2a2e;
+      }
+      .pill {
+        font-family: JB;
+        font-size: 13px;
+        background: #2a2a2e;
+        padding: 4px 10px;
+        border-radius: 7px;
+      }
+      .mutd {
+        color: #85858b;
+        font-size: 13px;
+      }
+      .grid {
+        font-family: JB;
+        font-size: 13.5px;
+      }
+      .gr {
+        display: grid;
+        grid-template-columns: 70px 140px 1fr 160px;
+        padding: 0 14px;
+        height: 38px;
+        align-items: center;
+        border-bottom: 1px solid #222226;
+        color: #dcdce0;
+      }
+      .gr:nth-child(odd):not(.gh) {
+        background: #1a1a1c;
+      }
+      .gh {
+        color: #85858b;
+        font-size: 12.5px;
+        height: 34px;
+        background: #1d1d20;
+      }
+      .sheet {
+        position: absolute;
+        left: 50%;
+        top: 22px;
+        width: 380px;
+        margin-left: -190px;
+        background: #232326;
+        border-radius: 12px;
+        padding: 20px 22px 18px;
+        box-shadow:
+          0 0 0 1px #34343a,
+          0 30px 80px rgba(0, 0, 0, 0.6);
+      }
+      .sh {
+        font-weight: 650;
+        font-size: 15.5px;
+        margin-bottom: 14px;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+      }
+      .f {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .f label {
+        width: 70px;
+        text-align: right;
+        color: #9a9aa0;
+        font-size: 13.5px;
+      }
+      .f .in {
+        flex: 1;
+        height: 32px;
+        border-radius: 7px;
+        background: #161618;
+        box-shadow: inset 0 0 0 1px #38383e;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-family: JB;
+        font-size: 14px;
+      }
+      .sbtns {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      .sbtns span {
+        padding: 7px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .b2 {
+        background: #34343a;
+      }
+      .b1 {
+        background: #3b74f0;
+        color: #fff;
+      }
+      .mac {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 9px;
+        border-radius: 7px;
+        background: rgba(52, 107, 241, 0.18);
+        color: var(--primary2);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .shade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 190px;
+        background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.96) 42%);
+        z-index: 30;
+      }
+      .cap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 806px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        z-index: 31;
+        opacity: 0;
+      }
+      .cap .n {
+        width: 50px;
+        height: 50px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 25px;
+        font-weight: 700;
+      }
+      .cap .n {
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      .cap .m {
+        color: #a3a3a3;
+        font-weight: 560;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 20;
+        transform-origin: 4px 3px;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+      }
+      .cam {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+      }
+
+      /* outro */
+      .outro {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        opacity: 0;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        background:
+          radial-gradient(760px 460px at 50% 34%, rgba(52, 107, 241, 0.16), transparent 70%), #000;
+      }
+      .outro .logo {
+        width: 176px;
+        height: 176px;
+        display: block;
+        margin: 0 auto -10px;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35))
+          drop-shadow(0 18px 60px rgba(52, 107, 241, 0.35));
+      }
+      .outro h2 {
+        margin-top: 44px;
+        font-size: 76px;
+        line-height: 1.02;
+        font-weight: 760;
+        letter-spacing: -0.045em;
+      }
+      .outro h2 {
+        color: var(--text);
+      }
+      .outro h2 .and {
+        color: #a3a3a3;
+      }
+      .outro p {
+        margin-top: 22px;
+        font-size: 34px;
+        color: #a3a3a3;
+        font-weight: 550;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro p b {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .ver {
+        font-family: JB;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 6px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .outro .url {
+        margin-top: 46px;
+        font-family: JB;
+        font-size: 22px;
+        color: var(--dim);
+      }
+      @keyframes outro {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes outroIn {
+        from {
+          opacity: 0;
+          transform: translateY(18px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .outro {
+        animation: outro 0.5s ease-out 16.05s both;
+      }
+      .outro .logo {
+        animation: outroIn 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 16.1s both;
+      }
+      .outro h2 {
+        animation: outroIn 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 16.2s both;
+      }
+      .outro p {
+        animation: outroIn 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 16.3s both;
+      }
+      .outro .url {
+        animation: outroIn 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 16.4s both;
+      }
+
+      /* ---------------- timeline (animation seconds) ---------------- */
+      @keyframes fade {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes out {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      @keyframes up {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(40px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes reveal {
+        from {
+          clip-path: inset(0 100% 0 0);
+        }
+        to {
+          clip-path: inset(0 0 0 0);
+        }
+      }
+      @keyframes popin {
+        from {
+          opacity: 0;
+          transform: scale(0.96) translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes grow {
+        from {
+          height: 0;
+          opacity: 0;
+        }
+        to {
+          height: 66px;
+          opacity: 1;
+        }
+      }
+      @keyframes load {
+        0% {
+          width: 0;
+          opacity: 1;
+        }
+        80% {
+          width: 100%;
+          opacity: 1;
+        }
+        100% {
+          width: 100%;
+          opacity: 0;
+        }
+      }
+      @keyframes hold {
+        0% {
+          opacity: 0;
+        }
+        10% {
+          opacity: 1;
+        }
+        90% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+      @keyframes cap {
+        0% {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        7% {
+          opacity: 1;
+          transform: none;
+        }
+        93% {
+          opacity: 1;
+          transform: none;
+        }
+        100% {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
+      }
+      @keyframes fwdOn {
+        0% {
+          transform: scale(1);
+        }
+        35% {
+          transform: scale(0.84);
+        }
+        100% {
+          background: var(--primary);
+          color: #fff;
+          box-shadow:
+            0 0 0 4px rgba(52, 107, 241, 0.25),
+            0 0 22px rgba(52, 107, 241, 0.55);
+          transform: scale(1);
+        }
+      }
+      @keyframes toast {
+        0% {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        8% {
+          opacity: 1;
+          transform: none;
+        }
+        92% {
+          opacity: 1;
+          transform: none;
+        }
+        100% {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+      }
+      @keyframes press {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        40% {
+          transform: scale(0.9);
+          background: #2a2a2d;
+        }
+      }
+      @keyframes camera {
+        0%,
+        5% {
+          transform: none;
+        }
+        8.125%,
+        18.125% {
+          transform: translate(-302px, -930px) scale(1.9);
+        }
+        21.25%,
+        34.375% {
+          transform: translate(-139px, -6px) scale(1.6);
+        }
+        38.125%,
+        47.5% {
+          transform: translate(-229px, -38px) scale(1.5);
+        }
+        51.875%,
+        63.75% {
+          transform: translate(-724px, -100px) scale(1.45);
+        }
+        67.5%,
+        76.875% {
+          transform: translate(-503px, -428px) scale(1.9);
+        }
+        80%,
+        83.125% {
+          transform: none;
+        }
+        86.875%,
+        100% {
+          transform: translate(65px, -365px) scale(1.5);
+        }
+      }
+
+      .cam {
+        animation: camera 16s cubic-bezier(0.65, 0, 0.35, 1) 0s both;
+      }
+      .win {
+        animation: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) 0s both;
+      }
+      .cap.a {
+        animation: cap 6.2s 0.4s both;
+      }
+      .cap.b {
+        animation: cap 3.3s 7.1s both;
+      }
+      .cap.c {
+        animation: fade 0.4s 10.5s both;
+      }
+
+      .composer .typing .reveal {
+        animation: reveal 1.7s steps(46, end) 0.9s both;
+      }
+      .composer .ph {
+        animation:
+          out 0.01s 0.9s both,
+          fade 0.2s 2.9s forwards;
+      }
+      .composer .typing {
+        animation: out 0.15s 2.8s both;
+      }
+      .composer .send .stop {
+        animation:
+          fade 0.1s 2.85s both,
+          out 0.2s 5.3s forwards;
+      }
+      .bubble {
+        animation: up 0.35s ease-out 2.8s both;
+      }
+      .working {
+        animation: fade 0.3s 3.1s both;
+      }
+      .working .a {
+        animation: out 0.1s 5.3s both;
+      }
+      .working .b {
+        animation: fade 0.1s 5.3s both;
+      }
+      .cmd {
+        animation: fade 0.3s 3.4s both;
+      }
+      .cmd .c1 {
+        animation: out 0.1s 4.3s both;
+      }
+      .cmd .c2 {
+        animation:
+          fade 0.1s 4.3s both,
+          out 0.1s 5.1s forwards;
+      }
+      .cmd .c3 {
+        animation: fade 0.1s 5.1s both;
+      }
+      .reply {
+        animation: up 0.4s ease-out 5.3s both;
+      }
+
+      .dtoggle {
+        animation: press 0.25s 6.2s both;
+      }
+      .pop {
+        animation: popin 0.2s ease-out 6.32s both;
+      }
+      .srv.r1 {
+        animation: grow 0.35s ease-out 6.6s both;
+      }
+      .srv.r2 {
+        animation: grow 0.35s ease-out 6.9s both;
+      }
+      .srv.r2 .hl {
+        animation: hold 1s 7.75s both;
+      }
+      .srv.r1 .hl {
+        animation: hold 1.9s 11.1s both;
+      }
+      .srv.r1 .acts {
+        animation: hold 1.9s 11.1s both;
+      }
+      .srv.r1 .fwd {
+        animation: fwdOn 0.45s ease-out 11.85s both;
+      }
+      .srv.r1 .tip {
+        animation: hold 1s 11.3s both;
+      }
+      .srv.r1 .s .ag {
+        animation: out 0.2s 12.15s both;
+      }
+      .srv.r1 .s .fw {
+        animation: fade 0.2s 12.2s both;
+      }
+
+      .tab .a {
+        animation: out 0.05s 8.15s both;
+      }
+      .tab .b {
+        animation: fade 0.05s 8.15s both;
+      }
+      .urlrow .ph {
+        animation: out 0.05s 8.15s both;
+      }
+      .urlrow .val {
+        animation: fade 0.05s 8.15s both;
+      }
+      .lbar {
+        animation: load 0.75s ease-in 8.2s both;
+      }
+      .bblank {
+        animation: out 0.2s 8.8s both;
+      }
+      .page {
+        animation: fade 0.4s 8.9s both;
+      }
+      .toast {
+        animation: toast 3.6s 12.1s both;
+      }
+      .db {
+        animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) 12.95s both;
+      }
+      .dmain,
+      .dside .dt {
+        opacity: 0;
+      }
+      .dside .dt {
+        animation: fade 0.25s 14.5s both;
+      }
+      .dmain {
+        animation: fade 0.3s 14.45s both;
+      }
+      .gr {
+        animation: up 0.25s ease-out both;
+      }
+      .gr:nth-child(1) {
+        animation-delay: 14.5s;
+      }
+      .gr:nth-child(2) {
+        animation-delay: 14.58s;
+      }
+      .gr:nth-child(3) {
+        animation-delay: 14.66s;
+      }
+      .gr:nth-child(4) {
+        animation-delay: 14.74s;
+      }
+      .gr:nth-child(5) {
+        animation-delay: 14.82s;
+      }
+      .gr:nth-child(6) {
+        animation-delay: 14.9s;
+      }
+      .gr:nth-child(7) {
+        animation-delay: 14.98s;
+      }
+      .r-host {
+        animation: reveal 0.45s steps(9, end) 13.15s both;
+      }
+      .r-port {
+        animation: reveal 0.25s steps(4, end) 13.6s both;
+      }
+      .connect {
+        animation: press 0.25s 14.12s both;
+      }
+      .sheet {
+        animation: out 0.2s 14.35s both;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="cam">
+        <div class="win">
+          <div class="stage">
+            <div class="side">
+              <div class="lights"><b></b><b></b><b></b></div>
+              <svg class="i tb-icons" style="left: 133px" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+              <div class="brandt"><b>T3</b> Code</div>
+              <svg
+                class="i tb-icons"
+                style="left: 266px; font-size: 19px; top: 26px"
+                viewBox="0 0 24 24"
+              >
+                <path d="m12 19-7-7 7-7" />
+                <path d="M19 12H5" />
+              </svg>
+              <svg
+                class="i tb-icons"
+                style="left: 304px; font-size: 19px; top: 26px; color: #4a4a4f"
+                viewBox="0 0 24 24"
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+              <div class="search">
+                <svg class="i" viewBox="0 0 24 24" style="font-size: 21px">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" /></svg
+                >Search
+                <span class="sp"
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <path d="M3 6h18" />
+                    <path d="M7 12h10" />
+                    <path d="M10 18h4" /></svg
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <path d="M12 10v6" />
+                    <path d="M9 13h6" />
+                    <path
+                      d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                    /></svg
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path
+                      d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"
+                    /></svg
+                ></span>
+              </div>
+              <div class="threads">
+                <div class="th on">
+                  <div class="l1">
+                    <span class="pav" style="background: #2e5bd8">MS</span>acme/mugshot<span
+                      class="t"
+                      >now</span
+                    >
+                  </div>
+                  <div class="l2">Spin up the dev stack</div>
+                  <div class="l3">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg
+                    >devbox<span class="r"><span class="ast">✳</span></span>
+                  </div>
+                </div>
+                <div class="th">
+                  <div class="l1">
+                    <span class="pav" style="background: #2e5bd8">MS</span>acme/mugshot<span
+                      class="t"
+                      >2h</span
+                    >
+                  </div>
+                  <div class="l2">Fix avatar upload on Safari</div>
+                  <div class="l3">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <circle cx="6" cy="6" r="3" />
+                      <path d="M6 9v12" />
+                      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                      <circle cx="18" cy="18" r="3" /></svg
+                    >fix/safari-avatar<span class="r"
+                      ><span class="pr">+42</span
+                      ><svg class="i" viewBox="0 0 24 24">
+                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg
+                      ><span class="ast">✳</span></span
+                    >
+                  </div>
+                </div>
+                <div class="th">
+                  <div class="l1">
+                    <span class="pav" style="background: #2e5bd8">MS</span>acme/mugshot<span
+                      class="t"
+                      >5h</span
+                    >
+                  </div>
+                  <div class="l2">Pricing page copy</div>
+                  <div class="l3">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <circle cx="6" cy="6" r="3" />
+                      <path d="M6 9v12" />
+                      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                      <circle cx="18" cy="18" r="3" /></svg
+                    >copy/pricing<span class="r"
+                      ><span class="pr">+18</span
+                      ><svg class="i" viewBox="0 0 24 24">
+                        <rect width="20" height="14" x="2" y="3" rx="2" />
+                        <path d="M8 21h8" />
+                        <path d="M12 17v4" /></svg
+                      ><span class="ast">✳</span></span
+                    >
+                  </div>
+                </div>
+                <div class="th">
+                  <div class="l1">
+                    <span class="pav" style="background: #7a4fd6">IN</span>acme/infra<span class="t"
+                      >1d</span
+                    >
+                  </div>
+                  <div class="l2">Bump Postgres to 17</div>
+                  <div class="l3">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <circle cx="6" cy="6" r="3" />
+                      <path d="M6 9v12" />
+                      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                      <circle cx="18" cy="18" r="3" /></svg
+                    >pg-17<span class="r"
+                      ><span class="pr">+7</span
+                      ><svg class="i" viewBox="0 0 24 24">
+                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg
+                      ><span class="ast">✳</span></span
+                    >
+                  </div>
+                </div>
+                <div class="th">
+                  <div class="l1">
+                    <span class="pav" style="background: #2e5bd8">MS</span>acme/mugshot<span
+                      class="t"
+                      >2d</span
+                    >
+                  </div>
+                  <div class="l2">Onboarding email tweaks</div>
+                  <div class="l3">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <circle cx="6" cy="6" r="3" />
+                      <path d="M6 9v12" />
+                      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                      <circle cx="18" cy="18" r="3" /></svg
+                    >main<span class="r"
+                      ><svg class="i" viewBox="0 0 24 24">
+                        <rect width="20" height="14" x="2" y="3" rx="2" />
+                        <path d="M8 21h8" />
+                        <path d="M12 17v4" /></svg
+                      ><span class="ast">✳</span></span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="sidefoot">
+                <svg class="i" viewBox="0 0 24 24">
+                  <path
+                    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+                  />
+                  <circle cx="12" cy="12" r="3" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <circle cx="18" cy="18" r="3" />
+                  <circle cx="6" cy="6" r="3" />
+                  <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                  <path d="M6 9v12" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" />
+                  <circle cx="12" cy="12" r="1" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+                  <path d="M18 17V9" />
+                  <path d="M13 17V5" />
+                  <path d="M8 17v-3" />
+                </svg>
+              </div>
+            </div>
+
+            <div class="mhead">
+              <span class="pav" style="background: #2e5bd8">MS</span
+              ><span class="muted">mugshot</span><span class="muted">/</span
+              ><span class="tt">Spin up the dev stack</span>
+            </div>
+            <div class="dtoggle">
+              <svg class="i" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M7 8h10" />
+                <path d="M7 12h10" />
+                <path d="M7 16h10" />
+              </svg>
+            </div>
+
+            <div class="chat">
+              <div class="bubble">spin up the app and a postgres for it so I can poke at it</div>
+              <div class="working mut" style="margin-top: 26px">
+                <div class="swap">
+                  <span class="a">Working for 4s</span
+                  ><span class="b" style="opacity: 0">Worked for 9s</span>
+                </div>
+              </div>
+              <div class="cmd row" style="margin-top: 8px">
+                <svg class="i" viewBox="0 0 24 24">
+                  <path d="m4 17 6-6-6-6" />
+                  <path d="M12 19h8" />
+                </svg>
+                <div class="swap" style="flex: 1">
+                  <span class="c1">Running <span class="w">docker compose up -d db</span></span
+                  ><span class="c2" style="opacity: 0">Running <span class="w">pnpm dev</span></span
+                  ><span class="c3" style="opacity: 0">Ran 2 commands</span>
+                </div>
+              </div>
+              <div class="reply" style="margin-top: 14px">
+                Both are up. The app is on <code>localhost:3000</code>, seeded from Postgres on
+                <code>localhost:5432</code>.
+              </div>
+            </div>
+
+            <div class="composer">
+              <span class="ph">Ask anything. @ files, $ skills, / commands</span>
+              <div class="typing">
+                <span class="reveal"
+                  >spin up the app and a postgres for it so I can poke at it</span
+                >
+              </div>
+              <div class="ft">
+                <svg class="i" viewBox="0 0 24 24" style="font-size: 22px">
+                  <path
+                    d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"
+                  />
+                </svg>
+                <span class="model"
+                  ><span class="ast">✳</span>Opus 5.5 <span class="mut">Medium</span></span
+                >
+                <svg class="i" viewBox="0 0 24 24" style="font-size: 22px">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <path d="M12 19v3" />
+                </svg>
+                <span class="send"
+                  ><svg class="i" viewBox="0 0 24 24" style="stroke-width: 2.4">
+                    <path d="m5 12 7-7 7 7" />
+                    <path d="M12 19V5" /></svg
+                  ><span class="stop" style="opacity: 0"><b></b></span
+                ></span>
+              </div>
+            </div>
+
+            <div class="pop">
+              <div class="prow">
+                <svg class="i ic" viewBox="0 0 24 24">
+                  <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg
+                >devbox<svg class="i end" viewBox="0 0 24 24" style="font-size: 20px">
+                  <path
+                    d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"
+                  />
+                  <path
+                    d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"
+                  />
+                  <path d="M3 5a2 2 0 0 0 2 2h3" />
+                  <path d="M3 3v13a2 2 0 0 0 2 2h3" />
+                </svg>
+              </div>
+              <div class="prow">
+                <svg class="i ic" viewBox="0 0 24 24"><path d="M6 3v18l14-9z" /></svg>Dev<svg
+                  class="i end"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </div>
+              <div class="psep"></div>
+              <div class="prow">
+                <svg class="i ic" viewBox="0 0 24 24">
+                  <circle cx="6" cy="6" r="3" />
+                  <path d="M6 9v12" />
+                  <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                  <circle cx="18" cy="18" r="3" /></svg
+                >main<svg class="i end" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+              </div>
+              <div class="prow">
+                <svg class="i ic" viewBox="0 0 24 24">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 12v6" />
+                  <path d="M9 15h6" /></svg
+                >Changes <span class="mut" style="margin-left: -4px">Uncommitted</span
+                ><span class="end" style="font-family: JB; font-size: 17px">+0 −0</span>
+              </div>
+              <div class="psep"></div>
+              <div class="plabel">Servers</div>
+              <div class="srv r1">
+                <div class="hl"></div>
+                <svg class="i ic" viewBox="0 0 24 24" style="position: relative">
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                  <path d="M3 12A9 3 0 0 0 21 12" />
+                </svg>
+                <div style="position: relative">
+                  <div class="t">localhost:5432</div>
+                  <div class="s">
+                    <span class="ag">Agent · postgres</span
+                    ><span class="fw" style="opacity: 0">Forwarded to :5432</span>
+                  </div>
+                </div>
+                <div class="acts">
+                  <div class="fwd">
+                    <svg class="i" viewBox="0 0 24 24">
+                      <path
+                        d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1z"
+                      />
+                      <path d="M17 21v-2" />
+                      <path d="M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10" />
+                      <path d="M21 21v-2" />
+                      <path d="M3 5V3" />
+                      <path
+                        d="M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2z"
+                      />
+                      <path d="M7 5V3" />
+                    </svg>
+                  </div>
+                  <div class="stopsq"></div>
+                </div>
+                <div class="tip" style="right: 96px">Forward to this machine, for any app here</div>
+              </div>
+              <div class="srv r2">
+                <div class="hl"></div>
+                <svg class="i ic" viewBox="0 0 24 24" style="position: relative">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                  <path d="M2 12h20" />
+                </svg>
+                <div style="position: relative">
+                  <div class="t">localhost:3000</div>
+                  <div class="s"><span>Agent · next-server</span></div>
+                </div>
+              </div>
+              <div class="psep"></div>
+              <div class="prow">
+                <span class="mut" style="font-size: 17px">Limits</span
+                ><span class="end" style="font-size: 17px">Unavailable</span>
+              </div>
+            </div>
+
+            <div class="bpanel">
+              <div class="tabs">
+                <div class="tab">
+                  <span
+                    class="a"
+                    style="
+                      position: absolute;
+                      left: 14px;
+                      display: flex;
+                      gap: 9px;
+                      align-items: center;
+                    "
+                    ><svg class="i" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                      <path d="M2 12h20" /></svg
+                    >New tab</span
+                  >
+                  <span
+                    class="b"
+                    style="
+                      position: absolute;
+                      left: 14px;
+                      display: flex;
+                      gap: 9px;
+                      align-items: center;
+                      opacity: 0;
+                    "
+                    ><span
+                      style="
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 5px;
+                        background: #1c1b18;
+                        box-shadow: 0 0 0 1px #444;
+                      "
+                    ></span
+                    >Mugshot admin</span
+                  ><span class="x">✕</span>
+                </div>
+                <div
+                  style="
+                    display: grid;
+                    place-items: center;
+                    width: 38px;
+                    color: var(--muted);
+                    font-size: 22px;
+                  "
+                >
+                  +
+                </div>
+              </div>
+              <div class="brr">
+                <svg class="i" viewBox="0 0 24 24">
+                  <path d="M15 3h6v6" />
+                  <path d="m21 3-7 7" />
+                  <path d="m3 21 7-7" />
+                  <path d="M9 21H3v-6" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M3 15h18" /></svg
+                ><span class="on"
+                  ><svg class="i" viewBox="0 0 24 24" style="display: block">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M15 3v18" /></svg
+                ></span>
+              </div>
+              <div class="urlrow">
+                <svg class="i" viewBox="0 0 24 24">
+                  <path d="m12 19-7-7 7-7" />
+                  <path d="M19 12H5" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" /></svg
+                ><svg class="i" viewBox="0 0 24 24">
+                  <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+                <div class="u">
+                  <span class="ph">Search or enter a URL</span
+                  ><span class="val" style="opacity: 0">http://localhost:3000/admin</span>
+                </div>
+                <span class="rr"
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <path d="M14 4.1 12 6" />
+                    <path d="m5.1 8-2.9-.8" />
+                    <path d="m6 12-1.9 2" />
+                    <path d="M7.2 2.2 8 5.1" />
+                    <path
+                      d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"
+                    /></svg
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <path
+                      d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"
+                    />
+                    <circle cx="12" cy="13" r="3" /></svg
+                  ><svg class="i" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="12" cy="5" r="1" />
+                    <circle cx="12" cy="19" r="1" /></svg
+                ></span>
+              </div>
+              <div class="lbar"></div>
+              <div class="bblank"></div>
+              <div class="page">
+                <div class="nav">
+                  <div class="logo"></div>
+                  Mugshot admin<span class="r">dev</span>
+                </div>
+                <h3>Good morning.</h3>
+                <div class="stats">
+                  <div class="stat">
+                    <div class="k">Users</div>
+                    <div class="v">1,204<small>+37 today</small></div>
+                  </div>
+                  <div class="stat">
+                    <div class="k">Mugs shot</div>
+                    <div class="v">8,911</div>
+                  </div>
+                </div>
+                <div class="table">
+                  <div><span>Name</span><span>Email</span><span>Joined</span></div>
+                  <div><span>Ada Park</span><span>ada@example.com</span><span>2m ago</span></div>
+                  <div><span>Sam Okafor</span><span>sam@example.com</span><span>14m ago</span></div>
+                  <div><span>Lena Ruiz</span><span>lena@example.com</span><span>1h ago</span></div>
+                  <div><span>Mira Holt</span><span>mira@example.com</span><span>3h ago</span></div>
+                </div>
+              </div>
+              <div class="toast">
+                <div class="ok">✓</div>
+                <div>
+                  <div class="tt">Forwarded port 5432</div>
+                  <div class="td">
+                    Apps on this machine reach it at <code>localhost:5432</code>.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="db">
+          <div class="dtb">
+            <div class="lights2"><b></b><b></b><b></b></div>
+            <span class="name"
+              >mugshot_dev <span style="color: #6d6d73">— localhost:5432</span></span
+            ><span class="mac"
+              ><svg class="i" viewBox="0 0 24 24">
+                <rect width="18" height="12" x="3" y="4" rx="2" />
+                <path d="M2 20h20" /></svg
+              >on your Mac</span
+            >
+          </div>
+          <div class="dbody">
+            <div class="dside">
+              <div class="dh">Tables</div>
+              <div class="dt on">
+                <svg class="i" viewBox="0 0 24 24">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M9 21V9" /></svg
+                >users
+              </div>
+              <div class="dt">
+                <svg class="i" viewBox="0 0 24 24">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M9 21V9" /></svg
+                >mugs
+              </div>
+              <div class="dt">
+                <svg class="i" viewBox="0 0 24 24">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M9 21V9" /></svg
+                >sessions
+              </div>
+              <div class="dt">
+                <svg class="i" viewBox="0 0 24 24">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M9 21V9" /></svg
+                >_migrations
+              </div>
+            </div>
+            <div class="dmain">
+              <div class="dbar">
+                <span class="pill">users</span><span class="mutd">1,204 rows</span
+                ><span class="mutd" style="margin-left: auto">LIMIT 300</span>
+              </div>
+              <div class="grid">
+                <div class="gr gh">
+                  <span>id</span><span>name</span><span>email</span><span>created_at</span>
+                </div>
+                <div class="gr">
+                  <span>1204</span><span>Ada Park</span><span>ada@example.com</span
+                  ><span>2026-11-19 09:41</span>
+                </div>
+                <div class="gr">
+                  <span>1203</span><span>Sam Okafor</span><span>sam@example.com</span
+                  ><span>2026-11-19 09:29</span>
+                </div>
+                <div class="gr">
+                  <span>1202</span><span>Lena Ruiz</span><span>lena@example.com</span
+                  ><span>2026-11-19 08:43</span>
+                </div>
+                <div class="gr">
+                  <span>1201</span><span>Mira Holt</span><span>mira@example.com</span
+                  ><span>2026-11-19 06:58</span>
+                </div>
+                <div class="gr">
+                  <span>1200</span><span>Priya Nair</span><span>priya@example.com</span
+                  ><span>2026-11-18 22:10</span>
+                </div>
+                <div class="gr">
+                  <span>1199</span><span>Jonas Berg</span><span>jonas@example.com</span
+                  ><span>2026-11-18 19:37</span>
+                </div>
+              </div>
+            </div>
+            <div class="sheet">
+              <div class="sh">New connection <span class="mutd">PostgreSQL</span></div>
+              <div class="f">
+                <label>Host</label>
+                <div class="in"><span class="reveal r-host">localhost</span></div>
+              </div>
+              <div class="f">
+                <label>Port</label>
+                <div class="in"><span class="reveal r-port">5432</span></div>
+              </div>
+              <div class="f">
+                <label>User</label>
+                <div class="in">app</div>
+              </div>
+              <div class="f">
+                <label>Database</label>
+                <div class="in">mugshot_dev</div>
+              </div>
+              <div class="sbtns">
+                <span class="b2">Test</span><span class="b1 connect">Connect</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cursor" id="cur">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 2.5 L4 19.5 L8.6 15.2 L11.6 21.6 L14.6 20.2 L11.7 14 L18 14 Z"
+              fill="#fff"
+              stroke="#000"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+
+      <div class="shade"></div>
+      <div class="cap a"><span>Ask an agent on a remote box to start your stack</span></div>
+      <div class="cap b">
+        <span class="n">1</span
+        ><span
+          >Open a server
+          <span class="m">in the in-app browser. Tunnelled automatically.</span></span
+        >
+      </div>
+      <div class="cap c">
+        <span class="n">2</span
+        ><span>Forward a port <span class="m">and every app on your Mac can use it.</span></span>
+      </div>
+    </div>
+    <div class="outro">
+      <div>
+        <img class="logo" src="logo-prod.png" />
+        <h2>Browser tunnels <span class="and">and</span><br />port forwarding</h2>
+        <p>Available now in <b>T3 Code</b> <span class="ver">0.1.11</span></p>
+        <div class="url">t3.codes</div>
+      </div>
+    </div>
+    <script src="kit.js"></script>
+    <script>
+      // Cursor waypoints, in animation seconds. Positions are measured at window.layoutTime with the camera at rest.
+      window.layoutTime = 15;
+      window.placeCursor = () =>
+        Kit.measure(() =>
+          Kit.cursor("#cur", [
+            { t: 5.6, at: [1100, 760], hidden: true },
+            { t: 5.75 },
+            { t: 6.2, at: ".dtoggle", dx: 2, dy: 3, click: true },
+            { t: 7.4 },
+            { t: 8.0, at: ".srv.r2 .t", dx: -12, dy: 4, click: true },
+            { t: 10.6 },
+            { t: 11.3, at: ".srv.r1 .fwd", dx: 2, dy: 3 },
+            { t: 11.85, click: true },
+            { t: 13.2 },
+            { t: 14.0, at: ".connect", dy: 2, click: true },
+            { t: 14.6 },
+            { t: 15.0, at: ".connect", dx: 150, dy: 162, hidden: true },
+          ]),
+        );
+      // Real seconds -> animation seconds: [realDuration, animFrom, animTo]; animFrom == animTo holds.
+      Kit.timeline([
+        [2.8, 0, 2.8],
+        [3.2, 2.8, 5.6],
+        [0.8, 5.6, 5.6],
+        [1.2, 5.6, 6.6],
+        [1.0, 6.6, 7.2],
+        [0.8, 7.2, 7.2],
+        [1.4, 7.2, 8.1],
+        [1.4, 8.1, 9.2],
+        [1.4, 9.2, 9.2],
+        [1.6, 9.2, 10.6],
+        [1.0, 10.6, 11.3],
+        [1.6, 11.3, 12.4],
+        [1.0, 12.4, 13.0],
+        [1.4, 13.0, 14.0],
+        [0.9, 14.0, 14.5],
+        [1.4, 14.5, 16.0],
+        [1.8, 16.0, 16.0],
+        [1.0, 16.0, 17.0],
+        [3.0, 17.0, 17.0],
+      ]);
+    </script>
+  </body>
+</html>

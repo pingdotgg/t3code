@@ -40,7 +40,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private let composeButton = UIButton(type: .system)
   private lazy var tabBarTrailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
   private var itemsByTab: [String: UITabBarItem] = [:]
-  var tabs = ["threads", "pullRequests", "usage", "settings"] {
+  var tabs = ["threads", "pullRequests", "issues", "usage", "settings"] {
     didSet { if tabs != oldValue { updateItems() } }
   }
   var selectedTab = "threads" { didSet { updateSelection() } }
@@ -109,10 +109,17 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private func prepareItems() {
     let iconBundle = Bundle(for: Self.self).url(forResource: "T3NativeControlIcons", withExtension: "bundle").flatMap(Bundle.init(url:))
     let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
-    let labels = ["threads": "Chats", "pullRequests": "PRs", "usage": "Usage", "settings": "Settings"]
-    let symbols = ["threads": "text.bubble", "usage": "chart.bar.xaxis", "settings": "gearshape"]
+    let labels = [
+      "threads": "Chats", "pullRequests": "PRs", "issues": "Issues", "workflows": "Workflows",
+      "usage": "Usage", "settings": "Settings",
+    ]
+    let issueIcon = UIImage(named: "issue", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
+    let symbols = [
+      "threads": "text.bubble", "workflows": "point.3.connected.trianglepath.dotted",
+      "usage": "chart.bar.xaxis", "settings": "gearshape",
+    ]
     for (tab, label) in labels {
-      let icon = tab == "pullRequests" ? pullRequestIcon : UIImage(systemName: symbols[tab] ?? "circle")
+      let icon = tab == "pullRequests" ? pullRequestIcon : tab == "issues" ? issueIcon : UIImage(systemName: symbols[tab] ?? "circle")
       let item = UITabBarItem(title: nil, image: tabIcon(icon), tag: 0)
       item.accessibilityLabel = label
       item.accessibilityIdentifier = "workspace-tab-\(tab)"

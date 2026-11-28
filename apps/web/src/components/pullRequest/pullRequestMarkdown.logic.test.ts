@@ -1,47 +1,71 @@
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
+import type { Element, Root } from "hast";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestCommentPreview, remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
-
-type Node = {
-  type: string;
-  value?: string;
-  url?: string;
-  data?: { hProperties?: Record<string, unknown> };
-  children?: Node[];
-};
+import { wordsHast } from "~/markdown/wordsHast";
+import {
+  pullRequestCommentPreview,
+  pullRequestMarkdownExtensions,
+} from "./pullRequestMarkdown.logic";
 
 function links(markdown: string) {
-  const autolinks = changeRequestReferenceAutolinker({
+  const extensions = pullRequestMarkdownExtensions({
     provider: "github",
     url: "https://github.com/team/repo/pull/8",
-  })!;
-  const tree = unified().use(remarkParse).parse(markdown) as Node;
-  remarkPullRequestAutolinks({ autolinks })(tree as never);
-  const found: Array<[string | undefined, string | undefined, unknown]> = [];
-  const visit = (node: Node) => {
-    if (node.type === "link") {
-      found.push([
-        node.children?.[0]?.value,
-        node.url,
-        node.data?.hProperties?.["dataPullRequestAutolink"],
-      ]);
+  });
+  const tree = wordsHast(markdown, {
+    math: false,
+    breaks: false,
+    escapeHtml: false,
+    insights: false,
+    extensions,
+  });
+  const found: Array<[string, unknown, unknown]> = [];
+  const visit = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      if (child.tagName === "a") {
+        const label = child.children[0];
+        found.push([
+          label?.type === "text" ? label.value : "",
+          child.properties.href,
+          child.properties.dataPullRequestAutolink,
+        ]);
+      }
+      visit(child);
     }
-    node.children?.forEach(visit);
   };
   visit(tree);
   return found;
 }
 
-describe("remarkPullRequestAutolinks", () => {
+describe("pullRequestMarkdownExtensions", () => {
   it("links the host's references in prose and leaves links and code alone", () => {
     expect(links("Fixes #12 in **abcdef1**. [#13](https://example.com) `#14`")).toEqual([
       ["#12", "https://github.com/team/repo/issues/12", "reference"],
       ["abcdef1", "https://github.com/team/repo/commit/abcdef1", "commit"],
       ["#13", "https://example.com", undefined],
     ]);
+  });
+  it("renders GitHub emoji shortcodes in prose and leaves code literal", () => {
+    const extensions = pullRequestMarkdownExtensions({
+      provider: "github",
+      url: "https://github.com/team/repo/pull/8",
+    });
+    const tree = wordsHast("Ship it :tada: :+1: `:tada:`", {
+      math: false,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions,
+    });
+    const text = (node: Root | Element | Root["children"][number]): string => {
+      if (node.type === "text") return node.value;
+      if (node.type === "element" && node.tagName === "code") {
+        return `\`${node.children.map(text).join("")}\``;
+      }
+      return "children" in node ? node.children.map(text).join("") : "";
+    };
+    expect(text(tree)).toBe("Ship it 🎉 👍 `:tada:`");
   });
 });
 
@@ -68,7 +92,9 @@ describe("pullRequestCommentPreview", () => {
       "Review :codex-file-citation{purpose='output'} safely.",
     ],
     [":codex-followup[Prepare **print** version]", ":codex-followup[Prepare **print** version]"],
-  ])("extracts readable text from %s", (body, expected) => {
-    expect(pullRequestCommentPreview(body)).toBe(expected);
+    ["Approved :thumbsup: `:warning:`", "Approved 👍 :warning:"],
+    ["Approved :thumbsup:", "Approved :thumbsup:", "gitlab"],
+  ])("extracts readable text from %s", (body, expected, provider = "github") => {
+    expect(pullRequestCommentPreview(body, provider)).toBe(expected);
   });
 });

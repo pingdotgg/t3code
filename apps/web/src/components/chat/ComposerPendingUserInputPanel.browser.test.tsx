@@ -26,6 +26,22 @@ const prompt: PendingUserInput = {
   ],
 };
 
+function panel(onToggleOption: (questionId: string, optionValue: string) => void) {
+  return (
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[prompt]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={onToggleOption}
+      onAdvance={vi.fn()}
+      onDismiss={vi.fn()}
+    />
+  );
+}
+
 it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
   { focus: "a page button", control: <button type="button" aria-label="Focused" />, toggles: true },
   {
@@ -73,6 +89,18 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     ),
     toggles: false,
   },
+  {
+    focus: "a device screen that takes the key",
+    control: (
+      <div
+        role="application"
+        aria-label="Focused"
+        tabIndex={0}
+        onKeyDown={(event) => event.preventDefault()}
+      />
+    ),
+    toggles: false,
+  },
 ])(
   "digit shortcut with focus in $focus toggles an option: $toggles",
   async ({ control, toggles }) => {
@@ -80,17 +108,7 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     await using screen = await render(
       <>
         {control}
-        <ComposerPendingUserInputPanel
-          pendingUserInputs={[prompt]}
-          cwd={undefined}
-          threadRef={threadRef}
-          respondingRequestIds={[]}
-          answers={{}}
-          questionIndex={0}
-          onToggleOption={onToggleOption}
-          onAdvance={vi.fn()}
-          onDismiss={vi.fn()}
-        />
+        {panel(onToggleOption)}
       </>,
     );
     await expect.element(screen.getByText("Incremental")).toBeVisible();
@@ -99,5 +117,39 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     await userEvent.keyboard("1");
 
     expect(onToggleOption.mock.calls).toEqual(toggles ? [["question", "Incremental"]] : []);
+  },
+);
+
+it.each<{ focus: string; html: string; nested?: boolean; typed: string; toggles: boolean }>([
+  {
+    focus: "a file editor",
+    html: '<div data-focus contenteditable="true"></div>',
+    typed: "1",
+    toggles: false,
+  },
+  { focus: "a find bar", html: "<input data-focus />", nested: true, typed: "1", toggles: false },
+  { focus: "a button", html: "<button data-focus></button>", typed: "", toggles: true },
+])(
+  "digit shortcut with focus in $focus inside a shadow root toggles an option: $toggles",
+  async ({ html, nested, typed, toggles }) => {
+    const onToggleOption = vi.fn();
+    await using screen = await render(
+      <>
+        <div data-testid="shadow-host" />
+        {panel(onToggleOption)}
+      </>,
+    );
+    await expect.element(screen.getByText("Incremental")).toBeVisible();
+    let root = screen.getByTestId("shadow-host").element().attachShadow({ mode: "open" });
+    if (nested)
+      root = root.appendChild(document.createElement("div")).attachShadow({ mode: "open" });
+    root.innerHTML = html;
+    const focused = root.querySelector<HTMLElement>("[data-focus]")!;
+    focused.focus();
+
+    await userEvent.keyboard("1");
+
+    expect(onToggleOption.mock.calls).toEqual(toggles ? [["question", "Incremental"]] : []);
+    expect("value" in focused ? focused.value : focused.textContent).toBe(typed);
   },
 );

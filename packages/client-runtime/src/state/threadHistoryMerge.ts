@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
@@ -101,6 +102,9 @@ export function mergeOlderHistoryIntoProjection(
   const currentByKey = new Map(
     projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
   );
+  const rolledBackRuns = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
   const pageKeys = new Set<string>();
   const page: OrchestrationV2ProjectedTurnItem[] = [];
@@ -139,6 +143,8 @@ export function mergeOlderHistoryIntoProjection(
           continue;
         row = { ...row, item: currentItem };
       }
+      // A rollback can arrive before a history page for rows outside the loaded window.
+      if (row.item.runId !== null && rolledBackRuns.has(row.item.runId)) continue;
     }
     pageKeys.add(key);
     page.push(row);
@@ -194,6 +200,17 @@ export function mergeOlderHistoryIntoProjection(
     turnItems: [...turnItemById.values()],
     visibleTurnItems: renumberVisible(visible),
   };
+}
+
+/** Adds the records of older subagents; a record already held is newer and stays. */
+export function mergeOlderSubagentsIntoProjection(
+  projection: OrchestrationV2ThreadProjection,
+  olderSubagents: ReadonlyArray<OrchestrationV2Subagent> | undefined,
+): OrchestrationV2ThreadProjection {
+  const held = new Set(projection.subagents.map((agent) => agent.id));
+  const added = olderSubagents?.filter((agent) => !held.has(agent.id)) ?? [];
+  if (added.length === 0) return projection;
+  return { ...projection, subagents: [...added, ...projection.subagents] };
 }
 
 export function applyHistoryPageMeta(

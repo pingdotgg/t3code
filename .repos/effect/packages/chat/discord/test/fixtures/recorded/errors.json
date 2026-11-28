@@ -1,0 +1,195 @@
+{
+  "case": "Error bodies: 160004 from a second startThread, 50024 from startThread in a forum post, unknown channel, message, user and member, an empty message, and content past the limit",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord REST v10 with the Janitor bot token, from a local script",
+    "where": "guild 840178841540362250 (Tim's test guild); #effect-chat-scratch 1570607253965246584, #effect-chat-forum 1570607255684915302 and #test 1570605581192929301",
+    "recordedAt": "2026-11-13T01:16Z, during EFF-3695",
+    "body": "Each response verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed"
+  },
+  "calls": [
+    {
+      "step": "thread-start-again",
+      "method": "POST",
+      "path": "/channels/1570607253965246584/messages/1570608327602471024/threads",
+      "request": {
+        "name": "Fixture thread again"
+      },
+      "status": 400,
+      "response": {
+        "message": "A thread has already been created for this message",
+        "code": 160004
+      }
+    },
+    {
+      "step": "forum-start-thread-again",
+      "method": "POST",
+      "path": "/channels/1570608449778098218/messages/1570608449778098218/threads",
+      "request": {
+        "name": "again"
+      },
+      "status": 400,
+      "response": {
+        "message": "Cannot execute action on this channel type",
+        "code": 50024
+      }
+    },
+    {
+      "step": "get-channel-unknown",
+      "method": "GET",
+      "path": "/channels/1",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown Channel",
+        "code": 10003
+      }
+    },
+    {
+      "step": "get-user-unknown",
+      "method": "GET",
+      "path": "/users/1",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown User",
+        "code": 10013
+      }
+    },
+    {
+      "step": "get-user-webhook",
+      "method": "GET",
+      "path": "/users/1570607260156297307",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown User",
+        "code": 10013
+      }
+    },
+    {
+      "step": "get-member-unknown",
+      "method": "GET",
+      "path": "/guilds/840178841540362250/members/1",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown User",
+        "code": 10013
+      }
+    },
+    {
+      "step": "get-message-unknown",
+      "method": "GET",
+      "path": "/channels/1570607253965246584/messages/1",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown Message",
+        "code": 10008
+      }
+    },
+    {
+      "step": "edit-unknown",
+      "method": "PATCH",
+      "path": "/channels/1570607253965246584/messages/1",
+      "request": {
+        "content": "x"
+      },
+      "status": 404,
+      "response": {
+        "message": "Unknown Message",
+        "code": 10008
+      }
+    },
+    {
+      "step": "delete-unknown",
+      "method": "DELETE",
+      "path": "/channels/1570607253965246584/messages/1",
+      "request": null,
+      "status": 404,
+      "response": {
+        "message": "Unknown Message",
+        "code": 10008
+      }
+    },
+    {
+      "step": "post-unknown-channel",
+      "method": "POST",
+      "path": "/channels/1/messages",
+      "request": {
+        "content": "x"
+      },
+      "status": 404,
+      "response": {
+        "message": "Unknown Channel",
+        "code": 10003
+      }
+    },
+    {
+      "step": "post-empty",
+      "method": "POST",
+      "path": "/channels/1570607253965246584/messages",
+      "request": {
+        "content": ""
+      },
+      "status": 400,
+      "response": {
+        "message": "Cannot send an empty message",
+        "code": 50006
+      }
+    },
+    {
+      "step": "length-2001-ascii",
+      "method": "POST",
+      "path": "/channels/1570607253965246584/messages",
+      "request": {
+        "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "allowed_mentions": {
+          "parse": []
+        }
+      },
+      "status": 400,
+      "response": {
+        "message": "Invalid Form Body",
+        "code": 50035,
+        "errors": {
+          "content": {
+            "_errors": [
+              {
+                "code": "BASE_TYPE_MAX_LENGTH",
+                "message": "Must be 2000 or fewer in length."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "length-1999-plus-flag",
+      "method": "POST",
+      "path": "/channels/1570607253965246584/messages",
+      "request": {
+        "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🇬🇧",
+        "allowed_mentions": {
+          "parse": []
+        }
+      },
+      "status": 400,
+      "response": {
+        "message": "Invalid Form Body",
+        "code": 50035,
+        "errors": {
+          "content": {
+            "_errors": [
+              {
+                "code": "BASE_TYPE_MAX_LENGTH",
+                "message": "Must be 2000 or fewer in length."
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

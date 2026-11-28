@@ -1,4 +1,5 @@
-import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
+import { T } from "gt-react-native";
+import { ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/ui/AppText";
 import {
@@ -7,12 +8,6 @@ import {
 } from "../../../../lib/appearancePreferences";
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-
-const CODE_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
 
 export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
@@ -27,24 +22,24 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
         className="text-foreground"
         style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
       >
-        The quick brown fox jumps over the lazy dog.
+        <T>The quick brown fox jumps over the lazy dog.</T>
       </Text>
       <Text
         className="text-foreground-muted"
         style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
       >
-        Messages, labels, and headings scale with this size.
+        <T>Messages, labels, and headings scale with this size.</T>
       </Text>
     </View>
   );
 }
 
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const { themeAppearance: scheme, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
-    fontFamily: Platform.OS === "android" ? "monospace" : "Menlo",
+    fontFamily: monoFontFamily,
     fontSize: props.fontSize,
     lineHeight,
   } as const;
@@ -62,29 +57,37 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
         <Text style={span(theme.palette[1])}>main</Text>
         <Text style={span(theme.palette[4])}>)</Text>
         <Text style={span(theme.palette[3])}> ✗</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.foreground)}> vpr dev</Text>
       </Text>
       <Text style={span(theme.foreground)}>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[2])}>VITE v7.1.1</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}> ready in</Text>
         <Text style={span(theme.foreground)}> 1.24s</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.palette[2])}>→ </Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}>Local: </Text>
         <Text style={span(theme.palette[6], { textDecorationLine: "underline" })}>
           http://127.0.0.1:5173/
         </Text>
       </Text>
       <Text style={span(theme.foreground)}>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[2])}>✓ 85 passed</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[3])}> △ 2 warnings</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[1])}> ✗ 0 failed</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.background, { backgroundColor: theme.palette[2] })}>
           {" READY "}
         </Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}> watching for changes</Text>{" "}
         <Text style={span(theme.cursorForeground)}>▏</Text>
       </Text>
@@ -105,6 +108,7 @@ interface CodePreviewLine {
 const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
   {
     id: "signature",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- sample code
     tokens: [{ text: "function", keyword: true }, { text: " formatUser(user) {" }],
   },
   {
@@ -112,6 +116,7 @@ const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
     tokens: [
       { text: "  " },
       { text: "return", keyword: true },
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- sample code
       { text: " `${user.name} <${user.email}>` // demonstrates how long lines behave" },
     ],
   },
@@ -123,13 +128,14 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
+  const { monoFontFamily } = useAppearancePreferences();
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text
       className="text-right text-icon-subtle"
       key={line.id}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: monoFontFamily,
         fontSize: surface.lineNumberFontSize,
         lineHeight: surface.rowHeight,
         width: 22,
@@ -145,7 +151,7 @@ export function CodeAppearancePreview(props: {
       key={line.id}
       numberOfLines={wrap ? undefined : 1}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: monoFontFamily,
         fontSize: surface.fontSize,
         lineHeight: surface.rowHeight,
       }}
@@ -155,7 +161,7 @@ export function CodeAppearancePreview(props: {
           key={token.text}
           className={token.keyword ? "text-md-link" : undefined}
           style={{
-            fontFamily: CODE_FONT_FAMILY,
+            fontFamily: monoFontFamily,
             fontSize: surface.fontSize,
             lineHeight: surface.rowHeight,
           }}

@@ -30,6 +30,9 @@ describe("resolveSendEnvMode", () => {
 
   it.each(["local", "worktree"] as const)("preserves %s for git repositories", (mode) => {
     expect(resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: true })).toBe(mode);
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: false, tracksGitRepositories: true }),
+    ).toBe(mode);
   });
 });
 

@@ -13,8 +13,11 @@ if (permissionIndex === -1 || argv[permissionIndex + 1] !== "dontAsk") {
   fail("text generation must deny permission prompts", 12);
 }
 const toolsIndex = argv.indexOf("--tools");
-if (toolsIndex === -1 || argv[toolsIndex + 1] !== "") {
-  fail("text generation must receive an explicit empty tool set", 6);
+if (
+  toolsIndex === -1 ||
+  argv[toolsIndex + 1] !== (process.env.T3_FAKE_CLAUDE_EXPECTED_TOOLS ?? "")
+) {
+  fail("text generation did not receive the expected tool set", 6);
 }
 if (argv.includes("--dangerously-skip-permissions")) {
   fail("text generation must not bypass permissions", 7);
@@ -33,8 +36,16 @@ if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
   fail("text generation must not save a resumable session", 16);
 }
 const settingsIndex = argv.indexOf("--settings");
-if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
+const settingsValue = settingsIndex === -1 ? "{}" : argv[settingsIndex + 1];
+// Like the CLI: a value starting with a brace is inline JSON, anything else a file path.
+const settingsText = settingsValue.startsWith("{")
+  ? settingsValue
+  : NodeFS.readFileSync(settingsValue, "utf8");
+if (JSON.parse(settingsText).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
+}
+if (process.env.T3_FAKE_CLAUDE_SETTINGS_LOG) {
+  NodeFS.writeFileSync(process.env.T3_FAKE_CLAUDE_SETTINGS_LOG, settingsText);
 }
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
@@ -63,6 +74,23 @@ if (argsMustNotContain && args.includes(argsMustNotContain)) {
 const stdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
 if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
   fail("stdin missing expected content", 4);
+}
+
+const imageRejection = process.env.T3_FAKE_CLAUDE_IMAGE_REJECTION;
+if (imageRejection && stdinContent.includes('"type":"image"')) {
+  if (process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG) {
+    NodeFS.appendFileSync(process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG, "image\n");
+  }
+  process.stdout.write(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 400,
+      result: `API Error: 400 ${imageRejection}`,
+    }) + "\n",
+  );
+  process.exit(1);
 }
 
 const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;

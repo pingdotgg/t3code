@@ -32,11 +32,20 @@ describe("parseIgnoreFile", () => {
     expect(decide("link-[0-9]", "link-7")).toBe("ignored");
     expect(decide("link-[!0-9]", "link-7")).toBeUndefined();
     expect(decide("link-?", "link-/")).toBeUndefined();
+    expect(decide("link-?", "link-ø")).toBeUndefined();
+    expect(decide("link-??", "link-ø")).toBe("ignored");
+    expect(decide("link-ø", "link-ø")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "!bang")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "#hash")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "starx")).toBeUndefined();
     expect(decide("dist/", "dist")).toBeUndefined();
     expect(decide("dist/", "dist", true)).toBe("ignored");
+  });
+
+  it("drops trailing spaces unless a backslash escapes them, like git", () => {
+    expect(decide("build  ", "build")).toBe("ignored");
+    expect(decide("keep\\ ", "keep ")).toBe("ignored");
+    expect(decide("dir\\\\ ", "dir\\")).toBe("ignored");
   });
 
   it("matches adversarial patterns in linear time", () => {

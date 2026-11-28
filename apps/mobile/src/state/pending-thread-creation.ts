@@ -9,7 +9,8 @@ import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
-import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
+import { m, type MessageResolver } from "../i18n/messages";
+import { deriveUnsentThreadTitle } from "../lib/projectThreadStartTurn";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -136,11 +137,14 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
 }
 
 /** Launches show as preparing from Send, before the server's shell exists, until their first run. */
-export function withLaunchingThreads(input: {
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly launches: ReadonlyArray<QueuedThreadMessage>;
-  readonly hiddenThreadKeys: ReadonlySet<string>;
-}): ReadonlyArray<EnvironmentThreadShell> {
+export function withLaunchingThreads(
+  input: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly launches: ReadonlyArray<QueuedThreadMessage>;
+    readonly hiddenThreadKeys: ReadonlySet<string>;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<EnvironmentThreadShell> {
   if (input.launches.length === 0) return input.threads;
   const launchByKey = new Map<string, QueuedThreadMessage>();
   for (const message of input.launches) {
@@ -156,7 +160,7 @@ export function withLaunchingThreads(input: {
     return asLaunchingThread(thread);
   });
   for (const launch of launchByKey.values()) {
-    const shell = pendingThreadCreationShell(launch);
+    const shell = pendingThreadCreationShell(launch, resolve);
     if (shell) threads.push(asLaunchingThread(shell));
   }
   return threads;
@@ -164,6 +168,7 @@ export function withLaunchingThreads(input: {
 
 export function pendingThreadCreationShell(
   message: QueuedThreadMessage,
+  resolve: MessageResolver = m,
 ): EnvironmentThreadShell | null {
   const creation = message.creation;
   if (!creation || !message.modelSelection) {
@@ -173,7 +178,7 @@ export function pendingThreadCreationShell(
   return presentThreadShell(message.environmentId, {
     id: message.threadId,
     projectId: creation.projectId,
-    title: deriveThreadTitleFromPrompt(message.text),
+    title: deriveUnsentThreadTitle(message, resolve),
     providerInstanceId: message.modelSelection.instanceId,
     modelSelection: message.modelSelection,
     runtimeMode: message.runtimeMode ?? DEFAULT_RUNTIME_MODE,

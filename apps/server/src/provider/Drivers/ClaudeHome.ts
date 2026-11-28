@@ -8,6 +8,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { parseGitfileTarget } from "../../project/worktreeContainer.ts";
 import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -67,7 +68,7 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
  * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
  */
 export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
-  config: Pick<ClaudeSettings, "homePath">,
+  config: Pick<ClaudeSettings, "homePath" | "enabled">,
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
@@ -80,6 +81,8 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
   delete baseEnvironment.ELECTRON_RUN_AS_NODE;
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+  // A turned-off Claude never runs, so its settings stay unread.
+  if (!config.enabled) return environment;
   const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
     .CLAUDE_CODE_ENTRYPOINT;
   return settingsEntrypoint
@@ -108,7 +111,7 @@ const mainCheckoutRoot = Effect.fnUntraced(function* (checkout: string) {
   const path = yield* Path.Path;
   return yield* fileSystem.readFileString(path.join(checkout, ".git")).pipe(
     Effect.flatMap((pointer) => {
-      const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+      const gitDir = parseGitfileTarget(pointer);
       if (gitDir === undefined) return Effect.succeed(checkout);
       const worktreeGitDir = path.resolve(checkout, gitDir);
       return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
@@ -147,9 +150,15 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
   function* (
     config: Pick<ClaudeSettings, "homePath">,
     environment?: NodeJS.ProcessEnv,
-  ): Effect.fn.Return<string, never, Path.Path> {
+  ): Effect.fn.Return<string, never, Path.Path | FileSystem.FileSystem> {
+    const fileSystem = yield* FileSystem.FileSystem;
     const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `claude:home:${resolvedHomePath}`;
+    // Two instances that reach one Claude home through a symlink share sessions, so they can resume.
+    // Only the key uses the real path: the spawn keeps the literal path, which names the Keychain login.
+    const canonicalHomePath = yield* fileSystem
+      .realPath(resolvedHomePath)
+      .pipe(Effect.orElseSucceed(() => resolvedHomePath));
+    return `claude:home:${canonicalHomePath}`;
   },
 );
 

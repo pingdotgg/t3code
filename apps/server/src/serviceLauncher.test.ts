@@ -38,6 +38,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  decodeServiceUnit,
   disabledServiceTask,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -52,12 +53,23 @@ const spawnHook = vi.hoisted(() => ({
 
 const failRm = vi.hoisted(() => ({ path: undefined as string | undefined }));
 
+const slowRm = vi.hoisted(() => ({
+  path: undefined as string | undefined,
+  started: undefined as (() => void) | undefined,
+  wait: undefined as Promise<void> | undefined,
+}));
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  const rm: typeof actual.rm = (path, options) =>
-    path === failRm.path
+  const rm: typeof actual.rm = async (path, options) => {
+    if (path === slowRm.path) {
+      slowRm.started?.();
+      await slowRm.wait;
+    }
+    return path === failRm.path
       ? Promise.reject(Object.assign(new Error("EACCES"), { code: "EACCES" }))
       : actual.rm(path, options);
+  };
   return { ...actual, rm };
 });
 
@@ -385,6 +397,8 @@ setInterval(() => {}, 1_000);
       recovered = true;
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
       yield* Effect.promise(() => Promise.race([ready.promise, running]));
+      // Stopping drains the queue, including the backup drop that follows the "committed" reply.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(
         state.activeVersion,
@@ -469,7 +483,7 @@ setInterval(() => {}, 1_000);
       // Task Scheduler's copy: `t3 doctor` disabled it to keep the service stopped.
       let task = disabledServiceTask(unit.replace("1.1.0", "1.0.0"));
       const schtasks = async (...args: ReadonlyArray<string>) => {
-        if (args[0] === "/Create") task = await NodeFSP.readFile(args[2] ?? "", "utf8");
+        if (args[0] === "/Create") task = decodeServiceUnit(await NodeFSP.readFile(args[2] ?? ""));
         return { stdout: task };
       };
 
@@ -552,7 +566,7 @@ setInterval(() => {}, 1_000);
         );
         yield* fs.writeFileString(
           path.join(bin, "systemctl"),
-          `#!/bin/sh\necho reload >> '${path.join(root, "reloads")}'\n`,
+          `#!/bin/sh\n[ "$*" = "--user daemon-reload" ] && echo reload >> '${path.join(root, "reloads")}'\n`,
         );
         yield* fs.chmod(path.join(bin, "busctl"), 0o755);
         yield* fs.chmod(path.join(bin, "systemctl"), 0o755);
@@ -683,6 +697,31 @@ process.exit(0);
       yield* fs.writeFileString(
         path.join(root, "runtime", "service-state.json"),
         JSON.stringify({ protocol: 4, activeVersion: "1.0.0" }),
+      );
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
+    }),
+  );
+
+  it.effect("starts the installed runtime when the service state file is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-no-state-" });
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        versionDir,
+        `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`,
       );
 
       yield* Effect.promise(() =>
@@ -895,6 +934,51 @@ process.exit(0);
       }),
   );
 
+  it.effect("repoints a unit that names this T3 home through a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-alias-" });
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(root, alias);
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.1.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.1.0",
+          update: {
+            id: "update-1",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            status: "committed",
+          },
+        }),
+      );
+      const unit = yield* fakeServiceUnit(fs, path, alias, "1.0.0");
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          serviceUnit: unit,
+        },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      assert.equal(
+        yield* fs.readFileString(unit.path),
+        renderBootServiceUnit(unitPlan(alias, "1.1.0")),
+      );
+    }),
+  );
+
   it.effect("waits without exiting and restarts once the other owner releases the T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1059,6 +1143,98 @@ process.exit(0);
         assert.strictEqual(yield* fs.readFileString(startsPath), "1.1.0\n1.0.0\n");
         assert.strictEqual(yield* fs.readFileString(databasePath), "written by the other owner");
       }),
+  );
+
+  it.effect("confirms a committed update before dropping its backup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-slow-discard-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const backupPath = path.join(root, "runtime", "db-backup", "update-1");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "before trial");
+      // The trial gives the launcher 30 seconds to answer "prepared". A backup drop that
+      // takes longer used to sit in front of that reply, so the trial exited and the
+      // launcher started the new version a second time.
+      const childSource = `
+import { existsSync } from "node:fs";
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+let answered = false;
+process.on("message", (message) => {
+  if (message.type !== "committed" || answered) return;
+  answered = true;
+  process.send({ type: "confirms", backupPresent: existsSync(${JSON.stringify(backupPath)}) });
+});
+setTimeout(() => {
+  if (!answered) process.send({ type: "confirms", backupPresent: null });
+}, 5_000);
+process.send({ type: "prepared", updateId: context.update.id });
+setInterval(() => {}, 1_000);
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* fs.makeDirectory(path.join(backupPath, "database"), { recursive: true });
+      yield* fs.writeFileString(path.join(backupPath, "database", "state.sqlite"), "before trial");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+          update: {
+            id: "update-1",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            dbPath: databasePath,
+            status: "pending",
+          },
+        }),
+      );
+      const discardStarted = Promise.withResolvers<void>();
+      const releaseDiscard = Promise.withResolvers<void>();
+      const confirmed = Promise.withResolvers<boolean | null>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          slowRm.path = backupPath;
+          slowRm.started = () => discardStarted.resolve();
+          slowRm.wait = releaseDiscard.promise;
+          spawnHook.current = (child) =>
+            child.on("message", (message) => {
+              const confirms = message as { type?: unknown; backupPresent?: boolean | null };
+              if (confirms.type === "confirms") confirmed.resolve(confirms.backupPresent ?? null);
+            });
+        }),
+        () =>
+          Effect.sync(() => {
+            releaseDiscard.resolve();
+            slowRm.path = undefined;
+            slowRm.started = undefined;
+            slowRm.wait = undefined;
+            spawnHook.current = undefined;
+          }),
+      );
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          releaseDiscard.resolve();
+          await launcher.stop("SIGTERM");
+          await running;
+        }),
+      );
+      yield* Effect.promise(() => discardStarted.promise);
+      assert.isTrue(yield* Effect.promise(() => confirmed.promise));
+      releaseDiscard.resolve();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+      assert.isFalse(yield* fs.exists(backupPath));
+    }),
   );
 
   it.effect("fails a pending update when its backup cannot be dropped while owned", () =>

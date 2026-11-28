@@ -22,6 +22,17 @@ describe("NodeHttpPlatform", { concurrent: false }, () => {
       assert.strictEqual(response.headers["content-type"], "application/custom")
     }).pipe(Effect.provide(NodeHttpPlatform.layer)))
 
+  it.effect("fileWeb reads the requested byte range", () =>
+    Effect.gen(function*() {
+      const file = new File(["aéz"], "file.txt")
+      const response = yield* HttpServerResponse.fileWeb(file, { offset: 1, bytesToRead: 2 })
+
+      assert.deepStrictEqual(
+        { contentLength: response.headers["content-length"], body: yield* readResponse(response) },
+        { contentLength: "2", body: "é" }
+      )
+    }).pipe(Effect.provide(NodeHttpPlatform.layer)))
+
   it.effect("fileResponse reads exact bytesToRead", () =>
     Effect.gen(function*() {
       const platform = yield* HttpPlatform.HttpPlatform

@@ -1,23 +1,34 @@
+// JavaScriptCore (Bun, Safari) stamps the construction site onto every Error as
+// non-enumerable own properties. Like `stack`, they describe where the error was
+// created, not what it is.
+const errorSiteKeys = ["line", "column", "sourceURL", "originalLine", "originalColumn"]
+
+const ownKeys = (obj: object): Array<PropertyKey> => {
+  const names = Object.getOwnPropertyNames(obj)
+  const syms = Object.getOwnPropertySymbols(obj)
+  return syms.length > 0 ? [...names, ...syms] : names
+}
+
 /** @internal */
-export const getAllObjectKeys = (obj: object): Set<PropertyKey> => {
-  const keys = new Set<PropertyKey>(Reflect.ownKeys(obj))
-  if (obj.constructor === Object) return keys
+export const getAllObjectKeys = (obj: object): Array<PropertyKey> | Set<PropertyKey> => {
+  const own = ownKeys(obj)
+  const proto = Object.getPrototypeOf(obj)
+  if (proto === Object.prototype || proto === null) return own
+  const keys = new Set<PropertyKey>(own)
 
   if (obj instanceof Error) {
     keys.delete("stack")
+    for (const key of errorSiteKeys) {
+      if (!Object.prototype.propertyIsEnumerable.call(obj, key)) keys.delete(key)
+    }
   }
 
-  const proto = Object.getPrototypeOf(obj)
   let current = proto
-
   while (current !== null && current !== Object.prototype) {
-    const ownKeys = Reflect.ownKeys(current)
-    for (let i = 0; i < ownKeys.length; i++) {
-      keys.add(ownKeys[i])
-    }
+    for (const key of ownKeys(current)) keys.add(key)
     current = Object.getPrototypeOf(current)
   }
-  if (keys.has("constructor") && typeof obj.constructor === "function" && proto === obj.constructor.prototype) {
+  if (typeof obj.constructor === "function" && proto === obj.constructor.prototype) {
     keys.delete("constructor")
   }
 
@@ -28,20 +39,37 @@ export const getAllObjectKeys = (obj: object): Set<PropertyKey> => {
 export const byReferenceInstances = new WeakSet<object>()
 
 /** @internal */
-export const viewBytes = (view: DataView): Uint8Array => new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
-
-/** @internal */
-export const isArrayBufferLike = (u: unknown): u is ArrayBufferLike =>
-  u instanceof ArrayBuffer || (typeof SharedArrayBuffer !== "undefined" && u instanceof SharedArrayBuffer)
+export const objectKind = (u: object): number =>
+  Array.isArray(u) ?
+    5 :
+    ArrayBuffer.isView(u) ?
+    (u instanceof DataView ? 7 : 6) :
+    Object.getPrototypeOf(u) === Object.prototype ?
+    0 :
+    u instanceof Date ?
+    1 :
+    u instanceof RegExp ?
+    2 :
+    u instanceof Map ?
+    3 :
+    u instanceof Set ?
+    4 :
+    u instanceof ArrayBuffer ?
+    8 :
+    typeof SharedArrayBuffer !== "undefined" && u instanceof SharedArrayBuffer ?
+    9 :
+    0
 
 /**
  * Returns `undefined` for detached buffers, which can no longer be read.
  *
  * @internal
  */
-export const bufferBytes = (buffer: ArrayBufferLike): Uint8Array | undefined => {
+export const toBytes = (u: ArrayBufferLike | DataView, kind: number): Uint8Array | undefined => {
   try {
-    return new Uint8Array(buffer)
+    return kind === 7 ?
+      new Uint8Array((u as DataView).buffer, (u as DataView).byteOffset, (u as DataView).byteLength) :
+      new Uint8Array(u as ArrayBufferLike)
   } catch {
     return undefined
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countViewedFiles,
   isFileViewed,
   isStaleViewedState,
   revertFileViewedOverlay,
@@ -30,8 +31,14 @@ describe("isFileViewed", () => {
   });
 
   it("shows the press ahead of the host's answer", () => {
-    expect(isFileViewed("b.ts", states, new Map([["b.ts", true]]))).toBe(true);
-    expect(isFileViewed("a.ts", states, new Map([["a.ts", false]]))).toBe(false);
+    const overlay = new Map([
+      ["a.ts", false],
+      ["b.ts", true],
+      ["unloaded.ts", true],
+    ]);
+    expect(isFileViewed("b.ts", states, overlay)).toBe(true);
+    expect(isFileViewed("a.ts", states, overlay)).toBe(false);
+    expect(countViewedFiles(states, overlay)).toBe(2);
   });
 });
 

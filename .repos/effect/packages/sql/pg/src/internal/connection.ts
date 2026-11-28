@@ -12,6 +12,8 @@ export interface ConnectionInternals {
   readonly deadError: () => SqlError | undefined
   /** Fired when a pool must stop reusing the connection. */
   readonly retireHooks: Set<() => void>
+  /** Calls back once the transport has emitted `close`. */
+  readonly onTransportClose: (f: () => void) => void
   /**
    * Installed by a multiplexed pool so that pinning the session also takes it
    * out of shared circulation for as long as the pin lasts. Every route to an

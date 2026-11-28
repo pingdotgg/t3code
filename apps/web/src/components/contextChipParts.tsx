@@ -1,4 +1,5 @@
 import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
   useEffect,
@@ -18,9 +19,9 @@ import { middleTruncateAttachmentName } from "./composerInlineChip";
 import { PullRequestContextDetails } from "./PullRequestContextDetails";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "./ContextChip";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export const PULL_REQUEST_CHIP_KINDS = {
   open: "pr-open",
@@ -51,14 +52,7 @@ export function ContextChipShell({
     </ContextChip>
   );
   if (!tooltip) return chip;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {tooltip}
-      </TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={chip} label={tooltip} className="whitespace-pre-wrap" />;
 }
 
 export function ContextChipPopover(props: {
@@ -71,6 +65,7 @@ export function ContextChipPopover(props: {
   accent?: string | undefined;
   children: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <Popover>
       <PopoverTrigger
@@ -83,7 +78,7 @@ export function ContextChipPopover(props: {
                 : undefined
             }
             render={<button type="button" />}
-            aria-label={`${props.accessibleLabel}. Show details`}
+            aria-label={gt("{label}. Show details", { label: props.accessibleLabel })}
             data-markdown-copy={props.copyMarkdown}
           />
         }
@@ -108,6 +103,7 @@ export function PullRequestChip(props: {
   copyMarkdown?: string;
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
+  const gt = useGT();
   const previewTarget = usePullRequestPreviewTarget(props.environmentId, props.metadata.url);
   const displayState =
     props.metadata.state === "open" && props.metadata.isDraft ? "draft" : props.metadata.state;
@@ -116,7 +112,11 @@ export function PullRequestChip(props: {
     <ContextChip
       kind={props.kind}
       render={<button type="button" />}
-      aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
+      aria-label={gt("Open {kind} {label}: {title}", {
+        kind: props.kindLabel,
+        label: props.label,
+        title: props.metadata.title,
+      })}
       data-markdown-copy={props.copyMarkdown}
       onClick={(event) => props.onOpen(event, props.metadata.url)}
       onAuxClick={(event) => props.onOpen(event, props.metadata.url)}
@@ -137,12 +137,14 @@ export function PullRequestChip(props: {
     );
   }
   return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup side="top">
-        <PullRequestContextDetails metadata={props.metadata} />
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={button}
+      label={
+        <>
+          <PullRequestContextDetails metadata={props.metadata} />
+        </>
+      }
+    />
   );
 }
 
@@ -162,11 +164,12 @@ export function ImageChipButton({
   disabled?: boolean | undefined;
   onPreviewError?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <ContextChip
       kind="image"
       render={<button type="button" disabled={disabled} />}
-      aria-label={`Image attachment, ${name}, ${size}`}
+      aria-label={gt("Image attachment, {name}, {size}", { name, size })}
       {...props}
     >
       {previewUrl ? (
@@ -227,28 +230,25 @@ export function FileChip(props: {
     "data-context-unresolved": props.unresolved ? "true" : undefined,
   } as const;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          props.onOpen ? (
-            <ContextChip
-              render={<button type="button" disabled={props.disabled} />}
-              onClick={props.onOpen}
-              {...attributes}
-            >
-              {content}
-            </ContextChip>
-          ) : (
-            <ContextChip tabIndex={0} {...attributes}>
-              {content}
-            </ContextChip>
-          )
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {props.tooltip}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        props.onOpen ? (
+          <ContextChip
+            render={<button type="button" disabled={props.disabled} />}
+            onClick={props.onOpen}
+            {...attributes}
+          >
+            {content}
+          </ContextChip>
+        ) : (
+          <ContextChip tabIndex={0} {...attributes}>
+            {content}
+          </ContextChip>
+        )
+      }
+      label={props.tooltip}
+      className="whitespace-pre-wrap"
+    />
   );
 }
 
@@ -288,27 +288,24 @@ function SvgFileChip(props: ComponentProps<typeof FileChip>) {
     return <FileChip {...props} svgPreview={undefined} />;
   }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ImageChipButton
-            name={props.name}
-            size={props.size}
-            previewUrl={url}
-            suffix={props.suffix}
-            disabled={props.disabled}
-            onClick={props.onOpen}
-            onPreviewError={() => setFailedPreviewUrl(url)}
-            data-markdown-copy={props.copyMarkdown}
-            aria-label={props.accessibleLabel}
-            {...(props.error ? { state: "invalid" as const } : {})}
-          />
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {props.tooltip}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <ImageChipButton
+          name={props.name}
+          size={props.size}
+          previewUrl={url}
+          suffix={props.suffix}
+          disabled={props.disabled}
+          onClick={props.onOpen}
+          onPreviewError={() => setFailedPreviewUrl(url)}
+          data-markdown-copy={props.copyMarkdown}
+          aria-label={props.accessibleLabel}
+          {...(props.error ? { state: "invalid" as const } : {})}
+        />
+      }
+      label={props.tooltip}
+      className="whitespace-pre-wrap"
+    />
   );
 }
 
@@ -341,12 +338,13 @@ function FileChipContent(props: {
 }
 
 export function UnresolvedChip(props: { label: string; tooltip: string; copyMarkdown?: string }) {
+  const gt = useGT();
   return (
     <ContextChipShell
       icon={<CircleDashedIcon />}
       label={props.label}
       state="unresolved"
-      aria-label={`Unavailable context, ${props.label}`}
+      aria-label={gt("Unavailable context, {label}", { label: props.label })}
       data-markdown-copy={props.copyMarkdown}
       tooltip={props.tooltip}
     />

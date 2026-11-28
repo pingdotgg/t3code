@@ -33,20 +33,23 @@ function pullRequestUrlHash(url: string | null | undefined): string {
 }
 
 function normalizePullRequestCommentAnchor(anchor: string): string {
-  return anchor.replace(
-    /^(?:r|discussion-diff-)(\d+)(?:[LR]\d+(?:-[LR]\d+)?)?$/i,
-    "discussion_r$1",
-  );
+  return anchor
+    .toLowerCase()
+    .replace(/^(?:r|discussion-diff-)(\d+)(?:[lr]\d+(?:-[lr]\d+)?)?$/, "discussion_r$1");
 }
 
-// GitHub pull request tabs and their GitLab merge request equivalents.
+// GitHub pull request tabs and their GitLab merge request equivalents. Forgejo and Gitea spell the
+// path `/pulls/`; Bitbucket spells it `/pull-requests/` and its code tab `diff`.
 function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
-  const tab = /\/(?:pull|-\/merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(pathname);
+  const tab = /\/(?:pulls?|pull-requests|-\/merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(
+    pathname,
+  );
   const rest = tab?.[2] ?? "";
   switch (tab?.[1]?.toLowerCase()) {
     case "files":
     case "changes":
     case "diffs":
+    case "diff":
       return { kind: "code" };
     case "commits":
       if (rest === "") return { kind: "commits" };
@@ -57,6 +60,13 @@ function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
     default:
       return null;
   }
+}
+
+// Azure DevOps names a pull request's tab in the `_a` query, not the path. Its provider states
+// no commit list, so `_a=commits` has nothing to open.
+function azureDevOpsQueryTab({ pathname, searchParams }: URL): PullRequestAnchor | null {
+  if (!/\/pullrequest\/\d+\/?$/i.test(pathname)) return null;
+  return searchParams.get("_a")?.toLowerCase() === "files" ? { kind: "code" } : null;
 }
 
 const isLine = (line: number) => Number.isSafeInteger(line) && line >= 1;
@@ -115,7 +125,7 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
   } catch {
     return null;
   }
-  const fallback = pullRequestPathTab(parsed.pathname);
+  const fallback = pullRequestPathTab(parsed.pathname) ?? azureDevOpsQueryTab(parsed);
   const anchor = pullRequestUrlHash(url);
   const gitLab = gitLabDiffAnchor(
     anchor,
@@ -162,7 +172,10 @@ export function pullRequestAnchorMatchesUrl(
   anchor: string,
   url: string | null | undefined,
 ): boolean {
-  return normalizePullRequestCommentAnchor(pullRequestUrlHash(url)) === anchor;
+  return (
+    normalizePullRequestCommentAnchor(pullRequestUrlHash(url)) ===
+    normalizePullRequestCommentAnchor(anchor)
+  );
 }
 
 interface AnchoredComment {
@@ -206,8 +219,8 @@ export function pullRequestLinkCommit(url: string | null | undefined): string | 
     const { pathname, searchParams } = new URL(url);
     const commit = /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(pathname)
       ? searchParams.get("commit_id")
-      : /\/pull\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
-    return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit : null;
+      : /\/pulls?\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
+    return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit.toLowerCase() : null;
   } catch {
     return null;
   }

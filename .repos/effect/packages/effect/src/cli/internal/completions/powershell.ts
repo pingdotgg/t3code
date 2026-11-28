@@ -53,6 +53,7 @@ const flagEntry = (flag: Completions.FlagDescriptor): string => {
     `takesValue = $${flag.type._tag !== "Boolean"}; ` +
     (negation === undefined ? "" : `negation = ${quotePs(`--${negation}`)}; `) +
     (flag.optionalValue === true ? `optionalValue = $true; ` : "") +
+    (flag.repeatable === true ? `repeatable = $true; ` : "") +
     `${valueFields(flag.type)}; ` +
     `description = ${psOptional(flag.description)} }`
 }
@@ -154,7 +155,7 @@ const completer = (dataName: string): string =>
   $addFlags = {
     param([string]$typed)
     foreach ($flag in $context.flags) {
-      if ($used.ContainsKey($flag.name)) { continue }
+      if (-not $flag.repeatable -and $used.ContainsKey($flag.name)) { continue }
       foreach ($form in $flag.forms) {
         & $add $form 'ParameterName' $flag.description $typed ''
       }

@@ -2,15 +2,18 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { AppRouteModal } from "../AppRouteModal";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
-import { SETTINGS_NAV_GROUPS, SETTINGS_SECTION_LABELS } from "./settingsSearch";
+import { settingsNavGroups, SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
     { id: "theme", title: "Theme", to: "/settings/appearance" },
   ],
+  useHasSecretProvidersEnvironment: () => false,
 }));
+vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(
@@ -42,6 +45,41 @@ it("ignores composing keys in the search", async () => {
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/settings/appearance"),
   );
+});
+
+it("Esc clears a search of spaces and a held Esc keeps Settings open", async () => {
+  await using _screen = await render(
+    <AppRouteModal label="Settings">
+      <SidebarProvider defaultOpen>
+        <SettingsSidebarNav pathname="/settings/general" />
+      </SidebarProvider>
+    </AppRouteModal>,
+    { router: "/settings/general" },
+  );
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  const search = page.getByRole("combobox", { name: "Search settings" });
+  await expect.element(settings).toHaveFocus();
+
+  for (const text of ["theme", "   "]) {
+    await search.fill(text);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    await expect.element(search).toHaveFocus();
+    await act(() =>
+      search.element().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    await expect.element(settings).toHaveAttribute("data-open");
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
 });
 
 function renderNav() {
@@ -76,9 +114,9 @@ it("moves Tab through every settings section", async () => {
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
 
-  const sections = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths).map(
-    (to) => SETTINGS_SECTION_LABELS[to],
-  );
+  const sections = settingsNavGroups(false)
+    .flatMap((group) => group.paths)
+    .map((to) => SETTINGS_SECTION_LABELS[to]);
   const tabbed: string[] = [];
   for (let step = 0; step < sections.length; step += 1) {
     await userEvent.tab();
@@ -103,7 +141,7 @@ it.each([1280, 390])("names each group by a heading outside it at %ipx wide", as
     );
   }
   const groups = page.getByRole("group").elements();
-  expect(groups).toHaveLength(SETTINGS_NAV_GROUPS.length);
+  expect(groups).toHaveLength(settingsNavGroups(false).length);
   for (const group of groups) {
     const first = group.querySelector("[data-settings-section]")?.textContent;
     const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");

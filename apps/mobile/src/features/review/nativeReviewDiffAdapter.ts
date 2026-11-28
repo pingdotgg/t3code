@@ -15,6 +15,8 @@ import {
   type ReviewRenderableLineRow,
 } from "./reviewModel";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
@@ -22,10 +24,13 @@ const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COMPARISONS = 1_000;
 // Bound the rows serialized to the native heap before mapping and word matching.
 const NATIVE_REVIEW_MAX_FILE_ROWS = 100_000;
-const TRUNCATED_FILE_NOTICE = "This diff is too large to show in full.";
+const TRUNCATED_FILE_NOTICE = msg("This diff is too large to show in full.");
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
+// Git's a/, b/ (maybe quoted) or /dev/null paths, or a `diff -u` timestamp after a tab.
+const LONE_FILE_HEADER =
+  /^(--- "?a\/|\+\+\+ "?b\/|(---|\+\+\+) (\/dev\/null(\t|$)|[^\t]+\t\d{4}-\d\d-\d\d \d\d:\d\d:\d\d))/;
 
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
@@ -34,7 +39,12 @@ export function buildNativeReviewSnippetRows(
 ): NativeReviewDiffRow[] {
   if ((comment.fenceLanguage ?? "diff") !== "diff" || !comment.diff.trim()) return [];
   const lines = comment.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-  if (lines.some((line) => !/^[ +-]/.test(line) || /^(---|\+\+\+) /.test(line))) return [];
+  // A file header is a `--- ` line followed by `+++ `, or one shaped like a header on its own.
+  // Any other `--- ` or `+++ ` line is a changed `-- ` or `++ ` line.
+  const isFileHeader = (line: string, index: number) =>
+    LONE_FILE_HEADER.test(line) ||
+    (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ "));
+  if (lines.some((line, index) => !/^[ +-]/.test(line) || isFileHeader(line, index))) return [];
   return lines.map((line, index) => ({
     kind: "line",
     id: `${comment.id}:snippet:${index}`,
@@ -95,9 +105,13 @@ function opaqueNativeHexColor(color: string, background: string): string {
 export function createNativeReviewDiffStyle(
   codeSurface: ResolvedMobileCodeSurface,
   wordWrap: boolean,
+  fonts: { readonly code: string; readonly ui: string; readonly uiBold: string },
 ) {
   return {
     wordWrap,
+    codeFontFamily: fonts.code,
+    uiFontFamily: fonts.ui,
+    uiBoldFontFamily: fonts.uiBold,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
     changeBarWidth: 4,
@@ -291,12 +305,18 @@ function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeRevi
   const previewState = getReviewFilePreviewState(file);
   if (previewState.kind === "suppressed" && previewState.reason === "non-text") {
     return [
-      createNoticeRow(file.id, "non-text", "Unsupported format. Diff contents are not available."),
+      createNoticeRow(
+        file.id,
+        "non-text",
+        m(msg("Unsupported format. Diff contents are not available.")),
+      ),
     ];
   }
 
   if (file.changeType === "rename-pure") {
-    return [createNoticeRow(file.id, "rename", "This file was renamed without modifications.")];
+    return [
+      createNoticeRow(file.id, "rename", m(msg("This file was renamed without modifications."))),
+    ];
   }
 
   return [];
@@ -461,16 +481,16 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
   });
 
   if (sourceRows !== file.rows) {
-    rows.push(createNoticeRow(file.id, "truncated", TRUNCATED_FILE_NOTICE));
+    rows.push(createNoticeRow(file.id, "truncated", m(TRUNCATED_FILE_NOTICE)));
   }
   rows.push(...noticeRowsForFile(file));
   if (file.noEOFCRAdditions || file.noEOFCRDeletions) {
-    const side = file.noEOFCRAdditions
+    const text = file.noEOFCRAdditions
       ? file.noEOFCRDeletions
-        ? "Old and new files have"
-        : "New file has"
-      : "Old file has";
-    rows.push(createNoticeRow(file.id, "eof", `${side} no newline at end of file.`));
+        ? m(msg("Old and new files have no newline at end of file."))
+        : m(msg("New file has no newline at end of file."))
+      : m(msg("Old file has no newline at end of file."));
+    rows.push(createNoticeRow(file.id, "eof", text));
   }
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,

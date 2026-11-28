@@ -10,12 +10,15 @@ import * as Option from "effect/Option"
 import { TestClock } from "effect/testing"
 import { type Published, registryClient } from "./utils.ts"
 
+const packages = [
+  { name: "effect", version: "4.0.4" },
+  { name: "@effect/sql-pg", version: "4.0.4" }
+]
+
 const release: Release = {
-  packages: [
-    { name: "effect", version: "4.0.4" },
-    { name: "@effect/sql-pg", version: "4.0.4" }
-  ],
-  bump: { sha: "a".repeat(40), committedAt: new Date(0) }
+  packages,
+  bump: { sha: "a".repeat(40), committedAt: new Date(0) },
+  packagesAtBump: Effect.succeed(packages)
 }
 
 const services = (options: {
@@ -43,6 +46,42 @@ const services = (options: {
   )
 
 describe("Release", () => {
+  for (const scenario of ["promoted", "unpromoted", "unknown history", "unknown latest"] as const) {
+    it.effect(
+      "handles a missing post-bump package when the original release is " + scenario,
+      () =>
+        Effect.gen(function*() {
+          const alerts: Array<OverdueRelease> = []
+          const unexpected = () => Effect.die("a pending release must not write tags or deploy")
+          const provide = services({
+            registry: {
+              effect: {
+                latest: scenario === "unpromoted" ? "4.0.3" : "4.0.4",
+                cachedLatest: "4.0.4",
+                versions: ["4.0.3", "4.0.4"],
+                ...(scenario === "unknown latest" ? { liveTagsStatus: 403 } : {})
+              }
+            },
+            addDistTag: unexpected,
+            website: Website.of({ isDeployed: unexpected, deploy: unexpected }),
+            alerts
+          })
+          yield* TestClock.adjust("13 hours")
+          yield* provide(promoteRelease({
+            ...release,
+            packagesAtBump: scenario === "unknown history"
+              ? Effect.fail(new NpmPromoteError({ message: "Git history unavailable" }))
+              : Effect.succeed([release.packages[0]])
+          }, { overdueAfterHours: 12 }))
+
+          assert.lengthOf(alerts, scenario === "promoted" ? 0 : 1)
+          if (scenario === "unpromoted") {
+            assert.include(alerts[0].diagnoses.map((diagnosis) => diagnosis.pkg.name), "effect")
+          }
+        })
+    )
+  }
+
   for (const endpoint of ["metadata", "live tags"] as const) {
     it.effect(
       `does not alert for an overdue ${endpoint} read failure without evidence of pending promotion`,

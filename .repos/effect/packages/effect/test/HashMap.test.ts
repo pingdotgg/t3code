@@ -541,6 +541,24 @@ describe("HashMap", () => {
       }
     }
 
+    it("handles custom hashes that are not 32-bit integers", () => {
+      const fractional = new FixedHashKey("fractional", 1.25)
+      const other = new FixedHashKey("other", 1.5)
+      const large = new FixedHashKey("large", 2 ** 32 + 1)
+
+      let map = HashMap.make([fractional, "a"], [other, "b"])
+      map = HashMap.set(map, large, "c")
+      assert.strictEqual(HashMap.size(map), 3)
+      assert.isTrue(HashMap.has(map, other))
+      assert.deepStrictEqual(HashMap.get(map, large), Option.some("c"))
+      assert.deepStrictEqual(HashMap.getHash(map, fractional, 1.25), Option.some("a"))
+      assert.isTrue(HashMap.hasHash(map, large, 2 ** 32 + 1))
+
+      map = HashMap.remove(map, fractional)
+      assert.isFalse(HashMap.has(map, fractional))
+      assert.deepStrictEqual(HashMap.get(map, large), Option.some("c"))
+    })
+
     it("keeps entries addressable when bit 31 is present in indexed leaf insert", () => {
       const bit31Key = new FixedHashKey("bit31", 31)
       const bit30Key = new FixedHashKey("bit30", 30)

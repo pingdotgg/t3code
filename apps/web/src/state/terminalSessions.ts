@@ -22,7 +22,15 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { formatEnvironmentQueryError } from "./query";
 import { terminalEnvironment } from "./terminal";
-import { environmentSession, sessionHasScope, useEnvironmentScope } from "./session";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import {
+  environmentSession,
+  sessionHasScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "./session";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -140,7 +148,7 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
   if (Option.isNone(decoded)) {
     return Atom.make<TerminalSessionState>({
       ...EMPTY_TERMINAL_SESSION_STATE,
-      error: "Invalid terminal launch input",
+      error: m(msg("Invalid terminal launch input")),
       status: "error",
     }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
   }
@@ -231,10 +239,84 @@ export function useKnownTerminalSessions(input: {
   );
 }
 
+interface TerminalDrawerSessions {
+  readonly sessions: ReadonlyArray<KnownTerminalSession>;
+  readonly snapshotId: string | symbol;
+}
+
+const noTerminalDrawerSessions = Atom.make<TerminalDrawerSessions | null>(null);
+
+const terminalDrawerSessionsFamily = Atom.family((key: string) => {
+  const [environmentId, threadId] = Option.getOrThrow(decodeKnownSessionsKey(key));
+  return Atom.make((get): TerminalDrawerSessions | null => {
+    const metadata = get(terminalEnvironment.metadataFeed({ environmentId, input: null }));
+    if (!AsyncResult.isSuccess(metadata)) return null;
+    const { terminals, snapshotId } = metadata.value;
+    return {
+      sessions: selectKnownTerminalSessions(terminals, environmentId, threadId),
+      snapshotId,
+    };
+  }).pipe(
+    Atom.withEquality<TerminalDrawerSessions | null>(
+      (left, right) => left?.sessions === right?.sessions && left?.snapshotId === right?.snapshotId,
+    ),
+    Atom.withLabel(`web-terminal-drawer-sessions:${key}`),
+  );
+});
+
+export function useTerminalDrawerSessions(environmentId: EnvironmentId, threadId: ThreadId) {
+  const canRead = useEnvironmentScope(environmentId, AuthTerminalReadScope);
+  return useAtomValue(
+    canRead
+      ? terminalDrawerSessionsFamily(JSON.stringify([environmentId, threadId]))
+      : noTerminalDrawerSessions,
+  );
+}
+
 export function useThreadRunningTerminalIds(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<string> {
   const sessions = useKnownTerminalSessions(input);
   return selectRunningSubprocessTerminalIds(sessions ?? []);
+}
+
+// A string so status updates that keep every label notify no one.
+const terminalLabelsFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const metadata = get(terminalEnvironment.metadata({ environmentId, input: null }));
+    if (metadata._tag !== "Success") return "[]";
+    return JSON.stringify(
+      Array.from(terminalMetadataIndex(metadata.value).byThreadId, ([threadId, summaries]) => [
+        threadId,
+        summaries[0]!.label,
+      ]),
+    );
+  }).pipe(Atom.withLabel(`web-terminal-labels:${environmentId}`)),
+);
+const terminalLabelsListAtom = environmentAtomList("web-terminal-labels", terminalLabelsFamily);
+const terminalLabelsByResults = new WeakMap<ReadonlyArray<string>, ReadonlyMap<string, string>>();
+
+/** First terminal label of each thread that has one, keyed `${environmentId}:${threadId}`. */
+export function useTerminalLabelsByThreadKey(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyMap<string, string> {
+  const readable = useEnvironmentsWithScope(
+    environmentIds.map((environmentId) => ({ environmentId })),
+    AuthTerminalReadScope,
+  );
+  const readableIds = environmentIds.filter((environmentId) => readable.has(environmentId));
+  const results = useAtomValue(terminalLabelsListAtom(environmentIdsKey(readableIds)));
+  let labels = terminalLabelsByResults.get(results);
+  if (!labels) {
+    const next = new Map<string, string>();
+    results.forEach((encoded, index) => {
+      for (const [threadId, label] of JSON.parse(encoded) as Array<[string, string]>) {
+        next.set(`${readableIds[index]}:${threadId}`, label);
+      }
+    });
+    labels = next;
+    terminalLabelsByResults.set(results, labels);
+  }
+  return labels;
 }

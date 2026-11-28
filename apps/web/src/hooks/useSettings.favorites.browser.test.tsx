@@ -59,6 +59,7 @@ vi.mock("~/localApi", () => ({
 
 vi.mock(import("~/state/server"), async (original) => {
   const actual = await original();
+  const Effect = await import("effect/Effect");
   return {
     ...actual,
     serverEnvironment: {
@@ -66,7 +67,19 @@ vi.mock(import("~/state/server"), async (original) => {
       settingsValueAtom: ((id: EnvironmentId) => state.settings.get(id)) as never,
       updateSettings: {
         ...actual.serverEnvironment.updateSettings,
-        run: (_registry: unknown, input: unknown) => state.persist(input),
+        run: (_registry: unknown, input: unknown) =>
+          Effect.promise(
+            () =>
+              state.persist(input) as Promise<
+                AsyncResult.Success<ServerSettings> | AsyncResult.Failure<ServerSettings, Error>
+              >,
+          ).pipe(
+            Effect.flatMap((result) =>
+              result._tag === "Failure"
+                ? Effect.failCause(result.cause)
+                : Effect.succeed(result.value),
+            ),
+          ),
       } as never,
     },
   };

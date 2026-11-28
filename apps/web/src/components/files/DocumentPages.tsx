@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { FileSurfaceAction } from "./fileSurfaceChrome";
+import { useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
@@ -47,12 +48,25 @@ export function sanitizeDocumentHtml(source: string): string {
       "dt",
       "dd",
       "img",
+      "ruby",
+      "rt",
+      "rp",
     ],
-    ALLOWED_ATTR: ["src", "alt", "colspan", "rowspan", "data-odf-whitespace"],
+    ADD_ATTR: (attribute, tag) => attribute === "type" && tag === "ol",
+    ALLOWED_ATTR: [
+      "src",
+      "alt",
+      "colspan",
+      "rowspan",
+      "start",
+      "value",
+      "data-odf-whitespace",
+      "data-rtf-whitespace",
+    ],
   });
   for (const image of fragment.querySelectorAll("img")) {
     if (
-      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/]*={0,2}$/i.test(
+      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/\t\n\f\r ]*(?:=[\t\n\f\r ]*){0,2}$/i.test(
         image.getAttribute("src") ?? "",
       )
     )
@@ -74,8 +88,10 @@ export default function DocumentPages(props: {
   readonly html: string;
   readonly name: string;
   readonly output?: boolean;
+  readonly estimatedOutputHeight?: number;
   readonly details?: string;
 }) {
+  const gt = useGT();
   const { theme, resolvedTheme, themeHalves } = useTheme();
   const [colors, setColors] = useState(documentColors);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the host DOM's applied theme tokens so the sandboxed document receives the current palette.
@@ -86,12 +102,12 @@ export default function DocumentPages(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Theme values invalidate the palette read from the host DOM.
   }, [theme, resolvedTheme, themeHalves]);
   const [zoom, setZoom] = useState(1);
-  const [outputHeight, setOutputHeight] = useState(0);
+  const [outputHeight, setOutputHeight] = useState<number>();
   const stopObserving = useRef<(() => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Disconnect the iframe body's resize observer when the document unmounts.
   useEffect(() => () => stopObserving.current?.(), []);
   const html = sanitizeDocumentHtml(props.html);
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:${15 * zoom}px/1.65 system-ui,sans-serif}body{box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(100% - 40px)"};max-width:${860 * zoom}px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:${15 * zoom}px/1.65 system-ui,sans-serif}body{box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(100% - 40px)"};max-width:${860 * zoom}px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace],p[data-rtf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
   return (
     <>
       {!props.output ? (
@@ -100,7 +116,7 @@ export default function DocumentPages(props: {
             {props.details}
           </span>
           <FileSurfaceAction
-            label="Decrease reading size"
+            label={gt("Decrease reading size")}
             disabled={zoom <= 0.5}
             onPress={() => setZoom((value) => Math.max(0.5, value - 0.25))}
           >
@@ -108,14 +124,14 @@ export default function DocumentPages(props: {
           </FileSurfaceAction>
           <span className="min-w-10 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
           <FileSurfaceAction
-            label="Increase reading size"
+            label={gt("Increase reading size")}
             disabled={zoom >= 2}
             onPress={() => setZoom((value) => Math.min(2, value + 0.25))}
           >
             <PlusIcon className="size-3.5" />
           </FileSurfaceAction>
           <FileSurfaceAction
-            label="Reset reading size"
+            label={gt("Reset reading size")}
             disabled={zoom === 1}
             onPress={() => setZoom(1)}
           >
@@ -133,11 +149,16 @@ export default function DocumentPages(props: {
           stopObserving.current?.();
           const body = event.currentTarget.contentDocument?.body;
           if (!body) return;
-          const measure = () => setOutputHeight(Math.ceil(body.getBoundingClientRect().height));
+          const measure = () => {
+            const height = Math.ceil(body.getBoundingClientRect().height);
+            if (height > 0) setOutputHeight(height);
+          };
           stopObserving.current = observeResize(body, measure);
           measure();
         }}
-        style={props.output ? { height: outputHeight } : undefined}
+        style={
+          props.output ? { height: outputHeight ?? props.estimatedOutputHeight ?? 0 } : undefined
+        }
         className={props.output ? "block w-full border-0" : "min-h-0 flex-1 border-0"}
       />
     </>

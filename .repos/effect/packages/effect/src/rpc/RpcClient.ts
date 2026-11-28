@@ -40,7 +40,7 @@ import * as Scope from "../Scope.ts"
 import * as Socket from "../socket/Socket.ts"
 import * as Stream from "../Stream.ts"
 import type * as Struct from "../Struct.ts"
-import type { Span } from "../Tracer.ts"
+import * as Tracer from "../Tracer.ts"
 import * as Transferable from "../workers/Transferable.ts"
 import * as Worker from "../workers/Worker.ts"
 import type { WorkerError } from "../workers/WorkerError.ts"
@@ -98,65 +98,8 @@ export declare namespace RpcClient {
       const Discard = false
     >(
       input: Rpc.PayloadConstructor<Current>,
-      options?: Rpc.Success<Current> extends Stream.Stream<infer _A, infer _E, infer _R> ? {
-          readonly asQueue?: AsQueue | undefined
-          readonly streamBufferSize?: number | undefined
-          readonly headers?: Headers.Input | undefined
-          readonly context?: Context.Context<never> | undefined
-        } :
-        {
-          readonly headers?: Headers.Input | undefined
-          readonly context?: Context.Context<never> | undefined
-          /**
-           * Completes once the server acknowledges the call as its handler starts,
-           * after the middleware has run, instead of waiting for the result. The
-           * handler's result and error are not returned, but transport errors,
-           * middleware errors and failures before the handler starts still fail the
-           * call. Over HTTP and workers the call completes after the handler has
-           * finished. A protocol that only delivers requests acknowledges the call
-           * itself once it has delivered the request.
-           */
-          readonly discard?: Discard | undefined
-        }
-    ) => Current extends Rpc.Rpc<
-      infer _Tag,
-      infer _Payload,
-      infer _Success,
-      infer _Error,
-      infer _Middleware,
-      infer _Requires
-    > ? [_Success] extends [RpcSchema.Stream<infer _A, infer _E>] ? AsQueue extends true ? Effect.Effect<
-            Queue.Dequeue<
-              _A["Type"],
-              _E["Type"] | _Error["Type"] | E | _Middleware["error"]["Type"] | _Middleware["~ClientError"] | Cause.Done
-            >,
-            never,
-            | Scope.Scope
-            | _Payload["EncodingServices"]
-            | _Success["DecodingServices"]
-            | _Error["DecodingServices"]
-            | _Middleware["error"]["DecodingServices"]
-          >
-        : Stream.Stream<
-          _A["Type"],
-          _E["Type"] | _Error["Type"] | E | _Middleware["error"]["Type"] | _Middleware["~ClientError"],
-          | _Payload["EncodingServices"]
-          | _Success["DecodingServices"]
-          | _Error["DecodingServices"]
-          | _Middleware["error"]["DecodingServices"]
-        >
-      : Effect.Effect<
-        Discard extends true ? void : _Success["Type"],
-        | (Discard extends true ? never : _Error["Type"])
-        | E
-        | _Middleware["error"]["Type"]
-        | _Middleware["~ClientError"],
-        | _Payload["EncodingServices"]
-        | _Success["DecodingServices"]
-        | _Error["DecodingServices"]
-        | _Middleware["error"]["DecodingServices"]
-      > :
-      never
+      options?: Options<Current, AsQueue, Discard>
+    ) => Result<Current, E, AsQueue, Discard>
   }
 
   /**
@@ -174,28 +117,48 @@ export declare namespace RpcClient {
   >(
     tag: Tag,
     payload: Rpc.PayloadConstructor<Rpc.ExtractTag<Rpcs, Tag>>,
-    options?: Rpc.Success<Rpc.ExtractTag<Rpcs, Tag>> extends Stream.Stream<infer _A, infer _E, infer _R> ? {
-        readonly asQueue?: AsQueue | undefined
-        readonly streamBufferSize?: number | undefined
-        readonly headers?: Headers.Input | undefined
-        readonly context?: Context.Context<never> | undefined
-      } :
-      {
-        readonly headers?: Headers.Input | undefined
-        readonly context?: Context.Context<never> | undefined
-        /**
-         * Completes once the server acknowledges the call as its handler starts,
-         * after the middleware has run, instead of waiting for the result. The
-         * handler's result and error are not returned, but transport errors,
-         * middleware errors and failures before the handler starts still fail the
-         * call. Over HTTP and workers the call completes after the handler has
-         * finished. A protocol that only delivers requests acknowledges the call
-         * itself once it has delivered the request.
-         */
-        readonly discard?: Discard | undefined
-      }
-  ) => Rpcs extends Rpc.Rpc<
-    infer _Tag extends Tag,
+    options?: Options<Rpc.ExtractTag<Rpcs, Tag>, AsQueue, Discard>
+  ) => Result<Rpc.ExtractTag<Rpcs, Tag>, E, AsQueue, Discard>
+
+  /**
+   * The options accepted by a client call for the given RPC(s).
+   *
+   * @stability unstable
+   * @category utility types
+   * @since 4.1.3
+   */
+  export type Options<Current, AsQueue extends boolean, Discard> = Rpc.Success<Current> extends
+    Stream.Stream<infer _A, infer _E, infer _R> ? {
+      readonly asQueue?: AsQueue | undefined
+      readonly streamBufferSize?: number | undefined
+      readonly headers?: Headers.Input | undefined
+      readonly context?: Context.Context<never> | undefined
+    } :
+    {
+      readonly headers?: Headers.Input | undefined
+      readonly context?: Context.Context<never> | undefined
+      /**
+       * Completes once the server acknowledges the call as its handler starts,
+       * after the middleware has run, instead of waiting for the result. The
+       * handler's result and error are not returned, but transport errors,
+       * middleware errors and failures before the handler starts still fail the
+       * call. Over HTTP and workers the call completes after the handler has
+       * finished. A protocol that only delivers requests acknowledges the call
+       * itself once it has delivered the request.
+       */
+      readonly discard?: Discard | undefined
+    }
+
+  /**
+   * The result of a client call for the given RPC(s). Distributes over a union
+   * of RPCs.
+   *
+   * @stability unstable
+   * @category utility types
+   * @since 4.1.3
+   */
+  export type Result<Current, E, AsQueue extends boolean, Discard> = Current extends Rpc.Rpc<
+    infer _Tag,
     infer _Payload,
     infer _Success,
     infer _Error,
@@ -204,7 +167,7 @@ export declare namespace RpcClient {
   > ? [_Success] extends [RpcSchema.Stream<infer _A, infer _E>] ? AsQueue extends true ? Effect.Effect<
           Queue.Dequeue<
             _A["Type"],
-            _E["Type"] | _Error["Type"] | E | _Middleware["error"]["Type"] | _Middleware["~ClientError"]
+            _E["Type"] | _Error["Type"] | E | _Middleware["error"]["Type"] | _Middleware["~ClientError"] | Cause.Done
           >,
           never,
           | Scope.Scope
@@ -340,9 +303,18 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     }
   }, Effect.uninterruptible)
 
+  const traceFields = (fiber: Fiber.Fiber<unknown, unknown>, clientSpan: Tracer.Span | undefined) => {
+    if (disableTracing || !fiber.cache.tracerEnabled || fiber.getRef(Tracer.DisablePropagation)) return undefined
+    const span = clientSpan ?? fiber.cache.span
+    if (!span || Context.get(span.annotations, Tracer.DisablePropagation)) return undefined
+    return { traceId: span.traceId, spanId: span.spanId, sampled: span.sampled }
+  }
+
   const onRequest = (rpc: Rpc.AnyWithProps) => {
     const isStream = RpcSchema.isStreamSchema(rpc.successSchema)
     const middleware = getRpcClientMiddleware(rpc)
+    const tracing = Context.get(rpc.annotations, Rpc.TracingEnabled)
+    const createSpan = !disableTracing && (tracing === "both" || tracing === "client")
     return (payload: any, opts?: {
       readonly asQueue?: boolean | undefined
       readonly streamBufferSize?: number | undefined
@@ -353,7 +325,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       const headers = opts?.headers ? Headers.fromInput(opts.headers) : Headers.empty
       const context = opts?.context ?? Context.empty()
       if (!isStream) {
-        const onRequest = (span: Span | undefined) =>
+        const onRequest = (span: Tracer.Span | undefined) =>
           onEffectRequest(
             rpc,
             middleware,
@@ -363,7 +335,8 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
             context,
             opts?.discard ?? false
           )
-        return disableTracing ? onRequest(undefined) : Effect.useSpan(
+        if (!createSpan) return onRequest(undefined)
+        return Effect.useSpan(
           RpcTracing.spanName(spanPrefix, rpc._tag),
           { kind: "client", attributes: RpcTracing.spanAttributes(rpc._tag, options.spanAttributes) },
           onRequest
@@ -371,6 +344,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       }
       const queue = onStreamRequest(
         rpc,
+        createSpan,
         middleware,
         rpc.payloadSchema.make(payload),
         headers,
@@ -388,7 +362,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       send: (request: Request<Rpcs>) => Effect.Effect<any, E>,
       request: Request<Rpcs>
     ) => Effect.Effect<any, E>,
-    span: Span | undefined,
+    span: Tracer.Span | undefined,
     payload: any,
     headers: Headers.Headers,
     context: Context.Context<never>,
@@ -406,13 +380,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
           id,
           tag: rpc._tag as Rpc.Tag<Rpcs>,
           payload,
-          ...(span ?
-            {
-              traceId: span.traceId,
-              spanId: span.spanId,
-              sampled: span.sampled
-            } :
-            {}),
+          ...traceFields(parentFiber, span),
           headers: Headers.merge(parentFiber.getRef(CurrentHeaders), headers),
           ...(discard ? { discard: true as const } : {})
         }
@@ -468,6 +436,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
 
   const onStreamRequest = Effect.fnUntraced(function*(
     rpc: Rpc.AnyWithProps,
+    createSpan: boolean,
     middleware: (
       send: (request: Request<Rpcs>) => Effect.Effect<any, E>,
       request: Request<Rpcs>
@@ -481,7 +450,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       return yield* Effect.interrupt
     }
 
-    const span = disableTracing ? undefined : yield* Effect.makeSpanScoped(
+    const span = !createSpan ? undefined : yield* Effect.makeSpanScoped(
       RpcTracing.spanName(spanPrefix, rpc._tag),
       { kind: "client", attributes: RpcTracing.spanAttributes(rpc._tag, options.spanAttributes) }
     )
@@ -521,13 +490,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
         id,
         tag: rpc._tag as Rpc.Tag<Rpcs>,
         payload,
-        ...(span ?
-          {
-            traceId: span.traceId,
-            spanId: span.spanId,
-            sampled: span.sampled
-          } :
-          {}),
+        ...traceFields(fiber, span),
         headers: Headers.merge(fiber.getRef(CurrentHeaders), headers)
       }
     ).pipe(
@@ -693,6 +656,7 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
     readonly flatten?: Flatten | undefined
   } | undefined
 ) {
+  const scope = yield* Effect.scope
   const clientId = clientIdCounter++
   const { codecFor, run, send, supportsAck, supportsTransferables } = yield* Protocol
   const rpcSchemas = makeRpcSchemas(codecFor)
@@ -787,7 +751,13 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
             decodeChunk(message.values).pipe(
               Effect.provideContext(entry.context),
               Effect.orDie,
-              Effect.flatMap((chunk) => write({ _tag: "Chunk", clientId: 0, requestId, values: chunk }))
+              Effect.flatMap((chunk) => {
+                const deliver = write({ _tag: "Chunk", clientId: 0, requestId, values: chunk })
+                // The server waits for each chunk's Ack, so a chunk waiting for
+                // buffer space must not block other responses on this
+                // connection. Starting immediately keeps it ahead of the Exit.
+                return supportsAck ? Effect.forkIn(deliver, scope, { startImmediately: true }) : deliver
+              })
             )
           ).pipe(
             Effect.onError((cause) =>
@@ -1024,6 +994,31 @@ const makeProtocolHttpUnbatched = (client: HttpClient.HttpClient) =>
     }
   }))
 
+const withBatchSpan = <A, E, R>(effect: Effect.Effect<A, E, R>, requests: ReadonlyArray<RequestEncoded>) => {
+  const links: Array<Tracer.SpanLink> = []
+  const seen = new Set<string>()
+  let sampled = false
+  for (const request of requests) {
+    if (request.traceId === undefined || request.spanId === undefined || seen.has(request.spanId)) continue
+    seen.add(request.spanId)
+    const span = Tracer.externalSpan({ traceId: request.traceId, spanId: request.spanId, sampled: request.sampled })
+    sampled ||= span.sampled
+    links.push({ span, attributes: {} })
+  }
+  if (links.length === 0) return effect
+  return Effect.withSpan(effect, "RpcClient.batch", {
+    root: true,
+    sampled,
+    links,
+    attributes: { batchSize: requests.length },
+    captureStackTrace: false
+  }).pipe(
+    // Do not let the opener's tracing settings suppress tracing for other callers.
+    Effect.provideService(Tracer.DisablePropagation, false),
+    Effect.withTracerEnabled(true)
+  )
+}
+
 const makeProtocolHttpBatched = Effect.fnUntraced(function*(client: HttpClient.HttpClient, options: {
   readonly window: Duration.Input
   readonly maxSize?: number | undefined
@@ -1061,7 +1056,7 @@ const makeProtocolHttpBatched = Effect.fnUntraced(function*(client: HttpClient.H
       Effect.raceFirst(Effect.sleep(window), batch.full.await).pipe(
         Effect.andThen(Effect.suspend(() => {
           closeBatch(clientId, batch)
-          return exchange.send(clientId, batch.requests)
+          return withBatchSpan(exchange.send(clientId, batch.requests), batch.requests)
         })),
         Effect.onExit((exit) => {
           closeBatch(clientId, batch)
@@ -1424,7 +1419,9 @@ export const makeProtocolSocket = (options?: {
     const write = (request: FromClientEncoded) =>
       Effect.suspend(() => {
         const encoded = parser.encode(request)
-        return encoded === undefined ? Effect.void : Effect.orDie(writer.write(encoded))
+        return encoded === undefined
+          ? Effect.void
+          : Effect.mapError(writer.write(encoded), (error) => new RpcClientError({ reason: error.reason }))
       })
 
     return {

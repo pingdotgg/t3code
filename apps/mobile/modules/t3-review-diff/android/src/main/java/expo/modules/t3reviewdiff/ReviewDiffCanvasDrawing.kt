@@ -1,6 +1,7 @@
 package expo.modules.t3reviewdiff
 
 import android.content.Context
+import android.content.res.AssetManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -10,6 +11,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
+import com.facebook.react.common.assets.ReactFontManager
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -31,16 +33,23 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     clearShadowLayer()
   }
 
-  private val italicCodeTypeface by lazy {
-    Typeface.create(ReviewDiffTypefaces.regular, Typeface.ITALIC)
-  }
-  private val boldItalicCodeTypeface by lazy {
-    Typeface.create(ReviewDiffTypefaces.bold, Typeface.ITALIC)
-  }
+  private val assets = context.assets
+  private var typefaces = ReviewDiffTypefaces(assets, "monospace", "sans-serif", "sans-serif")
 
   init {
-    textPaint.typeface = ReviewDiffTypefaces.regular
-    uiPaint.typeface = Typeface.DEFAULT_BOLD
+    textPaint.typeface = typefaces.regular
+    uiPaint.typeface = typefaces.uiBold
+  }
+
+  fun applyFonts(style: DiffStyle) {
+    if (typefaces.matches(style)) return
+    typefaces = ReviewDiffTypefaces(
+      assets,
+      style.codeFontFamily,
+      style.uiFontFamily,
+      style.uiBoldFontFamily,
+    )
+    textPaint.typeface = typefaces.regular
   }
 
   fun fileHeaderChevronRect(top: Int, bottom: Int, style: DiffStyle): RectF {
@@ -68,6 +77,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       right,
       centerY + 10f * density,
     )
+  }
+
+  fun fileHeaderCheckboxHitRect(top: Int, bottom: Int, width: Int, style: DiffStyle): RectF {
+    val checkbox = fileHeaderCheckboxRect(top, bottom, width, style)
+    return RectF(checkbox.left - 14f * density, top.toFloat(), width.toFloat(), bottom.toFloat())
   }
 
   fun drawDisclosureChevron(
@@ -157,23 +171,24 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   }
 
   fun configureUiPaint(paint: Paint, color: Int, size: Float, weight: String) {
-    paint.typeface = if (isBoldFontWeight(weight)) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    paint.typeface = if (isBoldFontWeight(weight)) typefaces.uiBold else typefaces.ui
     configureTextPaint(paint, color, size)
   }
 
   fun configureMonospacePaint(color: Int, size: Float, weight: String) {
-    textPaint.typeface = ReviewDiffTypefaces.forWeight(weight)
+    textPaint.typeface = typefaces.forWeight(weight)
     configureTextPaint(textPaint, color, size)
   }
 
   fun configureCodePaint(color: Int, fontStyle: Int, style: DiffStyle) {
     val tokenBold = fontStyle and 2 != 0
     val italic = fontStyle and 1 != 0
+    applyFonts(style)
     textPaint.typeface = when {
-      tokenBold && italic -> boldItalicCodeTypeface
-      tokenBold -> ReviewDiffTypefaces.bold
-      italic -> italicCodeTypeface
-      else -> ReviewDiffTypefaces.forWeight(style.codeFontWeight)
+      tokenBold && italic -> typefaces.boldItalic
+      tokenBold -> typefaces.bold
+      italic -> typefaces.italic
+      else -> typefaces.forWeight(style.codeFontWeight)
     }
     configureTextPaint(textPaint, color, style.codeFontSizePx)
     textPaint.isUnderlineText = fontStyle and 4 != 0
@@ -221,6 +236,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   private var measuredContentWidth = 0
   private var asciiCharacterWidth = 0f
   private var asciiFixedPitch = false
+  private var wordDiffLefts = FloatArray(0)
 
   fun tokensChangeWidth(
     previous: Map<String, List<DiffToken>>,
@@ -332,14 +348,58 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
       return textPaint.measureText(row.text.ifEmpty { row.content })
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
-    var width = 0f
-    // Match drawCode's run boundaries and fonts, including fallback glyphs and tabs.
-    for (run in runs) {
-      configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-      width += textPaint.measureText(run.content)
+    val lines = CodeWrapLayout.NONE.lines(row)
+    return forEachCodePiece(row, tokens, style, lines) { text, start, end, _, _, _, _ ->
+      textPaint.measureText(text, start, end)
     }
-    return width
+  }
+
+  /** Row width, highlights and drawCode share these drawText pieces so their positions agree. */
+  private inline fun forEachCodePiece(
+    row: DiffRow,
+    tokens: List<DiffToken>?,
+    style: DiffStyle,
+    lines: CodeLines,
+    piece: (
+      text: String,
+      start: Int,
+      end: Int,
+      tokenStart: Int,
+      x: Float,
+      line: Int,
+      note: Boolean
+    ) -> Float
+  ): Float {
+    val noteStart = row.noteStart ?: Int.MAX_VALUE
+    var line = 0
+    var x = 0f
+    var tokenStart = 0
+    val runCount = if (tokens.isNullOrEmpty()) 1 else tokens.size
+    for (index in 0 until runCount) {
+      val run = tokens?.getOrNull(index)
+      val text = run?.content ?: row.content
+      var start = 0
+      while (start < text.length) {
+        while (line + 1 < lines.starts.size && lines.starts[line + 1] <= tokenStart + start) {
+          line += 1
+          x = 0f
+        }
+        val note = tokenStart + start >= noteStart
+        var end = min(text.length, lines.end(line, Int.MAX_VALUE) - tokenStart)
+        if (!note) end = min(end, noteStart - tokenStart)
+        if (start == 0 || tokenStart + start == noteStart) {
+          configureCodePaint(
+            if (note) theme.warningText else run?.color ?: theme.text,
+            run?.fontStyle ?: 0,
+            style,
+          )
+        }
+        x += piece(text, start, end, tokenStart, x, line, note)
+        start = end
+      }
+      tokenStart += text.length
+    }
+    return x
   }
 
   fun lineNumberColor(change: String): Int = when (change) {
@@ -368,34 +428,55 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   fun drawWordDiffRanges(
     canvas: Canvas,
     row: DiffRow,
+    tokens: List<DiffToken>?,
     codeX: Float,
     top: Int,
     bottom: Int,
-    lines: CodeLines
+    lines: CodeLines,
+    style: DiffStyle
   ) {
-    if (lines.nativeLayout != null) return
-    if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
+    val changed = row.change == "add" || row.change == "delete"
+    if (lines.nativeLayout != null || row.wordDiffRanges.isEmpty() || !changed) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     backgroundPaint.color = withAlpha(color, 71)
-    val characterWidth = textPaint.measureText("M")
+    configureCodePaint(theme.text, 0, style)
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
-    row.wordDiffRanges.forEach { range ->
-      lines.starts.forEachIndexed { line, lineStart ->
-        val start = max(range.start, lineStart)
-        val end = min(range.end, lines.end(line, Int.MAX_VALUE))
-        if (end <= start) return@forEachIndexed
-        val left = codeX + (start - lineStart) * characterWidth
-        val right = max(left + 2f * density, left + (end - start) * characterWidth)
-        val lineTop = highlightTop + line * lines.height
-        canvas.drawRoundRect(
-          RectF(left, lineTop, right, lineTop + highlightHeight),
-          3f * density,
-          3f * density,
-          backgroundPaint,
-        )
+    if (wordDiffLefts.size < row.wordDiffRanges.size) {
+      wordDiffLefts = FloatArray(row.wordDiffRanges.size)
+    }
+    val lefts = wordDiffLefts
+    val lastEnd = row.wordDiffRanges.maxOf { it.end }
+    forEachCodePiece(row, tokens, style, lines) { text, start, end, tokenStart, x, line, _ ->
+      val pieceX = codeX + x
+      val advance = textPaint.measureText(text, start, end)
+
+      // Inside a piece an edge keeps its kerning and clusters, as drawText shapes the whole piece;
+      // the piece's end is where drawCode starts the next one.
+      fun edge(at: Int) = if (at == end) {
+        pieceX + advance
+      } else {
+        pieceX + textPaint.getRunAdvance(text, start, end, start, end, false, at)
       }
+      row.wordDiffRanges.forEachIndexed { index, range ->
+        val left = max(range.start, lines.starts[line]) - tokenStart
+        val right = min(range.end, lines.end(line, Int.MAX_VALUE)) - tokenStart
+        if (right <= left) return@forEachIndexed
+        if (left in start until end) lefts[index] = edge(left)
+        if (right in start + 1..end) {
+          val lineTop = highlightTop + line * lines.height
+          val rightX = max(lefts[index] + 2f * density, edge(right))
+          canvas.drawRoundRect(
+            RectF(lefts[index], lineTop, rightX, lineTop + highlightHeight),
+            3f * density,
+            3f * density,
+            backgroundPaint,
+          )
+        }
+      }
+      if (tokenStart + end >= lastEnd) return
+      advance
     }
   }
 
@@ -417,35 +498,19 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       canvas.restore()
       return
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
-    var line = 0
-    var x = codeX
-    var column = 0
-    splitAtNote(runs, row.noteStart).forEach { (run, note) ->
-      configureCodePaint(
-        if (note) theme.warningText else run.color ?: theme.text,
-        run.fontStyle,
-        style,
-      )
-      var start = 0
-      while (start < run.content.length) {
-        while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
-          line += 1
-          x = codeX
-        }
-        val end = min(run.content.length, lines.end(line, Int.MAX_VALUE) - column)
-        val lineBaseline = baseline + line * lines.height
-        if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
-          lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
-        ) {
-          val segmentWidth = textPaint.measureText(run.content, start, end)
-          fillNote(canvas, note, x, x + segmentWidth, lineBaseline)
-          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += segmentWidth
-        }
-        start = end
+    forEachCodePiece(row, tokens, style, lines) { text, start, end, _, x, line, note ->
+      val lineBaseline = baseline + line * lines.height
+      if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
+        lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
+      ) {
+        val left = codeX + x
+        val segmentWidth = textPaint.measureText(text, start, end)
+        fillNote(canvas, note, left, left + segmentWidth, lineBaseline)
+        canvas.drawText(text, start, end, left, lineBaseline, textPaint)
+        segmentWidth
+      } else {
+        0f
       }
-      column += run.content.length
     }
   }
 
@@ -542,35 +607,31 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 }
 
-private object ReviewDiffTypefaces {
-  val regular: Typeface = Typeface.create("monospace", Typeface.NORMAL)
-  private val medium: Typeface = Typeface.create("monospace-medium", Typeface.NORMAL)
-  val bold: Typeface = Typeface.create("monospace", Typeface.BOLD)
+/** Family names come from React Native; `monospace` and `sans-serif` select the platform fonts. */
+private class ReviewDiffTypefaces(
+  assets: AssetManager,
+  private val codeFamily: String,
+  private val uiFamily: String,
+  private val uiBoldFamily: String
+) {
+  private val fonts = ReactFontManager.getInstance()
+  val regular: Typeface = fonts.getTypeface(codeFamily, Typeface.NORMAL, assets)
+  private val medium: Typeface =
+    if (codeFamily == "monospace") Typeface.create("monospace-medium", Typeface.NORMAL) else regular
+  val bold: Typeface = fonts.getTypeface(codeFamily, Typeface.BOLD, assets)
+  val italic: Typeface = fonts.getTypeface(codeFamily, Typeface.ITALIC, assets)
+  val boldItalic: Typeface = fonts.getTypeface(codeFamily, Typeface.BOLD_ITALIC, assets)
+  val ui: Typeface = fonts.getTypeface(uiFamily, Typeface.NORMAL, assets)
+  val uiBold: Typeface = fonts.getTypeface(uiBoldFamily, Typeface.BOLD, assets)
+
+  fun matches(style: DiffStyle): Boolean =
+    style.codeFontFamily == codeFamily &&
+      style.uiFontFamily == uiFamily &&
+      style.uiBoldFontFamily == uiBoldFamily
 
   fun forWeight(weight: String): Typeface = when (weight.lowercase()) {
     "medium", "semibold", "semi-bold" -> medium
     "bold", "heavy", "black" -> bold
     else -> regular
-  }
-}
-
-/** Splits color runs where a cut line's note starts; the flag marks the note's runs. */
-private fun splitAtNote(runs: List<DiffToken>, noteStart: Int?): List<Pair<DiffToken, Boolean>> {
-  if (noteStart == null) return runs.map { it to false }
-  return buildList {
-    var offset = 0
-    for (run in runs) {
-      val end = offset + run.content.length
-      when {
-        end <= noteStart -> add(run to false)
-        offset >= noteStart -> add(run to true)
-        else -> {
-          val cut = noteStart - offset
-          add(run.copy(content = run.content.substring(0, cut)) to false)
-          add(run.copy(content = run.content.substring(cut)) to true)
-        }
-      }
-      offset = end
-    }
   }
 }

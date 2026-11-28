@@ -25,7 +25,7 @@ import * as Layer from "../Layer.ts"
 import * as Option from "../Option.ts"
 import type * as Scope from "../Scope.ts"
 import * as Tracer from "../Tracer.ts"
-import type { ExtractTag } from "../Types.ts"
+import type { Concurrency, ExtractTag } from "../Types.ts"
 import * as Version from "../Version.ts"
 import * as OtlpEnv from "./internal/otlpEnv.ts"
 import * as Exporter from "./OtlpExporter.ts"
@@ -62,6 +62,11 @@ export const make: (
     readonly compression?: "gzip" | "none" | undefined
     readonly exportInterval?: Duration.Input | undefined
     readonly maxBatchSize?: number | undefined
+    /** Maximum pending queued spans (does not include in-flight batches). */
+    readonly maxQueueSize?: number | undefined
+    /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+    readonly concurrency?: Concurrency | undefined
+    readonly onDrop?: ((count: number) => void) | undefined
     readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
     readonly shutdownTimeout?: Duration.Input | undefined
   }
@@ -84,6 +89,9 @@ export const make: (
     compression: options.compression,
     exportInterval: options.exportInterval ?? Duration.seconds(5),
     maxBatchSize: options.maxBatchSize ?? 1000,
+    maxQueueSize: options.maxQueueSize,
+    concurrency: options.concurrency,
+    onDrop: options.onDrop,
     body(spans) {
       const data: TraceData = {
         resourceSpans: [{
@@ -141,6 +149,11 @@ export const layer: (options: {
   readonly compression?: "gzip" | "none" | undefined
   readonly exportInterval?: Duration.Input | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued spans (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
 }) => Layer.Layer<Exporter.Flusher, never, OtlpSerialization | HttpClient.HttpClient> = flow(
@@ -170,6 +183,9 @@ export const layerFromConfig = (options?: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
 }): Layer.Layer<Exporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization> =>
   Effect.gen(function*() {
@@ -190,7 +206,8 @@ export const layerFromConfig = (options?: {
       tracesTimeout,
       exportTimeout,
       scheduleDelay,
-      maxBatchSize
+      maxBatchSize,
+      maxQueueSize
     } = yield* Config.all({
       baseCompression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_COMPRESSION")),
       compression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")),
@@ -202,7 +219,8 @@ export const layerFromConfig = (options?: {
           Config.map(Duration.millis)
         )
       ),
-      maxBatchSize: Config.option(Config.Int("OTEL_BSP_MAX_EXPORT_BATCH_SIZE"))
+      maxBatchSize: Config.option(Config.Int("OTEL_BSP_MAX_EXPORT_BATCH_SIZE")),
+      maxQueueSize: Config.option(Config.Int("OTEL_BSP_MAX_QUEUE_SIZE"))
     })
 
     const shutdownTimeout = Option.firstSomeOf([tracesTimeout, baseTimeout, exportTimeout]).pipe(
@@ -216,6 +234,9 @@ export const layerFromConfig = (options?: {
       compression: Option.getOrElse(Option.firstSomeOf([compression, baseCompression]), () => "none" as const),
       exportInterval: Option.getOrUndefined(scheduleDelay),
       maxBatchSize: Option.getOrUndefined(maxBatchSize),
+      maxQueueSize: Option.getOrUndefined(maxQueueSize),
+      concurrency: options?.concurrency,
+      onDrop: options?.onDrop,
       context: options?.context,
       shutdownTimeout: Option.getOrUndefined(shutdownTimeout)
     })
@@ -328,7 +349,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
   let otelStatus: Status
 
   if (status.exit._tag === "Success") {
-    otelStatus = { code: StatusCode.Ok }
+    otelStatus = { code: StatusCode.Unset }
   } else if (Cause.hasInterruptsOnly(status.exit.cause)) {
     otelStatus = { code: StatusCode.Unset }
     attributes.push({
@@ -341,7 +362,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
     })
     otelStatus = errors.length > 0
       ? { code: StatusCode.Error, message: errors[0].message }
-      : { code: StatusCode.Ok }
+      : { code: StatusCode.Unset }
     for (const error of errors) {
       events.push({
         name: "exception",
