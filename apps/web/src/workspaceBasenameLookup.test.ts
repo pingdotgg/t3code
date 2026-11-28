@@ -238,9 +238,16 @@ describe("agentWorkingDirectories", () => {
 
   it.each([
     { command: String.raw`echo marker \; cd /other`, expected: [] },
-    { command: String.raw`echo marker \\; cd /other`, expected: ["/other"] },
     { command: "echo ok; \\\ncd /other", expected: ["/other"] },
     { command: "cd \\\n/other", expected: ["/other"] },
+    { command: String.raw`echo C:\work\; cd /other`, expected: [] },
+    { command: "echo ok; \\\n# note; cd /other", expected: [] },
+    { command: String.raw`cd /repo C:\work\; cd /other`, expected: ["/repo"] },
+    { command: "c\\\nd /other", expected: ["/other"] },
+    { command: 'cd "/ot\\\nher"', expected: ["/other"] },
+    { command: "cd '/ot\\\nher'", expected: [] },
+    { command: "echo ok # \\\ncd /other", expected: ["/other"] },
+    { command: String.raw`echo marker \\; cd /other`, expected: ["/other"] },
     { command: String.raw`cd C:\ && dir`, expected: ["C:\\"] },
     {
       command: String.raw`cd C:\work\; cd D:\other`,
