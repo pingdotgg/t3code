@@ -225,6 +225,15 @@ export function mergePathEntries(
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
+// An empty POSIX PATH entry searches each child's own cwd (a workspace, the state dir), so
+// a PATH handed to children names the directory it meant: the one the process started in.
+export function anchorCurrentDirectoryEntry(pathValue: string, cwd: string): string {
+  return pathValue
+    .split(POSIX_PATH_DELIMITER)
+    .map((entry) => (entry === "" ? cwd : entry))
+    .join(POSIX_PATH_DELIMITER);
+}
+
 function envCaptureStart(name: string): string {
   return `__T3CODE_ENV_${name}_START__`;
 }

@@ -126,6 +126,30 @@ effectIt.effect("waits longer for only one hung login shell", () =>
   ),
 );
 
+effectIt.effect("anchors the login shell's current-directory entry to the server's cwd", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(NodeChildProcess, "execFileSync")
+        .mockReturnValue("__T3CODE_ENV_PATH_START__\n:/opt/tools/bin\n__T3CODE_ENV_PATH_END__\n"),
+    ),
+    () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/bash", PATH: "/usr/bin" };
+
+        yield* fixPath().pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provideService(HostProcess.WorkingDirectory, "/srv/launch"),
+          Effect.provide(NodeServices.layer),
+        );
+
+        assert.equal(env.PATH, "/srv/launch:/opt/tools/bin:/usr/bin");
+      }),
+    (probe) => Effect.sync(() => probe.mockRestore()),
+  ),
+);
+
 effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
   Effect.acquireUseRelease(
     Effect.sync(() =>

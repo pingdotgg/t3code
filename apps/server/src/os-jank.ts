@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  anchorCurrentDirectoryEntry,
   buildEnvironmentCaptureCommand,
   extractEnvironmentValues,
   listLoginShellCandidates,
@@ -55,6 +56,7 @@ function applyLoginShellEnvironment(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
   shellEnvironment: Partial<Record<string, string>>,
+  cwd: string,
   fallbackPath?: string,
 ): void {
   const shellPath = shellEnvironment.PATH;
@@ -75,7 +77,7 @@ function applyLoginShellEnvironment(
     platform,
   );
   if (mergedPath) {
-    env.PATH = mergedPath;
+    env.PATH = anchorCurrentDirectoryEntry(mergedPath, cwd);
   }
   if (shellPath && shellEnvironment.__MISE_DIFF) {
     env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
@@ -94,7 +96,7 @@ function applyLoginShellEnvironment(
   }
 }
 
-function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
+function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, cwd: string): void {
   let shellEnvironment: Partial<Record<string, string>> = {};
   let waitedForSlowShell = false;
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
@@ -123,7 +125,7 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
 
   const launchctlPath =
     platform === "darwin" && !shellEnvironment.PATH ? readPathFromLaunchctl() : undefined;
-  applyLoginShellEnvironment(env, platform, shellEnvironment, launchctlPath);
+  applyLoginShellEnvironment(env, platform, shellEnvironment, cwd, launchctlPath);
 }
 
 export function hydratePosixHome(
@@ -176,7 +178,8 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
     ),
   );
   if (options?.shellEnvironmentPrepared === true) return;
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
+  yield* HostProcess.WorkingDirectory.pipe(
+    Effect.flatMap((cwd) => Effect.sync(() => hydratePosixPath(env, platform, cwd))),
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
         logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
@@ -241,7 +244,12 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
   }
   const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
   if (shellEnvironment.PATH) {
-    applyLoginShellEnvironment(env, platform, shellEnvironment);
+    applyLoginShellEnvironment(
+      env,
+      platform,
+      shellEnvironment,
+      yield* HostProcess.WorkingDirectory,
+    );
   } else {
     yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
   }
