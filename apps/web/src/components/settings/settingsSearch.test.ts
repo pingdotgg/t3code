@@ -274,7 +274,6 @@ describe("searchSettings", () => {
     for (const teamsOnlyId of [
       "team-notification-sounds",
       "teams-notification-sound",
-      "teams-display-name",
       "teams-members",
       "teams-invites",
       "teams-mobile",
@@ -315,7 +314,7 @@ describe("searchSettings", () => {
     expect(searchSettings("mobile compatibility", teamItems).map((item) => item.id)).toContain(
       "teams-mobile",
     );
-    expect(searchSettings("display name", teamItems).map((item) => item.id)).toContain(
+    expect(searchSettings("display name", teamItems).map((item) => item.id)).not.toContain(
       "teams-display-name",
     );
   });

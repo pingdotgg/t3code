@@ -159,6 +159,7 @@ export const layer = HttpApiBuilder.group(
                   teamServiceOption.value,
                   threads,
                   options.upstreamCompat,
+                  sessionId,
                 ),
               ),
             )
@@ -293,14 +294,14 @@ export const layer = HttpApiBuilder.group(
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
           );
-          const projection =
-            Option.isSome(teamServiceOption) && upstreamCompat
-              ? yield* adaptThreadProjectionForUpstreamCompat(
-                  teamServiceOption.value,
-                  snapshot.projection,
-                  true,
-                )
-              : snapshot.projection;
+          const projection = Option.isSome(teamServiceOption)
+            ? yield* adaptThreadProjectionForUpstreamCompat(
+                teamServiceOption.value,
+                snapshot.projection,
+                upstreamCompat,
+                session.sessionId,
+              )
+            : snapshot.projection;
           const body = yield* encodeThreadSnapshotBody({
             snapshotSequence: snapshot.snapshotSequence,
             projection,
@@ -368,14 +369,14 @@ export const layer = HttpApiBuilder.group(
             undefined,
             args.query.deferWork === "1",
           ).pipe(traceLocalHandlerWork);
-          const projection =
-            Option.isSome(teamServiceOption) && upstreamCompat
-              ? yield* adaptThreadProjectionForUpstreamCompat(
-                  teamServiceOption.value,
-                  rawSnapshot.projection,
-                  true,
-                )
-              : rawSnapshot.projection;
+          const projection = Option.isSome(teamServiceOption)
+            ? yield* adaptThreadProjectionForUpstreamCompat(
+                teamServiceOption.value,
+                rawSnapshot.projection,
+                upstreamCompat,
+                session.sessionId,
+              )
+            : rawSnapshot.projection;
           const bounded = buildBoundedThreadProjection({
             projection,
             snapshotSequence: rawSnapshot.snapshotSequence,

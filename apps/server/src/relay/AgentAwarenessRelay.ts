@@ -57,6 +57,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TeamService from "../team/TeamService.ts";
+import { ignoreSharedRelaySnooze } from "../team/threadSnooze.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -729,7 +730,7 @@ export const make = Effect.gen(function* () {
       : Option.none<Project>();
     const rawSnapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
-      thread,
+      thread: yield* ignoreSharedRelaySnooze(teamService, thread),
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });

@@ -20,6 +20,7 @@ import {
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
+  type TeamThreadSnoozeState,
   type TeamThreadNote,
   type TeamTurnAttribution,
   type TeamView,
@@ -62,6 +63,7 @@ export interface TeamEnvironmentState {
   readonly views: ReadonlyArray<TeamView>;
   readonly invites: ReadonlyArray<TeamInvite>;
   readonly threadAttributions: ReadonlyArray<TeamThreadAttribution>;
+  readonly snoozedByThreadId: ReadonlyMap<ThreadId, TeamThreadSnoozeState>;
   readonly followedThreadIds: ReadonlySet<ThreadId>;
   readonly latestTurnByThreadId: ReadonlyMap<ThreadId, TeamTurnAttribution>;
   readonly turnAuthorByTurnId: ReadonlyMap<string, TeamTurnAttribution>;
@@ -94,6 +96,7 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   invites: [],
   threadAttributions: [],
   followedThreadIds: new Set(),
+  snoozedByThreadId: new Map(),
   latestTurnByThreadId: new Map(),
   turnAuthorByTurnId: new Map(),
   memberById: new Map(),
@@ -201,6 +204,7 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     invites: snapshot.invites,
     threadAttributions: snapshot.threadAttributions,
     followedThreadIds,
+    snoozedByThreadId: new Map(snapshot.threadSnoozes?.map((snooze) => [snooze.threadId, snooze])),
     latestTurnByThreadId,
     turnAuthorByTurnId,
     memberById,
@@ -236,33 +240,8 @@ export function applyTeamStreamEvent(
     case "teamDeleted":
       return EMPTY_TEAM_ENVIRONMENT_STATE;
 
-    case "teamUpdated": {
-      const nextTeam = event.payload;
-      const attributionByThreadId = new Map(current.attributionByThreadId);
-      let attributionsChanged = false;
-      for (const [threadId, attribution] of attributionByThreadId) {
-        if (
-          (attribution.ownerKind === "team" || attribution.creatorMemberId === null) &&
-          attribution.teamDisplayName !== nextTeam.displayName
-        ) {
-          attributionByThreadId.set(threadId, {
-            ...attribution,
-            teamDisplayName: nextTeam.displayName,
-          });
-          attributionsChanged = true;
-        }
-      }
-      return {
-        ...current,
-        team: nextTeam,
-        ...(attributionsChanged
-          ? {
-              threadAttributions: [...attributionByThreadId.values()],
-              attributionByThreadId,
-            }
-          : {}),
-      };
-    }
+    case "teamUpdated":
+      return { ...current, team: event.payload };
 
     case "memberUpserted": {
       const member = event.payload;
@@ -433,6 +412,8 @@ export function applyTeamStreamEvent(
       const hadAttribution = attributionByThreadId.delete(threadId);
       const followedThreadIds = new Set(current.followedThreadIds);
       const hadFollow = followedThreadIds.delete(threadId);
+      const snoozedByThreadId = new Map(current.snoozedByThreadId);
+      const hadSnooze = snoozedByThreadId.delete(threadId);
       const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
       const hadLatestTurn = latestTurnByThreadId.delete(threadId);
       const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
@@ -450,7 +431,14 @@ export function applyTeamStreamEvent(
       );
       const hadQueuedNotifications =
         filteredQueuedNotifications.length !== current.queuedMessageNotifications.length;
-      if (!hadAttribution && !hadFollow && !turnsChanged && !hadNotes && !hadQueuedNotifications) {
+      if (
+        !hadAttribution &&
+        !hadFollow &&
+        !hadSnooze &&
+        !turnsChanged &&
+        !hadNotes &&
+        !hadQueuedNotifications
+      ) {
         return current;
       }
       return {
@@ -462,12 +450,22 @@ export function applyTeamStreamEvent(
             }
           : {}),
         ...(hadFollow ? { followedThreadIds } : {}),
+        ...(hadSnooze ? { snoozedByThreadId } : {}),
         ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
         ...(hadNotes ? { threadNotesByThreadId } : {}),
         ...(hadQueuedNotifications
           ? { queuedMessageNotifications: filteredQueuedNotifications }
           : {}),
       };
+    }
+
+    case "threadSnoozeChanged": {
+      const { memberId, threadId, snooze } = event.payload;
+      if (current.currentMember?.id !== memberId) return current;
+      const snoozedByThreadId = new Map(current.snoozedByThreadId);
+      if (snooze === null) snoozedByThreadId.delete(threadId);
+      else snoozedByThreadId.set(threadId, snooze);
+      return { ...current, snoozedByThreadId };
     }
 
     case "threadFollowChanged": {
@@ -480,11 +478,13 @@ export function applyTeamStreamEvent(
         followedThreadIds.add(change.threadId);
       } else {
         followedThreadIds.delete(change.threadId);
+        if (current.snoozedByThreadId.has(change.threadId)) {
+          const snoozedByThreadId = new Map(current.snoozedByThreadId);
+          snoozedByThreadId.delete(change.threadId);
+          return { ...current, followedThreadIds, snoozedByThreadId };
+        }
       }
-      return {
-        ...current,
-        followedThreadIds,
-      };
+      return { ...current, followedThreadIds };
     }
 
     case "projectAssigned": {
@@ -755,10 +755,6 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:delete",
       tag: TEAM_WS_METHODS.teamDelete,
     }),
-    updateDisplayName: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:team:update-display-name",
-      tag: TEAM_WS_METHODS.teamUpdateDisplayName,
-    }),
     updateMyPseudo: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:update-my-pseudo",
       tag: TEAM_WS_METHODS.teamUpdateMyPseudo,
@@ -770,6 +766,14 @@ export function createTeamEnvironmentAtoms<R, E>(
     revokeInvite: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:revoke-invite",
       tag: TEAM_WS_METHODS.teamRevokeInvite,
+    }),
+    snoozeThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:snooze-thread",
+      tag: TEAM_WS_METHODS.teamSnoozeThread,
+    }),
+    unsnoozeThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:unsnooze-thread",
+      tag: TEAM_WS_METHODS.teamUnsnoozeThread,
     }),
     followThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:follow-thread",

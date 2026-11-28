@@ -29,6 +29,7 @@ import {
   type TeamScheduledTaskMeta,
   type TeamSessionBinding,
   type TeamThreadAttribution,
+  type TeamThreadSnoozeState,
   type TeamThreadNote,
   type TeamThreadNoteStatus,
   type TeamThreadOwnerKind,
@@ -200,10 +201,23 @@ export interface TeamLocalSyncWatermark {
   readonly updatedAt: string;
 }
 
+interface ThreadSnoozeRow {
+  readonly thread_id: string;
+  readonly snoozed_until: string | null;
+  readonly snoozed_at: string | null;
+  readonly last_snooze_wake_at: string | null;
+}
+
+const mapThreadSnoozeRow = (row: ThreadSnoozeRow): TeamThreadSnoozeState => ({
+  threadId: ThreadId.make(row.thread_id),
+  snoozedUntil: row.snoozed_until,
+  snoozedAt: row.snoozed_at,
+  lastSnoozeWakeAt: row.last_snooze_wake_at,
+});
+
 interface WorkspaceRow {
   readonly id: string;
   readonly name: string;
-  readonly display_name: string | null;
   readonly default_view_id: string;
   readonly created_at: string;
   readonly updated_at: string;
@@ -247,7 +261,6 @@ interface ThreadMetaRow {
   readonly owner_kind: TeamThreadOwnerKind;
   readonly creator_member_id: string | null;
   readonly creator_pseudo: string | null;
-  readonly team_display_name: string | null;
   readonly view_id: string;
   readonly locked: number;
   readonly locked_by_member_id: string | null;
@@ -349,20 +362,13 @@ interface AutomationTurnScopeRow {
   readonly created_at: string;
 }
 
-const mapWorkspaceRow = (row: WorkspaceRow): TeamWorkspace => {
-  const displayName =
-    row.display_name !== null && row.display_name.trim().length > 0
-      ? row.display_name.trim()
-      : row.name;
-  return {
-    id: TeamId.make(row.id),
-    name: row.name,
-    displayName,
-    defaultViewId: TeamViewId.make(row.default_view_id),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-};
+const mapWorkspaceRow = (row: WorkspaceRow): TeamWorkspace => ({
+  id: TeamId.make(row.id),
+  name: row.name,
+  defaultViewId: TeamViewId.make(row.default_view_id),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
 
 const mapMemberRow = (row: MemberRow): TeamMember => ({
   id: TeamMemberId.make(row.id),
@@ -439,7 +445,6 @@ const mapThreadMetaRow = (row: ThreadMetaRow): TeamThreadAttribution => ({
   ownerKind: row.owner_kind,
   creatorMemberId: row.creator_member_id !== null ? TeamMemberId.make(row.creator_member_id) : null,
   creatorPseudo: row.creator_pseudo !== null ? (row.creator_pseudo as TeamPseudo) : null,
-  ...(row.team_display_name !== null ? { teamDisplayName: row.team_display_name } : {}),
   viewId: TeamViewId.make(row.view_id),
   locked: row.locked === 1,
   lockedByMemberId:
@@ -586,11 +591,6 @@ export class TeamRepository extends Context.Service<
       void,
       TeamRepositoryError | TeamPseudoAlreadyTakenError | TeamAlreadyConfiguredError
     >;
-    readonly updateWorkspaceDisplayName: (input: {
-      readonly teamId: TeamId;
-      readonly displayName: string;
-      readonly updatedAt: string;
-    }) => Effect.Effect<Option.Option<TeamWorkspace>, TeamRepositoryError>;
     readonly listMembers: (
       teamId: TeamId,
     ) => Effect.Effect<ReadonlyArray<TeamMember>, TeamRepositoryError>;
@@ -841,6 +841,23 @@ export class TeamRepository extends Context.Service<
       readonly teamId: TeamId;
       readonly segment: string;
     }) => Effect.Effect<Option.Option<ThreadId>, TeamRepositoryError>;
+    readonly listThreadSnoozes: (
+      teamId: TeamId,
+      memberId: TeamMemberId,
+      threadIds?: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlyArray<TeamThreadSnoozeState>, TeamRepositoryError>;
+    readonly listSnoozedMembers: (
+      threadId: ThreadId,
+      now: string,
+    ) => Effect.Effect<ReadonlySet<TeamMemberId>, TeamRepositoryError>;
+    readonly setThreadSnooze: (input: {
+      readonly threadId: ThreadId;
+      readonly teamId: TeamId;
+      readonly memberId: TeamMemberId;
+      readonly snoozedUntil: string | null;
+      readonly now: string;
+      readonly expiredOnly?: boolean;
+    }) => Effect.Effect<TeamThreadSnoozeState | null, TeamRepositoryError>;
     readonly followThread: (input: {
       readonly threadId: ThreadId;
       readonly memberId: TeamMemberId;
@@ -849,7 +866,10 @@ export class TeamRepository extends Context.Service<
     readonly unfollowThread: (input: {
       readonly threadId: ThreadId;
       readonly memberId: TeamMemberId;
-    }) => Effect.Effect<boolean, TeamRepositoryError>;
+    }) => Effect.Effect<
+      { readonly unfollowed: boolean; readonly clearedSnooze: boolean },
+      TeamRepositoryError
+    >;
     readonly isFollowingThread: (input: {
       readonly threadId: ThreadId;
       readonly memberId: TeamMemberId;
@@ -1089,7 +1109,7 @@ const make = Effect.gen(function* () {
       const rows = yield* runSql(
         "getWorkspace",
         sql<WorkspaceRow>`
-          SELECT id, name, display_name, default_view_id, created_at, updated_at
+          SELECT id, name, default_view_id, created_at, updated_at
           FROM team_workspaces
           ORDER BY created_at ASC
           LIMIT 1
@@ -1109,12 +1129,11 @@ const make = Effect.gen(function* () {
               return yield* new TeamAlreadyConfiguredError({});
             }
             yield* sql`
-              INSERT INTO team_workspaces (id, singleton, name, display_name, default_view_id, created_at, updated_at)
+              INSERT INTO team_workspaces (id, singleton, name, default_view_id, created_at, updated_at)
               VALUES (
                 ${input.team.id},
                 1,
                 ${input.team.name},
-                ${input.team.displayName},
                 ${input.team.defaultViewId},
                 ${input.team.createdAt},
                 ${input.team.updatedAt}
@@ -1177,21 +1196,6 @@ const make = Effect.gen(function* () {
           }),
         );
     }),
-
-    updateWorkspaceDisplayName: Effect.fn("TeamRepository.updateWorkspaceDisplayName")(
-      function* (input) {
-        const rows = yield* runSql(
-          "updateWorkspaceDisplayName",
-          sql<WorkspaceRow>`
-            UPDATE team_workspaces
-            SET display_name = ${input.displayName}, updated_at = ${input.updatedAt}
-            WHERE id = ${input.teamId}
-            RETURNING id, name, display_name, default_view_id, created_at, updated_at
-          `,
-        );
-        return rows[0] ? Option.some(mapWorkspaceRow(rows[0])) : Option.none();
-      },
-    ),
 
     listMembers: Effect.fn("TeamRepository.listMembers")(function* (teamId) {
       const rows = yield* runSql(
@@ -1488,6 +1492,7 @@ const make = Effect.gen(function* () {
             const updatedViews: Array<TeamView> = [];
             const updatedEnvironments: Array<TeamEnvironment> = [];
             if (input.status === "removed") {
+              yield* sql`DELETE FROM team_thread_snoozes WHERE member_id = ${input.memberId}`;
               const views = yield* sql<ViewRow>`
                 SELECT id, team_id, name, description, is_default,
                        read_roles_json, read_member_ids_json,
@@ -1638,6 +1643,7 @@ const make = Effect.gen(function* () {
               SET status = 'removed', updated_at = ${input.updatedAt}
               WHERE id = ${input.memberId} AND team_id = ${input.teamId}
             `;
+            yield* sql`DELETE FROM team_thread_snoozes WHERE member_id = ${input.memberId}`;
             yield* sql`
               DELETE FROM team_thread_follows
               WHERE member_id = ${input.memberId}
@@ -1881,6 +1887,7 @@ const make = Effect.gen(function* () {
               WHERE thread_id IN (SELECT thread_id FROM team_thread_meta WHERE team_id = ${teamId})
                  OR author_member_id IN (SELECT id FROM team_members WHERE team_id = ${teamId})
             `;
+            yield* sql`DELETE FROM team_thread_snoozes WHERE team_id = ${teamId}`;
             yield* sql`DELETE FROM team_thread_meta WHERE team_id = ${teamId}`;
             yield* sql`DELETE FROM team_session_meta WHERE team_id = ${teamId}`;
             yield* sql`DELETE FROM team_invites WHERE team_id = ${teamId}`;
@@ -2280,13 +2287,12 @@ const make = Effect.gen(function* () {
         "recordThreadAttribution.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                 t.view_id, t.locked, t.locked_by_member_id,
+                                  t.view_id, t.locked, t.locked_by_member_id,
                  t.execution_environment_id, el.execution_environment_label,
                  t.is_local_synced, t.created_at
           FROM team_thread_meta t
           LEFT JOIN team_members m ON m.id = t.creator_member_id
-          LEFT JOIN team_workspaces w ON w.id = t.team_id
+
           LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
@@ -2358,13 +2364,12 @@ const make = Effect.gen(function* () {
             }
             const rows = yield* sql<ThreadMetaRow>`
               SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                     COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                     t.view_id, t.locked, t.locked_by_member_id,
+                                          t.view_id, t.locked, t.locked_by_member_id,
                      t.execution_environment_id, el.execution_environment_label,
                      t.is_local_synced, t.created_at
               FROM team_thread_meta t
               LEFT JOIN team_members m ON m.id = t.creator_member_id
-              LEFT JOIN team_workspaces w ON w.id = t.team_id
+
               LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
               WHERE t.thread_id = ${input.threadId}
               LIMIT 1
@@ -2453,13 +2458,12 @@ const make = Effect.gen(function* () {
         "updateThreadView.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                 t.view_id, t.locked, t.locked_by_member_id,
+                                  t.view_id, t.locked, t.locked_by_member_id,
                  t.execution_environment_id, el.execution_environment_label,
                  t.is_local_synced, t.created_at
           FROM team_thread_meta t
           LEFT JOIN team_members m ON m.id = t.creator_member_id
-          LEFT JOIN team_workspaces w ON w.id = t.team_id
+
           LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
@@ -2486,13 +2490,12 @@ const make = Effect.gen(function* () {
         "updateThreadLocked.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                 t.view_id, t.locked, t.locked_by_member_id,
+                                  t.view_id, t.locked, t.locked_by_member_id,
                  t.execution_environment_id, el.execution_environment_label,
                  t.is_local_synced, t.created_at
           FROM team_thread_meta t
           LEFT JOIN team_members m ON m.id = t.creator_member_id
-          LEFT JOIN team_workspaces w ON w.id = t.team_id
+
           LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
@@ -2507,6 +2510,7 @@ const make = Effect.gen(function* () {
           "deleteThreadAttribution",
           sql.withTransaction(
             Effect.gen(function* () {
+              yield* sql`DELETE FROM team_thread_snoozes WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_thread_env_labels WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_local_sync_watermarks WHERE thread_id = ${threadId}`;
@@ -2541,13 +2545,12 @@ const make = Effect.gen(function* () {
         "listThreadAttributions",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                 t.view_id, t.locked, t.locked_by_member_id,
+                                  t.view_id, t.locked, t.locked_by_member_id,
                  t.execution_environment_id, el.execution_environment_label,
                  t.is_local_synced, t.created_at
           FROM team_thread_meta t
           LEFT JOIN team_members m ON m.id = t.creator_member_id
-          LEFT JOIN team_workspaces w ON w.id = t.team_id
+
           LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.team_id = ${teamId}
           ORDER BY t.created_at DESC
@@ -2561,13 +2564,12 @@ const make = Effect.gen(function* () {
         "getThreadAttribution",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.owner_kind, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 COALESCE(NULLIF(TRIM(w.display_name), ''), w.name) AS team_display_name,
-                 t.view_id, t.locked, t.locked_by_member_id,
+                                  t.view_id, t.locked, t.locked_by_member_id,
                  t.execution_environment_id, el.execution_environment_label,
                  t.is_local_synced, t.created_at
           FROM team_thread_meta t
           LEFT JOIN team_members m ON m.id = t.creator_member_id
-          LEFT JOIN team_workspaces w ON w.id = t.team_id
+
           LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${threadId}
           LIMIT 1
@@ -2854,6 +2856,68 @@ const make = Effect.gen(function* () {
       },
     ),
 
+    listThreadSnoozes: Effect.fn("TeamRepository.listThreadSnoozes")(
+      function* (teamId, memberId, threadIds) {
+        if (threadIds?.length === 0) return [];
+        const rows = yield* runSql(
+          "listThreadSnoozes",
+          sql<ThreadSnoozeRow>`
+        SELECT thread_id, snoozed_until, snoozed_at, last_snooze_wake_at
+        FROM team_thread_snoozes
+        WHERE team_id = ${teamId} AND member_id = ${memberId}
+        ${threadIds === undefined ? sql`` : sql`AND ${sql.in("thread_id", threadIds)}`}
+      `,
+        );
+        return rows.map(mapThreadSnoozeRow);
+      },
+    ),
+    listSnoozedMembers: Effect.fn("TeamRepository.listSnoozedMembers")(function* (threadId, now) {
+      const rows = yield* runSql(
+        "listSnoozedMembers",
+        sql<{ readonly member_id: string }>`
+        SELECT member_id FROM team_thread_snoozes
+        WHERE thread_id = ${threadId} AND snoozed_until > ${now}
+      `,
+      );
+      return new Set(rows.map((row) => TeamMemberId.make(row.member_id)));
+    }),
+    setThreadSnooze: Effect.fn("TeamRepository.setThreadSnooze")(function* (input) {
+      const { threadId, teamId, memberId, snoozedUntil, now, expiredOnly } = input;
+      const rows = yield* runSql(
+        "setThreadSnooze",
+        snoozedUntil === null
+          ? sql<ThreadSnoozeRow>`
+            UPDATE team_thread_snoozes
+            SET last_snooze_wake_at = MIN(snoozed_until, ${now}),
+                snoozed_until = NULL, snoozed_at = NULL, updated_at = ${now}
+            WHERE thread_id = ${threadId} AND team_id = ${teamId} AND member_id = ${memberId}
+              AND snoozed_until IS NOT NULL
+              ${expiredOnly ? sql`AND snoozed_until <= ${now}` : sql``}
+            RETURNING thread_id, snoozed_until, snoozed_at, last_snooze_wake_at
+          `
+          : sql<ThreadSnoozeRow>`
+            INSERT INTO team_thread_snoozes
+              (thread_id, team_id, member_id, snoozed_until, snoozed_at, updated_at)
+            SELECT ${threadId}, ${teamId}, ${memberId}, ${snoozedUntil}, ${now}, ${now}
+            FROM team_thread_meta t
+            JOIN team_members m ON m.id = ${memberId} AND m.team_id = t.team_id
+            WHERE t.thread_id = ${threadId} AND t.team_id = ${teamId} AND m.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_threads p
+                WHERE p.thread_id = t.thread_id AND p.deleted_at IS NOT NULL
+              )
+              AND (t.creator_member_id = m.id OR EXISTS (
+                SELECT 1 FROM team_thread_follows f WHERE f.thread_id = t.thread_id AND f.member_id = m.id
+              ))
+            ON CONFLICT(thread_id, member_id) DO UPDATE SET
+              snoozed_until = excluded.snoozed_until, snoozed_at = excluded.snoozed_at,
+              updated_at = excluded.updated_at
+            RETURNING thread_id, snoozed_until, snoozed_at, last_snooze_wake_at
+          `,
+      );
+      return rows[0] ? mapThreadSnoozeRow(rows[0]) : null;
+    }),
+
     followThread: Effect.fn("TeamRepository.followThread")(function* (input) {
       const rows = yield* runSql(
         "followThread",
@@ -2867,15 +2931,25 @@ const make = Effect.gen(function* () {
     }),
 
     unfollowThread: Effect.fn("TeamRepository.unfollowThread")(function* (input) {
-      const rows = yield* runSql(
+      return yield* runSql(
         "unfollowThread",
-        sql<{ readonly thread_id: string }>`
-          DELETE FROM team_thread_follows
-          WHERE thread_id = ${input.threadId} AND member_id = ${input.memberId}
-          RETURNING thread_id
-        `,
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const follows = yield* sql`
+            DELETE FROM team_thread_follows
+            WHERE thread_id = ${input.threadId} AND member_id = ${input.memberId}
+            RETURNING thread_id
+          `;
+            if (follows.length === 0) return { unfollowed: false, clearedSnooze: false };
+            const snoozes = yield* sql`
+              DELETE FROM team_thread_snoozes
+              WHERE thread_id = ${input.threadId} AND member_id = ${input.memberId}
+              RETURNING thread_id
+            `;
+            return { unfollowed: true, clearedSnooze: snoozes.length > 0 };
+          }),
+        ),
       );
-      return rows.length > 0;
     }),
 
     isFollowingThread: Effect.fn("TeamRepository.isFollowingThread")(function* (input) {

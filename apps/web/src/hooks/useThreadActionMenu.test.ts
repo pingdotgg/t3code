@@ -65,6 +65,7 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/team", () => ({
+  readTeamThreadLocation: () => null,
   readTeamThreadFollowActionState: () => null,
   readTeamThreadAccessActionState: () => ({ teamView: null, teamLock: null }),
   readTeamThreadPostPermission: () => ({ canPost: true, blockReason: null }),

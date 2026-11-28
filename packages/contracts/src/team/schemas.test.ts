@@ -8,7 +8,6 @@ import {
   canChangeThreadTeamView,
   canManagePrivilegedTeamScheduledTasks,
   canManageTeamAutomationGitHub,
-  canManageTeamDisplayName,
   canManageTeamEnvironments,
   canManageTeamInvites,
   canManageTeamPreprompts,
@@ -21,7 +20,6 @@ import {
   canMemberReadTeamScheduledTask,
   canMemberSeeTeamScheduledTaskWebhook,
   resolveScheduledTaskScope,
-  resolveTeamDisplayName,
   defaultTeamProviderDeliveryStrategy,
   isTeamProviderInstanceId,
   isTeamProviderInstanceIdForTeam,
@@ -805,7 +803,7 @@ describe("Milestone 6 team providers, skills, and pre-prompts contracts", () => 
   });
 });
 
-describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-owned threads", () => {
+describe("Milestone 8 scheduled-task scoping & RBAC, and team-owned threads", () => {
   const owner = {
     id: TeamMemberId.make("m8-owner"),
     role: "owner" as const,
@@ -845,16 +843,7 @@ describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-
     postRule: { roles: ["owner", "admin"] as const, memberIds: [] },
   };
 
-  it("resolves team displayName (defaulting to name) and hidden personal scheduled-task scope", () => {
-    expect(resolveTeamDisplayName("Acme Corp", undefined)).toBe("Acme Corp");
-    expect(resolveTeamDisplayName("Acme Corp", "   ")).toBe("Acme Corp");
-    expect(resolveTeamDisplayName("Acme Corp", "  Acme Bot  ")).toBe("Acme Bot");
-
-    expect(canManageTeamDisplayName("owner")).toBe(true);
-    expect(canManageTeamDisplayName("admin")).toBe(true);
-    expect(canManageTeamDisplayName("modo")).toBe(false);
-    expect(canManageTeamDisplayName("regular")).toBe(false);
-
+  it("resolves hidden personal scheduled-task scope", () => {
     const envId = EnvironmentId.make("env-1");
     const teamId = TeamId.make("team-1");
     expect(resolveScheduledTaskScope(null, envId)).toEqual({

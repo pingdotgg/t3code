@@ -130,16 +130,14 @@ describe("upstreamMobileCompat pure helpers", () => {
     const memberCtx = {
       ownerKind: "member" as const,
       creatorPseudo: "alice",
-      teamDisplayName: "acme",
     };
     const teamCtx = {
       ownerKind: "team" as const,
       creatorPseudo: null,
-      teamDisplayName: "acme",
     };
 
     expect(resolveTeamThreadTitlePrefix(memberCtx)).toBe("alice");
-    expect(resolveTeamThreadTitlePrefix(teamCtx)).toBe("acme");
+    expect(resolveTeamThreadTitlePrefix(teamCtx)).toBe("scheduled");
 
     expect(formatUpstreamCompatThreadTitle("Fix login bug", memberCtx)).toBe(
       "alice: Fix login bug",
@@ -147,9 +145,11 @@ describe("upstreamMobileCompat pure helpers", () => {
     expect(formatUpstreamCompatThreadTitle("alice: Fix login bug", memberCtx)).toBe(
       "alice: Fix login bug",
     );
-    expect(formatUpstreamCompatThreadTitle("Nightly triage", teamCtx)).toBe("acme: Nightly triage");
-    expect(formatUpstreamCompatThreadTitle("acme: Nightly triage", teamCtx)).toBe(
-      "acme: Nightly triage",
+    expect(formatUpstreamCompatThreadTitle("Nightly triage", teamCtx)).toBe(
+      "scheduled: Nightly triage",
+    );
+    expect(formatUpstreamCompatThreadTitle("scheduled: Nightly triage", teamCtx)).toBe(
+      "scheduled: Nightly triage",
     );
 
     // Rename hygiene: strips single or repeated matching leading prefixes without touching unrelated prefixes.
@@ -171,12 +171,12 @@ describe("upstreamMobileCompat pure helpers", () => {
     );
     expect(stripUpstreamCompatThreadTitlePrefix("alice:", memberCtx)).toBe("alice:");
     expect(formatUpstreamCompatThreadTitle("alice:", memberCtx)).toBe("alice:");
-    expect(stripUpstreamCompatThreadTitlePrefix("acme: Nightly triage v2", teamCtx)).toBe(
+    expect(stripUpstreamCompatThreadTitlePrefix("scheduled: Nightly triage v2", teamCtx)).toBe(
       "Nightly triage v2",
     );
 
     // Non-ASCII case-folding length change ("İstanbul".toLowerCase() can have 2 code units for İ).
-    const unicodeTeamCtx = { ownerKind: "team" as const, teamDisplayName: "İstanbul" };
+    const unicodeTeamCtx = { ownerKind: "member" as const, creatorPseudo: "İstanbul" };
     expect(formatUpstreamCompatThreadTitle("Deploy", unicodeTeamCtx)).toBe("İstanbul: Deploy");
     expect(formatUpstreamCompatThreadTitle("İstanbul: Deploy", unicodeTeamCtx)).toBe(
       "İstanbul: Deploy",
@@ -1034,7 +1034,7 @@ describe("upstreamMobileCompat integration", () => {
   );
 
   it.effect(
-    "Milestone 8: prefixes team-owned threads with live team.displayName, strips prefix on rename, and hides unfollowed team threads in owned_and_followed mode",
+    "Milestone 8: prefixes team-owned threads with scheduled:, strips prefix on rename, and hides unfollowed team threads in owned_and_followed mode",
     () =>
       Effect.gen(function* () {
         const teamService = yield* TeamService.TeamService;
@@ -1048,7 +1048,7 @@ describe("upstreamMobileCompat integration", () => {
         });
         yield* teamService.initializeTeam({
           sessionId: ownerSession.sessionId,
-          payload: { name: "Acme Corp", displayName: "Acme Bot", ownerPseudo: "alice" },
+          payload: { name: "Acme Corp", ownerPseudo: "alice" },
         });
         const bobInvite = yield* teamService.createInvite({
           sessionId: ownerSession.sessionId,
@@ -1069,24 +1069,14 @@ describe("upstreamMobileCompat integration", () => {
           projectId: ProjectId.make("proj-m8-mobile"),
         });
 
-        // 1. Dynamic prefix uses team.displayName & rename strips it.
+        // 1. Dynamic prefix uses scheduled: & rename strips it.
         const ctxMap1 = yield* teamService.getThreadTitlePrefixContextMap([teamThreadId]);
         const ctx1 = ctxMap1.get(teamThreadId);
         expect(formatUpstreamCompatThreadTitle("Daily triage", ctx1)).toBe(
-          "Acme Bot: Daily triage",
+          "scheduled: Daily triage",
         );
-        expect(stripUpstreamCompatThreadTitlePrefix("Acme Bot: Daily triage v2", ctx1)).toBe(
+        expect(stripUpstreamCompatThreadTitlePrefix("scheduled: Daily triage v2", ctx1)).toBe(
           "Daily triage v2",
-        );
-
-        // 2. Updating team.displayName updates prefix dynamically.
-        yield* teamService.updateDisplayName({
-          sessionId: ownerSession.sessionId,
-          payload: { displayName: "Ops Bot" },
-        });
-        const ctxMap2 = yield* teamService.getThreadTitlePrefixContextMap([teamThreadId]);
-        expect(formatUpstreamCompatThreadTitle("Daily triage", ctxMap2.get(teamThreadId))).toBe(
-          "Ops Bot: Daily triage",
         );
 
         // 3. In default `owned_and_followed` mode, Bob does NOT see unfollowed team-owned threads until following.
@@ -1115,7 +1105,7 @@ describe("upstreamMobileCompat integration", () => {
           true,
         );
         expect(afterFollow.threads.map((t) => [t.id, t.title])).toEqual([
-          [teamThreadId, "Ops Bot: Daily triage"],
+          [teamThreadId, "scheduled: Daily triage"],
         ]);
       }).pipe(Effect.provide(makeTestLayer())),
   );

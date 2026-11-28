@@ -452,7 +452,6 @@ describe("TeamProviderManager", () => {
             team: {
               id: teamId,
               name: "Server Team",
-              displayName: "Server Team",
               defaultViewId: TeamViewId.make("view-default"),
               createdAt: now,
               updatedAt: now,

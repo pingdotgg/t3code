@@ -99,9 +99,6 @@ export function makeTeamWsRpcHandlers(
           ? { scheduledTaskService: deps.scheduledTaskService }
           : {}),
       }),
-    [TEAM_WS_METHODS.teamUpdateDisplayName]: (
-      payload: Parameters<typeof teamService.updateDisplayName>[0]["payload"],
-    ) => teamService.updateDisplayName({ sessionId, payload }),
     [TEAM_WS_METHODS.teamUpdateMyPseudo]: (
       payload: Parameters<typeof teamService.updateMyPseudo>[0]["payload"],
     ) => teamService.updateMyPseudo({ sessionId, payload }),
@@ -152,6 +149,12 @@ export function makeTeamWsRpcHandlers(
       teamService
         .listThreadAttributions(sessionId)
         .pipe(Effect.map((attributions) => ({ attributions }))),
+    [TEAM_WS_METHODS.teamSnoozeThread]: (
+      payload: Parameters<typeof teamService.snoozeThread>[0]["payload"],
+    ) => teamService.snoozeThread({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamUnsnoozeThread]: (
+      payload: Parameters<typeof teamService.unsnoozeThread>[0]["payload"],
+    ) => teamService.unsnoozeThread({ sessionId, payload }),
     [TEAM_WS_METHODS.teamFollowThread]: (
       payload: Parameters<typeof teamService.followThread>[0]["payload"],
     ) => teamService.followThread({ sessionId, payload }),
@@ -512,22 +515,12 @@ export const filterShellSnapshotForSession = Effect.fn("TeamWsHandlers.filterShe
     snapshot: OrchestrationV2ShellSnapshot,
     options?: { readonly upstreamCompat?: boolean },
   ) {
-    if (options?.upstreamCompat === true) {
-      return yield* adaptShellSnapshotForUpstreamCompat(teamService, sessionId, snapshot, true);
-    }
-    if (!(yield* teamService.isTeamConfigured())) {
-      return snapshot;
-    }
-    const allIds = [
-      ...snapshot.threads.map((thread) => thread.id),
-      ...snapshot.archivedThreads.map((thread) => thread.id),
-    ];
-    const readableIds = yield* teamService.filterReadableThreadIds(sessionId, allIds);
-    return {
-      ...snapshot,
-      threads: snapshot.threads.filter((thread) => readableIds.has(thread.id)),
-      archivedThreads: snapshot.archivedThreads.filter((thread) => readableIds.has(thread.id)),
-    };
+    return yield* adaptShellSnapshotForUpstreamCompat(
+      teamService,
+      sessionId,
+      snapshot,
+      options?.upstreamCompat === true,
+    );
   },
 );
 
@@ -538,25 +531,12 @@ const filterShellStreamItemForSession = Effect.fn("TeamWsHandlers.filterShellStr
     item: OrchestrationV2ShellStreamItem,
     options?: { readonly upstreamCompat?: boolean },
   ): Effect.fn.Return<OrchestrationV2ShellStreamItem | null> {
-    if (options?.upstreamCompat === true) {
-      return yield* adaptShellStreamItemForUpstreamCompat(teamService, sessionId, item, true);
-    }
-    if (item.kind === "snapshot") {
-      if (item.snapshot.threads.length === 0 && item.snapshot.archivedThreads.length === 0) {
-        return item;
-      }
-      const filtered = yield* filterShellSnapshotForSession(teamService, sessionId, item.snapshot);
-      return { ...item, snapshot: filtered };
-    }
-    if (item.kind === "thread.updated") {
-      const readable = yield* teamService.canReadThread(sessionId, item.thread.id);
-      return readable ? item : null;
-    }
-    if (item.kind === "thread.removed") {
-      const readable = yield* teamService.canReadThread(sessionId, item.threadId);
-      return readable ? item : null;
-    }
-    return item;
+    return yield* adaptShellStreamItemForUpstreamCompat(
+      teamService,
+      sessionId,
+      item,
+      options?.upstreamCompat === true,
+    );
   },
 );
 
@@ -583,9 +563,12 @@ export const filterSearchThreadsResultForSession = Effect.fn(
       ? {}
       : { threads: result.threads.filter((thread) => readableIds.has(thread.id)) }),
   };
-  return options?.upstreamCompat === true
-    ? yield* adaptSearchThreadsResultForUpstreamCompat(teamService, filtered, true)
-    : filtered;
+  return yield* adaptSearchThreadsResultForUpstreamCompat(
+    teamService,
+    filtered,
+    options?.upstreamCompat === true,
+    sessionId,
+  );
 });
 
 export const filterThreadTitlesForSession = Effect.fn("TeamWsHandlers.filterThreadTitles")(
@@ -616,16 +599,82 @@ export const filterThreadLinkMetadataForSession = Effect.fn(
     : filtered;
 });
 
+export const teamThreadSubscriptionInput = Effect.fn("TeamWsHandlers.threadSubscriptionInput")(
+  function* <T extends { readonly afterSequence?: number }>(
+    teamService: TeamService.TeamService["Service"],
+    input: T,
+  ) {
+    if (input.afterSequence === undefined || !(yield* teamService.isTeamConfigured())) return input;
+    // Snooze changes are private to the member and have no shared event sequence to replay.
+    const { afterSequence: _afterSequence, ...snapshotInput } = input;
+    return snapshotInput;
+  },
+);
+
 export const adaptThreadStreamForSession = <E, R>(
   teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  threadId: ThreadId,
   stream: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>,
+  snapshot: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>,
   options?: { readonly upstreamCompat?: boolean },
 ): Stream.Stream<OrchestrationV2ThreadStreamItem, E, R> =>
-  options?.upstreamCompat === true
-    ? stream.pipe(
-        Stream.mapEffect((item) => adaptThreadStreamItemForUpstreamCompat(teamService, item, true)),
-      )
-    : stream;
+  Stream.suspend(() => {
+    let deliveredSequence = -1;
+    return Stream.merge(
+      stream,
+      teamService.subscribeAccessChanges().pipe(
+        Stream.filterEffect((change) =>
+          change.type === "memberSnooze" && change.threadId === threadId
+            ? teamService.shouldRefreshShellForAccessChange(sessionId, change)
+            : Effect.succeed(false),
+        ),
+        Stream.flatMap(() => snapshot.pipe(Stream.take(1))),
+      ),
+      { haltStrategy: "left" },
+    ).pipe(
+      Stream.filter((item) => {
+        if (item.kind === "synchronized") return true;
+        const sequence = item.kind === "snapshot" ? item.snapshotSequence : item.sequence;
+        if (sequence < deliveredSequence) return false;
+        deliveredSequence = sequence;
+        return true;
+      }),
+      Stream.mapEffect((item) =>
+        adaptThreadStreamItemForUpstreamCompat(
+          teamService,
+          item,
+          options?.upstreamCompat === true,
+          sessionId,
+        ),
+      ),
+    );
+  });
+
+export const interceptTeamThreadSnooze = Effect.fn("TeamWsHandlers.interceptTeamThreadSnooze")(
+  function* (
+    teamService: TeamService.TeamService["Service"],
+    sessionId: AuthSessionId,
+    command: OrchestrationV2Command,
+  ) {
+    if (
+      command.type !== "thread.snooze" &&
+      command.type !== "thread.unsnooze" &&
+      command.type !== "thread.visit" &&
+      command.type !== "thread.mark-unread"
+    )
+      return false;
+    if (!(yield* teamService.isTeamConfigured())) return false;
+    const expiredOnly = command.type === "thread.visit" || command.type === "thread.mark-unread";
+    yield* teamService.updateActorThreadSnooze({
+      actor: { kind: "session", sessionId },
+      threadId: command.threadId,
+      snoozedUntil: command.type === "thread.snooze" ? command.snoozedUntil : null,
+      expiredOnly,
+    });
+    return !expiredOnly;
+  },
+);
 
 export const filterThreadRecordByReadableIds = Effect.fn(
   "TeamWsHandlers.filterThreadRecordByReadableIds",
@@ -805,6 +854,7 @@ export const guardThreadScopedStreamForSession = <A, E, R>(
             if (
               change.type === "memberVisibility" ||
               change.type === "memberFollow" ||
+              change.type === "memberSnooze" ||
               change.type === "memberPseudo" ||
               (change.type === "threadView" && change.threadId !== threadId)
             ) {

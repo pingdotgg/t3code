@@ -92,7 +92,6 @@ const bobThreadId = ThreadId.make("thread-bob");
 const team: TeamWorkspace = {
   id: teamId,
   name: "Core Team",
-  displayName: "Core Team",
   defaultViewId: viewId,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1356,7 +1355,6 @@ describe("team client-runtime state and presentation", () => {
         team: {
           id: teamId,
           name: "Acme",
-          displayName: "Acme",
           defaultViewId: viewId,
           createdAt: now,
           updatedAt: now,
@@ -1495,7 +1493,7 @@ describe("team client-runtime state and presentation", () => {
     expect(state.githubAppConfig).toBeNull();
   });
 
-  it("handles Milestone 8 team displayName updates, team-owned threads, and scheduled-task metadata/RBAC", () => {
+  it("handles Milestone 8 team-owned threads, and scheduled-task metadata/RBAC", () => {
     const teamThreadId = ThreadId.make("thread-team-auto-1");
     const taskMinId = ScheduledTaskId.make("task-min");
     const taskElevId = ScheduledTaskId.make("task-elev");
@@ -1537,7 +1535,7 @@ describe("team client-runtime state and presentation", () => {
       version: 1,
       type: "snapshot",
       payload: {
-        team: { ...team, displayName: "Acme Bot" },
+        team,
         currentMember: modoMember,
         members: [alice, modoMember],
         views: [defaultView, opsView],
@@ -1549,7 +1547,6 @@ describe("team client-runtime state and presentation", () => {
             ownerKind: "team",
             creatorMemberId: null,
             creatorPseudo: null,
-            teamDisplayName: "Acme Bot",
             viewId: secondaryViewId,
             locked: false,
             lockedByMemberId: null,
@@ -1609,11 +1606,11 @@ describe("team client-runtime state and presentation", () => {
       },
     });
 
-    // Team-owned thread renders with displayName, hides by default like colleagues, and produces zero notifications.
+    // Team-owned thread renders with scheduled prefix, hides by default like colleagues, and produces zero notifications.
     expect(isTeamOwnedThread({ teamState: state, threadId: teamThreadId })).toBe(true);
     expect(isTeamColleagueThread({ teamState: state, threadId: teamThreadId })).toBe(true);
     expect(resolveTeamThreadCreatorPseudo({ teamState: state, threadId: teamThreadId })).toBe(
-      "Acme Bot",
+      "scheduled",
     );
     const teamStates = new Map([[envId, state]]);
     expect(
@@ -1640,22 +1637,13 @@ describe("team client-runtime state and presentation", () => {
       }),
     ).toBe("suppress");
 
-    // Live teamUpdated updates displayName on team-owned thread prefix & queued automation label.
-    state = applyTeamStreamEvent(state, {
-      version: 1,
-      type: "teamUpdated",
-      payload: { ...team, displayName: "Ops Bot" },
-    });
-    expect(resolveTeamThreadCreatorPseudo({ teamState: state, threadId: teamThreadId })).toBe(
-      "Ops Bot",
-    );
     expect(
       resolveTeamQueuedRunAuthorPseudo({
         teamState: state,
         threadId: teamThreadId,
         runId: "run-auto-1",
       }),
-    ).toBe("Ops Bot");
+    ).toBe(team.name);
 
     // Modo cannot steer/promote an active automation turn on the team-owned thread,
     // DOES get explicit Interrupt on an UNLOCKED team-owned thread, and loses Interrupt when LOCKED.
@@ -1709,7 +1697,6 @@ describe("team client-runtime state and presentation", () => {
         ownerKind: "member",
         creatorMemberId: state.currentMember!.id,
         creatorPseudo: state.currentMember!.pseudo,
-        teamDisplayName: "Ops Bot",
         viewId,
         locked: true,
         lockedByMemberId: alice.id,
@@ -1767,7 +1754,6 @@ describe("team client-runtime state and presentation", () => {
         ownerKind: "team",
         creatorMemberId: null,
         creatorPseudo: null,
-        teamDisplayName: "Ops Bot",
         viewId,
         locked: true,
         lockedByMemberId: null,
@@ -1861,7 +1847,6 @@ describe("team client-runtime state and presentation", () => {
       team: {
         id: teamAId,
         name: "Alpha",
-        displayName: "Alpha",
         defaultViewId: viewAId,
         createdAt: now,
         updatedAt: now,
@@ -1893,7 +1878,6 @@ describe("team client-runtime state and presentation", () => {
       team: {
         id: teamBId,
         name: "Beta",
-        displayName: "Beta",
         defaultViewId: TeamViewId.make("view-beta"),
         createdAt: now,
         updatedAt: now,
@@ -2029,7 +2013,6 @@ describe("team client-runtime state and presentation", () => {
     const teamWorkspace = {
       id: teamId,
       name: "Hub Team",
-      displayName: "Hub Team",
       defaultViewId: viewId,
       createdAt: now,
       updatedAt: now,
@@ -2272,5 +2255,42 @@ describe("team client-runtime state and presentation", () => {
     expect(correlated?.teamEnvironmentId).toBe(hubEnvId);
     expect(correlated?.attribution.locked).toBe(true);
     expect(correlated?.attribution.creatorPseudo).toBe("alice");
+
+    const runnerTeamStates = new Map(teamStates).set(hubEnvId, {
+      ...hubState,
+      attributionByThreadId: new Map(hubState.attributionByThreadId).set(syncedThreadId, {
+        ...correlated!.attribution,
+        isLocalSynced: false,
+        executionEnvironmentId: runnerEnvId,
+      }),
+    });
+    expect(
+      resolveCorrelatedLocalSyncedTeamThread({
+        environmentId: runnerEnvId,
+        threadId: syncedThreadId,
+        teamStates: runnerTeamStates,
+      })?.teamEnvironmentId,
+    ).toBe(hubEnvId);
+
+    const member = hubState.currentMember!;
+    const snooze = {
+      threadId: syncedThreadId,
+      snoozedUntil: "2026-11-29T00:00:00Z",
+      snoozedAt: now,
+      lastSnoozeWakeAt: null,
+    };
+    const snoozed = applyTeamStreamEvent(hubState, {
+      version: 1,
+      type: "threadSnoozeChanged",
+      payload: { memberId: member.id, threadId: syncedThreadId, snooze },
+    });
+    expect(snoozed.snoozedByThreadId.get(syncedThreadId)).toEqual(snooze);
+    expect(
+      applyTeamStreamEvent(snoozed, {
+        version: 1,
+        type: "threadFollowChanged",
+        payload: { memberId: member.id, threadId: syncedThreadId, isFollowing: false },
+      }).snoozedByThreadId.has(syncedThreadId),
+    ).toBe(false);
   });
 });

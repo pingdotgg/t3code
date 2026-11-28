@@ -340,16 +340,22 @@ test("unmodified upstream mobile client inherits member identity via standard pa
 
         // Keep a live subscribeShell stream open throughout so we prove live push on follow & visibility toggle!
         const liveShellThreads = new Map<string, string>();
+        const liveSnoozes = new Map<string, string>();
         const shellFiber = yield* mobileClient[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
           Stream.runForEach((item: OrchestrationV2ShellStreamItem) =>
             Effect.sync(() => {
               if (item.kind === "snapshot") {
                 liveShellThreads.clear();
+                liveSnoozes.clear();
                 for (const t of item.snapshot.threads) {
                   liveShellThreads.set(t.id, t.title);
+                  if (t.snoozedUntil != null)
+                    liveSnoozes.set(t.id, DateTime.formatIso(t.snoozedUntil));
                 }
               } else if (item.kind === "thread.updated") {
                 liveShellThreads.set(item.thread.id, item.thread.title);
+                if (item.thread.snoozedUntil == null) liveSnoozes.delete(item.thread.id);
+                else liveSnoozes.set(item.thread.id, DateTime.formatIso(item.thread.snoozedUntil));
               } else if (item.kind === "thread.removed") {
                 liveShellThreads.delete(item.threadId);
               }
@@ -481,6 +487,41 @@ test("unmodified upstream mobile client inherits member identity via standard pa
         );
         // Unfollowed locked thread is STILL hidden while in owned_and_followed mode.
         expect(liveShellThreads.has(aliceLockedThread!.id)).toBe(false);
+
+        const snoozedUntil = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 }));
+        const followedThreadId = aliceDeployThread!.id;
+        yield* mobileClient[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-bob-mobile-snooze"),
+          threadId: followedThreadId,
+          snoozedUntil,
+        });
+        yield* Effect.promise(() =>
+          expect.poll(() => liveSnoozes.get(followedThreadId)).toBe(snoozedUntil),
+        );
+        const bobProjection = yield* mobileClient[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+          threadId: followedThreadId,
+        });
+        expect(DateTime.formatIso(bobProjection.thread.snoozedUntil!)).toBe(snoozedUntil);
+        const aliceMobileShell = yield* Effect.promise(() =>
+          fetchShellSnapshotHttp({
+            origin: topology.teamServer.origin,
+            accessToken: aliceToken,
+            teamAware: false,
+          }),
+        );
+        expect(
+          aliceMobileShell.threads.find((t) => t.id === followedThreadId)?.snoozedUntil,
+        ).toBeNull();
+        yield* mobileClient[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.unsnooze",
+          commandId: CommandId.make("cmd-bob-mobile-unsnooze"),
+          threadId: followedThreadId,
+          reason: "user",
+        });
+        yield* Effect.promise(() =>
+          expect.poll(() => liveSnoozes.has(followedThreadId)).toBe(false),
+        );
 
         // 9. Bob flips Settings -> Teams -> Visible threads on upstream mobile to "All accessible team threads"!
         yield* Effect.promise(async () => {

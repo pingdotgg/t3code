@@ -178,11 +178,6 @@ export function canManageTeamGitHubAppConfig(role: TeamRole): boolean {
   return isTeamAdminRole(role);
 }
 
-/** Editing team displayName is restricted to owner/admin. */
-export function canManageTeamDisplayName(role: TeamRole): boolean {
-  return isTeamAdminRole(role);
-}
-
 /** Creating/editing/toggling/deleting/running minimal unlocked team scheduled tasks starts at modo. */
 export function canManageTeamScheduledTasks(role: TeamRole): boolean {
   return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
@@ -191,12 +186,6 @@ export function canManageTeamScheduledTasks(role: TeamRole): boolean {
 /** Creating/editing/deleting locked or elevated-MCP team scheduled tasks is restricted to owner/admin. */
 export function canManagePrivilegedTeamScheduledTasks(role: TeamRole): boolean {
   return isTeamAdminRole(role);
-}
-
-/** Resolves effective team displayName: copies `name` when `displayName` is omitted or blank after trim. */
-export function resolveTeamDisplayName(name: string, displayName?: string | null): string {
-  const trimmedDisplay = displayName?.trim() ?? "";
-  return trimmedDisplay.length > 0 ? trimmedDisplay : name.trim();
 }
 
 /** Regular authors require an explicit UI confirmation dialog before note approval/edit-approval. */
@@ -251,10 +240,11 @@ export function isValidTeamPseudo(raw: string): boolean {
 export const TeamPseudo = TrimmedNonEmptyString.check(Schema.isPattern(TEAM_PSEUDO_PATTERN));
 export type TeamPseudo = typeof TeamPseudo.Type;
 
+export const TEAM_SCHEDULED_THREAD_PREFIX = "scheduled";
+
 export const TeamWorkspace = Schema.Struct({
   id: TeamId,
   name: TrimmedNonEmptyString,
-  displayName: TrimmedNonEmptyString,
   defaultViewId: TeamViewId,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -841,7 +831,6 @@ export const TeamThreadAttribution = Schema.Struct({
   ownerKind: Schema.optionalKey(TeamThreadOwnerKind),
   creatorMemberId: Schema.NullOr(TeamMemberId),
   creatorPseudo: Schema.NullOr(TeamPseudo),
-  teamDisplayName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   viewId: TeamViewId,
   locked: Schema.Boolean,
   lockedByMemberId: Schema.NullOr(TeamMemberId),
@@ -861,6 +850,26 @@ export const TeamTurnAttribution = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type TeamTurnAttribution = typeof TeamTurnAttribution.Type;
+
+export const TeamThreadSnoozeState = Schema.Struct({
+  threadId: ThreadId,
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  lastSnoozeWakeAt: Schema.NullOr(IsoDateTime),
+});
+export type TeamThreadSnoozeState = typeof TeamThreadSnoozeState.Type;
+
+export const TeamThreadSnoozeInput = Schema.Struct({
+  threadId: ThreadId,
+  snoozedUntil: IsoDateTime,
+});
+export type TeamThreadSnoozeInput = typeof TeamThreadSnoozeInput.Type;
+
+export const TeamThreadUnsnoozeInput = Schema.Struct({ threadId: ThreadId });
+export type TeamThreadUnsnoozeInput = typeof TeamThreadUnsnoozeInput.Type;
+
+export const TeamThreadSnoozeResult = TeamThreadSnoozeState;
+export type TeamThreadSnoozeResult = typeof TeamThreadSnoozeResult.Type;
 
 export const TeamThreadFollowInput = Schema.Struct({
   threadId: ThreadId,
@@ -1381,6 +1390,7 @@ export const TeamStateSnapshot = Schema.Struct({
   views: Schema.Array(TeamView),
   threadAttributions: Schema.Array(TeamThreadAttribution),
   followedThreadIds: Schema.Array(ThreadId),
+  threadSnoozes: Schema.optionalKey(Schema.Array(TeamThreadSnoozeState)),
   latestTurnAttributions: Schema.Array(TeamTurnAttribution),
   teamProjects: Schema.optionalKey(Schema.Array(TeamProjectAssignment)),
   environments: Schema.optionalKey(Schema.Array(TeamEnvironment)),
@@ -1457,6 +1467,15 @@ export const TeamStateStreamEvent = Schema.Union([
     version: Schema.Literal(1),
     type: Schema.Literal("threadFollowChanged"),
     payload: TeamThreadFollowChangedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("threadSnoozeChanged"),
+    payload: Schema.Struct({
+      memberId: TeamMemberId,
+      threadId: ThreadId,
+      snooze: Schema.NullOr(TeamThreadSnoozeState),
+    }),
   }),
   Schema.Struct({
     version: Schema.Literal(1),
@@ -1592,15 +1611,9 @@ export function shouldNotifyTeamMemberForThread(
 
 export const TeamInitializeInput = Schema.Struct({
   name: TrimmedNonEmptyString,
-  displayName: Schema.optionalKey(Schema.NullOr(Schema.String)),
   ownerPseudo: TrimmedNonEmptyString,
 });
 export type TeamInitializeInput = typeof TeamInitializeInput.Type;
-
-export const TeamUpdateDisplayNameInput = Schema.Struct({
-  displayName: TrimmedNonEmptyString,
-});
-export type TeamUpdateDisplayNameInput = typeof TeamUpdateDisplayNameInput.Type;
 
 export const TeamInitializeResult = Schema.Struct({
   team: TeamWorkspace,

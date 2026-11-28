@@ -2,6 +2,7 @@ import {
   TEAM_CLIENT_CAPABILITY_HEADER,
   TEAM_CLIENT_CAPABILITY_QUERY_PARAM,
   TEAM_CLIENT_CAPABILITY_VALUE,
+  TEAM_SCHEDULED_THREAD_PREFIX,
   TeamId,
   TeamMemberId,
   type AuthEnvironmentScope,
@@ -21,16 +22,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type { TeamService } from "./TeamService.ts";
+import { makeThreadSnoozeOverlay } from "./threadSnooze.ts";
 import type * as SqlClient from "effect/sql/SqlClient";
 
-/**
- * Pure prefix context designed so Milestone 8's team-owned threads (`ownerKind === "team"`,
- * `teamDisplayName`) plug in without changing call sites or callers.
- */
 export interface TeamThreadTitlePrefixContext {
   readonly ownerKind?: "member" | "team";
   readonly creatorPseudo?: string | null;
-  readonly teamDisplayName?: string | null;
 }
 
 export interface TeamPairingMetaRecord {
@@ -62,11 +60,8 @@ export function resolveTeamThreadTitlePrefix(
   context: TeamThreadTitlePrefixContext | null | undefined,
 ): string | null {
   if (!context) return null;
-  const raw =
-    context.ownerKind === "team"
-      ? context.teamDisplayName
-      : (context.creatorPseudo ?? context.teamDisplayName);
-  const trimmed = raw?.trim() ?? "";
+  if (context.ownerKind === "team") return TEAM_SCHEDULED_THREAD_PREFIX;
+  const trimmed = context.creatorPseudo?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -80,7 +75,7 @@ function hasLeadingPrefixColon(value: string, prefix: string, lowerPrefix: strin
 
 /**
  * Dynamically formats a thread title for non-team-aware clients (`<creatorPseudo>: <title>` or
- * `<teamDisplayName>: <title>`) without mutating SQLite. Avoids double-prefixing if the raw title
+ * `scheduled: <title>`) without mutating SQLite. Avoids double-prefixing if the raw title
  * already starts with the exact prefix.
  */
 export function formatUpstreamCompatThreadTitle(
@@ -149,6 +144,7 @@ export function formatUpstreamCompatReadOnlyViewBlockedMessage(): string {
 }
 
 export interface UpstreamCompatTitleLookup {
+  readonly listActorThreadSnoozes?: TeamService["Service"]["listActorThreadSnoozes"];
   readonly isTeamConfigured: () => Effect.Effect<boolean>;
   readonly getThreadTitlePrefixContextMap: (
     threadIds: ReadonlyArray<ThreadId>,
@@ -211,21 +207,31 @@ function prefixAppThread(
   return nextTitle === thread.title ? thread : { ...thread, title: nextTitle };
 }
 
+const loadSnoozeOverlay = (
+  lookup: UpstreamCompatTitleLookup,
+  sessionId: AuthSessionId | undefined,
+  threadIds: ReadonlyArray<ThreadId>,
+) =>
+  (sessionId === undefined || lookup.listActorThreadSnoozes === undefined || threadIds.length === 0
+    ? Effect.succeed(null)
+    : lookup.listActorThreadSnoozes({ kind: "session", sessionId }, threadIds)
+  ).pipe(Effect.map(makeThreadSnoozeOverlay));
+
 export const adaptThreadShellsForUpstreamCompat = Effect.fn(
   "UpstreamMobileCompat.adaptThreadShells",
 )(function* (
   lookup: UpstreamCompatTitleLookup,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   upstreamCompat: boolean,
+  sessionId?: AuthSessionId,
 ): Effect.fn.Return<ReadonlyArray<OrchestrationV2ThreadShell>> {
-  if (!upstreamCompat || threads.length === 0 || !(yield* lookup.isTeamConfigured())) {
-    return threads;
-  }
-  const prefixByThreadId = yield* lookup.getThreadTitlePrefixContextMap(
-    threads.map((thread) => thread.id),
-  );
-  if (prefixByThreadId.size === 0) return threads;
-  return threads.map((thread) => prefixThreadShell(thread, prefixByThreadId));
+  if (threads.length === 0 || !(yield* lookup.isTeamConfigured())) return threads;
+  const ids = threads.map((thread) => thread.id);
+  const overlay = yield* loadSnoozeOverlay(lookup, sessionId, ids);
+  const prefixByThreadId = upstreamCompat
+    ? yield* lookup.getThreadTitlePrefixContextMap(ids)
+    : new Map();
+  return threads.map((thread) => overlay(prefixThreadShell(thread, prefixByThreadId)));
 });
 
 export const adaptShellSnapshotForUpstreamCompat = Effect.fn(
@@ -248,21 +254,17 @@ export const adaptShellSnapshotForUpstreamCompat = Effect.fn(
   });
   const visibleThreads = snapshot.threads.filter((thread) => visibleIds.has(thread.id));
   const visibleArchived = snapshot.archivedThreads.filter((thread) => visibleIds.has(thread.id));
-  if (!upstreamCompat) {
-    return {
-      ...snapshot,
-      threads: visibleThreads,
-      archivedThreads: visibleArchived,
-    };
-  }
-  const prefixByThreadId = yield* lookup.getThreadTitlePrefixContextMap([
-    ...visibleThreads.map((thread) => thread.id),
-    ...visibleArchived.map((thread) => thread.id),
-  ]);
+  const visibleThreadIds = [...visibleThreads, ...visibleArchived].map((thread) => thread.id);
+  const overlay = yield* loadSnoozeOverlay(lookup, sessionId, visibleThreadIds);
+  const prefixByThreadId = upstreamCompat
+    ? yield* lookup.getThreadTitlePrefixContextMap(visibleThreadIds)
+    : new Map();
   return {
     ...snapshot,
-    threads: visibleThreads.map((thread) => prefixThreadShell(thread, prefixByThreadId)),
-    archivedThreads: visibleArchived.map((thread) => prefixThreadShell(thread, prefixByThreadId)),
+    threads: visibleThreads.map((thread) => overlay(prefixThreadShell(thread, prefixByThreadId))),
+    archivedThreads: visibleArchived.map((thread) =>
+      overlay(prefixThreadShell(thread, prefixByThreadId)),
+    ),
   };
 });
 
@@ -291,10 +293,15 @@ export const adaptShellStreamItemForUpstreamCompat = Effect.fn(
       upstreamCompat,
     });
     if (!visible) return null;
-    if (!upstreamCompat) return item;
-    const prefixByThreadId = yield* lookup.getThreadTitlePrefixContextMap([item.thread.id]);
-    const nextThread = prefixThreadShell(item.thread, prefixByThreadId);
-    return nextThread === item.thread ? item : { ...item, thread: nextThread };
+    const [nextThread] = yield* adaptThreadShellsForUpstreamCompat(
+      lookup,
+      [item.thread],
+      upstreamCompat,
+      sessionId,
+    );
+    return nextThread === undefined || nextThread === item.thread
+      ? item
+      : { ...item, thread: nextThread };
   }
   if (item.kind === "thread.removed") {
     const visible = yield* lookup.canShowThreadInShell(sessionId, item.threadId, {
@@ -311,12 +318,15 @@ export const adaptThreadProjectionForUpstreamCompat = Effect.fn(
   lookup: UpstreamCompatTitleLookup,
   projection: OrchestrationV2ThreadProjection,
   upstreamCompat: boolean,
+  sessionId?: AuthSessionId,
 ): Effect.fn.Return<OrchestrationV2ThreadProjection> {
-  if (!upstreamCompat || !(yield* lookup.isTeamConfigured())) {
-    return projection;
-  }
-  const prefixByThreadId = yield* lookup.getThreadTitlePrefixContextMap([projection.thread.id]);
-  const nextThread = prefixAppThread(projection.thread, prefixByThreadId.get(projection.thread.id));
+  if (!(yield* lookup.isTeamConfigured())) return projection;
+  const id = projection.thread.id;
+  const overlay = yield* loadSnoozeOverlay(lookup, sessionId, [id]);
+  const prefix = upstreamCompat
+    ? (yield* lookup.getThreadTitlePrefixContextMap([id])).get(id)
+    : undefined;
+  const nextThread = overlay(prefixAppThread(projection.thread, prefix));
   return nextThread === projection.thread ? projection : { ...projection, thread: nextThread };
 });
 
@@ -326,22 +336,25 @@ export const adaptThreadStreamItemForUpstreamCompat = Effect.fn(
   lookup: UpstreamCompatTitleLookup,
   item: OrchestrationV2ThreadStreamItem,
   upstreamCompat: boolean,
+  sessionId?: AuthSessionId,
 ): Effect.fn.Return<OrchestrationV2ThreadStreamItem> {
-  if (!upstreamCompat || !(yield* lookup.isTeamConfigured())) {
-    return item;
-  }
   if (item.kind === "snapshot") {
     const nextProjection = yield* adaptThreadProjectionForUpstreamCompat(
       lookup,
       item.projection,
       upstreamCompat,
+      sessionId,
     );
     return nextProjection === item.projection ? item : { ...item, projection: nextProjection };
   }
   if (item.kind === "event" && THREAD_APP_PAYLOAD_EVENT_TYPES.has(item.event.type)) {
     const payload = item.event.payload as OrchestrationV2AppThread;
-    const prefixByThreadId = yield* lookup.getThreadTitlePrefixContextMap([payload.id]);
-    const nextPayload = prefixAppThread(payload, prefixByThreadId.get(payload.id));
+    const overlay = yield* loadSnoozeOverlay(lookup, sessionId, [payload.id]);
+    const prefix =
+      upstreamCompat && (yield* lookup.isTeamConfigured())
+        ? (yield* lookup.getThreadTitlePrefixContextMap([payload.id])).get(payload.id)
+        : undefined;
+    const nextPayload = overlay(prefixAppThread(payload, prefix));
     if (nextPayload === payload) return item;
     return {
       ...item,
@@ -360,14 +373,16 @@ export const adaptSearchThreadsResultForUpstreamCompat = Effect.fn(
   lookup: UpstreamCompatTitleLookup,
   result: OrchestrationV2SearchThreadsResult,
   upstreamCompat: boolean,
+  sessionId?: AuthSessionId,
 ): Effect.fn.Return<OrchestrationV2SearchThreadsResult> {
-  if (!upstreamCompat || !result.threads || result.threads.length === 0) {
+  if (!result.threads || result.threads.length === 0) {
     return result;
   }
   const adaptedThreads = yield* adaptThreadShellsForUpstreamCompat(
     lookup,
     result.threads,
     upstreamCompat,
+    sessionId,
   );
   return adaptedThreads === result.threads ? result : { ...result, threads: adaptedThreads };
 });

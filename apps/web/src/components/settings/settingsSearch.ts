@@ -1539,14 +1539,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("team workspace create join invite shared server")],
   },
   {
-    id: "teams-display-name",
-    title: msg("Team display name & pseudo"),
-    to: "/settings/teams",
-    targetId: "teams-display-name",
-    teamsOnly: true,
-    searchTerms: [msg("team display name pseudo handle prefix colleagues leave delete")],
-  },
-  {
     id: "teams-notification-sound",
     title: msg("Team notification sound"),
     to: "/settings/teams",

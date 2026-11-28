@@ -1,3 +1,7 @@
+import {
+  readTeamThreadSnoozeAccess,
+  updateTeamThreadSnooze,
+} from "../components/team/threadSnooze";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   parseScopedThreadKey,
@@ -941,6 +945,9 @@ export function useThreadActions() {
   };
 
   const unsnoozeThread = async (target: ScopedThreadRef) => {
+    const team = readTeamThreadSnoozeAccess(target);
+    if (team !== null)
+      return updateTeamThreadSnooze(appAtomRegistry, team.teamEnvironmentId, target.threadId, null);
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -959,6 +966,14 @@ export function useThreadActions() {
   };
 
   const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+    const team = readTeamThreadSnoozeAccess(target);
+    if (team !== null)
+      return updateTeamThreadSnooze(
+        appAtomRegistry,
+        team.teamEnvironmentId,
+        target.threadId,
+        snoozedUntil,
+      );
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -1017,11 +1032,20 @@ export function useThreadActions() {
             return sendPin(target, step.orderKey === undefined ? {} : { orderKey: step.orderKey });
           case "reorderActive":
             return reorderActiveThread(target, step.orderKey);
-          case "snooze":
-            return snoozeThreadMutation({
-              environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
-            });
+          case "snooze": {
+            const team = readTeamThreadSnoozeAccess(target);
+            return team === null
+              ? snoozeThreadMutation({
+                  environmentId: target.environmentId,
+                  input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+                })
+              : updateTeamThreadSnooze(
+                  appAtomRegistry,
+                  team.teamEnvironmentId,
+                  target.threadId,
+                  step.snoozedUntil,
+                );
+          }
         }
       },
       (result) => result._tag === "Success",

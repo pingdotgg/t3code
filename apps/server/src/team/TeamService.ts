@@ -16,7 +16,6 @@ import {
   canChangeThreadTeamView,
   canManagePrivilegedTeamScheduledTasks,
   canManageTeamAutomationGitHub,
-  canManageTeamDisplayName,
   canManageTeamEnvironments,
   canManageTeamGitHubAppConfig,
   canManageTeamInvites,
@@ -52,7 +51,6 @@ import {
   isValidTeamPseudo,
   normalizeTeamPseudo,
   resolveScheduledTaskEffectiveThreadId,
-  resolveTeamDisplayName,
   resolveTeamQueuedMessageNotificationRecipients,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
@@ -167,13 +165,15 @@ import {
   type TeamSyncLocalThreadResult,
   type TeamThreadAttribution,
   type TeamThreadFollowInput,
+  type TeamThreadSnoozeInput,
+  type TeamThreadSnoozeState,
+  type TeamThreadUnsnoozeInput,
   type TeamThreadFollowResult,
   type TeamThreadNote,
   type TeamTurnAttribution,
   type TeamTurnAuthorKind,
   type TeamUnassignProjectInput,
   type TeamUnassignProjectResult,
-  type TeamUpdateDisplayNameInput,
   type TeamUpdateEnvironmentInput,
   type TeamUpdateMemberRoleInput,
   type TeamUpdateMemberStatusInput,
@@ -324,6 +324,7 @@ export type TeamAccessChangeEvent =
   | { readonly type: "view"; readonly viewId: TeamViewId }
   | { readonly type: "member"; readonly memberId: TeamMemberId }
   | { readonly type: "memberVisibility"; readonly memberId: TeamMemberId }
+  | { readonly type: "memberSnooze"; readonly memberId: TeamMemberId; readonly threadId: ThreadId }
   | { readonly type: "memberFollow"; readonly memberId: TeamMemberId; readonly threadId: ThreadId }
   | { readonly type: "memberPseudo"; readonly memberId: TeamMemberId }
   | { readonly type: "threadView"; readonly threadId: ThreadId }
@@ -459,10 +460,6 @@ export class TeamService extends Context.Service<
       readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
       readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
     }) => Effect.Effect<TeamDeleteResult, TeamOperationError>;
-    readonly updateDisplayName: (input: {
-      readonly sessionId: AuthSessionId;
-      readonly payload: TeamUpdateDisplayNameInput;
-    }) => Effect.Effect<TeamWorkspace, TeamOperationError>;
     readonly updateMyPseudo: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateMyPseudoInput;
@@ -655,6 +652,24 @@ export class TeamService extends Context.Service<
       boundThreadId?: ThreadId | null,
       options?: { readonly isRunNow?: boolean },
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly listActorThreadSnoozes: (
+      actor: TeamActor,
+      threadIds?: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlyArray<TeamThreadSnoozeState> | null>;
+    readonly updateActorThreadSnooze: (input: {
+      readonly actor: TeamActor;
+      readonly threadId: ThreadId;
+      readonly snoozedUntil: string | null;
+      readonly expiredOnly?: boolean;
+    }) => Effect.Effect<TeamThreadSnoozeState, TeamOperationError>;
+    readonly snoozeThread: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamThreadSnoozeInput;
+    }) => Effect.Effect<TeamThreadSnoozeState, TeamOperationError>;
+    readonly unsnoozeThread: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamThreadUnsnoozeInput;
+    }) => Effect.Effect<TeamThreadSnoozeState, TeamOperationError>;
     readonly followThread: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamThreadFollowInput;
@@ -1294,7 +1309,6 @@ const make = Effect.gen(function* () {
             ownerKind:
               attribution.ownerKind ?? (attribution.creatorMemberId === null ? "team" : "member"),
             creatorPseudo: attribution.creatorPseudo,
-            teamDisplayName: team.displayName,
           });
         }
         return result;
@@ -1312,7 +1326,6 @@ const make = Effect.gen(function* () {
           ownerKind:
             attribution.ownerKind ?? (attribution.creatorMemberId === null ? "team" : "member"),
           creatorPseudo: attribution.creatorPseudo,
-          teamDisplayName: team.displayName,
         });
       }
       return result;
@@ -1503,6 +1516,7 @@ const make = Effect.gen(function* () {
     PubSub.publish(eventsPubSub, event).pipe(
       Effect.andThen(
         event.type === "threadFollowChanged" ||
+          event.type === "threadSnoozeChanged" ||
           event.type === "threadAttributed" ||
           event.type === "turnAttributed"
           ? PubSub.publish(notificationTriggersPubSub, {
@@ -1609,6 +1623,7 @@ const make = Effect.gen(function* () {
         views: [],
         threadAttributions: [],
         followedThreadIds: [],
+        threadSnoozes: [],
         latestTurnAttributions: [],
         teamProjects: [],
         environments: [],
@@ -1783,6 +1798,14 @@ const make = Effect.gen(function* () {
       views: visibleViews,
       threadAttributions,
       followedThreadIds,
+      threadSnoozes:
+        currentMember?.status === "active"
+          ? (yield* repository
+              .listThreadSnoozes(team.id, currentMember.id)
+              .pipe(Effect.mapError(toInternalError))).filter((snooze) =>
+              readableThreadIds.has(snooze.threadId),
+            )
+          : [],
       latestTurnAttributions,
       teamProjects,
       environments: visibleEnvironments,
@@ -1880,7 +1903,7 @@ const make = Effect.gen(function* () {
                   ? Option.some<TeamStateStreamEvent>(event)
                   : Option.none<TeamStateStreamEvent>();
               }
-              if (event.type === "threadFollowChanged") {
+              if (event.type === "threadFollowChanged" || event.type === "threadSnoozeChanged") {
                 // Keep each member's follow updates scoped to their own connected sessions.
                 return currentMember !== null &&
                   currentMember.status === "active" &&
@@ -2046,11 +2069,9 @@ const make = Effect.gen(function* () {
     );
 
     const trimmedName = input.payload.name.trim();
-    const displayName = resolveTeamDisplayName(trimmedName, input.payload.displayName);
     const team: TeamWorkspace = {
       id: teamId,
       name: trimmedName,
-      displayName,
       defaultViewId,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -2107,44 +2128,6 @@ const make = Effect.gen(function* () {
     yield* publishAccessChange({ type: "workspace" });
 
     return { team, owner } satisfies TeamInitializeResult;
-  });
-
-  const updateDisplayName = Effect.fn("TeamService.updateDisplayName")(function* (input: {
-    readonly sessionId: AuthSessionId;
-    readonly payload: TeamUpdateDisplayNameInput;
-  }) {
-    const team = yield* requireWorkspace();
-    const actor = yield* requireActiveMember(input.sessionId);
-    if (actor.teamId !== team.id || !canManageTeamDisplayName(actor.role)) {
-      return yield* new TeamOperationError({
-        code: "forbidden",
-        message: "Only owner and admin members can edit the team display name.",
-      });
-    }
-    const nextDisplayName = input.payload.displayName.trim();
-    if (nextDisplayName.length === 0) {
-      return yield* new TeamOperationError({
-        code: "invalid_input",
-        message: "Team display name cannot be empty.",
-      });
-    }
-    const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updated = yield* repository
-      .updateWorkspaceDisplayName({
-        teamId: team.id,
-        displayName: nextDisplayName,
-        updatedAt,
-      })
-      .pipe(Effect.mapError(toInternalError));
-    if (Option.isNone(updated)) {
-      return yield* new TeamOperationError({
-        code: "not_found",
-        message: "Team workspace could not be found.",
-      });
-    }
-    yield* publish({ version: 1, type: "teamUpdated", payload: updated.value });
-    yield* publishAccessChange({ type: "workspace" });
-    return updated.value;
   });
 
   const revokeSessionsForMember = Effect.fn("TeamService.revokeSessionsForMember")(function* (
@@ -5002,9 +4985,7 @@ const make = Effect.gen(function* () {
         rememberNotifiedQueuedKey(runKey);
         if (cmdKey !== null) rememberNotifiedQueuedKey(cmdKey);
 
-        const senderPseudo = TrimmedNonEmptyString.make(
-          senderMember?.pseudo ?? (workspace.displayName || workspace.name),
-        );
+        const senderPseudo = TrimmedNonEmptyString.make(senderMember?.pseudo ?? workspace.name);
         const rawPreview = (input.messageText ?? "").trim().replace(/\s+/g, " ");
         const messagePreview =
           rawPreview.length > 160 ? `${rawPreview.slice(0, 157)}…` : rawPreview;
@@ -6122,6 +6103,9 @@ const make = Effect.gen(function* () {
         });
         return command;
       }
+      case "thread.snooze":
+      case "thread.unsnooze":
+        return command;
       case "thread.visit":
       case "thread.mark-unread":
         yield* assertActorCanReadThread(actor, command.threadId);
@@ -6268,8 +6252,6 @@ const make = Effect.gen(function* () {
       case "thread.archive":
       case "thread.unarchive":
       case "thread.unsettle":
-      case "thread.snooze":
-      case "thread.unsnooze":
       case "thread.auto-settle.set":
       case "thread.pin":
       case "thread.unpin":
@@ -6316,6 +6298,135 @@ const make = Effect.gen(function* () {
     );
     return attributions.filter((item) => readableIds.has(item.threadId));
   }, Effect.mapError(toInternalError));
+
+  const listActorThreadSnoozes = Effect.fn("TeamService.listActorThreadSnoozes")(function* (
+    actor: TeamActor,
+    threadIds?: ReadonlyArray<ThreadId>,
+  ) {
+    if (!(yield* isTeamConfigured())) return null;
+    const member = yield* resolveMemberForActor(actor).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(member) || member.value.status !== "active") return [];
+    return yield* repository
+      .listThreadSnoozes(member.value.teamId, member.value.id, threadIds)
+      .pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Failed to load team thread snoozes", { cause }),
+        ),
+        Effect.orElseSucceed(() => []),
+      );
+  });
+
+  const publishSnooze = (
+    memberId: TeamMemberId,
+    threadId: ThreadId,
+    snooze: TeamThreadSnoozeState | null,
+  ) =>
+    publish({
+      version: 1,
+      type: "threadSnoozeChanged",
+      payload: { memberId, threadId, snooze },
+    }).pipe(Effect.andThen(publishAccessChange({ type: "memberSnooze", memberId, threadId })));
+
+  const updateActorThreadSnooze = Effect.fn("TeamService.updateActorThreadSnooze")(
+    function* (input: {
+      readonly actor: TeamActor;
+      readonly threadId: ThreadId;
+      readonly snoozedUntil: string | null;
+      readonly expiredOnly?: boolean;
+    }) {
+      const team = yield* requireWorkspace();
+      const member = yield* resolveMemberForActor(input.actor).pipe(
+        Effect.mapError(toInternalError),
+      );
+      if (
+        Option.isNone(member) ||
+        member.value.status !== "active" ||
+        member.value.teamId !== team.id
+      ) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "This session is not bound to an active team member.",
+        });
+      }
+      const now = yield* DateTime.now;
+      let snoozedUntil: string | null = null;
+      if (input.snoozedUntil !== null) {
+        const until = DateTime.make(input.snoozedUntil);
+        if (
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+            input.snoozedUntil,
+          ) ||
+          Option.isNone(until) ||
+          until.value.epochMilliseconds <= now.epochMilliseconds
+        ) {
+          return yield* new TeamOperationError({
+            code: "invalid_input",
+            message: "Snooze wake time must be a future ISO timestamp.",
+          });
+        }
+        if (
+          !(yield* canActorReadThread(input.actor, input.threadId)) ||
+          (yield* repository
+            .isThreadDeletedInProjection(input.threadId)
+            .pipe(Effect.mapError(toInternalError)))
+        ) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "You do not have permission to view this thread.",
+          });
+        }
+        snoozedUntil = DateTime.formatIso(until.value);
+      }
+      const snooze = yield* repository
+        .setThreadSnooze({
+          ...input,
+          teamId: team.id,
+          memberId: member.value.id,
+          snoozedUntil,
+          now: DateTime.formatIso(now),
+        })
+        .pipe(Effect.mapError(toInternalError));
+      if (snooze !== null) {
+        yield* publishSnooze(member.value.id, input.threadId, snooze);
+        return snooze;
+      }
+      if (snoozedUntil !== null) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "You can only snooze a thread you created or follow.",
+        });
+      }
+      const [previous] = yield* repository
+        .listThreadSnoozes(team.id, member.value.id, [input.threadId])
+        .pipe(Effect.mapError(toInternalError));
+      return (
+        previous ?? {
+          threadId: input.threadId,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastSnoozeWakeAt: null,
+        }
+      );
+    },
+  );
+
+  const snoozeThread = ({
+    sessionId,
+    payload,
+  }: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamThreadSnoozeInput;
+  }) => updateActorThreadSnooze({ actor: sessionActor(sessionId), ...payload });
+
+  const unsnoozeThread = ({
+    sessionId,
+    payload,
+  }: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamThreadUnsnoozeInput;
+  }) => updateActorThreadSnooze({ actor: sessionActor(sessionId), ...payload, snoozedUntil: null });
 
   const followThread = Effect.fn("TeamService.followThread")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -6433,7 +6544,8 @@ const make = Effect.gen(function* () {
         memberId: actor.id,
       })
       .pipe(Effect.mapError(toInternalError));
-    if (removed) {
+    if (removed.unfollowed) {
+      if (removed.clearedSnooze) yield* publishSnooze(actor.id, input.payload.threadId, null);
       yield* publish({
         version: 1,
         type: "threadFollowChanged",
@@ -6560,6 +6672,11 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const listSnoozedMembers = (threadId: ThreadId) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) => repository.listSnoozedMembers(threadId, DateTime.formatIso(now))),
+    );
+
   const listNotificationRecipientsForThread = Effect.fn(
     "TeamService.listNotificationRecipientsForThread",
   )(function* (input: { readonly threadId: ThreadId; readonly turnId?: string }) {
@@ -6621,7 +6738,10 @@ const make = Effect.gen(function* () {
         ? turnAttribution.value.authorMemberId
         : null;
 
+    const snoozedMembers = yield* listSnoozedMembers(input.threadId).pipe(Effect.option);
+    if (Option.isNone(snoozedMembers)) return { isTeamThread: true, recipientMemberIds: [] };
     const recipientMemberIds = members
+      .filter((member) => !snoozedMembers.value.has(member.id))
       .filter(
         (member) =>
           member.status === "active" &&
@@ -6783,6 +6903,8 @@ const make = Effect.gen(function* () {
     }
 
     const recipientMemberId = relayBindingOption.value.memberId;
+    const snoozedMembers = yield* listSnoozedMembers(input.threadId).pipe(Effect.option);
+    if (Option.isNone(snoozedMembers) || snoozedMembers.value.has(recipientMemberId)) return false;
     const [memberOption, isFollowing, turnAttribution, viewOption, defaultViewOption] =
       yield* Effect.all([
         repository
@@ -6861,6 +6983,8 @@ const make = Effect.gen(function* () {
       return false;
     }
     const recipientMemberId = relayBindingOption.value.memberId;
+    const snoozedMembers = yield* listSnoozedMembers(input.threadId).pipe(Effect.option);
+    if (Option.isNone(snoozedMembers) || snoozedMembers.value.has(recipientMemberId)) return false;
     if (!input.recipientMemberIds.includes(recipientMemberId)) {
       return false;
     }
@@ -10778,8 +10902,12 @@ const make = Effect.gen(function* () {
     options?: { readonly upstreamCompat?: boolean },
   ) {
     const upstreamCompat = options?.upstreamCompat === true;
-    if (change.type === "memberVisibility" || change.type === "memberFollow") {
-      if (!upstreamCompat) return false;
+    if (
+      change.type === "memberVisibility" ||
+      change.type === "memberFollow" ||
+      change.type === "memberSnooze"
+    ) {
+      if (change.type !== "memberSnooze" && !upstreamCompat) return false;
       const memberIdOption = yield* resolveMemberIdForSession(sessionId);
       return Option.isSome(memberIdOption) && memberIdOption.value === change.memberId;
     }
@@ -11843,7 +11971,6 @@ const make = Effect.gen(function* () {
     initializeTeam,
     leaveTeam,
     deleteTeam,
-    updateDisplayName,
     updateMyPseudo,
     updateMemberRole,
     updateMemberStatus,
@@ -11888,6 +12015,10 @@ const make = Effect.gen(function* () {
     deleteScheduledTaskMeta,
     assertActorCanMutateScheduledTask,
     assertCanMutateScheduledTask,
+    listActorThreadSnoozes,
+    updateActorThreadSnooze,
+    snoozeThread,
+    unsnoozeThread,
     followThread,
     unfollowThread,
     listFollowedThreads,

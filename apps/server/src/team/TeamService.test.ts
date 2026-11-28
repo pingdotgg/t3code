@@ -110,6 +110,7 @@ describe("TeamService", () => {
         invites: [],
         threadAttributions: [],
         followedThreadIds: [],
+        threadSnoozes: [],
         latestTurnAttributions: [],
         teamProjects: [],
         environments: [],
@@ -628,6 +629,126 @@ describe("TeamService", () => {
           ["run-child-1", init.owner.id],
         ]);
       }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect("isolates snoozes on a followed locked thread across team members and devices", () =>
+    Effect.gen(function* () {
+      const team = yield* TeamService.TeamService;
+      const repo = yield* TeamRepository.TeamRepository;
+      const sessions = yield* SessionStore.SessionStore;
+      const charlie = yield* sessions.issue({ subject: "charlie" });
+      const { team: workspace, owner } = yield* team.initializeTeam({
+        sessionId: charlie.sessionId,
+        payload: { name: "Snooze Team", ownerPseudo: "charlie" },
+      });
+      const join = (pseudo: string, role: "regular" | "modo" | "admin" | "owner") =>
+        Effect.gen(function* () {
+          const invite = yield* team.createInvite({
+            sessionId: charlie.sessionId,
+            payload: { role },
+          });
+          const redeemed = yield* team.redeemInvite({
+            token: invite.token,
+            pseudo,
+            client: testClient,
+          });
+          return { member: redeemed.member, session: yield* sessions.verify(redeemed.accessToken) };
+        });
+      const alice = yield* join("alice", "regular");
+      const bob = yield* join("bob", "regular");
+      const modo = yield* join("modo", "modo");
+      const admin = yield* join("admin", "admin");
+      const otherOwner = yield* join("owner", "owner");
+      const aliceMobile = yield* sessions.issue({ subject: "alice-mobile" });
+      const now = yield* DateTime.now;
+      yield* repo.bindSession({
+        sessionId: aliceMobile.sessionId,
+        teamId: workspace.id,
+        memberId: alice.member.id,
+        boundAt: DateTime.formatIso(now),
+      });
+      const readOnly = yield* team.createView({
+        sessionId: charlie.sessionId,
+        payload: {
+          name: "Read only",
+          readRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+          postRule: { roles: ["owner"], memberIds: [] },
+        },
+      });
+      const threadId = ThreadId.make("locked-runner-thread");
+      yield* repo.recordThreadAttribution({
+        threadId,
+        teamId: workspace.id,
+        creatorMemberId: owner.id,
+        viewId: readOnly.id,
+        locked: true,
+        lockedByMemberId: owner.id,
+        executionEnvironmentId: EnvironmentId.make("unavailable-runner"),
+        createdAt: DateTime.formatIso(now),
+      });
+      const payload = {
+        threadId,
+        snoozedUntil: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+      };
+      expect(
+        (yield* team
+          .snoozeThread({ sessionId: alice.session.sessionId, payload })
+          .pipe(Effect.flip)).code,
+      ).toBe("forbidden");
+      for (const { session } of [alice, bob, modo, admin, otherOwner]) {
+        const input = { sessionId: session.sessionId, payload: { threadId } };
+        expect((yield* team.followThread(input)).isFollowing).toBe(true);
+        if (session !== alice.session && session !== bob.session) {
+          expect((yield* team.unfollowThread(input)).isFollowing).toBe(false);
+        }
+      }
+
+      const snooze = yield* team.snoozeThread({ sessionId: alice.session.sessionId, payload });
+      const mobileActor = { kind: "session" as const, sessionId: aliceMobile.sessionId };
+      expect(yield* team.listActorThreadSnoozes(mobileActor, [threadId])).toEqual([snooze]);
+      expect((yield* team.getState(alice.session.sessionId)).threadSnoozes).toEqual([snooze]);
+      expect((yield* team.getState(bob.session.sessionId)).threadSnoozes).toEqual([]);
+      expect((yield* team.getState(charlie.sessionId)).threadSnoozes).toEqual([]);
+      expect(
+        new Set((yield* team.listNotificationRecipientsForThread({ threadId })).recipientMemberIds),
+      ).toEqual(new Set([owner.id, bob.member.id]));
+      yield* team.bindRelayRecipientForSession({
+        sessionId: alice.session.sessionId,
+        cloudUserId: "alice",
+      });
+      expect(
+        yield* team.shouldPublishRelayNotificationForThread({ threadId, cloudUserId: "alice" }),
+      ).toBe(false);
+      expect(
+        yield* team.shouldPublishRelayQueuedMessageNotification!({
+          threadId,
+          recipientMemberIds: [alice.member.id, bob.member.id],
+          cloudUserId: "alice",
+        }),
+      ).toBe(false);
+      yield* team.bindRelayRecipientForSession({
+        sessionId: bob.session.sessionId,
+        cloudUserId: "bob",
+      });
+      expect(
+        yield* team.shouldPublishRelayNotificationForThread({ threadId, cloudUserId: "bob" }),
+      ).toBe(true);
+      expect(
+        yield* team.shouldPublishRelayQueuedMessageNotification!({
+          threadId,
+          recipientMemberIds: [alice.member.id, bob.member.id],
+          cloudUserId: "bob",
+        }),
+      ).toBe(true);
+      yield* team.unsnoozeThread({ sessionId: aliceMobile.sessionId, payload: { threadId } });
+      expect(
+        (yield* team.getState(alice.session.sessionId)).threadSnoozes?.[0]?.snoozedUntil,
+      ).toBeNull();
+      yield* team.snoozeThread({ sessionId: alice.session.sessionId, payload });
+      yield* team.unfollowThread({ sessionId: alice.session.sessionId, payload: { threadId } });
+      expect(yield* team.listActorThreadSnoozes(mobileActor, [threadId])).toEqual([]);
+      expect((yield* team.getState(bob.session.sessionId)).followedThreadIds).toEqual([threadId]);
+    }).pipe(Effect.provide(makeTestLayer())),
   );
 
   it.effect(
@@ -3652,7 +3773,7 @@ describe("TeamService", () => {
   );
 
   it.effect(
-    "Milestone 8: manages team displayName, scheduled-task RBAC/anti-escalation/webhook redaction, and team-owned threads",
+    "Milestone 8: manages scheduled-task RBAC/anti-escalation/webhook redaction, and team-owned threads",
     () =>
       Effect.gen(function* () {
         const team = yield* TeamService.TeamService;
@@ -3664,8 +3785,6 @@ describe("TeamService", () => {
           sessionId: ownerSession.sessionId,
           payload: { name: "Platform Team", ownerPseudo: "alice" },
         });
-        // displayName defaults to team name when omitted.
-        expect(init.team.displayName).toBe("Platform Team");
 
         const modoInvite = yield* team.createInvite({
           sessionId: ownerSession.sessionId,
@@ -3688,21 +3807,6 @@ describe("TeamService", () => {
           client: testClient,
         });
         const regularSession = yield* sessions.verify(regularRedeemed.accessToken);
-
-        // Only owner/admin can update displayName.
-        expect(
-          (yield* Effect.exit(
-            team.updateDisplayName({
-              sessionId: modoSession.sessionId,
-              payload: { displayName: "Blocked Bot" },
-            }),
-          ))._tag,
-        ).toBe("Failure");
-        const updatedWorkspace = yield* team.updateDisplayName({
-          sessionId: ownerSession.sessionId,
-          payload: { displayName: "Platform Bot" },
-        });
-        expect(updatedWorkspace.displayName).toBe("Platform Bot");
 
         const projectId = ProjectId.make("proj-m8");
         const baseTaskInput = {
@@ -3847,7 +3951,6 @@ describe("TeamService", () => {
         const attr = Option.getOrThrow(yield* repo.getThreadAttribution(autoThreadId));
         expect(attr.ownerKind).toBe("team");
         expect(attr.creatorMemberId).toBeNull();
-        expect(attr.teamDisplayName).toBe("Platform Bot");
 
         const principalOpt = yield* team.recordTeamAutomationTurn({
           threadId: autoThreadId,

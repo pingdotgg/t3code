@@ -53,6 +53,7 @@ describe("team sidecar migrations", () => {
         "team_thread_follows",
         "team_thread_meta",
         "team_thread_notes",
+        "team_thread_snoozes",
         "team_turn_meta",
         "team_views",
         "team_workspaces",

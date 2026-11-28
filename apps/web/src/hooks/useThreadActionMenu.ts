@@ -1,3 +1,4 @@
+import { readTeamThreadSnoozeAccess } from "../components/team/threadSnooze";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
@@ -134,10 +135,11 @@ export function useThreadActionMenu(input: {
     if (!thread) return null;
     const now = new Date();
     const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
+    const teamSnooze = readTeamThreadSnoozeAccess(threadRef);
     const supports = {
       settlement: configLoaded,
       autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
-      snooze: configLoaded,
+      snooze: teamSnooze === null ? configLoaded : teamSnooze.canSnooze || teamSnooze.canUnsnooze,
       pinning: configLoaded,
       titleRegeneration: configLoaded,
     };
@@ -162,8 +164,13 @@ export function useThreadActionMenu(input: {
       isPinned: thread.pinnedAt != null,
       isSettled: supports.settlement && thread.settledOverride === "settled",
       autoSettleEnabled: thread.autoSettleDisabledAt == null,
-      isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
-      canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+      canTriageSnooze: teamSnooze?.canSnooze === true || teamSnooze?.canUnsnooze === true,
+      isSnoozed:
+        teamSnooze === null
+          ? supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() })
+          : teamSnooze.canUnsnooze &&
+            Date.parse(teamSnooze.snooze?.snoozedUntil ?? "") > now.getTime(),
+      canSnoozeNow: teamSnooze?.canSnooze ?? canSnooze(thread, { now: now.toISOString() }),
       isRegeneratingTitle,
       isRunning: !threadRuntimeCanArchive(thread.runtime),
       hasCompletedRun: thread.latestRun?.completedAt != null,

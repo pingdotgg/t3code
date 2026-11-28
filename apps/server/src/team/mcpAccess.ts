@@ -3,6 +3,7 @@ import {
   OrchestratorMcpFailure,
   type EnvironmentAuthorizationError,
   type EnvironmentId,
+  type OrchestrationV2Command,
   type ProjectId,
   type ScheduledTask,
   type ScheduledTaskId,
@@ -528,3 +529,42 @@ export const notifyQueuedMessageByCaller = Effect.fn("TeamMcpAccess.notifyQueued
       .pipe(Effect.asVoid);
   },
 );
+
+export const loadThreadSnoozes = Effect.fn("TeamMcpAccess.loadThreadSnoozes")(function* (
+  threadIds?: ReadonlyArray<ThreadId>,
+) {
+  const caller = yield* resolveTeamMcpCaller();
+  return Option.isNone(caller)
+    ? null
+    : yield* caller.value.teamService.listActorThreadSnoozes(caller.value.actor, threadIds);
+});
+
+export const interceptThreadSnooze = Effect.fn("TeamMcpAccess.interceptThreadSnooze")(function* (
+  command: OrchestrationV2Command,
+) {
+  if (
+    command.type !== "thread.snooze" &&
+    command.type !== "thread.unsnooze" &&
+    command.type !== "thread.mark-unread"
+  )
+    return false;
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return false;
+  yield* caller.value.teamService
+    .updateActorThreadSnooze({
+      actor: caller.value.actor,
+      threadId: command.threadId,
+      snoozedUntil: command.type === "thread.snooze" ? command.snoozedUntil : null,
+      expiredOnly: command.type === "thread.mark-unread",
+    })
+    .pipe(
+      Effect.mapError(
+        (error) =>
+          new OrchestratorMcpFailure({
+            code: error.code === "invalid_input" ? "invalid_request" : "capability_denied",
+            message: error.message,
+          }),
+      ),
+    );
+  return command.type !== "thread.mark-unread";
+});

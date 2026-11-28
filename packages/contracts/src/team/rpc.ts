@@ -92,11 +92,13 @@ import {
   TeamSyncLocalThreadResult,
   TeamThreadAttribution,
   TeamThreadFollowInput,
+  TeamThreadSnoozeInput,
+  TeamThreadUnsnoozeInput,
+  TeamThreadSnoozeResult,
   TeamThreadFollowResult,
   TeamThreadNote,
   TeamUnassignProjectInput,
   TeamUnassignProjectResult,
-  TeamUpdateDisplayNameInput,
   TeamUpdateEnvironmentInput,
   TeamUpdateMemberRoleInput,
   TeamUpdateMemberStatusInput,
@@ -107,7 +109,6 @@ import {
   TeamUpsertProviderInput,
   TeamUpsertSkillInput,
   TeamView,
-  TeamWorkspace,
 } from "./schemas.ts";
 
 export const TEAM_WS_METHODS = {
@@ -116,7 +117,6 @@ export const TEAM_WS_METHODS = {
   teamInitialize: "team.initialize",
   teamLeave: "team.leave",
   teamDelete: "team.delete",
-  teamUpdateDisplayName: "team.updateDisplayName",
   teamUpdateMyPseudo: "team.updateMyPseudo",
   teamUpdateMemberRole: "team.updateMemberRole",
   teamUpdateMemberStatus: "team.updateMemberStatus",
@@ -128,6 +128,8 @@ export const TEAM_WS_METHODS = {
   teamSetThreadView: "team.setThreadView",
   teamSetThreadLocked: "team.setThreadLocked",
   teamListThreadAttributions: "team.listThreadAttributions",
+  teamSnoozeThread: "team.snoozeThread",
+  teamUnsnoozeThread: "team.unsnoozeThread",
   teamFollowThread: "team.followThread",
   teamUnfollowThread: "team.unfollowThread",
   teamListFollowedThreads: "team.listFollowedThreads",
@@ -177,7 +179,6 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamInitialize]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamLeave]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamDelete]: AuthAccessWriteScope,
-  [TEAM_WS_METHODS.teamUpdateDisplayName]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamCreateMobilePairingLink]: AuthOrchestrationReadScope,
@@ -191,6 +192,8 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamDeleteView]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamSetThreadView]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamSetThreadLocked]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamSnoozeThread]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamUnsnoozeThread]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamFollowThread]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUnfollowThread]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamAssignProject]: AuthOrchestrationOperateScope,
@@ -273,12 +276,6 @@ const WsTeamDeleteRpc = Rpc.make(TEAM_WS_METHODS.teamDelete, {
   error: TeamRpcError,
 });
 
-const WsTeamUpdateDisplayNameRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateDisplayName, {
-  payload: TeamUpdateDisplayNameInput,
-  success: TeamWorkspace,
-  error: TeamRpcError,
-});
-
 const WsTeamUpdateMyPseudoRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateMyPseudo, {
   payload: TeamUpdateMyPseudoInput,
   success: TeamMember,
@@ -342,6 +339,17 @@ const WsTeamSetThreadLockedRpc = Rpc.make(TEAM_WS_METHODS.teamSetThreadLocked, {
 const WsTeamListThreadAttributionsRpc = Rpc.make(TEAM_WS_METHODS.teamListThreadAttributions, {
   payload: Schema.Struct({}),
   success: TeamListThreadAttributionsResult,
+  error: TeamRpcError,
+});
+
+const WsTeamSnoozeThreadRpc = Rpc.make(TEAM_WS_METHODS.teamSnoozeThread, {
+  payload: TeamThreadSnoozeInput,
+  success: TeamThreadSnoozeResult,
+  error: TeamRpcError,
+});
+const WsTeamUnsnoozeThreadRpc = Rpc.make(TEAM_WS_METHODS.teamUnsnoozeThread, {
+  payload: TeamThreadUnsnoozeInput,
+  success: TeamThreadSnoozeResult,
   error: TeamRpcError,
 });
 
@@ -609,7 +617,6 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamInitializeRpc,
   WsTeamLeaveRpc,
   WsTeamDeleteRpc,
-  WsTeamUpdateDisplayNameRpc,
   WsTeamUpdateMyPseudoRpc,
   WsTeamUpdateMemberRoleRpc,
   WsTeamUpdateMemberStatusRpc,
@@ -621,6 +628,8 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamSetThreadViewRpc,
   WsTeamSetThreadLockedRpc,
   WsTeamListThreadAttributionsRpc,
+  WsTeamSnoozeThreadRpc,
+  WsTeamUnsnoozeThreadRpc,
   WsTeamFollowThreadRpc,
   WsTeamUnfollowThreadRpc,
   WsTeamListFollowedThreadsRpc,

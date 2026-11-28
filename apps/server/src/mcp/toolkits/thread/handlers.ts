@@ -536,7 +536,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
-      if (input.action !== "mark_unread") {
+      if (
+        input.action !== "mark_unread" &&
+        input.action !== "snooze" &&
+        input.action !== "unsnooze"
+      ) {
         yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
       }
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
@@ -573,6 +577,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         }
         default:
           command = { ...common, type: `thread.${input.action}` };
+      }
+      if (yield* TeamMcpAccess.interceptThreadSnooze(command)) {
+        const snapshot = yield* threads
+          .getThreadSnapshotWindow(common.threadId, { rowLimit: 0 })
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence: snapshot.snapshotSequence };
+      }
+      if (command.type === "thread.snooze" || command.type === "thread.unsnooze") {
+        yield* TeamMcpAccess.assertCanPostInThread(command.threadId);
       }
       const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };

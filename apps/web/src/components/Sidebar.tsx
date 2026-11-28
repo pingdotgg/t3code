@@ -1,3 +1,4 @@
+import { overlayTeamSidebarThreadSnooze, readTeamThreadSnoozeAccess } from "./team/threadSnooze";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
@@ -483,7 +484,6 @@ function useSidebarThreads(input: {
   );
   const nowMinute = useNowMinute();
   // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
-  const snoozeWakeClock = useSnoozeWakeClock(threads);
   const [settledShelfExpanded, setSettledShelfExpanded] = useLocalStorage(
     SETTLED_SHELF_EXPANDED_KEY,
     false,
@@ -525,24 +525,27 @@ function useSidebarThreads(input: {
         liveLocalThreadKeys.add(`${thread.environmentId}\0${thread.id}`);
       }
     }
-    return threads.filter(
-      (thread) =>
-        !isDuplicateMirroredLocalTeamThread({
-          environmentId: thread.environmentId,
-          threadId: thread.id,
-          teamStates: teamStatesByEnvironment,
-          liveLocalThreadKeys,
-        }) &&
-        shouldShowThreadInTeamFilter({
-          environmentId: thread.environmentId,
-          threadId: thread.id,
-          teamStates: teamStatesByEnvironment,
-          showColleaguesThreads,
-          followedOnly: showFollowedThreadsOnly,
-        }),
-    );
+    return threads
+      .filter(
+        (thread) =>
+          !isDuplicateMirroredLocalTeamThread({
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+            teamStates: teamStatesByEnvironment,
+            liveLocalThreadKeys,
+          }) &&
+          shouldShowThreadInTeamFilter({
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+            teamStates: teamStatesByEnvironment,
+            showColleaguesThreads,
+            followedOnly: showFollowedThreadsOnly,
+          }),
+      )
+      .map((thread) => overlayTeamSidebarThreadSnooze(thread, teamStatesByEnvironment));
   })();
 
+  const snoozeWakeClock = useSnoozeWakeClock(teamFilteredThreads);
   const partition = partitionSidebarThreads({
     threads: teamFilteredThreads,
     scopedProjectKeys,
@@ -2424,8 +2427,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       const canSnoozeSelection = selectedThreads.every(
         (thread) =>
-          serverConfigs.has(thread.environmentId) &&
-          canSnooze(thread, { now: selectionNow.toISOString() }),
+          readTeamThreadSnoozeAccess(scopeThreadRef(thread.environmentId, thread.id))?.canSnooze ??
+          (serverConfigs.has(thread.environmentId) &&
+            canSnooze(thread, { now: selectionNow.toISOString() })),
       );
       const titleRegenerationThreads = selectedThreads.filter((thread) =>
         serverConfigs.has(thread.environmentId),
@@ -2755,6 +2759,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             .threadAutoSettleOptOut === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
+        const teamSnooze = readTeamThreadSnoozeAccess(threadRef);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(
@@ -2798,7 +2803,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+              canTriageSnooze: teamSnooze?.canSnooze === true || teamSnooze?.canUnsnooze === true,
+              canSnoozeNow:
+                teamSnooze?.canSnooze ?? canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               hasCompletedRun: thread.latestRun?.completedAt != null,
@@ -2815,7 +2822,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
-                snooze: configLoaded,
+                snooze:
+                  teamSnooze === null
+                    ? configLoaded
+                    : teamSnooze.canSnooze || teamSnooze.canUnsnooze,
                 pinning: configLoaded,
                 titleRegeneration: configLoaded,
               },

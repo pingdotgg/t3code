@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpServer } from "effect/http";
 import * as Layer from "effect/Layer";
@@ -127,6 +129,64 @@ const withClientCaller = <A, E, R>(sessionId: AuthSessionId, effect: Effect.Effe
   );
 
 describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () => {
+  it.effect("keeps snoozes from member-bound MCP invocations private to the follower", () =>
+    Effect.gen(function* () {
+      const team = yield* TeamService.TeamService;
+      const sessions = yield* SessionStore.SessionStore;
+      const owner = yield* sessions.issue({ subject: "mcp-snooze-owner" });
+      yield* team.initializeTeam({
+        sessionId: owner.sessionId,
+        payload: { name: "MCP Snooze", ownerPseudo: "charlie" },
+      });
+      const invite = yield* team.createInvite({
+        sessionId: owner.sessionId,
+        payload: { role: "regular" },
+      });
+      const joined = yield* team.redeemInvite({
+        token: invite.token,
+        pseudo: "alice",
+        client: testClient,
+      });
+      const alice = yield* sessions.verify(joined.accessToken);
+      const threadId = ThreadId.make("mcp-snooze-thread");
+      yield* team.recordThreadCreated({ sessionId: owner.sessionId, threadId, locked: true });
+      yield* team.followThread({ sessionId: alice.sessionId, payload: { threadId } });
+
+      const snoozedUntil = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 }));
+      expect(
+        yield* withClientCaller(
+          alice.sessionId,
+          TeamMcpAccess.interceptThreadSnooze({
+            type: "thread.snooze",
+            commandId: CommandId.make("mcp-snooze"),
+            threadId,
+            snoozedUntil,
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        yield* withClientCaller(alice.sessionId, TeamMcpAccess.loadThreadSnoozes([threadId])),
+      ).toEqual([expect.objectContaining({ threadId, snoozedUntil })]);
+      expect(
+        yield* withClientCaller(owner.sessionId, TeamMcpAccess.loadThreadSnoozes([threadId])),
+      ).toEqual([]);
+      expect(
+        yield* withClientCaller(
+          alice.sessionId,
+          TeamMcpAccess.interceptThreadSnooze({
+            type: "thread.unsnooze",
+            commandId: CommandId.make("mcp-unsnooze"),
+            threadId,
+            reason: "user",
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        yield* withClientCaller(alice.sessionId, TeamMcpAccess.loadThreadSnoozes([threadId])),
+      ).toEqual([expect.objectContaining({ threadId, snoozedUntil: null })]);
+    }).pipe(Effect.provide(makeTeamLayer())),
+  );
+
   it.effect(
     "binds MCP credentials to actingMemberId and enforces team RBAC, Views, Locks, creator-only Send now, Interrupt, and immutable child inheritance",
     () =>
@@ -646,7 +706,7 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
         const aliceSession = yield* sessions.issue({ subject: "alice-mcp-m8" });
         const init = yield* team.initializeTeam({
           sessionId: aliceSession.sessionId,
-          payload: { name: "MCP M8 Team", displayName: "M8 Bot", ownerPseudo: "alice" },
+          payload: { name: "MCP M8 Team", ownerPseudo: "alice" },
         });
         const aliceState = yield* team.getState(aliceSession.sessionId);
         const defaultEnvId = (aliceState.environments ?? []).find(

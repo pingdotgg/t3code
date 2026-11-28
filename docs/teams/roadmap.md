@@ -19,7 +19,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 | **Post-M8 Polish**   | `modo` Interrupt + Queued-Msg Notif, Per-Team Sounds, `v0.1.13` + `harnessProfiles` | Merged (PR #11–#13) |
 | **Phase 7b**         | GitHub OAuth / GitHub App User-to-Server Tokens & Device Flow                       | Merged (PR #14)     |
 | **Audit Follow-ups** | Security/Multi-Env Hardening & Settings UX / Reverse States Polish                  | Merged (PR #15–#16) |
-| **Post-Audit UX**    | Remove `displayName` (`scheduled: ` Prefix), Universal Follow & Per-Member Snooze   | Planned             |
+| **Post-Audit UX**    | Remove `displayName` (`scheduled: ` Prefix), Universal Follow & Per-Member Snooze   | Implemented         |
 
 ---
 
@@ -304,9 +304,9 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 > - **Phase 7b — GitHub OAuth / GitHub App user-to-server tokens _(Merged — PR #14)_:** Added team GitHub App & OAuth App configuration (`owner`/`admin`), one-click browser OAuth with PKCE + cross-origin confirmation code, RFC 8628 Device Flow for LAN/Tailscale servers, automatic server-side token refresh with `needsReconnect` banners, and PAT fallback.
 > - **Deep Audit Follow-ups _(Merged — PR #15 & PR #16)_:** Hardened local-sync View/Lock enforcement, remote GitHub lease attribution/session-revocation/TTL bounds, per-thread monotonic local-sync watermarks, `--team-hub-only` / `t3runner` seams, fork `remote-only` provider isolation, local-thread deduplication, `team.leave` / `team.delete` reverse states, tabbed `TeamsSettings`, personal-mode Settings Search isolation, and `<SelectValue>` localization.
 >
-> **Active follow-up specification:**
+> **Implemented follow-up:**
 >
-> - **Scheduled Thread Prefix (`scheduled: `), Universal Teammate Follow & Per-Member Snooze _(Planned)_:**
+> - **Scheduled Thread Prefix (`scheduled: `), Universal Teammate Follow & Per-Member Snooze _(Implemented)_:**
 >   1. **Remove team `displayName` & prefix scheduled threads with `"scheduled: "`:** Remove `displayName` / `teamDisplayName` / `team.updateDisplayName` from contracts, server RPCs/queries, `TeamsSettings`, Settings Search, and unused i18n keys (ignoring legacy `team_workspaces.display_name` column safely on upgrade); prefix all `ownerKind = "team"` scheduled threads with **`scheduled: <title>`** across web/desktop, notifications, and `upstreamMobileCompat.ts` (including stripping leading `scheduled:` on upstream mobile renames).
 >   2. **Universal follow/unfollow across teammates & environments:** Ensure every active team member (`owner`, `admin`, `modo`, `regular`) can follow and unfollow any readable teammate or scheduled thread—including locked threads, read-only Views, local-synced threads, and threads hosted on attached remote environments (`t3runner` / remote `t3server`)—by resolving the owning Team Server via correlated thread location across `TeamThreadFollowButton`, sidebar context menu, `useThreadActionMenu`, and command palette.
 >   3. **Per-member thread snoozing (`team_thread_snoozes`):** Allow every active member to snooze and unsnooze threads they created or follow (regardless of `postRule`, lock state, or execution access), including directly from in-app notification toasts as well as sidebar/header/command palette. Persist snooze strictly per `(threadId, memberId)` in sidecar `team_thread_snoozes` (never mutating upstream's shared `threads.snoozed_until`), intercept `thread.snooze` / `thread.unsnooze` on Team Servers + add `team.snoozeThread` / `team.unsnoozeThread` for attached remote environments, overlay `snoozedUntil`/`snoozedAt`/`lastSnoozeWakeAt` per session on all read/stream/MCP paths (transparently supporting unmodified upstream mobile), clear own snooze on unfollow, and filter both server relay/push notifications and client `ThreadNotificationCoordinator` independently per member so Alice snoozing Charlie's followed thread never affects Bob or Charlie.

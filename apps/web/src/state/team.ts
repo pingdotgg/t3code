@@ -231,29 +231,42 @@ const teamThreadCreatorPseudoAtom = Atom.family((threadKey: string) =>
   }).pipe(Atom.withLabel(`team:thread-creator-pseudo:${threadKey}`)),
 );
 
-// Stable singleton outputs avoid re-rendering every sidebar row on unrelated team stream events.
-const FOLLOW_STATE_NONE = { canFollow: false, isFollowing: false } as const;
-const FOLLOW_STATE_CAN_FOLLOW = { canFollow: true, isFollowing: false } as const;
-const FOLLOW_STATE_FOLLOWING = { canFollow: true, isFollowing: true } as const;
+const FOLLOW_STATE_NONE = {
+  canFollow: false,
+  isFollowing: false,
+  targetTeamEnvironmentId: null,
+} as const;
 
 const teamThreadFollowStateAtom = Atom.family((threadKey: string) =>
-  Atom.make((get): { readonly canFollow: boolean; readonly isFollowing: boolean } => {
-    const separatorIndex = threadKey.indexOf("\0");
-    if (separatorIndex === -1) return FOLLOW_STATE_NONE;
-    const environmentId = threadKey.slice(0, separatorIndex) as EnvironmentId;
-    const threadId = threadKey.slice(separatorIndex + 1) as ThreadId;
-    const result = get(teamEnvironment.state(environmentId));
-    if (result._tag !== "Success" || result.value.team === null) {
-      return FOLLOW_STATE_NONE;
-    }
-    if (!isTeamColleagueThread({ teamState: result.value, threadId })) {
-      return FOLLOW_STATE_NONE;
-    }
-    return isFollowingTeamThread({ teamState: result.value, threadId })
-      ? FOLLOW_STATE_FOLLOWING
-      : FOLLOW_STATE_CAN_FOLLOW;
+  Atom.make((get) => {
+    const location = get(teamThreadLocationAtom(threadKey));
+    if (location === null || !isTeamColleagueThread(location)) return FOLLOW_STATE_NONE;
+    return {
+      canFollow: true,
+      isFollowing: isFollowingTeamThread(location),
+      targetTeamEnvironmentId: location.teamEnvironmentId,
+    } as const;
   }).pipe(Atom.withLabel(`team:thread-follow-state:${threadKey}`)),
 );
+
+export function readTeamThreadLocation(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  registry: AtomRegistry.AtomRegistry = appAtomRegistry,
+) {
+  return registry.get(teamThreadLocationAtom(`${environmentId}\0${threadId}`));
+}
+
+export function useTeamThreadLocation(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+) {
+  return useAtomValue(
+    teamThreadLocationAtom(
+      environmentId === null || threadId === null ? "" : `${environmentId}\0${threadId}`,
+    ),
+  );
+}
 
 export function useTeamEnvironmentState(environmentId: EnvironmentId | null): TeamEnvironmentState {
   const result = useAtomValue(
@@ -277,10 +290,7 @@ export function useTeamThreadCreatorPseudo(
   return useAtomValue(teamThreadCreatorPseudoAtom(`${environmentId}\0${threadId}`));
 }
 
-export function useTeamThreadFollowState(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-): { readonly canFollow: boolean; readonly isFollowing: boolean } {
+export function useTeamThreadFollowState(environmentId: EnvironmentId, threadId: ThreadId) {
   return useAtomValue(teamThreadFollowStateAtom(`${environmentId}\0${threadId}`));
 }
 
@@ -289,11 +299,11 @@ export function readTeamThreadFollowActionState(
   threadId: ThreadId,
 ): { readonly isFollowing: boolean } | null {
   const state = appAtomRegistry.get(teamThreadFollowStateAtom(`${environmentId}\0${threadId}`));
-  if (!state.canFollow) return null;
+  if (state.targetTeamEnvironmentId === null) return null;
   const canMutate = appAtomRegistry.get(
     state.isFollowing
-      ? teamEnvironment.unfollowThread.permissionAtom(environmentId)
-      : teamEnvironment.followThread.permissionAtom(environmentId),
+      ? teamEnvironment.unfollowThread.permissionAtom(state.targetTeamEnvironmentId)
+      : teamEnvironment.followThread.permissionAtom(state.targetTeamEnvironmentId),
   );
   if (!canMutate) return null;
   return { isFollowing: state.isFollowing };

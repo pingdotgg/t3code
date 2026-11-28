@@ -17,12 +17,15 @@ export function TeamThreadFollowButton({
   readonly threadId: ThreadId;
 }) {
   const gt = useGT();
-  const { canFollow, isFollowing } = useTeamThreadFollowState(environmentId, threadId);
+  const { canFollow, isFollowing, targetTeamEnvironmentId } = useTeamThreadFollowState(
+    environmentId,
+    threadId,
+  );
   const canFollowPermission = useAtomValue(
-    teamEnvironment.followThread.permissionAtom(environmentId),
+    teamEnvironment.followThread.permissionAtom(targetTeamEnvironmentId),
   );
   const canUnfollowPermission = useAtomValue(
-    teamEnvironment.unfollowThread.permissionAtom(environmentId),
+    teamEnvironment.unfollowThread.permissionAtom(targetTeamEnvironmentId),
   );
   const { setFollowing } = useTeamThreadFollowToggle();
   const [pendingThreadKey, setPendingThreadKey] = useState<string | null>(null);

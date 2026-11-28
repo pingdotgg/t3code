@@ -58,6 +58,13 @@ import {
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
+import { readTeamThreadLocation } from "../state/team";
+import {
+  isTeamSnoozeActive,
+  isTeamThreadSnoozedForNotification,
+  overlayTeamThreadSnooze,
+} from "./team/threadSnooze";
+import { teamNotificationSnoozeAction } from "./team/notificationSnooze";
 import { toastManager } from "./ui/toast";
 
 interface NotificationState extends ThreadNotificationObservation {
@@ -228,7 +235,20 @@ export function startThreadNotifications(
       watchedEntry?.deferred.delete(thread.id);
       return;
     }
-    const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+    const teamState =
+      readTeamThreadLocation(environmentId, thread.id, registry)?.teamState ??
+      readTeamEnvironmentStateFromRegistry(registry, environmentId);
+    const now = Date.now();
+    if (
+      teamState?.attributionByThreadId.has(thread.id) &&
+      (isTeamThreadSnoozedForNotification(teamState, thread.id, now) ||
+        isSnoozedForNotification(
+          overlayTeamThreadSnooze(thread, teamState),
+          state.completedAt,
+          now,
+        ))
+    )
+      return;
     const decision = resolveTeamEnvironmentThreadNotificationDecision({
       teamState,
       threadId: thread.id,
@@ -311,6 +331,13 @@ export function startThreadNotifications(
         title,
         description: notificationThreadTitle,
         data: {
+          ...teamNotificationSnoozeAction(
+            registry,
+            environmentId,
+            thread.id,
+            settings.timestampFormat,
+            () => toastManager.close(toastId),
+          ),
           hideCopyButton: true,
           leadingIcon:
             kind === "completion" ? (
@@ -404,6 +431,13 @@ export function startThreadNotifications(
         title,
         description: body,
         data: {
+          ...teamNotificationSnoozeAction(
+            registry,
+            environmentId,
+            item.threadId,
+            settings.timestampFormat,
+            () => toastManager.close(toastId),
+          ),
           hideCopyButton: true,
           leadingIcon: <ListPlusIcon aria-hidden className="size-4 text-info-foreground" />,
         },
@@ -619,7 +653,11 @@ export function startThreadNotifications(
           if (seenQueuedRunIds.has(item.queuedRunId)) continue;
           rememberSeenQueuedRunId(item.queuedRunId);
           if (item.senderMemberId === currentMemberId) continue;
-          if (!item.recipientMemberIds.includes(currentMemberId)) continue;
+          if (
+            !item.recipientMemberIds.includes(currentMemberId) ||
+            isTeamSnoozeActive(teamState, item.threadId, Date.now())
+          )
+            continue;
           const rawThreadTitle =
             entry.previous.get(item.threadId)?.thread.title ??
             threads?.find((candidate) => candidate.id === item.threadId)?.title ??

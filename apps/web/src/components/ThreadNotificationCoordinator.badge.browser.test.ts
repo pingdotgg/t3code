@@ -560,7 +560,6 @@ it("gates team thread notifications by creator, follow state, and completing tur
     team: {
       id: teamId,
       name: "Core",
-      displayName: "Core",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",
@@ -571,6 +570,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
     invites: [],
     threadAttributions: [attribution],
     followedThreadIds: new Set(),
+    snoozedByThreadId: new Map(),
     latestTurnByThreadId: new Map([[threadId, aliceRun1]]),
     turnAuthorByTurnId: new Map([[aliceRun1.turnId, aliceRun1]]),
     memberById: new Map([
@@ -627,6 +627,51 @@ it("gates team thread notifications by creator, follow state, and completing tur
   expect(TestNotification.sent).toHaveLength(1);
   expect(TestNotification.sent[0]?.options.body).toBe("alice: Test thread");
   expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    followedThreadIds: new Set([threadId]),
+    snoozedByThreadId: new Map([
+      [
+        threadId,
+        {
+          threadId,
+          snoozedAt: "2026-09-13T07:02:01.000Z",
+          snoozedUntil: "2099-09-13T08:02:01.000Z",
+          lastSnoozeWakeAt: null,
+        },
+      ],
+    ]),
+    queuedMessageNotifications: [
+      {
+        threadId,
+        queuedRunId: "queued-during-snooze",
+        senderMemberId: aliceId,
+        senderPseudo: alice.pseudo,
+        recipientMemberIds: [bobId],
+        messagePreview: "New message",
+        createdAt: "2026-09-13T07:02:30.000Z",
+      },
+    ],
+  });
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "run-snoozed", state: "running", completedAt: null },
+      hasPendingApprovals: true,
+    }),
+  );
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: {
+        turnId: "run-snoozed",
+        state: "completed",
+        completedAt: "2026-09-13T07:02:59.000Z",
+      },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(1);
 
   // 3. Bob unfollows while the notification is pending -> pending notification closes & badge resets.
   state.teamStates.set("one", baseTeamState);
@@ -710,7 +755,6 @@ it("defers notifications and sound across team stream races without leaking coll
     team: {
       id: teamId,
       name: "Race Team",
-      displayName: "Race Team",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",
@@ -721,6 +765,7 @@ it("defers notifications and sound across team stream races without leaking coll
     invites: [],
     threadAttributions: [attribution],
     followedThreadIds: new Set(),
+    snoozedByThreadId: new Map(),
     latestTurnByThreadId: new Map([[threadId, aliceRun1]]),
     turnAuthorByTurnId: new Map([[aliceRun1.turnId, aliceRun1]]),
     memberById: new Map([
@@ -903,7 +948,6 @@ it("notifies creator and active turn author on queued messages without duplicati
     team: {
       id: teamId,
       name: "Queue Team",
-      displayName: "Queue Team",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",
@@ -1071,7 +1115,6 @@ it("plays per-team sound presets for remote Team Server threads and local team-p
     team: {
       id: teamId,
       name: "Sound Team",
-      displayName: "Sound Team",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",

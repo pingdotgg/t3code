@@ -724,6 +724,43 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
       `;
     }),
   },
+  {
+    id: 12,
+    name: "team_thread_snoozes",
+    up: Effect.fn("TeamMigrations.threadSnoozes")(function* (sql) {
+      yield* sql`
+        CREATE TABLE team_thread_snoozes (
+          thread_id TEXT NOT NULL,
+          member_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          snoozed_until TEXT,
+          snoozed_at TEXT,
+          last_snooze_wake_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (thread_id, member_id)
+        )
+      `;
+      yield* sql`
+        CREATE INDEX idx_team_thread_snoozes_team_member
+        ON team_thread_snoozes (team_id, member_id)
+      `;
+      yield* sql`
+        CREATE TRIGGER team_thread_snoozes_on_thread_tombstone
+        AFTER UPDATE OF deleted_at ON orchestration_v2_projection_threads
+        WHEN NEW.deleted_at IS NOT NULL
+        BEGIN
+          DELETE FROM team_thread_snoozes WHERE thread_id = NEW.thread_id;
+        END
+      `;
+      yield* sql`
+        CREATE TRIGGER team_thread_snoozes_on_thread_delete
+        AFTER DELETE ON orchestration_v2_projection_threads
+        BEGIN
+          DELETE FROM team_thread_snoozes WHERE thread_id = OLD.thread_id;
+        END
+      `;
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

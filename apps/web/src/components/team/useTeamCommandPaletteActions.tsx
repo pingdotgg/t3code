@@ -45,6 +45,7 @@ import {
   toggleShowColleaguesThreads,
   toggleShowFollowedThreadsOnly,
   useTeamSidebarFilterMode,
+  useTeamThreadLocation,
   useTeamStatesByEnvironment,
   type TeamSidebarFilterMode,
 } from "~/state/team";
@@ -65,21 +66,20 @@ export function useTeamCommandPaletteActions(
   const showFollowedThreadsOnly = sidebarFilterMode === "followed";
   const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
   const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
+  const activeLocation = useTeamThreadLocation(
+    activeThread?.environmentId ?? null,
+    activeThread?.id ?? null,
+  );
   const activeTeamState = activeThread
     ? teamStatesByEnvironment.get(activeThread.environmentId)
     : undefined;
-  const canFollowActiveThread =
-    activeThread !== null &&
-    activeThread !== undefined &&
-    isTeamColleagueThread({ teamState: activeTeamState, threadId: activeThread.id });
-  const isFollowingActiveThread =
-    canFollowActiveThread &&
-    isFollowingTeamThread({ teamState: activeTeamState, threadId: activeThread.id });
+  const canFollowActiveThread = activeLocation !== null && isTeamColleagueThread(activeLocation);
+  const isFollowingActiveThread = activeLocation !== null && isFollowingTeamThread(activeLocation);
   const canToggleActiveThreadFollow = useAtomValue(
     (isFollowingActiveThread
       ? teamEnvironment.unfollowThread
       : teamEnvironment.followThread
-    ).permissionAtom(activeThread?.environmentId ?? null),
+    ).permissionAtom(activeLocation?.teamEnvironmentId ?? null),
   );
   const canSetViewScope = useAtomValue(
     teamEnvironment.setThreadView.permissionAtom(activeThread?.environmentId ?? null),

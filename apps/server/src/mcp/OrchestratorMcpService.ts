@@ -122,6 +122,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as TeamService from "../team/TeamService.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import { assertLocalAgentMcpExecutionAllowed } from "../team/hubOnly.ts";
+import { makeThreadSnoozeOverlay } from "../team/threadSnooze.ts";
 import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -3827,7 +3828,10 @@ const make = Effect.gen(function* () {
       const readableThreadIds = yield* TeamMcpAccess.filterReadableThreadIds(
         rawProjectThreads.map((thread) => thread.id),
       );
-      const projectThreads = rawProjectThreads.filter((thread) => readableThreadIds.has(thread.id));
+      const overlaySnooze = makeThreadSnoozeOverlay(yield* TeamMcpAccess.loadThreadSnoozes());
+      const projectThreads = rawProjectThreads
+        .filter((thread) => readableThreadIds.has(thread.id))
+        .map(overlaySnooze);
       const nowMs = yield* Clock.currentTimeMillis;
       // An empty list is no filter: clients that fill every optional field send `[]`.
       const statuses =
@@ -3872,7 +3876,9 @@ const make = Effect.gen(function* () {
               .getShellSnapshot({ location: "active", threadIds: threads.map(({ id }) => id) })
               .pipe(
                 Effect.map((snapshot) => {
-                  const shellsById = new Map(snapshot.threads.map((shell) => [shell.id, shell]));
+                  const shellsById = new Map(
+                    snapshot.threads.map((shell) => [shell.id, overlaySnooze(shell)]),
+                  );
                   return threads.flatMap(({ id }) => shellsById.get(id) ?? []);
                 }),
                 Effect.mapError(listFailure),
@@ -3905,11 +3911,15 @@ const make = Effect.gen(function* () {
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
       const runLimit = input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT;
-      const { parent, target, shell, runCount } = yield* loadReadableThread(
-        scope,
-        input.threadId,
-        runLimit,
-      );
+      const {
+        parent,
+        target,
+        shell: rawShell,
+        runCount,
+      } = yield* loadReadableThread(scope, input.threadId, runLimit);
+      const shell = makeThreadSnoozeOverlay(
+        yield* TeamMcpAccess.loadThreadSnoozes([input.threadId]),
+      )(rawShell);
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;

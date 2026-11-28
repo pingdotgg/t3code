@@ -48,7 +48,6 @@ const activeTeamState: TeamEnvironmentState = {
   team: {
     id: teamId,
     name: "Toggle Team",
-    displayName: "Toggle Team",
     defaultViewId,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -59,6 +58,7 @@ const activeTeamState: TeamEnvironmentState = {
   invites: [],
   threadAttributions: [],
   followedThreadIds: new Set([ThreadId.make("thread-followed-1")]),
+  snoozedByThreadId: new Map(),
   latestTurnByThreadId: new Map(),
   turnAuthorByTurnId: new Map(),
   memberById: new Map([[memberId, member]]),

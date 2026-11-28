@@ -295,7 +295,7 @@ async function createInviteAndJoin(input: {
     .waitFor({ state: "visible", timeout: 20_000 });
 }
 
-test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned threads, synthetic team-automation MCP containment, and GitHub automation integration", async ({
+test("Milestone 8: (team, env) scheduled-task RBAC, team-owned threads, synthetic team-automation MCP containment, and GitHub automation integration", async ({
   app,
 }) => {
   await using topology = await startTeamTopology({
@@ -348,7 +348,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
     }).pipe(Effect.scoped),
   );
 
-  // 1. Alice initializes team without displayName -> defaults to team name; then updates displayName.
+  // 1. Alice initializes the team.
   await alice.pairWithRemoteServer({
     host: topology.teamServer.origin,
     pairingToken: topology.teamServer.pairingToken,
@@ -358,24 +358,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   await alice.page.getByRole("option", { name: /Team Server/ }).click();
   await alice.page.getByTestId("team-init-name").fill("Automation Corp");
   await alice.page.getByTestId("team-init-pseudo").fill("alice");
-  // Leave team-init-display-name blank to verify default copy from team name.
   await alice.page.getByTestId("team-init-submit").click();
-  await alice.page
-    .getByTestId("team-display-name-input")
-    .waitFor({ state: "visible", timeout: 20_000 });
-  expect(await alice.page.getByTestId("team-display-name-input").inputValue()).toBe(
-    "Automation Corp",
-  );
-
-  // Owner updates displayName to "Acme Bot".
-  await alice.page.getByTestId("team-display-name-input").fill("Acme Bot");
-  await alice.page.getByTestId("team-display-name-save").click();
-  await expect
-    .poll(async () => await alice.page.getByTestId("team-display-name-input").inputValue(), {
-      timeout: 10_000,
-    })
-    .toBe("Acme Bot");
-
   // Invite Charlie (modo) and Bob (regular).
   await createInviteAndJoin({
     inviter: alice,
@@ -389,20 +372,6 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
     roleLabel: "Regular",
     pseudo: "bob",
   });
-
-  // Bob (regular) sees read-only displayName in Settings -> Teams (no edit input).
-  await bob.open("/settings/teams");
-  await bob.page
-    .getByTestId("team-display-name-value")
-    .waitFor({ state: "visible", timeout: 20_000 });
-  await expect
-    .poll(
-      async () =>
-        ((await bob.page.getByTestId("team-display-name-value").textContent()) ?? "").trim(),
-      { timeout: 15_000 },
-    )
-    .toBe("Acme Bot");
-  expect(await bob.page.getByTestId("team-display-name-input").count()).toBe(0);
 
   // 2. Alice connects her personal GitHub PAT (leaving Team Automation GitHub UNCONFIGURED)
   //    and creates an admin-only View + secret thread to test minimal vs elevated MCP containment.
@@ -469,11 +438,11 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   await scopeFilter.waitFor({ state: "visible", timeout: 20_000 });
   await scopeFilter.click();
   await charlie.page
-    .getByRole("option", { name: /Acme Bot/ })
+    .getByRole("option", { name: /Automation Corp/ })
     .first()
     .waitFor({ state: "visible", timeout: 15_000 });
   const optionTexts = await charlie.page.getByRole("option").allTextContents();
-  expect(optionTexts.some((text) => text.includes("Acme Bot"))).toBe(true);
+  expect(optionTexts.some((text) => text.includes("Automation Corp"))).toBe(true);
   expect(optionTexts.some((text) => /personal/i.test(text))).toBe(false);
   await charlie.page.keyboard.press("Escape");
 
@@ -484,7 +453,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   await dialog.waitFor({ state: "visible", timeout: 15_000 });
   // Ensure Team Server is selected in "Runs on".
   await dialog.locator("#scheduled-task-environment").click();
-  await charlie.page.getByRole("option", { name: /Acme Bot/ }).click();
+  await charlie.page.getByRole("option", { name: /Automation Corp/ }).click();
 
   await dialog
     .getByTestId("scheduled-task-team-view")
@@ -524,7 +493,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
 
   // 6. Prepare notification watchers (unfocused windows) before Charlie runs "Daily Triage"
   //    with NO Team Automation GitHub account configured -> runs cleanly with zero GitHub creds,
-  //    creates team-owned thread "<displayName>: Daily Triage", hidden by default, zero notifications!
+  //    creates team-owned thread "scheduled: Daily Triage", hidden by default, zero notifications!
   await alice.open("/");
   await bob.open("/");
   await alice.setWindowFocused(false);
@@ -575,11 +544,11 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   await alice.setWindowFocused(true);
   expect(await bob.notifications()).toEqual([]);
   expect(await alice.notifications()).toEqual([]);
-  expect(await bob.page.getByText("Acme Bot: Daily Triage").count()).toBe(0);
+  expect(await bob.page.getByText("scheduled: Daily Triage").count()).toBe(0);
 
-  // Toggling colleagues/all-team-threads reveals "Acme Bot: Daily Triage".
+  // Toggling colleagues/all-team-threads reveals "scheduled: Daily Triage".
   await bob.page.getByTestId("team-colleagues-toggle").click();
-  await bob.page.getByText("Acme Bot: Daily Triage").first().waitFor({
+  await bob.page.getByText("scheduled: Daily Triage").first().waitFor({
     state: "visible",
     timeout: 15_000,
   });
@@ -672,7 +641,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   const ownerDialog = alice.page.getByRole("dialog", { name: "New task" });
   await ownerDialog.waitFor({ state: "visible", timeout: 15_000 });
   await ownerDialog.locator("#scheduled-task-environment").click();
-  await alice.page.getByRole("option", { name: /Acme Bot/ }).click();
+  await alice.page.getByRole("option", { name: /Automation Corp/ }).click();
   await ownerDialog.locator("#scheduled-task-title").fill("Admin Release");
   await ownerDialog.locator("#scheduled-task-workspace").click();
   await alice.page.getByRole("option", { name: "Use the project checkout" }).click();

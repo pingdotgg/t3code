@@ -103,6 +103,7 @@ export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   /** Settle, snooze and their undo stay available until the host denies the operate scope. */
   readonly canTriage?: boolean;
+  readonly canTriageSnooze?: boolean;
   readonly canFind?: boolean;
   /** False where no inline title editor is rendered, such as sidebar search results. */
   readonly canRename?: boolean;
@@ -393,7 +394,8 @@ export function buildThreadActionMenuItems(
     ? items
     : items.map((item) =>
         threadActionRequiresOperate(item.id) &&
-        !(state.canTriage === true && isThreadTriageAction(item.id))
+        !(state.canTriage === true && isThreadTriageAction(item.id)) &&
+        !(state.canTriageSnooze === true && (item.id === "snooze" || item.id === "unsnooze"))
           ? {
               ...item,
               disabled: true,

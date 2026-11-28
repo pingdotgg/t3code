@@ -143,7 +143,6 @@ describe("TeamLocalThreadSyncCoordinator note alert sounds", () => {
       team: {
         id: teamId,
         name: "Notes Team",
-        displayName: "Notes Team",
         defaultViewId: viewId,
         createdAt: "2026-09-13T07:00:00.000Z",
         updatedAt: "2026-09-13T07:00:00.000Z",

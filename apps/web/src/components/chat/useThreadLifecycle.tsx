@@ -1,3 +1,5 @@
+import { overlayTeamThreadSnooze } from "../team/threadSnooze";
+import { useTeamThreadLocation } from "~/state/team";
 import { msg, useGT, useMessages } from "gt-react";
 import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -166,7 +168,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     activeThreadRef,
     threadDetailRef,
     activeThreadKey,
-    activeThreadShell,
+    activeThreadShell: rawActiveThreadShell,
     activeLatestRun,
     limitRecoveryHoldsSnooze,
     activeProjectCwd,
@@ -196,7 +198,15 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const messages = useMessages();
   const navigate = useNavigate();
   const router = useRouter();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, unsnoozeThread } = useThreadActions();
+  const teamLocation = useTeamThreadLocation(
+    activeThreadRef?.environmentId ?? null,
+    activeThreadRef?.threadId ?? null,
+  );
+  const activeThreadShell =
+    rawActiveThreadShell === null
+      ? null
+      : overlayTeamThreadSnooze(rawActiveThreadShell, teamLocation?.teamState);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canTriageThread = !useEnvironmentScopeDenied(environmentId, AuthOrchestrationOperateScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
@@ -286,7 +296,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
   const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
   const handleUnsnoozeActiveThread = async () => {
-    if (!activeThreadRef || !threadTriagePermitted(activeThreadRef.environmentId)) return;
+    if (
+      !activeThreadRef ||
+      (teamLocation === null && !threadTriagePermitted(activeThreadRef.environmentId))
+    )
+      return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsnoozingThreadKey(threadKey);
     // Commands settle into a result, so this always runs.
@@ -296,18 +310,21 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       recovery.runId === activeThreadShell?.latestRun?.runId &&
       activeThreadShell?.snoozedUntil != null &&
       Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
-    const result = recoveryOwnsSnooze
-      ? await updateThreadMetadata({
-          environmentId: activeThreadRef.environmentId,
-          input: {
-            threadId: activeThreadRef.threadId,
-            limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
-          },
-        })
-      : await unsnoozeThreadMutation({
-          environmentId: activeThreadRef.environmentId,
-          input: { threadId: activeThreadRef.threadId, reason: "user" },
-        });
+    const result =
+      teamLocation !== null
+        ? await unsnoozeThread(activeThreadRef)
+        : recoveryOwnsSnooze
+          ? await updateThreadMetadata({
+              environmentId: activeThreadRef.environmentId,
+              input: {
+                threadId: activeThreadRef.threadId,
+                limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
+              },
+            })
+          : await unsnoozeThreadMutation({
+              environmentId: activeThreadRef.environmentId,
+              input: { threadId: activeThreadRef.threadId, reason: "user" },
+            });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
@@ -672,7 +689,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         }
         clockMinute={nowMinute}
         actionLabel={isUnsnoozing ? gt("Waking...") : gt("Wake now")}
-        actionDisabled={!canTriageThread || isUnsnoozing}
+        actionDisabled={(teamLocation === null && !canTriageThread) || isUnsnoozing}
         onAction={() => void handleUnsnoozeActiveThreadStable()}
       />
     )

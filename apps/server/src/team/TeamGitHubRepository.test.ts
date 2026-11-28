@@ -250,7 +250,6 @@ describe("TeamGitHubRepository", () => {
           team: {
             id: teamId,
             name: "Acme",
-            displayName: "Acme",
             defaultViewId,
             createdAt: now,
             updatedAt: now,

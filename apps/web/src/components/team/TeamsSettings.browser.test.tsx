@@ -61,7 +61,6 @@ const makeTeamState = (
     team: {
       id: teamId,
       name,
-      displayName: name,
       defaultViewId,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -71,6 +70,7 @@ const makeTeamState = (
     views: [defaultView],
     invites: [],
     threadAttributions: [],
+    snoozedByThreadId: new Map(),
     followedThreadIds: new Set(),
     latestTurnByThreadId: new Map(),
     turnAuthorByTurnId: new Map(),
@@ -109,7 +109,6 @@ const mockState = vi.hoisted(() => ({
       }) => Promise<AsyncResult.AsyncResult<TeamInviteCreatedResult, unknown>>
     >(),
   updateMobileVisibilityHandler: vi.fn(),
-  updateDisplayNameHandler: vi.fn(),
   createMobilePairingHandler: vi.fn(),
   listMobilePairingsHandler: vi.fn(),
   revokeMobilePairingHandler: vi.fn(),
@@ -195,7 +194,6 @@ vi.mock(import("../../state/team"), async (original) => ({
     environmentId === envC ? teamStateC : environmentId === envB ? teamStateB : teamStateA,
   teamEnvironment: {
     initialize: { tag: "initialize", permissionAtom: () => alwaysAllowedAtom },
-    updateDisplayName: { tag: "updateDisplayName", permissionAtom: () => alwaysAllowedAtom },
     updateMyPseudo: { tag: "updateMyPseudo", permissionAtom: () => alwaysAllowedAtom },
     leave: { tag: "leave", permissionAtom: () => alwaysAllowedAtom },
     deleteTeam: { tag: "deleteTeam", permissionAtom: () => alwaysAllowedAtom },
@@ -268,9 +266,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
           : undefined;
       if (tag === "createInvite") {
         return mockState.createInviteHandler(args);
-      }
-      if (tag === "updateDisplayName") {
-        return mockState.updateDisplayNameHandler(args);
       }
       if (tag === "updateMyMobileVisibility") {
         return mockState.updateMobileVisibilityHandler(args);
@@ -466,35 +461,6 @@ describe("TeamsSettings", () => {
     await expect.element(tokenInputC).toBeVisible();
     await expect.element(tokenInputC).toHaveValue("");
     expect(screen.getByTestId("team-automation-github-token-input").query()).toBeNull();
-  });
-
-  it("lets owner edit team displayName while showing read-only displayName for regular members", async () => {
-    mockState.updateDisplayNameHandler.mockReset().mockResolvedValueOnce(
-      AsyncResult.success({
-        ...teamStateA.team!,
-        displayName: "Alpha Bot",
-      }),
-    );
-
-    await using screen = await render(<TeamsSettings />);
-
-    const displayNameInput = screen.getByTestId("team-display-name-input");
-    await expect.element(displayNameInput).toBeVisible();
-    await expect.element(displayNameInput).toHaveValue("Team Alpha");
-    await displayNameInput.fill("Alpha Bot");
-    await screen.getByTestId("team-display-name-save").click();
-    expect(mockState.updateDisplayNameHandler).toHaveBeenCalledWith({
-      environmentId: envA,
-      input: { displayName: "Alpha Bot" },
-    });
-
-    // Switch to Server C (regular member) -> read-only displayName badge, no edit input.
-    await screen.getByTestId("team-server-select").click();
-    await screen.getByRole("option", { name: /Server C/ }).click();
-    await expect
-      .element(screen.getByTestId("team-display-name-value"))
-      .toHaveTextContent("Team Gamma");
-    expect(screen.getByTestId("team-display-name-input").query()).toBeNull();
   });
 
   it("lets owner configure GitHub App OAuth with callback URL helper, hides admin form from regular members, and surfaces one-click OAuth, device code, and reconnect required states", async () => {

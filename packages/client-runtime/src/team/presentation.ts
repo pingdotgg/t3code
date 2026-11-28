@@ -17,6 +17,7 @@ import {
   DEFAULT_TEAM_NOTIFICATION_SOUND,
   isTeamAdminRole,
   isTeamOwnedThreadAttribution,
+  TEAM_SCHEDULED_THREAD_PREFIX,
   isTeamProviderInstanceId,
   isTeamProviderInstanceIdForTeam,
   parseTeamProviderInstanceId,
@@ -63,15 +64,15 @@ export function resolveTeamThreadCreatorPseudo(
       },
 ): string | null {
   const teamState =
-    "teamState" in input ? input.teamState : input.teamStates.get(input.environmentId);
+    "teamState" in input
+      ? input.teamState
+      : (resolveCorrelatedLocalSyncedTeamThread(input)?.teamState ??
+        input.teamStates.get(input.environmentId));
   if (!teamState || teamState.team === null) return null;
   const attribution = teamState.attributionByThreadId.get(input.threadId);
   if (!attribution) return null;
-  if (isTeamOwnedThreadAttribution(attribution)) {
-    return teamState.team.displayName || attribution.teamDisplayName || teamState.team.name;
-  }
-  if (attribution.creatorMemberId === null) {
-    return teamState.team.displayName || attribution.teamDisplayName || teamState.team.name;
+  if (isTeamOwnedThreadAttribution(attribution) || attribution.creatorMemberId === null) {
+    return TEAM_SCHEDULED_THREAD_PREFIX;
   }
   return teamState.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo;
 }
@@ -104,7 +105,7 @@ export function isTeamColleagueThread(input: {
   readonly threadId: ThreadId;
 }): boolean {
   const { teamState, threadId } = input;
-  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+  if (!teamState || teamState.team === null || teamState.currentMember?.status !== "active") {
     return false;
   }
   const attribution = teamState.attributionByThreadId.get(threadId);
@@ -426,7 +427,7 @@ export function resolveTeamQueuedRunAuthorPseudo(input: {
   const turn = resolveTurnAttribution({ teamState, threadId, runId, userMessageId });
   if (!turn) return null;
   if (turn.authorKind === "team_automation" || turn.authorMemberId === null) {
-    return teamState.team.displayName || teamState.team.name;
+    return teamState.team.name;
   }
   return teamState.memberById.get(turn.authorMemberId)?.pseudo ?? turn.authorPseudo;
 }
@@ -760,8 +761,7 @@ export interface CorrelatedLocalSyncedTeamThread {
 }
 
 /**
- * Finds the Team Server attribution for a local-environment thread that has been mirrored via
- * local sync, allowing local sidebar rows and controls to display team pseudo/view/lock metadata.
+ * Finds the Team Server attribution when the displayed thread lives on an execution environment.
  */
 export function resolveCorrelatedLocalSyncedTeamThread(input: {
   readonly environmentId: EnvironmentId;
@@ -771,10 +771,7 @@ export function resolveCorrelatedLocalSyncedTeamThread(input: {
   for (const [teamEnvironmentId, teamState] of input.teamStates) {
     if (teamState.team === null) continue;
     const attribution = teamState.attributionByThreadId.get(input.threadId);
-    if (
-      attribution?.isLocalSynced === true &&
-      attribution.executionEnvironmentId === input.environmentId
-    ) {
+    if (attribution?.executionEnvironmentId === input.environmentId) {
       return { teamEnvironmentId, teamState, attribution };
     }
   }

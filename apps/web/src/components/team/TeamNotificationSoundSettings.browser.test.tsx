@@ -25,7 +25,6 @@ const makeTeamState = (teamId: TeamId, name: string): TeamEnvironmentState => ({
   team: {
     id: teamId,
     name,
-    displayName: name,
     defaultViewId: TeamViewId.make(`view-${teamId}`),
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

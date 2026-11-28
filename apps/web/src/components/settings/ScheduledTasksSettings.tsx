@@ -629,7 +629,7 @@ function ScheduledTaskEnvironmentList({
   for (const { environment, connected, tasks, error } of states) {
     const envTeam = teamStates.get(environment.environmentId)?.team ?? null;
     const baseLabel = settingsScopeEnvironmentLabel(environment, environments);
-    const label = envTeam ? `${envTeam.displayName} · ${baseLabel}` : baseLabel;
+    const label = envTeam ? `${envTeam.name} · ${baseLabel}` : baseLabel;
     if (!connected) {
       summaries["Not connected:"]!.push(
         `${label} (${connectionStatusTitle(environment.connection, messages)})`,
@@ -646,7 +646,7 @@ function ScheduledTaskEnvironmentList({
   const filterOptionLabel = (entry: EnvironmentPresentation) => {
     const envTeam = teamStates.get(entry.environmentId)?.team ?? null;
     const baseLabel = settingsScopeEnvironmentLabel(entry, environments);
-    return envTeam ? `${envTeam.displayName} · ${baseLabel}` : baseLabel;
+    return envTeam ? `${envTeam.name} · ${baseLabel}` : baseLabel;
   };
   const selectedFilterEntry =
     effectiveFilterEnvId === "all"
@@ -709,7 +709,7 @@ function ScheduledTaskEnvironmentList({
               >
                 {envTeam ? (
                   <Badge variant="secondary" data-testid="scheduled-tasks-env-team-badge">
-                    {envTeam.displayName}
+                    {envTeam.name}
                   </Badge>
                 ) : null}
                 <ConnectionStatusDot
@@ -821,7 +821,7 @@ function ScheduledTaskEnvironmentSection({
   const linkedTask = tasks?.find((task) => task.id === taskId);
   return (
     <SettingsSection
-      title={envTeam ? `${envTeam.displayName} · ${environment.label}` : environment.label}
+      title={envTeam ? `${envTeam.name} · ${environment.label}` : environment.label}
       hideTitle={!envTeam}
       icon={
         <EnvironmentMachineIcon
@@ -2034,7 +2034,7 @@ function ScheduledTaskEditorForm({
                       className="size-4"
                     />
                     {teamState?.team
-                      ? `${teamState.team.displayName} · ${environment?.label ?? gt("Unavailable environment")}`
+                      ? `${teamState.team.name} · ${environment?.label ?? gt("Unavailable environment")}`
                       : (environment?.label ?? gt("Unavailable environment"))}
                   </span>
                 </SelectValue>
@@ -2046,9 +2046,7 @@ function ScheduledTaskEditorForm({
                     selectableEnvironments,
                   );
                   const entryTeam = teamStates.get(entry.environmentId)?.team ?? null;
-                  const entryLabel = entryTeam
-                    ? `${entryTeam.displayName} · ${entry.label}`
-                    : entry.label;
+                  const entryLabel = entryTeam ? `${entryTeam.name} · ${entry.label}` : entry.label;
                   return (
                     <SelectItem
                       key={entry.environmentId}

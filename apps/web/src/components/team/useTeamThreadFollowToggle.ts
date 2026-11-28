@@ -7,7 +7,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m } from "~/i18n/messages";
-import { teamEnvironment } from "~/state/team";
+import { readTeamThreadLocation, teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -24,13 +24,18 @@ export function useTeamThreadFollowToggle() {
     readonly threadId: ThreadId;
     readonly follow: boolean;
   }): Promise<boolean> => {
+    const targetTeamEnvironmentId = readTeamThreadLocation(
+      input.environmentId,
+      input.threadId,
+    )?.teamEnvironmentId;
+    if (targetTeamEnvironmentId === undefined) return false;
     const result = input.follow
       ? await followThread({
-          environmentId: input.environmentId,
+          environmentId: targetTeamEnvironmentId,
           input: { threadId: input.threadId },
         })
       : await unfollowThread({
-          environmentId: input.environmentId,
+          environmentId: targetTeamEnvironmentId,
           input: { threadId: input.threadId },
         });
     if (result._tag === "Success") {
