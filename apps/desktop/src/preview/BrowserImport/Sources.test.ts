@@ -628,6 +628,40 @@ describe("Zen", () => {
   );
 });
 
+describe("Firefox XDG profiles", () => {
+  it.effect("finds profiles Firefox 147+ creates under the XDG config directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-xdg-" });
+        for (const environment of [
+          { HOME: home },
+          { HOME: home, XDG_CONFIG_HOME: `${home}/xdg-config` },
+        ]) {
+          const context = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcess.Environment, environment),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+          const root = context.path.join(context.linuxConfigHome, "mozilla", "firefox");
+          const directory = context.path.join(root, "abcd.default-release");
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* writeFirefoxCookieDatabase(`${directory}/cookies.sqlite`, 2, 0);
+          yield* fileSystem.writeFileString(
+            `${root}/profiles.ini`,
+            "[Profile0]\nName=default-release\nIsRelative=1\nPath=abcd.default-release\n",
+          );
+
+          assert.isTrue(yield* isSourceInstalled(firefox, context));
+          assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+            { directory, name: "default-release", cookieCount: 2 },
+          ]);
+          yield* fileSystem.remove(root, { recursive: true });
+        }
+      }),
+    ),
+  );
+});
+
 describe("Firefox Snap profiles", () => {
   it.effect.skipIf(!symlinksSupported)(
     "finds Snap profiles with or without profiles.ini and checks their locks",
