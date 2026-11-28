@@ -54,13 +54,18 @@ function settingsProjectGroups(
   if (!byMode) byLocale.set(locale, (byMode = new Map()));
   let groups = byMode.get(groupingMode);
   if (!groups) {
-    groups = buildProjectGroups(
-      {
-        projects,
-        settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
-      },
-      resolve,
-    );
+    groups = [
+      ...buildProjectGroups(
+        {
+          projects,
+          settings: {
+            sidebarProjectGroupingMode: groupingMode,
+            sidebarProjectGroupingOverrides: {},
+          },
+        },
+        resolve,
+      ),
+    ].sort((left, right) => left.label.localeCompare(right.label, locale));
     byMode.set(groupingMode, groups);
   }
   return groups;
