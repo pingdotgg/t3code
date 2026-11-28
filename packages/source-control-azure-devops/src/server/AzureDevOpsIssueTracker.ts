@@ -378,15 +378,13 @@ export const make: Effect.Effect<
       timeToLive: (exit) => (Exit.isSuccess(exit) ? CLOSED_STATES_TTL : Duration.zero),
     });
 
-  const workItem = (input: {
+  const readWorkItem = (input: {
     readonly cwd: string;
     readonly operation: string;
     readonly organization: string;
-    readonly project: string;
     readonly number: number;
-    readonly closed: ClosedStates;
-  }): Effect.Effect<AzureDevOpsWorkItem, IssueTrackerError> =>
-    read({
+  }) =>
+    run({
       cwd: input.cwd,
       operation: input.operation,
       args: [
@@ -402,19 +400,24 @@ export const make: Effect.Effect<
         "--expand",
         "relations",
       ],
-      decode: (raw) => decodeWorkItemJson(raw, input.closed),
-    }).pipe(
-      Effect.filterOrFail(
-        (item) => item !== null,
-        () => notFound(input.operation),
-      ),
-      // `az` addresses a work item by organization and id alone, so one from another project
-      // answers too; the scope names a project, and an item outside it is not this scope's.
-      Effect.filterOrFail(
-        (item) => item.project?.toLowerCase() === input.project.toLowerCase(),
-        () => notFound(input.operation),
-      ),
-    );
+    });
+
+  const decodeWorkItem = (
+    raw: string,
+    input: { readonly operation: string; readonly project: string; readonly closed: ClosedStates },
+  ): Effect.Effect<AzureDevOpsWorkItem, IssueTrackerError> => {
+    const decoded = decodeWorkItemJson(raw, input.closed);
+    if (Result.isFailure(decoded)) return Effect.fail(unreadable(input.operation, decoded.failure));
+    const item = decoded.success;
+    // Azure addresses the item by organization and id. Verify it belongs to this project.
+    return item !== null && item.project?.toLowerCase() === input.project.toLowerCase()
+      ? Effect.succeed(item)
+      : Effect.fail(notFound(input.operation));
+  };
+
+  const workItem = (
+    input: Parameters<typeof readWorkItem>[0] & Parameters<typeof decodeWorkItem>[1],
+  ) => readWorkItem(input).pipe(Effect.flatMap((raw) => decodeWorkItem(raw, input)));
 
   /** The work item as `az` addresses it, or a not-found for a key that names no id. */
   const target = (
@@ -695,13 +698,20 @@ export const make: Effect.Effect<
     getIssue: (input) =>
       target("getIssue", input).pipe(
         Effect.flatMap((scope) =>
-          workItemTypes({ ...scope, cwd: input.cwd, operation: "getIssue" }).pipe(
-            Effect.flatMap((types) => {
-              const closed = closedStateNames(types);
-              return workItem({ ...scope, cwd: input.cwd, operation: "getIssue", closed }).pipe(
-                Effect.map((item) => ({ item, closed, states: workItemStates(types, item) })),
-              );
-            }),
+          Effect.gen(function* () {
+            const request = { ...scope, cwd: input.cwd, operation: "getIssue" };
+            // Reading the item does not need the workflow. Decode it only after the workflow loads.
+            const [types, itemRead] = yield* Effect.all(
+              [workItemTypes(request), Effect.result(readWorkItem(request))],
+              { concurrency: 2 },
+            );
+            const closed = closedStateNames(types);
+            const item = yield* decodeWorkItem(yield* Effect.fromResult(itemRead), {
+              ...request,
+              closed,
+            });
+            return { item, closed, states: workItemStates(types, item) };
+          }).pipe(
             Effect.flatMap(({ item, closed, states }) =>
               Effect.all(
                 [
