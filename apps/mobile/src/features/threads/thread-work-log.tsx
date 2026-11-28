@@ -10,6 +10,7 @@ import {
   WorkLogPressable,
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
+import { useSyncListLayoutOnChange } from "./useSyncListLayoutOnChange";
 import { McpSignInSheet, type McpSignInTarget } from "./McpSignInSheet";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
 import {
@@ -647,6 +648,7 @@ function ThreadWorkGroupList(props: {
   const loadedRef = useRef(false);
   const [contentHeight, setContentHeight] = useState(estimatedRowsHeight);
   const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
+  useSyncListLayoutOnChange(height);
   const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
   const sharedValues = { scrollOffset };
 
@@ -917,6 +919,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     expanded && row.fetchesDetail && !streamsOutput
       ? { environmentId: props.environmentId, row: row.projectedItem }
       : null,
+  );
+  useSyncListLayoutOnChange(
+    expanded ? (fetchedDetail.data?.item ?? fetchedDetail.error ?? fetchedDetail.data) : null,
   );
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {

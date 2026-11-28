@@ -1,4 +1,5 @@
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
+import { useSyncListLayoutOnChange } from "./useSyncListLayoutOnChange";
 import {
   DISCLOSURE_DETAIL_DELAY_MS,
   DISCLOSURE_DETAIL_FADE_MS,
@@ -1890,6 +1891,7 @@ function RunFoldButton({
   onToggle,
   rowSizing,
   iconColor,
+  disclosureActive,
 }: {
   entry: Extract<ThreadFeedEntry, { type: "run-fold" }>;
   environmentId: EnvironmentId;
@@ -1897,6 +1899,8 @@ function RunFoldButton({
   onToggle: (runId: RunId) => void;
   rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   iconColor: ColorValue;
+  /** A disclosure hold or slide is moving rows, so new bars could land on a row still at its old spot. */
+  disclosureActive: boolean;
 }) {
   const gt = useGT();
   const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
@@ -1921,6 +1925,7 @@ function RunFoldButton({
   }, [entry.expanded, anchorsKey, environmentId, threadId]);
   const error = anchorsKey && failed ? gt("Couldn't load work. Tap to retry.") : null;
   const loading = entry.expanded && anchorsKey !== "" && !failed;
+  useSyncListLayoutOnChange(loading);
   const toggle = () => {
     setFailed(false);
     if (error && entry.expanded) load();
@@ -1952,21 +1957,35 @@ function RunFoldButton({
           tintColor={iconColor}
         />
       </Pressable>
-      {loading ? (
-        <View
-          accessible={false}
-          importantForAccessibility="no-hide-descendants"
-          className="gap-2 px-1 pb-2"
-        >
-          {(["40%", "60%", "33%"] as const).map((width) => (
-            <View key={width} className="flex-row items-center gap-2">
-              <View className="size-3 rounded bg-subtle-strong" />
-              <View className="h-2.5 rounded-full bg-subtle-strong" style={{ width }} />
-            </View>
-          ))}
-        </View>
-      ) : null}
+      {loading ? <RunFoldLoadingBars disclosureActive={disclosureActive} /> : null}
     </View>
+  );
+}
+
+function RunFoldLoadingBars(props: { disclosureActive: boolean }) {
+  // Bars that appear while a disclosure is moving rows wait until the rows below have slid
+  // past them; once shown they stay shown through later disclosures.
+  const [revealed, setRevealed] = useState(!props.disclosureActive);
+  if (!revealed && !props.disclosureActive) setRevealed(true);
+  return (
+    <Animated.View
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      className="gap-2 px-1 pb-2"
+      style={{
+        opacity: revealed ? 1 : 0,
+        transitionProperty: "opacity",
+        transitionDuration: DISCLOSURE_DETAIL_FADE_MS,
+        transitionDelay: THREAD_DISCLOSURE_TRANSITION_MS,
+      }}
+    >
+      {(["40%", "60%", "33%"] as const).map((width) => (
+        <View key={width} className="flex-row items-center gap-2">
+          <View className="size-3 rounded bg-subtle-strong" />
+          <View className="h-2.5 rounded-full bg-subtle-strong" style={{ width }} />
+        </View>
+      ))}
+    </Animated.View>
   );
 }
 
@@ -1991,6 +2010,7 @@ function renderFeedEntry(
     readonly pendingFoldMessageId: string | null;
     readonly formatMessageTime: (input: string) => string;
     readonly copiedRowId: string | null;
+    readonly disclosureActive: boolean;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
@@ -2088,6 +2108,7 @@ function renderFeedEntry(
             onToggle={props.onToggleTurnFold}
             rowSizing={props.workRowSizing}
             iconColor={iconSubtleColor}
+            disclosureActive={props.disclosureActive}
           />
         )}
         {props.worktreeSetup && entry.id === props.setupFoldRowId ? (
@@ -4120,7 +4141,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     switch (entry.type) {
       case "run-fold":
-        return resolveThreadFeedFixedItemSize(entry.type);
+        // An open fold with deferred history shows loading bars under its label until it loads.
+        return entry.expanded && entry.deferredWorkItemIds
+          ? undefined
+          : resolveThreadFeedFixedItemSize(entry.type);
       case "work-toggle":
         return entry.thought ? undefined : WORK_GROUP_TOGGLE_HEIGHT;
       case "thinking":
@@ -4213,6 +4237,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onCiteAssistantText: props.onCiteAssistantText,
             threadId: props.threadId,
             copiedRowId,
+            disclosureActive: disclosureLayout !== null,
             expandedWorkRows,
             workRowSizing,
             workGroupScrollPositions,
@@ -4345,6 +4370,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               : {})}
             scrollToOverflowEnabled
             estimatedItemSize={180}
+            // Rows a disclosure reveals in bulk otherwise paint for a frame at estimated spots, over their neighbours.
+            experimental_hideItemsUntilMeasured
             alignItemsAtEnd
             initialScrollAtEnd
             onReady={() => {
