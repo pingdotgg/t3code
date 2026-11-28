@@ -3083,6 +3083,11 @@ export const layerWithOptions = (
             if (nativeEvent.type === "command_output.delta") {
               return commandOutput.append(nativeEvent);
             }
+            if (nativeEvent.type === "command_output.background") {
+              return nativeEvent.running
+                ? commandOutput.hold(nativeEvent)
+                : commandOutput.release(nativeEvent);
+            }
             // A query process can exit under a live session, after the run's last event.
             if (nativeEvent.type === "background_work.lost") {
               return writeReleasedWorkNote({

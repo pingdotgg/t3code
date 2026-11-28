@@ -127,12 +127,15 @@ export function BackgroundWorkDetails(props: {
                       <ShellCommandBlock command={command} />
                     </div>
                   ) : null}
-                  {itemId && streamsOutput && item?.status === "running" ? (
-                    <div className="font-mono text-xs whitespace-pre-wrap break-words">
+                  {/* A background command's row settles at launch while its output keeps streaming. */}
+                  {itemId && streamsOutput ? (
+                    <div className="flex h-64 flex-col rounded-md border border-border bg-(--terminal-background) p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-(--terminal-foreground)">
                       <CommandOutputPanel
                         environmentId={props.environmentId}
                         threadId={task.sourceThreadId ?? item?.threadId ?? props.threadId}
                         itemId={itemId}
+                        showWaiting
+                        className="max-h-none min-h-0 flex-1 text-(--terminal-foreground) scrollbar-thumb-foreground/18 scrollbar-track-transparent [scrollbar-width:thin]"
                       />
                     </div>
                   ) : null}

@@ -5,6 +5,7 @@ import { T, Var } from "gt-react";
 import { useLayoutEffect, useRef } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
+import { cn } from "../../lib/utils";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -30,6 +31,10 @@ export function CommandOutputPanel(props: {
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
   readonly source?: TurnItemSource["commandOutput"] | undefined;
+  /** Classes for the scrolling output, such as a fixed height inside a terminal frame. */
+  readonly className?: string | undefined;
+  /** Show a placeholder while the command runs before its first output. */
+  readonly showWaiting?: boolean | undefined;
 }) {
   const input = { threadId: props.threadId, itemId: props.itemId };
   const { data, error } = useEnvironmentQuery<CommandOutputView, unknown>(
@@ -66,7 +71,14 @@ export function CommandOutputPanel(props: {
         </div>
       );
     }
-    return data.running ? null : (
+    if (data.running) {
+      return props.showWaiting ? (
+        <div className="italic opacity-60">
+          <T>Waiting for output…</T>
+        </div>
+      ) : null;
+    }
+    return (
       <div className="text-muted-foreground italic">
         <T>No output.</T>
       </div>
@@ -82,7 +94,7 @@ export function CommandOutputPanel(props: {
         followRef.current =
           element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK_PX;
       }}
-      className="max-h-80 overflow-auto text-muted-foreground"
+      className={cn("max-h-80 overflow-auto text-muted-foreground", props.className)}
     >
       {data?.output.truncated ? (
         <div className="italic">

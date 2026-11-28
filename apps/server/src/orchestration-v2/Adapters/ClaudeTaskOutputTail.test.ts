@@ -144,6 +144,12 @@ describe("claudeTaskOutputRoot", () => {
         assert.equal(root({ TMPDIR: "/var/folders/x/T/" }, "linux"), `/var/folders/x/T/${user}`);
         assert.equal(root({ TMP: "/tmp/user/1000" }, "linux"), `/tmp/user/1000/${user}`);
         assert.equal(root({}, "linux"), `/tmp/${user}`);
+        // Windows has no uid; Claude Code writes under `<temp>\claude`.
+        assert.equal(root({ TEMP: "/w/Temp" }, "win32"), path.resolve("/w/Temp", "claude"));
+        assert.equal(
+          root({ CLAUDE_CODE_TMPDIR: "/srv/claude", TEMP: "/w/Temp" }, "win32"),
+          path.resolve("/srv/claude", "claude"),
+        );
         assert.equal(root({ TMPDIR: "/var/folders/x/T/" }, "darwin"), `/tmp/${user}`);
         assert.equal(
           root({ CLAUDE_CODE_TMPDIR: "/srv/claude", TMPDIR: "/var/folders/x/T/" }, "linux"),

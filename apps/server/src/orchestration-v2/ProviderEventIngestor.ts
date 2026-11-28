@@ -685,6 +685,7 @@ export const layer: Layer.Layer<
               return [];
             case "background_work.lost":
             case "command_output.delta":
+            case "command_output.background":
             case "prompt_suggestion.updated":
               // The session manager handles these before ingestion.
               return [];

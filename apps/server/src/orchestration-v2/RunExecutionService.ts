@@ -592,6 +592,7 @@ export function routeProviderEvent(
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "background_work.lost":
     case "command_output.delta":
+    case "command_output.background":
     case "prompt_suggestion.updated":
       // The session manager handles these itself; runs never see them.
       return [false, state];

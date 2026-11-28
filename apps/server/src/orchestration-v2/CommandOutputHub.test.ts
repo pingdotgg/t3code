@@ -356,4 +356,48 @@ layer("CommandOutputHub", (it) => {
       assert.equal(yield* Queue.take(frames), "ended");
     }),
   );
+
+  it.effect("a background command streams after its row settles until it is released", () =>
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      const target = { threadId, itemId: ITEM_ID };
+      yield* writeCommandItem(threadId, { driver: CLAUDE_DRIVER, status: "running" });
+      yield* hub.hold(target);
+      yield* hub.append({ ...target, chunk: "installing\n" });
+      // The tool call returns at launch, so the row settles with only an acknowledgement.
+      yield* hub.finish(target);
+      yield* writeCommandItem(threadId, {
+        driver: CLAUDE_DRIVER,
+        status: "completed",
+        output: "Command running in background with ID: b1",
+      });
+      const frames = yield* subscribeFrames(threadId);
+      let state = EMPTY_TERMINAL_OUTPUT;
+      const first = yield* takeFrame(frames);
+      assert.isTrue(first.running);
+      state = applyFrame(state, first);
+      yield* hub.append({ ...target, chunk: "done\n" });
+      yield* TestClock.adjust("1 second");
+      const next = yield* takeFrame(frames);
+      assert.isTrue(next.running);
+      state = applyFrame(state, next);
+      assert.equal(state.text, "installing\ndone\n");
+
+      yield* hub.release(target);
+      yield* TestClock.adjust("1 second");
+      const final = yield* takeFrame(frames);
+      assert.deepEqual(final, {
+        kind: "replace",
+        text: "installing\ndone\n",
+        truncated: false,
+        running: false,
+      });
+      assert.equal(yield* Queue.take(frames), "ended");
+
+      // Opening it again after release shows the output, not the acknowledgement.
+      const reopened = yield* subscribeFrames(threadId);
+      assert.deepEqual(yield* takeFrame(reopened), final);
+    }),
+  );
 });

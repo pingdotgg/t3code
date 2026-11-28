@@ -16123,6 +16123,316 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each([
+    { end: "its task notification", notified: true },
+    { end: "Claude exiting", notified: false },
+  ])("streams a background Bash command's output until $end", ({ notified }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-bg-output-" });
+      // Windows has no uid, so Claude writes under `<TEMP>/claude`; this also runs on POSIX hosts.
+      const harness = yield* makeWakeHarnessWithOptions({ environment: { TEMP: temp } });
+      const now = yield* DateTime.now;
+      const toolUseId = "toolu_background_bash";
+      const taskId = "background-bash-task";
+      const tasks = path.join(temp, "claude", "project", WAKE_NATIVE_SESSION, "tasks");
+      const outputFile = path.join(tasks, `${taskId}.output`);
+      yield* fileSystem.makeDirectory(tasks, { recursive: true });
+      yield* fileSystem.writeFileString(outputFile, "installing\n");
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-background-output"),
+          text: "Install in the background.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_background_bash",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Bash",
+                input: { command: "pnpm install", run_in_background: true },
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000b01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          description: "pnpm install",
+          is_backgrounded: true,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000b02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: `Command running in background with ID: ${taskId}`,
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000b03",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b04", result: "Started." }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      yield* harness.until(() =>
+        harness.events.some((event) => event.type === "command_output.delta"),
+      );
+      // The tool result settled the row and the turn ended, yet the tail keeps reading the task's file.
+      yield* fileSystem.writeFileString(outputFile, "installing\ndone\n");
+      if (notified) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            status: "completed",
+            output_file: outputFile,
+            summary: "pnpm install finished",
+            uuid: "00000000-0000-4000-8000-000000000b05",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      } else {
+        // An empty roster can precede the notification, which an exited process never sends.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "00000000-0000-4000-8000-000000000b06",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.shutdown(harness.sdkMessages);
+      }
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "command_output.background" && !event.running,
+        ),
+      );
+
+      const output = harness.events.flatMap((event) =>
+        event.type === "command_output.delta"
+          ? [event.chunk]
+          : event.type === "command_output.background"
+            ? [event.running ? "<held>" : "<released>"]
+            : [],
+      );
+      assert.deepEqual(output, ["<held>", "installing\n", "done\n", "<released>"]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { result: "the roster", structured: false },
+    { result: "its tool result", structured: true },
+  ])("streams a Bash command moved to the background via $result", ({ structured }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-moved-output-",
+      });
+      const harness = yield* makeWakeHarnessWithOptions({ environment: { TEMP: temp } });
+      const now = yield* DateTime.now;
+      const toolUseId = "toolu_moved_bash";
+      const taskId = "moved-bash-task";
+      const tasks = path.join(temp, "claude", "project", WAKE_NATIVE_SESSION, "tasks");
+      const outputFile = path.join(tasks, `${taskId}.output`);
+      yield* fileSystem.makeDirectory(tasks, { recursive: true });
+      yield* fileSystem.writeFileString(outputFile, "installing\n");
+      const deltas = () =>
+        harness.events.filter((event) => event.type === "command_output.delta").length;
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-moved-output"),
+          text: "Install.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_moved_bash",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Bash",
+                input: { command: "pnpm install" },
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000c01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          description: "pnpm install",
+          is_backgrounded: false,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000c02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.until(() => deltas() === 1);
+      // The acknowledgement stops the foreground reader before the roster shows the move.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: `Command was manually backgrounded by user with ID: ${taskId}`,
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          ...(structured
+            ? { tool_use_result: { backgroundTaskId: taskId, backgroundedByUser: true } }
+            : {}),
+          uuid: "00000000-0000-4000-8000-000000000c03",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: taskId, task_type: "local_bash", description: "pnpm install" }],
+          uuid: "00000000-0000-4000-8000-000000000c04",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // Background work details find the command row by this launch even though the call already settled.
+      yield* harness.until(() =>
+        providerThreadRosterEvents(harness.events).some(
+          (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ),
+      );
+      const moved = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+        .pendingBackgroundTasks?.[0];
+      assert.equal(moved?.command, "pnpm install");
+      assert.isDefined(moved?.itemId);
+      yield* harness.until(() => deltas() === 2);
+      yield* fileSystem.writeFileString(outputFile, "installing\ndone\n");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          status: "completed",
+          output_file: outputFile,
+          summary: "pnpm install finished",
+          uuid: "00000000-0000-4000-8000-000000000c05",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "command_output.background" && !event.running,
+        ),
+      );
+
+      const output = harness.events.flatMap((event) =>
+        event.type === "command_output.delta"
+          ? [event.chunk]
+          : event.type === "command_output.background"
+            ? [event.running ? "<held>" : "<released>"]
+            : [],
+      );
+      // The hold resets the hub's copy, so rereading the file from the start duplicates nothing.
+      assert.deepEqual(output, ["installing\n", "<held>", "installing\n", "done\n", "<released>"]);
+      if (structured) {
+        // Holding before the row settles keeps an open Details view streaming.
+        const held = harness.events.findIndex(
+          (event) => event.type === "command_output.background",
+        );
+        const settled = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status !== "running",
+        );
+        assert.isAbove(settled, held);
+      }
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
     Effect.gen(function* () {
       let closes = 0;
@@ -21809,6 +22119,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           reason === "Stop" ? "command_execution:interrupted" : "command_execution:failed",
         ]);
       }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "streams a background Bash command a subagent starts after the root turn completes",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-subagent-bg-",
+        });
+        const harness = yield* makeWakeHarnessWithOptions({ environment: { TEMP: temp } });
+        const now = yield* DateTime.now;
+        const AGENT = "toolu-idle-bg-agent";
+        const BASH = "toolu-idle-bg-bash";
+        const taskId = "idle-bg-bash-task";
+        const tasks = path.join(temp, "claude", "project", WAKE_NATIVE_SESSION, "tasks");
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "auditing\n");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-idle-bg-bash"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: "task-idle-bg-agent",
+            toolUseId: AGENT,
+            uuid: "00000000-0000-4000-8000-000000000d01",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000d02",
+            result: "Auditing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: AGENT,
+          uuid: "00000000-0000-4000-8000-000000000d03",
+          bashToolUseId: BASH,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: BASH,
+            description: "git log -5",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000d04",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some((event) => event.type === "command_output.delta"),
+        );
+        assert.isTrue(
+          harness.events.some(
+            (event) => event.type === "command_output.background" && event.running,
+          ),
+        );
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,
