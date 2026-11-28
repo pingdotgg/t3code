@@ -1208,6 +1208,7 @@ const makeStreamResponse = Effect.fnUntraced(
     let responseMetadataEmitted = false
     let reasoningDetailsAttachedToToolCall = false
     let finishReason: Response.FinishReason | undefined = undefined
+    let provider: string | undefined
     let openRouterResponseId: string | undefined = undefined
     let activeReasoningId: string | undefined = undefined
     let activeTextId: string | undefined = undefined
@@ -1246,6 +1247,10 @@ const makeStreamResponse = Effect.fnUntraced(
     return stream.pipe(
       Stream.mapEffect(Effect.fnUntraced(function*(event) {
         const parts: Array<Response.StreamPartEncoded> = []
+
+        if (Predicate.isString(event.provider)) {
+          provider = event.provider
+        }
 
         if (Predicate.isNotUndefined(event.error)) {
           finishReason = "error"
@@ -1632,9 +1637,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 ? { systemFingerprint: event.system_fingerprint }
                 : undefined),
               ...(Predicate.isNotUndefined(event.usage) ? { usage: event.usage } : undefined),
-              ...(Predicate.hasProperty(event, "provider") && Predicate.isString(event.provider)
-                ? { provider: event.provider }
-                : undefined),
+              ...(Predicate.isNotUndefined(provider) ? { provider } : undefined),
               ...(accumulatedFileAnnotations.length > 0 ? { annotations: accumulatedFileAnnotations } : undefined),
               ...(accumulatedRefusal.length > 0 ? { refusal: accumulatedRefusal } : undefined)
             }

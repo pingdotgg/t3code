@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1089,7 +1090,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 return snapshot;
               }).pipe(
                 Effect.provide(
-                  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+                  ProjectionStore.layer.pipe(
+                    Layer.provide(NodeCrypto.layerDigest),
+                    Layer.provideMerge(SqlitePersistence.layerMemory),
+                  ),
                 ),
                 Effect.orDie,
               ),
