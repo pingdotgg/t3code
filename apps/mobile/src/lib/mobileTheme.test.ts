@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as mobileTheme from "./mobileTheme";
-import { buildGhosttyThemeConfig, getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+import {
+  buildGhosttyThemeConfig,
+  getMobileTerminalTheme,
+} from "../features/terminal/terminalTheme";
 import {
   BUILT_IN_THEME_IDS,
   BUILT_IN_THEMES,

@@ -38,8 +38,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
-import { TERMINAL_ANSI_COLOR_ROLES } from "@t3tools/shared/themePalettes";
-import { getThemeColorVariable } from "../themePalette";
+import {
+  TERMINAL_ANSI_COLOR_ROLES,
+  TERMINAL_ANSI_THEME_VARIABLES,
+} from "@t3tools/shared/themePalettes";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -405,7 +407,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     ),
     palette: TERMINAL_ANSI_COLOR_ROLES.map((role, index) => {
       const fallback = TERMINAL_PALETTES[isDark ? "dark" : "light"][index]!;
-      const color = readThemeColor(themeStyles, getThemeColorVariable(role), "");
+      const color = readThemeColor(themeStyles, TERMINAL_ANSI_THEME_VARIABLES[role], "");
       return color ? parseTerminalColor(color, fallback) : fallback;
     }),
     selectionBackground: terminalSelection,

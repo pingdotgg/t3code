@@ -15,8 +15,27 @@ export interface TerminalTheme {
   readonly border: string;
   readonly cursorForeground: string;
   readonly cursorBackground: string;
-  readonly palette: readonly string[];
+  readonly palette: TerminalPalette;
 }
+
+type TerminalPalette = readonly [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+];
 
 const PIERRE_LIGHT_THEME: TerminalTheme = {
   background: "#fcfcfc",
@@ -85,6 +104,11 @@ export function getMobileTerminalTheme(
   const palette = getMobileThemeColors(paletteId, scheme);
   const colors = getMobileThemeVariables(paletteId, scheme);
   const background = themeColorToNativeColor(palette.terminalBackground);
+  const terminalPalette: [...TerminalPalette] = [...base.palette];
+  for (const [index, role] of TERMINAL_ANSI_COLOR_ROLES.entries()) {
+    const color = palette[role];
+    if (color !== undefined) terminalPalette[index] = themeColorToNativeColor(color);
+  }
   return {
     ...base,
     background,
@@ -93,10 +117,7 @@ export function getMobileTerminalTheme(
     border: colors["--color-border"],
     cursorForeground: themeColorToNativeColor(palette.terminalCursor),
     cursorBackground: background,
-    palette: TERMINAL_ANSI_COLOR_ROLES.map((role, index) => {
-      const color = palette[role];
-      return color === undefined ? base.palette[index]! : themeColorToNativeColor(color);
-    }),
+    palette: terminalPalette,
   };
 }
 

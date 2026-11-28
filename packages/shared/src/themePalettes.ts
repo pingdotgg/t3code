@@ -46,6 +46,25 @@ export const TERMINAL_ANSI_COLOR_ROLES = [
   "terminalAnsiBrightWhite",
 ] as const;
 
+export const TERMINAL_ANSI_THEME_VARIABLES = {
+  terminalAnsiBlack: "--app-theme-terminal-ansi-black",
+  terminalAnsiRed: "--app-theme-terminal-ansi-red",
+  terminalAnsiGreen: "--app-theme-terminal-ansi-green",
+  terminalAnsiYellow: "--app-theme-terminal-ansi-yellow",
+  terminalAnsiBlue: "--app-theme-terminal-ansi-blue",
+  terminalAnsiMagenta: "--app-theme-terminal-ansi-magenta",
+  terminalAnsiCyan: "--app-theme-terminal-ansi-cyan",
+  terminalAnsiWhite: "--app-theme-terminal-ansi-white",
+  terminalAnsiBrightBlack: "--app-theme-terminal-ansi-bright-black",
+  terminalAnsiBrightRed: "--app-theme-terminal-ansi-bright-red",
+  terminalAnsiBrightGreen: "--app-theme-terminal-ansi-bright-green",
+  terminalAnsiBrightYellow: "--app-theme-terminal-ansi-bright-yellow",
+  terminalAnsiBrightBlue: "--app-theme-terminal-ansi-bright-blue",
+  terminalAnsiBrightMagenta: "--app-theme-terminal-ansi-bright-magenta",
+  terminalAnsiBrightCyan: "--app-theme-terminal-ansi-bright-cyan",
+  terminalAnsiBrightWhite: "--app-theme-terminal-ansi-bright-white",
+} as const;
+
 export const THEME_COLOR_ROLES = [
   "canvas",
   "chrome",
