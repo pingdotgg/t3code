@@ -6,6 +6,7 @@ import {
   type DesktopBrowserEvent as DesktopBrowserEventType,
   type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
+import { captureGuestPage } from "./GuestCapture.ts";
 import {
   type FrameDetachWatch,
   type PointerRoute,
@@ -198,6 +200,7 @@ export class DesktopBrowserHost extends Context.Service<
 >()("@t3tools/desktop/preview/DesktopBrowserHost") {}
 
 export const make = Effect.gen(function* () {
+  const hostPlatform = yield* HostProcess.Platform;
   const outbox = yield* PubSub.unbounded<DesktopBrowserEventType>();
   const pointers = yield* PubSub.sliding<{
     readonly key: DesktopBrowserTabKey;
@@ -510,6 +513,12 @@ export const make = Effect.gen(function* () {
     const annotated = (method: string) =>
       method.startsWith("Input.") && tab.debuggee.annotating?.() === true;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      if (
+        sessionId === undefined &&
+        hostPlatform === "darwin" &&
+        method === "Page.captureScreenshot"
+      )
+        return captureGuestPage(webContents, debuggee, params);
       // Asked again at each dispatch: an annotation can start while the input waits its turn.
       const refuseAnnotated = () => {
         if (annotated(method)) throw new Error(ANNOTATING_MESSAGE);

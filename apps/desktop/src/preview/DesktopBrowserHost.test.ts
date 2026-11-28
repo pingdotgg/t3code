@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it, vi } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -32,8 +33,13 @@ const decodeCdpMessage = Schema.decodeUnknownSync(
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
 
+// The lifecycle fixture models CDP replies; native routing has its own platform cases below.
+const makeCdpHost = DesktopBrowserHost.make.pipe(
+  Effect.provideService(HostProcess.Platform, "linux"),
+);
+
 /** A host whose client already draws `key` at full detail, so its screenshots go out at once. */
-const makeDrawnHost = Effect.tap(DesktopBrowserHost.make, (host) =>
+const makeDrawnHost = Effect.tap(makeCdpHost, (host) =>
   Effect.sync(() => host.setCaptureDrawn(key, true)),
 );
 /** Sends a page command whose id the fake debugger records as it receives it. */
@@ -203,6 +209,50 @@ const watchPainting = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =
   });
 
 describe("DesktopBrowserHost", () => {
+  it.effect.each(["darwin", "linux"] as const)(
+    "uses native viewport capture only on macOS (%s)",
+    (platform) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        host.setCaptureDrawn(key, true);
+        let cdpCaptures = 0;
+        let nativeCaptures = 0;
+        const debuggee = makeDebuggee({
+          answer: (method) => {
+            if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+            if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+            if (method === "Runtime.evaluate") return { result: { value: true } };
+          },
+          refuse: (method) => {
+            if (method !== "Page.captureScreenshot") return false;
+            cdpCaptures += 1;
+            return true;
+          },
+        });
+        debuggee.tab.webContents.capturePage = async () => {
+          nativeCaptures += 1;
+          return { toPNG: () => Buffer.from("native png") } as Electron.NativeImage;
+        };
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id: 1,
+              method: "Page.captureScreenshot",
+              params: { format: "png" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* Queue.take(replies)).toBe(1);
+        expect(nativeCaptures > 0).toBe(platform === "darwin");
+        expect(cdpCaptures).toBe(platform === "darwin" ? 0 : 1);
+      }).pipe(Effect.provideService(HostProcess.Platform, platform), Effect.scoped),
+  );
+
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;
@@ -367,7 +417,7 @@ describe("DesktopBrowserHost", () => {
     "sends a screenshot once the client draws the guest at full detail, or soon after",
     () =>
       Effect.gen(function* () {
-        const host = yield* DesktopBrowserHost.make;
+        const host = yield* makeCdpHost;
         const debuggee = makeDebuggee();
         host.attach(key, debuggee.tab);
         const replies = yield* watchReplies(host);
@@ -1375,7 +1425,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("keeps a guest's one screencast running until its last streaming session stops", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
       const frames: Array<string | undefined> = [];
@@ -1412,7 +1462,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("keeps a session's screencast when another of its starts is refused", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
       const frames: Array<string | undefined> = [];
@@ -1482,7 +1532,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("stops a guest's screencast once its last streaming session detaches", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
@@ -1521,7 +1571,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("stops a screencast whose start lands after its session detached", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee({ deferFocus: true });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
@@ -1615,7 +1665,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("stops crediting the agent once a person acts through a viewer", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
@@ -1650,7 +1700,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("relays no input to a guest while the person at its window annotates it", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee();
       let annotating = true;
       host.attach(key, { ...debuggee.tab, annotating: () => annotating });
@@ -1700,7 +1750,7 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("relays no input that was still waiting when the annotation started", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
+      const host = yield* makeCdpHost;
       const debuggee = makeDebuggee({ deferFocus: true });
       let annotating = false;
       host.attach(key, { ...debuggee.tab, annotating: () => annotating });
