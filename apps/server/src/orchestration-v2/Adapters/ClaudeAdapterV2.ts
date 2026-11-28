@@ -11822,11 +11822,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } else if (
               // Background tasks from earlier turns keep streaming while the root request hangs.
               // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.
+              // Hook frames carry no parent, so a background task's hooks look like root frames.
               Reflect.get(message, "parent_tool_use_id") == null &&
               !(
                 message.type === "system" &&
-                message.subtype.startsWith("task_") &&
-                !(message.subtype === "task_started" && (message.spawn_depth ?? 1) <= 1)
+                (message.subtype.startsWith("hook_") ||
+                  (message.subtype.startsWith("task_") &&
+                    !(message.subtype === "task_started" && (message.spawn_depth ?? 1) <= 1)))
               )
             ) {
               context.unansweredRequestSince = undefined;

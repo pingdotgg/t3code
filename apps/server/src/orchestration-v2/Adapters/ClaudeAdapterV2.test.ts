@@ -17939,9 +17939,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       requesting: false,
       backgroundProgress: true,
     },
+    {
+      case: "while an earlier background task runs a hook",
+      requesting: true,
+      backgroundHook: true,
+    },
   ])(
     "does not keep a turn silently running when Claude goes quiet $case",
-    ({ requesting, backgroundProgress = false, forkedTask = false, nestedTaskStarted = false }) =>
+    ({
+      requesting,
+      backgroundProgress = false,
+      forkedTask = false,
+      nestedTaskStarted = false,
+      backgroundHook = false,
+    }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -17987,6 +17998,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               description: "Earlier background task",
               usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
               uuid: "00000000-0000-4000-8000-000000000793",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (backgroundHook) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "hook_started",
+              hook_id: "earlier-background-hook",
+              hook_name: "PreToolUse:Bash",
+              hook_event: "PreToolUse",
+              uuid: "00000000-0000-4000-8000-000000000796",
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
