@@ -534,6 +534,22 @@ describe("HostResources pressure on Linux", () => {
     ),
   );
 
+  it.effect("keeps io pressure from a network filesystem while local disks are idle", () =>
+    Effect.gen(function* () {
+      setup();
+      expect(yield* firstIo).toBe("severe");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": [calmCpu],
+          "/proc/pressure/io": [ioStalled],
+          "/proc/diskstats": [diskstats(1000), diskstats(1000)],
+          "/proc/mounts": ["/dev/nvme1n1p2 / ext4 rw 0 0\nnas:/work /mnt/work nfs4 rw,hard 0 0\n"],
+        }),
+      ),
+    ),
+  );
+
   it.effect("reports io pressure while a disk is busy", () =>
     Effect.gen(function* () {
       setup();

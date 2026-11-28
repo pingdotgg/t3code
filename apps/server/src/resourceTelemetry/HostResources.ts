@@ -107,6 +107,28 @@ export function diskBusyTicks(diskstats: string): ReadonlyMap<string, number> {
   return ticks;
 }
 
+const NETWORK_FILESYSTEMS = new Set([
+  "nfs",
+  "nfs4",
+  "cifs",
+  "smb3",
+  "smbfs",
+  "ceph",
+  "glusterfs",
+  "9p",
+  "afs",
+  "lustre",
+  "fuse.sshfs",
+  "fuse.rclone",
+]);
+
+/** Whether `/proc/mounts` lists a network filesystem, whose stalls never reach a block device. */
+function hasNetworkFilesystem(mounts: string): boolean {
+  return mounts
+    .split("\n")
+    .some((line) => NETWORK_FILESYSTEMS.has(line.trim().split(/\s+/)[2] ?? ""));
+}
+
 /** The busiest device's share of the interval with I/O in flight, in percent. */
 export function diskBusyPercent(
   before: ReadonlyMap<string, number>,
@@ -136,7 +158,8 @@ export interface PressureSample {
   /**
    * The busiest block device's busy percent over about the same minute. PSI also counts
    * waits that touch no disk, such as a terminal idling in `io_uring_enter`, but tasks
-   * cannot all wait on a disk for longer than some disk has I/O in flight.
+   * cannot all wait on a disk for longer than some disk has I/O in flight. Null while a
+   * network filesystem is mounted, since its stalls are real but touch no local disk.
    */
   readonly diskBusy: number | null;
   /** One-minute load average per CPU, where PSI is missing. */
@@ -387,9 +410,10 @@ const make = Effect.fn("makeHostResources")(function* () {
         : null;
     const disk = yield* diskSpace;
     const ioFull = psiAverage(ioPsi, "full", "avg60");
-    const diskBusy = linux
-      ? yield* sampleDiskBusy(ioFull !== null && ioFull >= IO_ELEVATED * EXIT_RATIO)
-      : null;
+    const diskBusy =
+      linux && !hasNetworkFilesystem(yield* readFile("/proc/mounts"))
+        ? yield* sampleDiskBusy(ioFull !== null && ioFull >= IO_ELEVATED * EXIT_RATIO)
+        : null;
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),
