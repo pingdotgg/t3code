@@ -9607,6 +9607,7 @@
   "6b8537ca0fd65c14": "Downloading {downloaded} MB of {total} MB.",
   "7a5f115c4fe2ecb8": "Extracting Antigravity.",
   "105bda70e8f610d1": "Checking the downloaded runtime.",
+  "f0e5a6deafa5deb5": "Antigravity {version} installed successfully.",
   "252aedce2875ac27": "Installed.",
   "f47994a4a4dfb523": "The configured Antigravity runtime is unavailable.",
   "2dddf2442b8b7f0c": "The configured Antigravity runtime has not been checked.",

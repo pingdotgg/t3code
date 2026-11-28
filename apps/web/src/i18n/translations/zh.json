@@ -9616,6 +9616,7 @@
   "6b8537ca0fd65c14": "正在下载 {downloaded} MB，共 {total} MB。",
   "7a5f115c4fe2ecb8": "正在解压 Antigravity。",
   "105bda70e8f610d1": "正在检查下载的运行环境。",
+  "f0e5a6deafa5deb5": "Antigravity {version} 安装成功。",
   "252aedce2875ac27": "已安装。",
   "f47994a4a4dfb523": "配置的 Antigravity 运行环境不可用。",
   "2dddf2442b8b7f0c": "尚未检查配置的 Antigravity 运行环境。",
