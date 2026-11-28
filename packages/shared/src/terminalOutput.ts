@@ -71,6 +71,13 @@ const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
 const EMOJI_MODIFIER_BASE = /\p{Emoji_Modifier_Base}/u;
 const VARIATION_SELECTOR = /\p{Variation_Selector}/u;
 const REGIONAL_INDICATOR = /\p{Regional_Indicator}/u;
+const LEADING_EMOJI_SUFFIX = /^\p{Variation_Selector}*\p{Emoji_Modifier}?/u;
+
+// A fully trimmed line can still be followed by a modifier for its discarded base.
+const discardedEmojiBases = new WeakMap<
+  Line,
+  { readonly base: string; readonly selectorUnits: number }
+>();
 
 function isDetachedTailStart(
   character: string,
@@ -193,7 +200,7 @@ function pushRun(runs: Array<Run>, run: Run): void {
 }
 
 /** Mutates only lines owned by this feed. */
-function trimLineStart(runs: Array<Run>, count: number): number {
+function trimLineStart(runs: Array<Run>, count: number, lineBudget?: number): number {
   const width = lineWidth(runs);
   const length = lineLength(runs);
   let removedWidth = 0;
@@ -217,6 +224,22 @@ function trimLineStart(runs: Array<Run>, count: number): number {
       break;
     }
     dropped += 1;
+  }
+  if (lineBudget !== undefined && dropped === runs.length) {
+    for (const character of previousRunCharacters(
+      runs,
+      runs.length - 1,
+      runs.at(-1)!.text.length,
+    )) {
+      if (VARIATION_SELECTOR.test(character)) continue;
+      if (EMOJI_MODIFIER_BASE.test(character)) {
+        discardedEmojiBases.set(runs, {
+          base: character,
+          selectorUnits: Math.max(0, lineBudget - character.length + 1),
+        });
+      }
+      break;
+    }
   }
   if (dropped > 0) runs.splice(0, dropped);
   lineLengths.set(runs, length - removedUnits);
@@ -496,6 +519,14 @@ class Terminal {
 
   write(text: string): void {
     let line = this.lines[this.row]!;
+    if (this.col === 0 && discardedEmojiBases.has(line)) {
+      const suffix = LEADING_EMOJI_SUFFIX.exec(text)![0];
+      if (suffix.length === text.length) {
+        if (EMOJI_MODIFIER.test(suffix)) this.lines[this.row] = [];
+        return;
+      }
+      text = text.slice(suffix.length);
+    }
     const length = lineWidth(line);
     const width = textWidth(text);
     if (this.col === length && this.owned.has(line)) {
@@ -525,7 +556,7 @@ class Terminal {
     // The output budget is UTF-16 units; cursor positions are terminal columns.
     const current = lineLength(line);
     if (current > this.maxChars) {
-      const removed = trimLineStart(line as Array<Run>, current - this.maxChars);
+      const removed = trimLineStart(line as Array<Run>, current - this.maxChars, this.maxChars);
       this.dropped = true;
       this.col = Math.max(0, this.col - removed);
       if (this.saved !== null && this.saved.row === this.row) {
@@ -860,7 +891,15 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     // Scroll the history out with blank rows, then clear them before replaying the live window.
     replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  replay += screen.lines.map(serializeLine).join("\n");
+  replay += screen.lines
+    .map((line) => {
+      const discarded = discardedEmojiBases.get(line);
+      // Replaying the over-budget suffix restores the boundary without adding visible text.
+      return discarded === undefined
+        ? serializeLine(line)
+        : discarded.base + "\ufe0f".repeat(discarded.selectorUnits);
+    })
+    .join("\n");
   const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
