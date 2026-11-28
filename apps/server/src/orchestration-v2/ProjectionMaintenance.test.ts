@@ -305,6 +305,15 @@ it.effect("prunes events the projections cover once the retained day has passed"
       ),
       ["Review prompt A. ".repeat(40)],
     );
+
+    // A due pass cut short by a restart still moves the boundary to its own head a day later.
+    yield* sink.write({ events: [itemEvent(threadId, now, itemSpecs[0], 4)] });
+    const cutPassHead = yield* eventStore.latestSequence();
+    yield* TestClock.adjust("1 day");
+    yield* Effect.exit(maintenance.pruneEventStore(Effect.interrupt));
+    yield* TestClock.adjust("1 day");
+    yield* maintenance.pruneEventStore();
+    assert.equal(yield* events.prunedThroughSequence, cutPassHead);
   }).pipe(Effect.provide(layerTest)),
 );
 
