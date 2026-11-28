@@ -957,6 +957,19 @@ describe("ChatMarkdown inline code selection", () => {
 });
 
 describe("ChatMarkdown copy", () => {
+  it("copies bracketed prose that renders back as text with math on", async () => {
+    setup();
+    settingsOverrides.mathRenderingEnabled = true;
+    const shown = "Tags [WIP] and [done]";
+    await using screen = await renderText(shown);
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(screen.container.querySelector("p")!);
+    const copied = chatMarkdownClipboardPayload(selection)!.text;
+    await using pasted = await renderText(copied);
+    expect(pasted.container.querySelector("svg")).toBeNull();
+    expect(pasted.container.textContent).toBe(shown);
+  });
+
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
     setup();
     await using screen = await renderText("> [!WARNING]\n> Back up first.");
