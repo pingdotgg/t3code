@@ -7,6 +7,7 @@ import {
   type LocalizedPath,
   localizedHref,
 } from "../i18n/locales";
+import { getDocsCatalog } from "../lib/docs";
 import { absoluteUrl, STATIC_PAGES } from "../lib/seo";
 
 // Each localized URL lists every translation plus x-default, as Google's sitemap hreflang format asks.
@@ -21,8 +22,10 @@ const alternateLinks = (path: LocalizedPath) =>
     )
     .join("\n");
 
-export const GET: APIRoute = () => {
-  const urls = STATIC_PAGES.flatMap((page) => {
+export const GET: APIRoute = async () => {
+  const catalog = await getDocsCatalog();
+
+  const staticUrls = STATIC_PAGES.flatMap((page) => {
     const path = page.path;
     if (!isLocalizedPath(path)) {
       return [`  <url><loc>${absoluteUrl(path)}</loc><priority>${page.priority}</priority></url>`];
@@ -33,9 +36,17 @@ export const GET: APIRoute = () => {
         `  <url>\n    <loc>${absoluteUrl(localizedHref(entry.code, path))}</loc>\n    <priority>${page.priority}</priority>\n${alternates}\n  </url>`,
     );
   });
+
+  const docUrls = [
+    `  <url><loc>${absoluteUrl("/docs")}</loc><priority>0.8</priority></url>`,
+    ...catalog.docs.map(
+      (doc) => `  <url><loc>${absoluteUrl(doc.href)}</loc><priority>0.7</priority></url>`,
+    ),
+  ];
+
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${urls.join("\n")}
+${[...staticUrls, ...docUrls].join("\n")}
 </urlset>
 `;
   return new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8" } });

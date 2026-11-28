@@ -7,6 +7,7 @@ export const ja: Messages = {
     socialImageAlt:
       "T3 Code：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
     homeLabel: "T3 Code ホーム",
+    docs: "ドキュメント",
     download: "ダウンロード",
     starsLabel: "GitHub で T3 Code にスターを付ける（{stars} スター）",
     githubStars: "GitHub スター {stars}",

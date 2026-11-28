@@ -146,6 +146,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
                 </ul>
               </details>
             )}
+            <a class="nav-link" href="/docs">{t.docs}</a>
             <a class="nav-link" href={downloadHref}>{t.download}</a>
             <a
               class="nav-stars"
@@ -190,6 +191,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
           <div class="footer-links">
             <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
+            <a href="/docs">{t.docs}</a>
             <a href={downloadHref}>{t.download}</a>
             <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">{t.iosApp}</a>
             <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">{t.androidApp}</a>

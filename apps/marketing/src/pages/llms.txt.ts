@@ -1,10 +1,22 @@
 import type { APIRoute } from "astro";
 
+import { getDocsCatalog } from "../lib/docs";
 import { ANDROID_PLAY_STORE_URL, GITHUB_REPOSITORY_URL, IOS_APP_STORE_URL } from "../lib/site";
 import { absoluteUrl, SITE_TAGLINE } from "../lib/seo";
 
 // https://llmstxt.org: a plain index that tells AI agents which domain and links are official.
-export const GET: APIRoute = () => {
+export const GET: APIRoute = async () => {
+  const catalog = await getDocsCatalog();
+  const docLines = catalog.groups.flatMap((group) => [
+    `### ${group.category}`,
+    ...group.items.map((item) => {
+      const doc = catalog.bySlug.get(item.slug);
+      const summary = item.summary || doc?.description || "";
+      return `- [${item.label}](${absoluteUrl(`/docs/${item.slug}.md`)})${summary ? `: ${summary}` : ""}`;
+    }),
+    "",
+  ]);
+
   const body = `# T3 Code
 
 > ${SITE_TAGLINE}. T3 Code is free, MIT-licensed, and built by T3 Tools Inc. It runs Claude Code, Codex, Cursor, OpenCode, Grok, Antigravity, and other coding agents from one desktop, web, and mobile app.
@@ -13,6 +25,8 @@ The only official websites are https://t3.codes and the web app at https://app.t
 
 ## Official links
 
+- [Documentation](${absoluteUrl("/docs")}): full user guide and feature index
+- [Full docs for LLMs](${absoluteUrl("/llms-full.txt")}): all user docs concatenated as Markdown
 - [Download T3 Code](${absoluteUrl("/download")}): macOS, Windows, and Linux installers
 - [Web app](https://app.t3.codes): connect to a T3 Code server from a browser
 - [Source code](${GITHUB_REPOSITORY_URL}): the MIT-licensed repository
@@ -20,6 +34,10 @@ The only official websites are https://t3.codes and the web app at https://app.t
 - [npm package](https://www.npmjs.com/package/t3): run \`npx t3@latest\`
 - [iOS app](${IOS_APP_STORE_URL})
 - [Android app](${ANDROID_PLAY_STORE_URL})
+
+## Documentation
+
+${docLines.join("\n").trimEnd()}
 
 ## Policies
 

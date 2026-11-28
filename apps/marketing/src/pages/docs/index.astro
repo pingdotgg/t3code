@@ -1,0 +1,14 @@
+---
+import { render } from "astro:content";
+
+import DocsLayout from "../../components/DocsLayout.astro";
+import { getDocsCatalog, getPrevNext } from "../../lib/docs";
+
+const catalog = await getDocsCatalog();
+const { Content, headings } = await render(catalog.indexDoc.entry);
+const { prev, next } = getPrevNext(catalog, null);
+---
+
+<DocsLayout doc={catalog.indexDoc} catalog={catalog} headings={headings} prev={prev} next={next}>
+  <Content />
+</DocsLayout>

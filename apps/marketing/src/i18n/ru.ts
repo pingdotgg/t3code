@@ -7,6 +7,7 @@ export const ru: Messages = {
     socialImageAlt:
       "T3 Code: открытый пульт управления ИИ-агентами для программирования. Claude Code, Codex, Cursor, OpenCode, Grok и Antigravity.",
     homeLabel: "Главная страница T3 Code",
+    docs: "Документация",
     download: "Скачать",
     starsLabel: "Поставить звезду T3 Code на GitHub, звёзд: {stars}",
     githubStars: "{stars} звёзд на GitHub",

@@ -7,6 +7,7 @@ export const de: Messages = {
     socialImageAlt:
       "T3 Code: die Open-Source-Steuerzentrale für Coding-Agenten, mit Claude Code, Codex, Cursor, OpenCode, Grok und Antigravity.",
     homeLabel: "Startseite von T3 Code",
+    docs: "Doku",
     download: "Download",
     starsLabel: "T3 Code auf GitHub einen Stern geben, {stars} Sterne",
     githubStars: "{stars} GitHub-Sterne",
