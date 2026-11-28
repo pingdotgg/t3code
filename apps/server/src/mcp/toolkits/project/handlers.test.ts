@@ -66,6 +66,8 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** The caller is a linked environment paired with `runtimeModeCeiling` access. */
+  readonly linked?: true;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -115,6 +117,7 @@ const clientLaunchHarness = (input: {
         label: "Claude Code",
         access: input.runtimeModeCeiling,
         hostedAppUrl: input.hostedAppUrl,
+        ...(input.linked === undefined ? {} : { linked: true }),
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -929,6 +932,46 @@ it.effect("a worktree launch that omits startFromOrigin follows the new-worktree
       expect(checked).toEqual([strategy]);
       expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([strategy]);
     }
+  }),
+);
+
+it.effect("a worktree launch from a link below Full access says setup scripts do not run", () =>
+  Effect.gen(function* () {
+    const launchFrom = (
+      runtimeModeCeiling: "approval-required" | "full-access",
+      workspaceStrategy:
+        | { readonly type: "root" }
+        | { readonly type: "worktree"; readonly baseRef: string; readonly startFromOrigin: false },
+    ) =>
+      Effect.gen(function* () {
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          linked: true,
+          launched: [],
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        return yield* toolkit
+          .handle("t3_thread_launch", { title: "Fix", projectId, workspaceStrategy })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((collected) => collected.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+      });
+    const worktree = { type: "worktree", baseRef: "main", startFromOrigin: false } as const;
+
+    expect(yield* launchFrom("approval-required", worktree)).toMatchObject({
+      note: expect.stringContaining("setup scripts do not run"),
+    });
+    expect(yield* launchFrom("full-access", worktree)).not.toHaveProperty("note");
+    expect(yield* launchFrom("approval-required", { type: "root" })).not.toHaveProperty("note");
   }),
 );
 
