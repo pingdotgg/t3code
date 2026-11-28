@@ -66,7 +66,7 @@ vi.mock("../../../state/threads", () => ({
 import { launchWorkspaceURL } from "./workspace-selection-store";
 
 it("reopens a remembered chat whose id has reserved characters at that same chat", async () => {
-  const url = await launchWorkspaceURL();
+  const url = await launchWorkspaceURL(1);
   expect(url).not.toBeNull();
 
   const state = getStateFromPath(url!.replace(/^t3code-dev:\/\//, ""), {
