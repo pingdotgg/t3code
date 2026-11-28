@@ -27,5 +27,5 @@ Configure defaults in **Settings → Browser**:
 Agents can open tabs, navigate, click, type, inspect accessibility snapshots, and take screenshots using T3 Code's `preview_*` tools.
 
 - Toggle **Settings → Browser → Agent browser access** (per environment or project override; takes effect when the next agent session starts).
-- **Floating preview**: By default, agent-opened tabs float over chat (**Settings → Browser → Auto-show floating preview**). Turn this off to open them in the right panel instead.
+- **Floating preview**: By default, agent-opened tabs float over chat, and closing the right panel floats its browser tab (**Settings → Browser → Auto-show floating preview**). Turn this off to open agent tabs in the right panel instead and to close the panel without a float.
 - **Take control**: Click **Take control** before interacting with an agent's tab, and release control when you want the agent to resume.

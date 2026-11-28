@@ -13,7 +13,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const { Children, mocks } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
-  mocks: { upsert: vi.fn(), alert: vi.fn(), tasks: [] as ScheduledTask[] },
+  mocks: {
+    upsert: vi.fn(),
+    alert: vi.fn(),
+    tasks: [] as ScheduledTask[],
+    timePicker: null as {
+      value: Date;
+      onValueChange: (event: unknown, selected: Date) => void;
+    } | null,
+  },
 }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
@@ -28,7 +36,12 @@ vi.mock("@react-navigation/native", () => ({
   usePreventRemove: () => {},
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
-vi.mock("@expo/ui/community/datetime-picker", () => ({ DateTimePicker: () => null }));
+vi.mock("@expo/ui/community/datetime-picker", () => ({
+  DateTimePicker: (props: NonNullable<typeof mocks.timePicker>) => {
+    mocks.timePicker = props;
+    return null;
+  },
+}));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -152,6 +165,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.alert.mockReset();
   mocks.upsert.mockReset();
+  mocks.timePicker = null;
   mocks.upsert.mockResolvedValue({ _tag: "Success" });
   const task: ScheduledTask = {
     id: ScheduledTaskId.make("task"),
@@ -263,5 +277,52 @@ describe("scheduled task batched edits", () => {
       environmentId: "target",
       draft: { projectId: "target-project", schedule: { mode: "interval" } },
     });
+  });
+  it("keeps a fixed time on a DST spring-forward day in the phone's zone", () => {
+    const editor = appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current;
+    if (!editor) throw new Error("Missing editor");
+    const previousZone = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 02:00 to 02:59 does not exist in New York on this day.
+    vi.setSystemTime(new Date("2026-03-08T12:00:00-04:00"));
+    try {
+      act(() =>
+        startScheduledTaskEditor({
+          ...editor,
+          draft: { ...editor.draft, schedule: { ...editor.draft.schedule, timeOfDay: "02:30" } },
+        }),
+      );
+      const timeRow = Array.from(container.querySelectorAll("button")).find((element) =>
+        element.textContent?.startsWith("Time"),
+      );
+      if (!timeRow) throw new Error("Missing time row");
+      const label = timeRow.textContent;
+      act(() => timeRow.click());
+      const picker = mocks.timePicker;
+      if (!picker) throw new Error("Missing time picker");
+      // Native pickers keep the value's date and set the chosen local hour and minute.
+      const picked = new Date(picker.value);
+      picked.setHours(2, 30);
+      act(() => picker.onValueChange({}, picked));
+      expect({
+        label,
+        pickerTime: [picker.value.getHours(), picker.value.getMinutes()],
+        saved: appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current?.draft.schedule
+          .timeOfDay,
+      }).toEqual({
+        label: `Time${new Date(Date.UTC(2000, 0, 1, 2, 30)).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: "UTC",
+        })}`,
+        pickerTime: [2, 30],
+        saved: "02:30",
+      });
+    } finally {
+      vi.useRealTimers();
+      if (previousZone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousZone;
+    }
   });
 });

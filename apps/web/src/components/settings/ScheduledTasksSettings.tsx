@@ -44,6 +44,7 @@ import {
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  trimAsciiWhitespace,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -942,7 +943,7 @@ function ScheduledTaskRow({
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
-                Delete
+                <T context="verb, delete the scheduled task">Delete</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -1569,7 +1570,8 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const automaticBaseRef = draft.workspaceMode === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef =
+    draft.workspaceMode === "worktree" && !trimAsciiWhitespace(draft.baseRef);
   const automaticBaseRefs = usePaginatedBranches({
     environmentId,
     cwd: automaticBaseRef ? (selectedProject?.workspaceRoot ?? null) : null,
@@ -2366,7 +2368,11 @@ function ScheduledTaskEditorForm({
                     setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
                   }
                 />
-                <span className="text-xs text-muted-foreground">minutes</span>
+                <span className="text-xs text-muted-foreground">
+                  {gt("{count, plural, one {minute} other {minutes}}", {
+                    count: Number(draft.intervalMinutes),
+                  })}
+                </span>
               </div>
             )}
           </div>

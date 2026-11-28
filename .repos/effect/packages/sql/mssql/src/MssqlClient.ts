@@ -241,6 +241,12 @@ export interface MssqlClientConfig {
    * the timer) leaves interruption unbounded rather than making it faster.
    */
   readonly cancelTimeout?: Duration.Input | undefined
+  /**
+   * How long Tedious waits for the first response packet of a request before
+   * cancelling and failing it. Defaults to 15 seconds. Pass a zero or infinite
+   * duration to disable the timeout.
+   */
+  readonly requestTimeout?: Duration.Input | undefined
   readonly connectionRetryInterval?: Duration.Input | undefined
   readonly multiSubnetFailover?: boolean | undefined
   readonly maxRetriesOnTransientErrors?: number | undefined
@@ -293,6 +299,12 @@ export const make = (
 ): Effect.Effect<MssqlClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const parameterTypes = options.parameterTypes ?? defaultParameterTypes
+    let requestTimeout: number | undefined
+    if (options.requestTimeout !== undefined) {
+      const millis = Duration.toMillis(options.requestTimeout)
+      // Tedious disables the timer for 0; passing Infinity overflows setTimeout.
+      requestTimeout = Number.isFinite(millis) ? millis : 0
+    }
     const compiler = makeCompiler(options.transformQueryNames)
 
     const transformRows = options.transformResultNames ?
@@ -337,6 +349,7 @@ export const make = (
           cancelTimeout: options.cancelTimeout
             ? Duration.toMillis(Duration.fromInputUnsafe(options.cancelTimeout))
             : undefined,
+          requestTimeout,
           connectionRetryInterval: options.connectionRetryInterval
             ? Duration.toMillis(Duration.fromInputUnsafe(options.connectionRetryInterval))
             : undefined,

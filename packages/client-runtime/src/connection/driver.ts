@@ -95,7 +95,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
+  // Kept when `transient` is set aside below, so a relay refusal never ends retries.
+  let firstTransient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let relayRefused: ConnectionAttemptError | undefined;
   const refusedRouteIds: Array<string> = [];
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
@@ -106,7 +109,13 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       Effect.result,
     );
     if (result._tag === "Failure") {
-      if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
+      if (result.failure._tag === "ConnectionTransientError") {
+        transient ??= result.failure;
+        firstTransient ??= result.failure;
+      }
+      // A T3 Connect refusal cannot explain why a direct route failed.
+      else if (result.failure.hop === "relay" || result.failure.hop === "tunnel")
+        relayRefused ??= result.failure;
       else blocked ??= result.failure;
       if (isHostCredentialRefusal(result.failure))
         refusedRouteIds.push(connectionRouteId(route.target));
@@ -140,14 +149,19 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // A route still silent after its whole check can hold the attempt open far
     // longer than the check did. Once another route failed in a way that
     // retries, the retry reaches it sooner than waiting here would.
-    if (transient !== undefined && stillSilent.some((entry) => entry.route === route)) break;
+    const neverAnswered = stillSilent.some((entry) => entry.route === route);
+    if (transient !== undefined && neverAnswered) break;
     const result = yield* attempt(route);
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
+    // A route that never answered cannot explain why a host that answered refused.
+    if (neverAnswered && (blocked ?? relayRefused) !== undefined) transient = undefined;
   }
   return yield* (
     transient ??
     blocked ??
+    firstTransient ??
+    relayRefused ??
     new ConnectionTransientError({
       reason: "endpoint-unavailable",
       ...translatableDetail(
