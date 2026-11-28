@@ -1,11 +1,13 @@
 import { afterEach, expect, it, vi } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as RateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
@@ -19,6 +21,25 @@ const layer = it.layer(
   ),
 );
 const input = { cwd: "/repo", repository: "acme/nested/web", number: 7 };
+const batchInput = { ...input, host: "gitlab.example", numbers: [7, 8] };
+
+function apiReply(
+  body: unknown,
+  { status = 200, header = "Content-Type: application/json", truncated = false } = {},
+) {
+  return (request: SourceControlHost.SourceControlProcessInput) => {
+    const launch = Effect.succeed({
+      exitCode: ChildProcessSpawner.ExitCode(
+        status >= 400 || (typeof body === "object" && body !== null && "errors" in body) ? 1 : 0,
+      ),
+      stdout: `HTTP/2.0 ${status} Response\n${header}\r\n\r\n${JSON.stringify(body)}`,
+      stderr: "",
+      stdoutTruncated: truncated,
+      stderrTruncated: false,
+    });
+    return request.aroundLaunch?.(launch) ?? launch;
+  };
+}
 const file = {
   old_path: "src/old.ts",
   new_path: "src/new.ts",
@@ -160,5 +181,152 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
         "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=30&page=2",
       );
     }),
+  );
+});
+
+layer("linked MR batches through GitLabCli", (it) => {
+  it.effect("keeps the GraphQL page bounded, follows the cursor and rechecks stale MRs", () =>
+    Effect.gen(function* () {
+      const numbers = Array.from({ length: 41 }, (_, index) => index + 1);
+      const nodes = numbers.map((number) => ({
+        iid: String(number),
+        title: `MR !${number}`,
+        webUrl: `https://gitlab.example/acme/nested/web/-/merge_requests/${number}`,
+        sourceBranch: "fork-branch",
+        targetBranch: "main",
+        state: "OPENED",
+        updatedAt: "2026-08-28T12:00:00Z",
+        mergeStatusEnum: number === 41 ? "UNCHECKED" : "CAN_BE_MERGED",
+      }));
+      run.mockImplementationOnce(
+        apiReply({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: nodes.slice(0, 40),
+                pageInfo: { hasNextPage: true, endCursor: "opaque" },
+              },
+            },
+          },
+        }),
+      );
+      run.mockImplementationOnce(
+        apiReply({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: nodes.slice(40),
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        }),
+      );
+      run.mockImplementationOnce(apiReply([]));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      expect([...(yield* cli.getLinkedSummaries({ ...batchInput, numbers })).keys()]).toEqual(
+        numbers,
+      );
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(run.mock.calls[0]?.[0].stdin).toContain('"first":40,"after":null');
+      expect(run.mock.calls[1]?.[0].stdin).toContain('"first":40,"after":"opaque"');
+      expect(run.mock.calls[2]?.[0].args[1]).toContain(
+        "merge_requests?iids[]=41&scope=all&state=all&with_merge_status_recheck=true",
+      );
+    }).pipe(Effect.provide(RateLimit.layer)),
+  );
+
+  it.effect("reduces a truncated REST page and keeps rows whose enrichment fails", () =>
+    Effect.gen(function* () {
+      run.mockImplementationOnce(apiReply({ errors: [{ message: "Unknown closedAt" }] }));
+      run.mockImplementationOnce(apiReply(null, { truncated: true }));
+      run.mockImplementationOnce(
+        apiReply(
+          [
+            {
+              iid: 7,
+              title: "MR",
+              web_url: "https://gitlab.example/acme/nested/web/-/merge_requests/7",
+              source_branch: "fork-branch",
+              target_branch: "main",
+              state: "opened",
+              created_at: "2026-08-28T12:00:00Z",
+              updated_at: "2026-08-28T12:00:00Z",
+            },
+          ],
+          { header: "X-Next-Page:" },
+        ),
+      );
+      run.mockImplementationOnce(
+        apiReply({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: [
+                  {
+                    iid: "7",
+                    approved: true,
+                    approvedBy: { nodes: [{}] },
+                    headPipeline: { status: "SUCCESS" },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      );
+      run.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessTimeoutError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: input.cwd,
+            timeoutMs: 1,
+          }),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const summaries = yield* cli.getLinkedSummaries(batchInput);
+      expect([...summaries.keys()]).toEqual([7]);
+      expect(summaries.get(7)).toMatchObject({
+        headBranch: "fork-branch",
+        reviewDecision: "approved",
+        checksState: "passing",
+      });
+      expect(summaries.get(7)).not.toHaveProperty("additions");
+      expect(run.mock.calls[2]?.[0].args[1]).toContain("per_page=1&page=1");
+      expect(run.mock.calls[3]?.[0].stdin).toContain('"iids":["7"]');
+      expect(run.mock.calls[4]?.[0].stdin).toContain('"iids":["7"]');
+    }).pipe(Effect.provide(RateLimit.layer)),
+  );
+
+  it.effect("denies a compatibility read while a Retry-After is active", () =>
+    Effect.gen(function* () {
+      const launches: string[] = [];
+      run.mockImplementationOnce(apiReply({ errors: [{ message: "Unknown closedAt" }] }));
+      run.mockImplementation((request) =>
+        request.aroundLaunch!(
+          Effect.sync(() => {
+            launches.push(request.args[1]!);
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(1),
+              stdout: "HTTP/2.0 429 Too Many Requests\nRetry-After: 120\r\n\r\n{}",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const retryAt = (yield* Clock.currentTimeMillis) + 120_000;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(yield* cli.getLinkedSummaries(batchInput).pipe(Effect.flip)).toMatchObject({
+          _tag: "GitLabCliRateLimitError",
+          retryAt,
+        });
+      }
+      expect(launches).toEqual([expect.stringContaining("/merge_requests?")]);
+    }).pipe(Effect.provide(RateLimit.layer)),
   );
 });

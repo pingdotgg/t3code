@@ -39,6 +39,10 @@ export interface SourceControlProcessInput {
    * The first run of a key fixes its limit.
    */
   readonly concurrency?: { readonly key: string; readonly limit: number };
+  /** Runs admission and observes the result while holding the actual process slot. */
+  readonly aroundLaunch?: (
+    launch: Effect.Effect<SourceControlProcessOutput, VcsError>,
+  ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
 }
 
 export interface SourceControlProcessOutput {

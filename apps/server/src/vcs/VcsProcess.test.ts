@@ -316,6 +316,7 @@ describe("VcsProcess.run", () => {
       const active = yield* Ref.make(0);
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
+      const admitted = yield* Ref.make(0);
       const service = yield* VcsProcess.make.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
@@ -350,6 +351,8 @@ describe("VcsProcess.run", () => {
             args: ["api", "user"],
             cwd: "/workspace",
             concurrency: { key: "host-cli", limit: 4 },
+            aroundLaunch: (launch) =>
+              Ref.update(admitted, (count) => count + 1).pipe(Effect.andThen(launch)),
           }),
         ),
         { concurrency: "unbounded" },
@@ -358,6 +361,7 @@ describe("VcsProcess.run", () => {
       yield* Effect.all(Array.from({ length: 4 }, () => Queue.take(starts)));
       yield* Effect.yieldNow;
       expect(yield* Queue.size(starts)).toBe(0);
+      expect(yield* Ref.get(admitted)).toBe(4);
       expect(yield* Ref.get(peak)).toBe(4);
 
       yield* Deferred.succeed(gate, undefined);

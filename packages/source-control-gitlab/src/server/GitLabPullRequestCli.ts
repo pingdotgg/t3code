@@ -1,5 +1,6 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
+import type { SourceControlRateLimit } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   diffFileSection,
   truncateLongDiffLines,
@@ -73,6 +74,8 @@ import {
   decodeReferenceCandidatesJson,
   decodeRepositoryBlobsJson,
   decodeListStatesJson,
+  decodeLinkedSummaryPageJson,
+  decodeRestLinkedSummariesJson,
   decodeSourceBranchJson,
   decodeTriggerJobChecksJson,
   decodeViewerJson,
@@ -86,6 +89,9 @@ import {
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   LIST_ITEM_GRAPHQL_FIELDS,
   LIST_STATES_GRAPHQL_QUERY,
+  LINKED_LIST_STATES_GRAPHQL_QUERY,
+  LINKED_STATS_GRAPHQL_QUERY,
+  LINKED_SUMMARIES_GRAPHQL_QUERY,
   SERVER_VERSION_GRAPHQL_QUERY,
   SOURCE_BRANCH_GRAPHQL_QUERY,
   type GitLabDiffRefs,
@@ -337,6 +343,31 @@ export type GitLabPullRequestCliError =
 
 /** GitLab's `per_page` limit. */
 const MAX_PAGE_SIZE = 100;
+export const LINKED_SUMMARY_BATCH_SIZE = MAX_PAGE_SIZE;
+// GitLab multiplies the connection cost by 1 + first * 0.05 for up to 100 IIDs.
+// Forty rows leaves room for nested reviewer and diff fields under its default query budget.
+const LINKED_SUMMARY_GRAPHQL_PAGE_SIZE = 40;
+
+interface LinkedSummaryInput {
+  readonly cwd: string;
+  readonly host: string;
+  readonly repository: string;
+  readonly numbers: ReadonlyArray<number>;
+}
+
+const encodeLinkedSummaryQuery = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Struct({
+        fullPath: Schema.String,
+        iids: Schema.Array(Schema.String),
+        first: Schema.Int,
+        after: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+    }),
+  ),
+);
 const COMMIT_PAGE_SIZE = 100;
 /**
  * GitLab 15.7 through 17.10 answer the merge request `/diffs` endpoint with a 500 for any
@@ -434,6 +465,14 @@ export class GitLabPullRequestCli extends Context.Service<
     }) => Effect.Effect<
       ReadonlyMap<number, GitLabMergeRequestListState>,
       GitLabPullRequestCliError
+    >;
+
+    readonly getLinkedSummaries: (
+      input: LinkedSummaryInput,
+    ) => Effect.Effect<
+      ReadonlyMap<number, ProviderChangeRequestSummary>,
+      GitLabPullRequestCliError,
+      SourceControlRateLimit
     >;
 
     /** Line counts for the given merge requests; one with no answer is left out. */
@@ -2272,6 +2311,174 @@ export const make = Effect.gen(function* () {
       decode: decodeListStatesJson,
     });
 
+  const getLinkedSummaries = Effect.fn("GitLabPullRequestCli.getLinkedSummaries")(function* (
+    input: LinkedSummaryInput,
+  ) {
+    const wanted = new Set(input.numbers);
+    const summaries = new Map<number, ProviderChangeRequestSummary>();
+    const add = (items: ReadonlyArray<ProviderChangeRequestSummary>) => {
+      for (const item of items) {
+        if (wanted.has(item.number)) summaries.set(item.number, item);
+      }
+    };
+    const readError = (cause: unknown) =>
+      new GitLabMergeRequestReadError({
+        command: "glab",
+        cwd: input.cwd,
+        operation: "getLinkedSummaries",
+        cause,
+      });
+    if (wanted.size === 0) return summaries;
+    if (wanted.size > LINKED_SUMMARY_BATCH_SIZE) {
+      return yield* readError(new Error("Too many linked merge requests in one batch."));
+    }
+    const readGraphql = (query: string, iids: ReadonlyArray<string>, after?: string | null) =>
+      encodeLinkedSummaryQuery({
+        query,
+        variables: {
+          fullPath: input.repository,
+          iids,
+          first: Math.min(iids.length, LINKED_SUMMARY_GRAPHQL_PAGE_SIZE),
+          ...(after === undefined ? {} : { after }),
+        },
+      }).pipe(
+        Effect.mapError(readError),
+        Effect.flatMap((stdin) =>
+          gitlab.executeApiPage({
+            cwd: input.cwd,
+            host: input.host,
+            path: "graphql",
+            stdin,
+          }),
+        ),
+      );
+    // GitLab only recalculates a stale merge status when a read asks for it; GraphQL never does.
+    const restListPath = (numbers: Iterable<number>, pageSize: number, page: number) =>
+      `projects/${projectPath(input.repository)}/merge_requests?${query([
+        ...Array.from(numbers, (number) => ["iids[]", String(number)] as const),
+        ["scope", "all"],
+        ["state", "all"],
+        ["with_merge_status_recheck", "true"],
+        ["per_page", String(pageSize)],
+        ["page", String(page)],
+      ])}`;
+    const requestRecheck = Effect.fnUntraced(function* () {
+      const unchecked = [...summaries.values()].flatMap((item) =>
+        item.state === "open" && item.mergeability === "unknown" ? [item.number] : [],
+      );
+      if (unchecked.length === 0) return summaries;
+      yield* gitlab
+        .executeApiPage({
+          cwd: input.cwd,
+          host: input.host,
+          path: restListPath(unchecked, unchecked.length, 1),
+        })
+        .pipe(
+          // Best effort: the summaries are already read, and the limiter keeps any cooldown.
+          Effect.catchTags({
+            GitLabCliCommandError: () => Effect.void,
+            GitLabCliRateLimitError: () => Effect.void,
+          }),
+        );
+      return summaries;
+    });
+    const seenCursors = new Set<string>();
+    const iids = [...wanted].map(String);
+    let after: string | null = null;
+    for (let page = 0; page < wanted.size; page++) {
+      const response = yield* readGraphql(LINKED_SUMMARIES_GRAPHQL_QUERY, iids, after);
+      if ([400, 404, 405, 422, 501].includes(response.status)) break;
+      if (response.status !== 200 || response.bodyTruncated)
+        return yield* readError(new Error("GitLab GraphQL read failed."));
+      const decoded = decodeLinkedSummaryPageJson(response.body);
+      // Old servers can respond with HTTP 200 and GraphQL validation errors.
+      if (Result.isFailure(decoded) || decoded.success === null) break;
+      const { items, hasNextPage, endCursor } = decoded.success;
+      add(items);
+      if (!hasNextPage || summaries.size === wanted.size) return yield* requestRecheck();
+      if (endCursor === null || seenCursors.has(endCursor)) {
+        return yield* readError(new Error("GitLab GraphQL pagination did not advance."));
+      }
+      seenCursors.add(endCursor);
+      after = endCursor;
+      if (page + 1 === wanted.size) {
+        return yield* readError(new Error("GitLab GraphQL pagination exceeded the batch size."));
+      }
+    }
+
+    // Filter at the target project so fork MRs keep their target IID. Each page uses the
+    // same admission guard as GraphQL, including the first compatibility read.
+    summaries.clear();
+    let pageSize = wanted.size;
+    for (let page = 1; ; page++) {
+      if (page > wanted.size) {
+        return yield* readError(new Error("GitLab REST pagination exceeded the batch size."));
+      }
+      const response = yield* gitlab.executeApiPage({
+        cwd: input.cwd,
+        host: input.host,
+        path: restListPath(wanted, pageSize, page),
+      });
+      if (response.status !== 200)
+        return yield* readError(new Error("GitLab REST list read failed."));
+      if (response.bodyTruncated) {
+        if (pageSize === 1) {
+          return yield* readError(
+            new Error("GitLab REST merge request exceeded the output limit."),
+          );
+        }
+        // Offset pagination changes with per_page, so restart rather than skipping rows.
+        pageSize = Math.floor(pageSize / 2);
+        summaries.clear();
+        page = 0;
+        continue;
+      }
+      const decoded = decodeRestLinkedSummariesJson(response.body);
+      if (Result.isFailure(decoded)) return yield* readError(decoded.failure);
+      add(decoded.success);
+      if (summaries.size === wanted.size) break;
+      const next = response.headers.get("x-next-page");
+      const hasNext =
+        next === undefined
+          ? /;\s*rel="next"/iu.test(response.headers.get("link") ?? "")
+          : next !== "";
+      if (!hasNext) break;
+      if (next !== undefined && Number(next) !== page + 1) {
+        return yield* readError(new Error("GitLab REST pagination did not advance."));
+      }
+    }
+    // A server may reject newer summary fields and still support the existing status and stat
+    // selections. Only ask for IIDs returned by REST, in independent, guarded requests.
+    const found = [...summaries.keys()];
+    for (let offset = 0; offset < found.length; offset += LINKED_SUMMARY_GRAPHQL_PAGE_SIZE) {
+      const numbers = found.slice(offset, offset + LINKED_SUMMARY_GRAPHQL_PAGE_SIZE);
+      const slice = numbers.map(String);
+      // Enrichment is optional: a failed read keeps the REST row, but rate limits still surface.
+      const enrich = <A>(
+        graphqlQuery: string,
+        decode: (body: string) => Result.Result<A, unknown>,
+      ) =>
+        readGraphql(graphqlQuery, slice).pipe(
+          Effect.map((page) =>
+            page.status === 200 && !page.bodyTruncated
+              ? Result.getOrUndefined(decode(page.body))
+              : undefined,
+          ),
+          Effect.catchTags({ GitLabCliCommandError: () => Effect.undefined }),
+        );
+      const states = yield* enrich(LINKED_LIST_STATES_GRAPHQL_QUERY, decodeListStatesJson);
+      const stats = yield* enrich(LINKED_STATS_GRAPHQL_QUERY, decodeMergeRequestStatsJson);
+      for (const number of numbers) {
+        summaries.set(number, {
+          ...summaries.get(number)!,
+          ...states?.get(number),
+          ...stats?.get(number),
+        });
+      }
+    }
+    return summaries;
+  });
+
   const viewerUsername = (input: { readonly cwd: string; readonly host?: string | undefined }) =>
     api({ cwd: input.cwd, host: input.host, path: "user" }).pipe(
       Effect.flatMap((result): Effect.Effect<string, GitLabPullRequestCliError> => {
@@ -2404,6 +2611,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.map((pages) => new Map(pages.flatMap((page) => [...page]))));
     }),
 
+    getLinkedSummaries,
     listMergeRequestStats,
 
     getMergeRequestFileStats: Effect.fn("GitLabPullRequestCli.getMergeRequestFileStats")(

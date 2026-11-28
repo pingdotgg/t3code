@@ -110,7 +110,12 @@ function gitLabProviderFailure(
 ): PullRequestProviderFailure {
   if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
-  if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "GitLabCliRateLimitError") {
+    return {
+      reason: "rate-limited",
+      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+    };
+  }
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
@@ -351,6 +356,12 @@ export const make = Effect.gen(function* () {
         Effect.map(([mergeRequest, states]) => withListState(mergeRequest, states)),
         Effect.mapError(fail("getChangeRequestSummary")),
       ),
+
+    linkedSummaries: {
+      batchSize: GitLabPullRequestCli.LINKED_SUMMARY_BATCH_SIZE,
+      read: (input) =>
+        cli.getLinkedSummaries(input).pipe(Effect.mapError(fail("getLinkedSummaries"))),
+    },
 
     getChangeRequest: (input) =>
       Effect.all(

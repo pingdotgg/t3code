@@ -175,6 +175,9 @@ const routingCredential = Context.Reference<{
 } | null>("t3/PullRequestService/routingCredential", { defaultValue: () => null });
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
 type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
+type LinkedSummaryReads = (
+  input: PullRequestRef,
+) => Effect.Effect<PullRequestSummary, PullRequestError> | undefined;
 
 export class PullRequestService extends Context.Service<
   PullRequestService,
@@ -206,6 +209,9 @@ export class PullRequestService extends Context.Service<
         readonly bypassCache?: boolean;
       },
     ) => Effect.Effect<PullRequestSummary, PullRequestError>;
+    readonly prepareLinkedSummaryReads: (
+      refs: ReadonlyArray<PullRequestRef>,
+    ) => Effect.Effect<LinkedSummaryReads>;
     /** Whether the reference's host batches summary reads; false when it cannot be resolved. */
     readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
@@ -569,6 +575,7 @@ function withRateLimitBackoff(
       ? {}
       : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
     ...(api.batchesReads === undefined ? {} : { batchesReads: api.batchesReads }),
+    ...(api.linkedSummaries === undefined ? {} : { linkedSummaries: api.linkedSummaries }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
@@ -3301,6 +3308,89 @@ export const make = Effect.gen(function* () {
         );
   };
 
+  const prepareLinkedSummaryReads: PullRequestService["Service"]["prepareLinkedSummaryReads"] =
+    Effect.fn("PullRequestService.prepareLinkedSummaryReads")(function* (refs) {
+      const credential = yield* routingCredential;
+      const rateLimitScope = yield* SourceControlRateLimit.CredentialScope;
+      const referencedRepositories = Map.groupBy(refs, (input) =>
+        JSON.stringify([input.projectId, input.host, input.repository.toLowerCase()]),
+      );
+      const routes = yield* Effect.forEach(
+        referencedRepositories.values(),
+        (inputs) =>
+          requireProject(inputs[0]!).pipe(
+            Effect.map((project) => {
+              const batch = project.api.linkedSummaries;
+              return batch === undefined ? [] : inputs.map((input) => ({ input, project, batch }));
+            }),
+            Effect.orElseSucceed(() => []),
+          ),
+        { concurrency: REPOSITORY_CONCURRENCY },
+      );
+      const repositories = Map.groupBy(routes.flat(), ({ input, project }) =>
+        JSON.stringify([
+          project.kind,
+          project.host,
+          project.repository.toLowerCase(),
+          project.project.workspaceRoot,
+          input.expectedAccountId ?? null,
+          credential?.credentialFingerprint ?? null,
+          rateLimitScope,
+        ]),
+      );
+      const readKey = (input: PullRequestRef) =>
+        JSON.stringify([refScope(input), input.expectedAccountId ?? null]);
+      const byRef = new Map<string, Effect.Effect<PullRequestSummary, PullRequestError>>();
+      for (const routes of repositories.values()) {
+        const { project, batch } = routes[0]!;
+        const byNumber = Map.groupBy(routes, ({ input }) => input.number);
+        const numbers = [...byNumber.keys()];
+        for (let offset = 0; offset < numbers.length; offset += batch.batchSize) {
+          const chunk = numbers.slice(offset, offset + batch.batchSize);
+          // A linked sync observes each chunk once per sweep, independent of the full summary cache.
+          const read = yield* Effect.cached(
+            observeRead(
+              batch
+                .read({
+                  cwd: project.project.workspaceRoot,
+                  repository: project.repository,
+                  host: project.host,
+                  numbers: chunk,
+                })
+                .pipe(
+                  Effect.provideService(SourceControlRateLimit.SourceControlRateLimit, rateLimits),
+                  Effect.provideService(SourceControlRateLimit.CredentialScope, rateLimitScope),
+                ),
+            ),
+          );
+          for (const number of chunk) {
+            for (const route of byNumber.get(number)!) {
+              byRef.set(
+                readKey(route.input),
+                read.pipe(
+                  Effect.flatMap(({ value, observedAt }) => {
+                    const row = value.get(number);
+                    return row === undefined
+                      ? Effect.fail(
+                          new PullRequestProviderError({
+                            provider: project.api.kind,
+                            operation: "getLinkedSummaries",
+                            reason: "not-found",
+                            detail: "The change request was not found.",
+                          }),
+                        )
+                      : Effect.succeed(toSummary(route.project, row, observedAt));
+                  }),
+                  Effect.mapError(toPullRequestError("summary")),
+                ),
+              );
+            }
+          }
+        }
+      }
+      return (input) => byRef.get(readKey(input));
+    });
+
   const batchesReads: PullRequestService["Service"]["batchesReads"] = Effect.fn(
     "PullRequestService.batchesReads",
   )(
@@ -4281,6 +4371,7 @@ export const make = Effect.gen(function* () {
       return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
     }),
     summary: credentialCached(summary),
+    prepareLinkedSummaryReads,
     batchesReads,
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(

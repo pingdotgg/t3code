@@ -182,6 +182,7 @@ const missingSummary = Effect.fail(
 interface HarnessOptions {
   readonly invalidate?: PullRequestService.PullRequestService["Service"]["invalidate"];
   readonly batchesReads?: (input: PullRequestRef) => boolean;
+  readonly prepareLinkedSummaryReads?: PullRequestService.PullRequestService["Service"]["prepareLinkedSummaryReads"];
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
@@ -245,6 +246,8 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const layerDependencies = Layer.mergeAll(
     Layer.mock(PullRequestService.PullRequestService)({
       withSharedProjectReads: (effect) => effect,
+      prepareLinkedSummaryReads:
+        options.prepareLinkedSummaryReads ?? (() => Effect.succeed(() => undefined)),
       batchesReads: (input) => Effect.succeed(options.batchesReads?.(input) ?? true),
       summary,
       stack,
@@ -1896,6 +1899,53 @@ describe("PullRequestSyncReactor", () => {
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
+  );
+
+  it.effect("batches new links immediately and keeps explicit refreshes on the full read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const thread = makeThread("gitlab-links", {
+        pullRequests: [8, 9].map((number) =>
+          makeLink(number, null, {
+            host: "gitlab.com",
+            url: `https://gitlab.com/owner/repository/-/merge_requests/${number}`,
+          }),
+        ),
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        prepareLinkedSummaryReads: (refs) =>
+          Effect.succeed((input) =>
+            refs.some((ref) => ref.number === input.number)
+              ? Effect.succeed(makeSummary(input))
+              : undefined,
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        yield* Ref.set(fixture.snapshots, makeSnapshot([thread]));
+        yield* Queue.offer(fixture.domainEvents, {
+          type: "thread.pull-request-synced",
+          id: EventId.make("gitlab-links-synced"),
+          threadId: thread.id,
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload: { ...v2PullRequestThread(thread), lastVisitedAt: null },
+        });
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.syncCommands)).map(({ number }) => number).toSorted(),
+          [8, 9],
+        );
+        assert.lengthOf(yield* Ref.get(fixture.summaryCalls), 0);
+        yield* reactor.requestSync(thread.pullRequests[0]!);
+        yield* reactor.drain;
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.summaryCalls)).map(({ number }) => number),
+          [8],
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
   );
 
   it.effect("a pending stack retry respects the missing summary backoff", () =>
