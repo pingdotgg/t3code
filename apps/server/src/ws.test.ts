@@ -2653,9 +2653,10 @@ const acpSessionRpcs = WsRpcGroup.omit(
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),
 );
-const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const acpStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer)),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,

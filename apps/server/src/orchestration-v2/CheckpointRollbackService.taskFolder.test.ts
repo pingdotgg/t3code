@@ -95,6 +95,7 @@ const layerFor = (state: State, options: Options) => {
   );
   const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(Layer.provide(layerGit));
   const layerProjections = ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
   const layerProjects = Layer.mock(ProjectStore.ProjectStoreV2)({

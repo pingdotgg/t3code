@@ -280,6 +280,23 @@ describe("extractMarkdownLinkHrefs", () => {
   });
 
   it.each([
+    ["```md\n- [Setup](./a/README.md)\n```\n\nSee [README.md](./b/README.md)", ["./b/README.md"]],
+    ["Write `[Setup](./a/README.md)` as [README.md](./b/README.md)", ["./b/README.md"]],
+    ["[a `b](./a/README.md)` [c](./b/README.md)", ["./b/README.md"]],
+    ["[`code`](./a/README.md) and [x](<./b/a`b`.md>)", ["./a/README.md", "./b/a`b`.md"]],
+    ["`unclosed [a](./a/README.md)\n\nand` [b](./b/README.md)", ["./a/README.md", "./b/README.md"]],
+    ["~~~\n[a](./a/README.md)\n\n~~~\n[b](./b/README.md)", ["./b/README.md"]],
+    ["Type `` ``` `` then [a](./a/README.md)", ["./a/README.md"]],
+    ["\\``[a](./a/README.md)` [b](./b/README.md)", ["./b/README.md"]],
+    ["```\n```js\n[a](./a/README.md)\n```\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n  ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["> ```\n> [a](./a/README.md)\n> ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n\n[b](./b/README.md)", ["./b/README.md"]],
+  ])("skips links inside code in %s", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
     [
       String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
       [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],

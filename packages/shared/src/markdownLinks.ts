@@ -517,15 +517,25 @@ const PARAGRAPH_INTERRUPTION_PATTERN =
 
 const BLOCKQUOTE = 0;
 
+export function extractInlineCodeSpans(text: string): string[] {
+  if (!text.includes("`")) return [];
+  const spans: string[] = [];
+  visitMarkdownLines(text, (line, _start, fenced) => {
+    if (!fenced) collectLineCodeSpans(line, spans);
+  });
+  return spans;
+}
+
 /**
- * Inline code spans outside fenced code. Blockquotes and list items are tracked line by line as
+ * Visits text lines and fenced code lines. Blockquotes and list items are tracked line by line as
  * CommonMark nests them, because a fence closes only at its own container's indentation and ends
  * with that container. A full parse would be exact but costs about 100x this scan, which runs on
  * every streamed chunk.
  */
-export function extractInlineCodeSpans(text: string): string[] {
-  if (!text.includes("`")) return [];
-  const spans: string[] = [];
+function visitMarkdownLines(
+  text: string,
+  visit: (line: string, start: number, fenced: boolean) => void,
+) {
   // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
   const containers: number[] = [];
   let fence: { marker: string; indented: boolean } | null = null;
@@ -535,7 +545,10 @@ export function extractInlineCodeSpans(text: string): string[] {
   let indentedCode = false;
   // Depth of an item that has only its marker so far; a blank line next ends it.
   let emptyItemDepth = 0;
+  let lineStart = 0;
   for (const line of text.split("\n")) {
+    const start = lineStart;
+    lineStart += line.length + 1;
     let source = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (source.includes("\t")) {
       let column = 0;
@@ -583,6 +596,7 @@ export function extractInlineCodeSpans(text: string): string[] {
         if (content === "") continue;
         // A fence written inside indented code ends with that code.
         if (!fence.indented || indent >= 4) {
+          visit(line, start, true);
           const closer = FENCE_CLOSER_PATTERN.exec(content)?.[1];
           if (
             closer?.startsWith(fence.marker[0]!) &&
@@ -605,7 +619,7 @@ export function extractInlineCodeSpans(text: string): string[] {
         content !== "" &&
         (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
       ) {
-        collectLineCodeSpans(line, spans);
+        visit(line, start, false);
         continue;
       }
       containers.length = matched;
@@ -626,13 +640,18 @@ export function extractInlineCodeSpans(text: string): string[] {
         if (!paragraph && !closedContainer) indentedCode = true;
         // Indented code is not skipped, but a fence shown inside it still hides its lines. Inside
         // a paragraph an indented line is text, where only a backtick run opens code (a span).
-        if (opener && (!paragraph || opener[0] === "`")) fence = { marker: opener, indented: true };
-        else collectLineCodeSpans(line, spans);
+        if (opener && (!paragraph || opener[0] === "`")) {
+          fence = { marker: opener, indented: true };
+          visit(line, start, true);
+        } else {
+          visit(line, start, false);
+        }
         break;
       }
       indentedCode = false;
       if (opener) {
         fence = { marker: opener, indented: false };
+        visit(line, start, true);
         break;
       }
       if (content[0] === ">") {
@@ -662,7 +681,7 @@ export function extractInlineCodeSpans(text: string): string[] {
         readIndent();
         continue;
       }
-      collectLineCodeSpans(line, spans);
+      visit(line, start, false);
       paragraph = !(
         ATX_HEADING_PATTERN.test(content) ||
         (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
@@ -670,7 +689,6 @@ export function extractInlineCodeSpans(text: string): string[] {
       break;
     }
   }
-  return spans;
 }
 
 function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
@@ -733,7 +751,7 @@ function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number
   }
 }
 
-function markdownLinkDestinationScanner(markdown: string) {
+export function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /\\[\\<>]|[<>\r\n]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
@@ -756,16 +774,46 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+// Code is literal: fenced lines become spaces, keeping every offset.
+function blankFencedCode(text: string): string {
+  if (!text.includes("```") && !text.includes("~~~")) return text;
+  let blanked = "";
+  let copied = 0;
+  visitMarkdownLines(text, (line, start, fenced) => {
+    if (!fenced) return;
+    blanked += text.slice(copied, start) + line.replace(/[^\r]/g, " ");
+    copied = start + line.length;
+  });
+  return blanked + text.slice(copied);
+}
+
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const markdown = blankFencedCode(text);
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  const bracket = /!\[|[[\]\\]|\n[ \t\r]*\n/g;
+  const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);
+  // A code span closes at the next run of as many backticks in its paragraph.
+  const closersByLength = new Map<number, { ends: number[]; next: number }>();
+  for (const run of markdown.matchAll(/`+/g)) {
+    const closers = closersByLength.get(run[0].length) ?? { ends: [], next: 0 };
+    closers.ends.push(run.index + run[0].length);
+    closersByLength.set(run[0].length, closers);
+  }
+  const bracket = /!\[|[[\]\\]|`+|\n[ \t\r]*\n/g;
   const openers: boolean[] = [];
   for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
     if (match[0] === "\\") {
       bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("`")) {
+      const length = match[0].length;
+      const closers = closersByLength.get(length) ?? { ends: [], next: 0 };
+      while ((closers.ends[closers.next] ?? Infinity) - length < bracket.lastIndex) closers.next++;
+      const end = closers.ends[closers.next];
+      if (end !== undefined && end - length <= paragraphEnd(bracket.lastIndex)) {
+        bracket.lastIndex = end;
+      }
     } else if (match[0].startsWith("\n")) {
       openers.length = 0;
     } else if (match[0].endsWith("[")) {

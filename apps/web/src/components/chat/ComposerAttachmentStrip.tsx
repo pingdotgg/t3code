@@ -7,7 +7,15 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
-import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  FileIcon,
+  FolderIcon,
+  ImageIcon,
+  PaperclipIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
 import { type ComponentProps, type Ref, useLayoutEffect, useRef } from "react";
 
 import {
@@ -36,6 +44,7 @@ import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import type { PreparingComposerImage } from "./preparingComposerImages";
@@ -44,6 +53,7 @@ import {
   buildExpandedImagePreview,
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
+import type { EditedImage } from "./ImageAnnotationOverlay";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import {
   SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
@@ -155,6 +165,7 @@ export function ComposerAttachmentMediaRow({
   canOperateThread,
   onExpandImage,
   onCopySnapshot,
+  onSaveImageEdit,
   onFileOpen,
   onRemoveImage,
   onRemoveFile,
@@ -174,6 +185,7 @@ export function ComposerAttachmentMediaRow({
   readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
   readonly canOperateThread: boolean;
   readonly onCopySnapshot: (imageId: string) => Promise<void>;
+  readonly onSaveImageEdit: (imageId: string, file: File) => Promise<EditedImage | null>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
   readonly onRemoveImage: (imageId: string) => void;
@@ -233,7 +245,12 @@ export function ComposerAttachmentMediaRow({
                   aria-label={gt("Preview {name}", { name: image.name })}
                   disabled={!ready}
                   onClick={() => {
-                    const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
+                    const preview = buildExpandedImagePreview(
+                      images,
+                      image.id,
+                      onCopySnapshot,
+                      onSaveImageEdit,
+                    );
                     if (!preview) return;
                     onExpandImage(preview);
                   }}
@@ -598,12 +615,14 @@ export function ComposerRestingImagePreviews({
   resolvedTheme,
   onExpandImage,
   onCopySnapshot,
+  onSaveImageEdit,
   onShowMore,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly allImages: ReadonlyArray<ComposerImageAttachment>;
   readonly resolvedTheme: "light" | "dark";
   readonly onCopySnapshot: (imageId: string) => Promise<void>;
+  readonly onSaveImageEdit: (imageId: string, file: File) => Promise<EditedImage | null>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onShowMore: () => void;
 }) {
@@ -620,7 +639,12 @@ export function ComposerRestingImagePreviews({
           aria-label={gt("Preview {name}", { name: image.name })}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
-            const preview = buildExpandedImagePreview(allImages, image.id, onCopySnapshot);
+            const preview = buildExpandedImagePreview(
+              allImages,
+              image.id,
+              onCopySnapshot,
+              onSaveImageEdit,
+            );
             if (preview) onExpandImage(preview);
           }}
         >
@@ -750,28 +774,73 @@ export function ComposerAttachInput({
   );
 }
 
-export function ComposerAttachButton({ onOpenPicker }: { readonly onOpenPicker: () => void }) {
+export function ComposerAttachButton({
+  onOpenPicker,
+  onPickFolder,
+}: {
+  readonly onOpenPicker: () => void;
+  /** Present when a folder can be attached; the button then opens a Files / Folder menu. */
+  readonly onPickFolder?: (() => void) | undefined;
+}) {
   const gt = useGT();
+  // The clip's weight sits in its upper loop; 1px down reads as centered on the row.
+  const icon = <PaperclipIcon className="translate-y-px" />;
+  if (onPickFolder === undefined) {
+    return (
+      <SharedTooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onOpenPicker}
+            aria-label={gt("Attach files")}
+          />
+        }
+        label={
+          <>
+            <T>Attach files</T>
+          </>
+        }
+      >
+        {icon}
+      </SharedTooltipTrigger>
+    );
+  }
   return (
-    <SharedTooltipTrigger
-      render={
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onOpenPicker}
-          aria-label={gt("Attach files")}
-        />
-      }
-      label={
-        <>
-          <T>Attach files</T>
-        </>
-      }
-    >
-      {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
-      <PaperclipIcon className="translate-y-px" />
-    </SharedTooltipTrigger>
+    <Menu>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={gt("Attach files or a folder")}
+              />
+            }
+          />
+        }
+        label={
+          <>
+            <T>Attach files or a folder</T>
+          </>
+        }
+      >
+        {icon}
+      </SharedTooltipTrigger>
+      <MenuPopup align="start" {...composerFloatingLayerProps}>
+        <MenuItem onClick={onOpenPicker}>
+          <FileIcon />
+          <T context="attach menu item, opens a file picker">Files…</T>
+        </MenuItem>
+        <MenuItem onClick={onPickFolder}>
+          <FolderIcon />
+          <T context="attach menu item, opens a folder picker">Folder…</T>
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
   );
 }
