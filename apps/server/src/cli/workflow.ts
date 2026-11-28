@@ -267,6 +267,9 @@ const signalCommand = Command.make("signal", {
           detail: "Address a signal with --run and --wait, or with --workflow and --channel.",
         });
       }
+      if (Option.isSome(flags.id) && flags.id.value.trim() === "") {
+        return yield* new ThreadUsageError({ detail: "--id cannot be blank." });
+      }
       // An agent answers through this command, so its answer is named after its thread.
       const callingThread = (yield* HostProcess.Environment).T3CODE_THREAD_ID?.trim();
       const threadTitle =

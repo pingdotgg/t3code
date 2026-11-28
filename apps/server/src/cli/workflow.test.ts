@@ -199,6 +199,12 @@ it.effect("signal sends only one complete address to the server", () =>
       assert.strictEqual(error?._tag, sent ? undefined : "ThreadUsageError");
       assert.lengthOf(calls, sent ? 1 : 0);
     }
+
+    const blankId = yield* runCli(["signal", "{}", ...byRun, "--id", " "], () =>
+      Effect.succeed({ structuredContent: { delivery: "delivered" } }),
+    );
+    assert.strictEqual(blankId.error?.message, "--id cannot be blank.");
+    assert.lengthOf(blankId.calls, 0);
   }),
 );
 
