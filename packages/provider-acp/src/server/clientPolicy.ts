@@ -193,7 +193,7 @@ function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
     : runtimePolicy.approvalPolicy !== "never";
 }
 
-function isAcpReadKind(toolKind: string): boolean {
+export function isAcpReadKind(toolKind: string): boolean {
   return toolKind === "read" || toolKind === "search" || toolKind === "think";
 }
 
