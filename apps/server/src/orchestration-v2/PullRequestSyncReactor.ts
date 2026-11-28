@@ -107,11 +107,12 @@ function shellScript(input: string): string {
       ).join("");
 }
 
-/** A script split at command separators that sit outside quotes. */
+/** A script split at command separators that sit outside quotes and comments. */
 function shellSegments(script: string): ReadonlyArray<string> {
   const segments: Array<string> = [];
   let current = "";
   let quote: string | null = null;
+  let wordStart = true;
   for (let index = 0; index < script.length; index++) {
     const char = script[index] ?? "";
     if (quote !== null) {
@@ -120,6 +121,13 @@ function shellSegments(script: string): ReadonlyArray<string> {
       else if (char === quote) quote = null;
       continue;
     }
+    if (char === "#" && wordStart) {
+      const end = script.indexOf("\n", index);
+      current += script.slice(index, end === -1 ? undefined : end);
+      index = end === -1 ? script.length : end - 1;
+      continue;
+    }
+    wordStart = /[\s;&|(]/u.test(char);
     if (char === "'" || char === '"') quote = char;
     if (char === "\\") {
       current += char + (script[++index] ?? "");

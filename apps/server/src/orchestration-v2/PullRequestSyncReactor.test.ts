@@ -2328,6 +2328,13 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create beside a named read after a comment with an apostrophe",
+      input:
+        "# don't treat <<EOF as code\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
       name: "a create command after a comment that starts at a separator",
       input: "gh pr view --json url --jq .url;# note; gh pr create --fill",
       output: "https://github.com/owner/repository/pull/124",
