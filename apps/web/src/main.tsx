@@ -19,6 +19,41 @@ const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
+// index.css gates hover variants on these markers instead of media queries, so a VDI/VM mouse that
+// Chromium reports as non-hovering can set them too.
+const root = document.documentElement;
+const hoverQuery = window.matchMedia("(hover: hover)");
+const anyHoverQuery = window.matchMedia("(any-hover: hover)");
+let lastPointerIsMouse = false;
+const syncHoverMarkers = () => {
+  const mouseFallback = lastPointerIsMouse && !anyHoverQuery.matches;
+  root.toggleAttribute("data-hover", hoverQuery.matches || mouseFallback);
+  root.toggleAttribute("data-any-hover", anyHoverQuery.matches || mouseFallback);
+};
+hoverQuery.addEventListener("change", syncHoverMarkers);
+anyHoverQuery.addEventListener("change", syncHoverMarkers);
+syncHoverMarkers();
+
+const setLastPointer = (isMouse: boolean) => {
+  if (isMouse === lastPointerIsMouse) return;
+  lastPointerIsMouse = isMouse;
+  syncHoverMarkers();
+};
+// Capture phase: a handler that stops propagation must not hide the pointer type.
+const pointerOptions = { capture: true, passive: true };
+window.addEventListener(
+  "pointermove",
+  (event) => setLastPointer(event.pointerType === "mouse"),
+  pointerOptions,
+);
+// A tap may never move, so presses clear the marker before its hover sticks. They never set
+// it: the app replays synthetic mouse presses (HostedBrowserWebview).
+window.addEventListener(
+  "pointerdown",
+  (event) => event.pointerType !== "mouse" && setLastPointer(false),
+  pointerOptions,
+);
+
 const app = <AppRoot router={router} />;
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
