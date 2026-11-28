@@ -38,7 +38,11 @@ import {
   readAntigravityPendingReply,
   readAntigravitySubagentTranscript,
 } from "../../provider/acp/AntigravityChildWork.ts";
-import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import {
+  type ClientFileRoot,
+  readAntigravityClientTextFile,
+  resolveGitWorktreeDirectory,
+} from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -87,7 +91,9 @@ const AntigravityProviderCapabilitiesV2 = {
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
-> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+> & {
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+};
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -154,9 +160,17 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  const { profileDirectory } = options;
-  const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  const { fileSystem, path, profileDirectory } = options;
+  const antigravityClientFileRoots = Effect.fn("AntigravityAdapterV2.antigravityClientFileRoots")(
+    function* (cwd: string | null): Effect.fn.Return<ReadonlyArray<ClientFileRoot>> {
+      const { attachmentsDir } = options.host.paths;
+      if (cwd === null) return [attachmentsDir];
+      const worktreeGitDir = yield* resolveGitWorktreeDirectory({ fileSystem, path, cwd });
+      return worktreeGitDir === undefined
+        ? [cwd, attachmentsDir]
+        : [cwd, attachmentsDir, worktreeGitDir];
+    },
+  );
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -288,14 +302,16 @@ export function makeAntigravityAcpAdapterFlavor(
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
-      readTextFile: (request, cwd) =>
-        readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
+      readTextFile: Effect.fn("AntigravityAdapterV2.readTextFile")(function* (request, cwd) {
+        const allowedRoots = yield* antigravityClientFileRoots(cwd);
+        return yield* readAntigravityClientTextFile({
+          fileSystem,
+          path,
           cwd,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots,
           request,
-        }),
+        });
+      }),
     },
     permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
