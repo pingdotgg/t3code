@@ -9,6 +9,8 @@ export interface ParseCliArgsOptions {
   readonly valueFlags?: readonly string[];
 }
 
+const ASCII_WHITESPACE = /[ \t\n\r\f\v]/;
+
 export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
   const input = args;
   if (!input) return [];
@@ -43,7 +45,7 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     if (char === "'" || char === '"') {
       quote = char;
       quoted = true;
-    } else if (/[ \t\n\r\f\v]/.test(char)) {
+    } else if (ASCII_WHITESPACE.test(char)) {
       if (current || quoted) {
         tokens.push(current);
         current = "";
@@ -51,7 +53,7 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
       }
     } else if (char === "\\") {
       const next = input[index + 1];
-      if (next !== undefined && /[\s'"]/.test(next)) {
+      if (next !== undefined && (next === "'" || next === '"' || ASCII_WHITESPACE.test(next))) {
         current += next;
         index++;
       } else {
