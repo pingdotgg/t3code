@@ -66,6 +66,42 @@ describe("decodePullRequestListJson", () => {
     });
   });
 
+  it("gives authors and reviewers an avatar a browser can load without an Azure sign-in", () => {
+    // Azure DevOps answers this endpoint with a 302 to its sign-in page unless the request carries
+    // Azure credentials, so an <img> pointed at it never shows a picture.
+    const signInOnly =
+      "https://dev.azure.com/acme/_api/_common/identityImage?id=045e40d6-c17e-66c1-9649-dc1f0141a3a3";
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        asJson([
+          pullRequest({
+            createdBy: {
+              displayName: "Bilal Hassan",
+              uniqueName: "bilal@acme.dev",
+              imageUrl: signInOnly,
+            },
+            reviewers: [
+              {
+                displayName: "Mei Tanaka",
+                uniqueName: "mei@acme.dev",
+                imageUrl: signInOnly,
+                vote: 0,
+              },
+            ],
+          }),
+        ]),
+      ),
+    );
+
+    const avatarUrls = [batch.items[0]?.author, ...(batch.items[0]?.reviewers ?? [])].map(
+      (actor) => actor?.avatarUrl ?? null,
+    );
+    expect(avatarUrls).toHaveLength(2);
+    for (const avatarUrl of avatarUrls) {
+      expect(avatarUrl).not.toContain("/_api/_common/identityImage");
+    }
+  });
+
   it("assembles a browser url when Azure reports no web link", () => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest()])));
 
