@@ -1,4 +1,5 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
@@ -316,7 +317,9 @@ export function openCodeToolTurnItem(
           ? {}
           : {
               results: [
-                { fileName: searchRoot, preview: output.slice(0, SEARCH_PREVIEW_MAX_CHARS) },
+                ...(parseGrepOutput(output, searchRoot) ?? [
+                  { fileName: searchRoot, preview: output.slice(0, SEARCH_PREVIEW_MAX_CHARS) },
+                ]),
               ],
             }),
       };

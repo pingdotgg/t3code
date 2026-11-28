@@ -23,7 +23,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { toastManager } from "./ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export interface SavedView<Preferences> {
   readonly id: string;
@@ -142,43 +142,41 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
   return (
     <>
       <Menu>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger render={<Button variant="outline" />} aria-label={savedViewsLabel} />
-            }
-          >
-            <BookmarkIcon aria-hidden className="size-4" />
-            <span className="max-w-40 truncate">
-              {selectedView?.name ?? gt("Views", { $context: "saved filter views menu" })}
-            </span>
-            {modified ? <span aria-label={gt("Modified view")}>*</span> : null}
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
-          </TooltipTrigger>
-          <TooltipPopup>{selectedView?.name ?? savedViewsLabel}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger render={<Button variant="outline" />} aria-label={savedViewsLabel} />
+          }
+          label={selectedView?.name ?? savedViewsLabel}
+        >
+          <BookmarkIcon aria-hidden className="size-4" />
+          <span className="max-w-40 truncate">
+            {selectedView?.name ?? gt("Views", { $context: "saved filter views menu" })}
+          </span>
+          {modified ? <span aria-label={gt("Modified view")}>*</span> : null}
+          <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+        </SharedTooltipTrigger>
         <MenuPopup align="start">
           {views.map((view) => (
-            <Tooltip key={view.id}>
-              <TooltipTrigger
-                render={
-                  <MenuItem
-                    onClick={() => {
-                      setSelectedId(view.id);
-                      onApply(kind.normalize(view.preferences));
-                    }}
-                  />
-                }
-              >
-                {selectedView?.id === view.id && !modified ? (
-                  <CheckIcon aria-hidden />
-                ) : (
-                  <BookmarkIcon aria-hidden />
-                )}
-                <MenuItemLabel>{view.name}</MenuItemLabel>
-              </TooltipTrigger>
-              <TooltipPopup side="right">{view.name}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              key={view.id}
+              render={
+                <MenuItem
+                  onClick={() => {
+                    setSelectedId(view.id);
+                    onApply(kind.normalize(view.preferences));
+                  }}
+                />
+              }
+              label={view.name}
+              side="right"
+            >
+              {selectedView?.id === view.id && !modified ? (
+                <CheckIcon aria-hidden />
+              ) : (
+                <BookmarkIcon aria-hidden />
+              )}
+              <MenuItemLabel>{view.name}</MenuItemLabel>
+            </SharedTooltipTrigger>
           ))}
           {views.length > 0 ? <MenuSeparator /> : null}
           <MenuItem onClick={() => setEditor({ name: messages(kind.suggestedName(preferences)) })}>

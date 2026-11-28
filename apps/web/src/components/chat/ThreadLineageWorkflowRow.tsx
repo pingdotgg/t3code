@@ -18,7 +18,8 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { Spinner } from "../ui/spinner";
 import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
@@ -167,30 +168,31 @@ export function ThreadLineageWorkflowRow({
         {header}
         {onStop ? (
           <div className="pointer-events-none absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="icon-xs"
-                    variant="ghost"
-                    part="icon"
-                    tone="destructive"
-                    aria-label={gt("Stop workflow {label}", { label })}
-                    disabled={stopDisabled}
-                    onClick={onStop}
-                  />
-                }
-              >
-                {stopping ? (
-                  <Spinner aria-hidden size="xs" />
-                ) : (
-                  <SquareIcon aria-hidden className="size-3 fill-current" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                <T>Stop entire workflow</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  size="icon-xs"
+                  variant="ghost"
+                  part="icon"
+                  tone="destructive"
+                  aria-label={gt("Stop workflow {label}", { label })}
+                  disabled={stopDisabled}
+                  onClick={onStop}
+                />
+              }
+              label={
+                <>
+                  <T>Stop entire workflow</T>
+                </>
+              }
+              side="left"
+            >
+              {stopping ? (
+                <Spinner aria-hidden size="xs" />
+              ) : (
+                <SquareIcon aria-hidden className="size-3 fill-current" />
+              )}
+            </SharedTooltipTrigger>
           </div>
         ) : null}
         <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />

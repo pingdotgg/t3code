@@ -32,6 +32,21 @@ it.each([
 ])("preserves timeline anchor %s", (anchor) => {
   expect(parsePullRequestAnchor(`${url}#${anchor}`)).toEqual({ kind: "timeline", anchor });
 });
+it("normalizes and matches mixed-case timeline anchors", () => {
+  for (const [raw, canonical] of [
+    ["ISSUECOMMENT-123", "issuecomment-123"],
+    ["PullRequestReview-9", "pullrequestreview-9"],
+    ["DISCUSSION_R123", "discussion_r123"],
+    ["NOTE_5", "note_5"],
+  ] as const) {
+    expect(parsePullRequestAnchor(`${url}#${raw}`)).toEqual({
+      kind: "timeline",
+      anchor: canonical,
+    });
+    expect(pullRequestAnchorMatchesUrl(raw, `${url}#${canonical}`)).toBe(true);
+    expect(pullRequestAnchorMatchesUrl(canonical, `${url}#${raw}`)).toBe(true);
+  }
+});
 it.each(["a".repeat(32), "b".repeat(64)])(
   "reads file and cross-side line ranges for %s",
   (digest) => {
@@ -107,10 +122,15 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
 
 it("keeps the commit scope of a PR diff permalink", () => {
   const sha = "a".repeat(40);
+  const upperSha = sha.toUpperCase();
   expect(pullRequestLinkCommit(`${url}/commits/${sha}#diff-abcR5`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${url}/commits/${upperSha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${forgejo}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${upperSha}#${"b".repeat(40)}`)).toBe(
+    sha,
+  );
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=main`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}?commit_id=${sha}`)).toBeNull();
 });
@@ -181,6 +201,7 @@ it("finds a review with no text of its own through the earliest comment it poste
     },
   ];
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [], threads)).toBe("discussion_r2");
+  expect(resolvePullRequestReviewAnchor("PullRequestReview-9", [], threads)).toBe("discussion_r2");
   // A review shown in its own right, an unknown review and other anchors are kept.
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [{ url: review }], threads)).toBe(
     "pullrequestreview-9",

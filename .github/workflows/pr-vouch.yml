@@ -15,6 +15,17 @@ on:
 permissions:
   contents: read
 
+# Per-PR events supersede each other at the run level, in arrival order (a job-level group
+# is joined when the job starts, so an older run's slower job could cancel the newer one).
+# Other comments and pushes get a unique group so they never cancel a PR's run.
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/recheck-vouch')))
+      && format('pr-vouch-run-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('pr-vouch-run-{0}', github.run_id) }}
+  cancel-in-progress: true
+
 jobs:
   collect-targets:
     name: Collect PR targets
@@ -74,9 +85,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    concurrency:
-      group: pr-vouch-${{ matrix.target.number }}
-      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:

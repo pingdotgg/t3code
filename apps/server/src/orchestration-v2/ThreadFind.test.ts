@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -37,9 +38,11 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 
 vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
-const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const layerTest = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+  ProjectStore.layer,
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));

@@ -42,6 +42,13 @@ describe("scoreSubsequenceMatch", () => {
     expect(spread).not.toBeNull();
     expect(compact!).toBeLessThan(spread!);
   });
+
+  it("matches full Unicode code points instead of combining unrelated surrogate halves", () => {
+    expect(scoreSubsequenceMatch("😀🤨.md", "🔨")).toBeNull();
+    expect(scoreSubsequenceMatch("😀🔨.md", "🔨")).toBe(9);
+    expect(scoreSubsequenceMatch("😀🔨", "😀🔨")).toBe(0);
+    expect(scoreSubsequenceMatch("🔨.md", "🔨")).toBe(3);
+  });
 });
 
 describe("insertRankedSearchResult", () => {

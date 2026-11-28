@@ -7,8 +7,6 @@ import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import * as RpcClient from "effect/rpc/RpcClient"
-import type * as RpcClientError from "effect/rpc/RpcClientError"
-import type * as RpcGroup from "effect/rpc/RpcGroup"
 import type * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as Schema from "effect/Schema"
 
@@ -31,10 +29,6 @@ export interface McpTestPeerOptions {
 }
 
 export interface McpTestPeer {
-  readonly wireClient: RpcClient.RpcClient<
-    RpcGroup.Rpcs<typeof McpSchema.ServerRequestRpcs>,
-    RpcClientError.RpcClientError
-  >
   readonly reverseClient: McpSchema.McpReverseClient
   readonly requests: Effect.Effect<ReadonlyArray<RecordedRequest>>
   readonly takeRequest: Effect.Effect<RecordedRequest>
@@ -111,11 +105,6 @@ export const makeMcpTestPeer = Effect.fn("McpTestPeer.make")(function*(
     })
   )
 
-  const wireClient = yield* RpcClient.make(
-    protocol.serverRequestRpcs as unknown as typeof McpSchema.ServerRequestRpcs
-  ).pipe(
-    Effect.provideService(RpcClient.Protocol, rpcProtocol)
-  )
   const reverseClient = yield* protocol.makeReverseClient({
     protocolVersion: protocol.protocolVersion,
     clientCapabilities: options.capabilities ?? {},
@@ -123,7 +112,6 @@ export const makeMcpTestPeer = Effect.fn("McpTestPeer.make")(function*(
   }).pipe(Effect.provideService(RpcClient.Protocol, rpcProtocol))
 
   return {
-    wireClient,
     reverseClient,
     requests: Ref.get(requests),
     takeRequest: Queue.take(inbox)

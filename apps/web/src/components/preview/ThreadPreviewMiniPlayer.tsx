@@ -40,7 +40,6 @@ import {
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
 import {
@@ -75,6 +74,7 @@ import {
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
@@ -291,29 +291,25 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       onOpenInPanel={openInPanel}
       pillActions={
         canPopOut ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={poppedOut ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  aria-label={
-                    poppedOut
-                      ? gt("Close popped-out preview")
-                      : gt("Pop preview into separate window")
-                  }
-                  disabled={!serverTab && !desktopOverlay?.hasWebContents}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={toggleNativePictureInPicture}
-                />
-              }
-            >
-              <PictureInPicture2 />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {poppedOut ? gt("Close separate window") : gt("Pop into separate window")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant={poppedOut ? "secondary" : "ghost"}
+                size="icon-xs"
+                aria-label={
+                  poppedOut
+                    ? gt("Close popped-out preview")
+                    : gt("Pop preview into separate window")
+                }
+                disabled={!serverTab && !desktopOverlay?.hasWebContents}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={toggleNativePictureInPicture}
+              />
+            }
+            label={poppedOut ? gt("Close separate window") : gt("Pop into separate window")}
+          >
+            <PictureInPicture2 />
+          </SharedTooltipTrigger>
         ) : null
       }
     >
@@ -647,43 +643,43 @@ function MiniPlayerShell({
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
                 </span>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={gt("Open preview in right panel")}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={onOpenInPanel}
-                    />
-                  }
-                >
-                  <PanelRightIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  <T>Open in right panel</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={gt("Open preview in right panel")}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={onOpenInPanel}
+                  />
+                }
+                label={
+                  <>
+                    <T>Open in right panel</T>
+                  </>
+                }
+              >
+                <PanelRightIcon />
+              </SharedTooltipTrigger>
               {pillActions}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={gt("Close floating preview")}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={close}
-                    />
-                  }
-                >
-                  <XIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  <T>Close floating preview</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={gt("Close floating preview")}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={close}
+                  />
+                }
+                label={
+                  <>
+                    <T>Close floating preview</T>
+                  </>
+                }
+              >
+                <XIcon />
+              </SharedTooltipTrigger>
             </div>
           </div>
 

@@ -316,7 +316,8 @@ describe("file embeds in native thread and file Markdown", () => {
       "Image",
       "Image",
       "Image",
-      "Image Text Image",
+      "Image",
+      "Image",
       "Image",
       "Text",
     ]);
@@ -325,6 +326,13 @@ describe("file embeds in native thread and file Markdown", () => {
     );
     expect(markdownForNativeParsing("![a](./a.png)\r![b](./b.png)")).toBe(
       "![a](./a.png)\r\r![b](./b.png)",
+    );
+    expect(
+      markdownForNativeParsing(
+        "**Dialog** (native) ![a](./a.png)\n\n**Label**\n![b](./b.png)\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
+      ),
+    ).toBe(
+      "**Dialog** (native)\n\n![a](./a.png)\n\n**Label**\n\n![b](./b.png)\n\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
     );
   });
 
