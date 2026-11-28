@@ -6839,6 +6839,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: providerThread.id,
         providerInstanceId: targetRun.providerInstanceId,
       });
+      // Some providers read a steer only after the running tool returns, and
+      // request_secret returns only once its card closes, so the steer closes it.
+      if (steerCarriesSelection) {
+        const { turnItems } = yield* projectionStore
+          .getThreadRecords(input.command.threadId, ["turnItems"], {
+            turnItemTypes: ["secret_request"],
+            turnItemRunIds: [targetRun.id],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestratorProjectionError({ threadId: input.command.threadId, cause }),
+            ),
+          );
+        for (const item of turnItems) {
+          if (item.type !== "secret_request" || item.secretStatus !== "pending") continue;
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: input.command.threadId,
+            runId: targetRun.id,
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId: targetRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              status: "cancelled",
+              secretStatus: "cancelled",
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+      }
       yield* Ref.update(input.effects, (existing) => [
         ...existing,
         {
