@@ -517,6 +517,50 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("keeps Unicode whitespace that Git allows at the edges of branch names", () => {
+    // Git refuses ASCII whitespace in ref names but allows U+3000 and U+00A0.
+    const head = "feature\u3000";
+    const base = "\u00a0release";
+    const paths: string[] = [];
+    const { layer } = harness({
+      remotes,
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            paths.push(input.path);
+            return restResponse([
+              {
+                number: 9,
+                title: "PR 9",
+                html_url: "https://github.com/acme/web/pull/9",
+                state: "open",
+                merged_at: null,
+                closed_at: null,
+                updated_at: "2026-01-02T00:00:00Z",
+                base: { ref: base, repo: { full_name: "acme/web" } },
+                head: {
+                  ref: head,
+                  sha: "f".repeat(40),
+                  repo: { name: "web", full_name: "me/web", owner: { login: "me", type: "User" } },
+                },
+              },
+            ]);
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const [pr] = yield* gh.listChangeRequests({
+        cwd: "/repo",
+        headSelector: `me:${head}`,
+        state: "open",
+        limit: 1,
+      });
+      assert.deepStrictEqual([pr?.headRefName, pr?.baseRefName], [head, base]);
+      assert.include(paths[0], `head=${encodeURIComponent(`me:${head}`)}`);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("maps API failures onto the errors callers handle", () => {
     let signedIn = false;
     const { layer } = harness({
