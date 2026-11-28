@@ -10,10 +10,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   continueIssuePage,
+  createIssuePageRereader,
   groupIssues,
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  rereadIssuePage,
+  type HeldIssuePage,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -90,6 +93,106 @@ describe("continueIssuePage", () => {
       issueCursorsForHost(next.nextCursors, "github.com"),
     );
     expect(done.nextCursors).toEqual({ "linear.app ENG": "l1" });
+  });
+});
+
+describe("holdIssuePages", () => {
+  it("keeps the loaded pages when a refresh after a ticket action changes the first page", () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const first = answer({ entries: [entry({ key: "3" })], nextCursors: cursors });
+    const continued = continueIssuePage(
+      hold(first),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #1 moves it to the top of the first page the refresh reads.
+    const refreshed = answer({
+      entries: [entry({ key: "1", updatedAt: "2026-10-02T00:00:00.000Z" }), entry({ key: "3" })],
+      nextCursors: cursors,
+    });
+    const held = holdIssuePages(
+      [[environmentId, refreshed]],
+      new Map([[environmentId, continued]]),
+    ).get(environmentId)!;
+    expect(held.entries.map((issue) => issue.key)).toContain("2");
+  });
+
+  it("starts over when the list's filters change", () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const first = holdIssuePages(
+      [[environmentId, answer({ entries: [entry({ key: "3" })], nextCursors: cursors })]],
+      new Map(),
+      "open",
+    ).get(environmentId)!;
+    const continued = continueIssuePage(first, answer({ entries: [entry({ key: "2" })] }), cursors);
+    const closed = answer({ entries: [entry({ key: "1" })], nextCursors: cursors });
+    const held = holdIssuePages(
+      [[environmentId, closed]],
+      new Map([[environmentId, continued]]),
+      "closed",
+    ).get(environmentId)!;
+    expect(held.entries.map((issue) => issue.key)).toEqual(["1"]);
+    expect(held.nextCursors).toEqual(cursors);
+  });
+
+  it("reads the loaded pages again, dropping a continuation ticket closed out of an open list", async () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const firstPage = [entry({ key: "4" }), entry({ key: "3" })];
+    const continued = continueIssuePage(
+      hold(answer({ entries: firstPage, nextCursors: cursors })),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #2 leaves the open first page as it was.
+    const refreshed = answer({ entries: firstPage, nextCursors: cursors });
+    const held = holdIssuePages(
+      [[environmentId, refreshed]],
+      new Map([[environmentId, continued]]),
+    ).get(environmentId)!;
+    expect(held.rereading).toBe(refreshed);
+    const asked: unknown[] = [];
+    const reread = await rereadIssuePage({ ...held, rereading: refreshed }, async (next) => {
+      asked.push(next);
+      return answer({ entries: [entry({ key: "1" })] });
+    });
+    expect(asked).toEqual([cursors]);
+    expect(reread.entries.map((issue) => issue.key)).toEqual(["4", "3", "1"]);
+    expect(reread.nextCursors).toEqual({});
+    expect(
+      holdIssuePages([[environmentId, refreshed]], new Map([[environmentId, reread]])).get(
+        environmentId,
+      ),
+    ).toBe(reread);
+  });
+});
+
+describe("createIssuePageRereader", () => {
+  it("keeps the newest refresh when an older reread answers after it", async () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const continued = continueIssuePage(
+      hold(answer({ entries: [entry({ key: "4" }), entry({ key: "3" })], nextCursors: cursors })),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #4, then #3: B still pages, C fits on one page.
+    const b = answer({ entries: [entry({ key: "3" }), entry({ key: "2" })], nextCursors: cursors });
+    const c = answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] });
+    let pages: ReadonlyMap<EnvironmentId, HeldIssuePage> = new Map([[environmentId, continued]]);
+    const reread = createIssuePageRereader();
+    const commit = (id: EnvironmentId, page: HeldIssuePage) => {
+      pages = new Map(pages).set(id, page);
+    };
+    let answerB: (value: IssueListResult) => void = () => {};
+    const slow = new Promise<IssueListResult>((resolve) => (answerB = resolve));
+    reread(holdIssuePages([[environmentId, b]], pages), () => slow, commit);
+    reread(holdIssuePages([[environmentId, c]], pages), () => slow, commit);
+    await Promise.resolve();
+    answerB(answer({ entries: [entry({ key: "1" })] }));
+    await slow;
+    await Promise.resolve();
+    const held = holdIssuePages([[environmentId, c]], pages).get(environmentId)!;
+    expect(held.rereading).toBeNull();
+    expect(held.entries.map((issue) => issue.key)).toEqual(["2", "1"]);
   });
 });
 

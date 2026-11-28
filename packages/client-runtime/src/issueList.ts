@@ -20,6 +20,8 @@ export interface EnvironmentIssueEntry extends IssueListEntry {
 
 /** Rows from every environment that answered, with any continuation pages laid over them. */
 export interface HeldIssuePage {
+  /** Which listing (its filters) the pages belong to; another listing starts over. */
+  readonly list: string;
   readonly answer: IssueListResult;
   readonly entries: ReadonlyArray<IssueListEntry>;
   readonly errors: ReadonlyArray<IssueListProjectError>;
@@ -31,35 +33,101 @@ export interface HeldIssuePage {
   readonly nextCursors: IssueListCursors;
   /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
   readonly moreFailure: string | null;
+  /** How many pages "Load more" laid over the first page, per cursor. */
+  readonly depth: Readonly<Record<string, number>>;
+  /** A newer first page these rows are being read again under. */
+  readonly rereading: IssueListResult | null;
 }
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
   return `${tracker.tracker} ${tracker.host.toLowerCase()}`;
 }
 
-/** Continuations are laid over the first page they continue; a new first page forgets them. */
+function freshIssuePage(answer: IssueListResult, list: string): HeldIssuePage {
+  return {
+    list,
+    answer,
+    entries: answer.entries,
+    errors: answer.errors,
+    moreErrors: [],
+    nextCursors: answer.nextCursors,
+    moreFailure: null,
+    depth: {},
+    rereading: null,
+  };
+}
+
+/**
+ * Continuations are laid over the first page they continue. A new first page of the same list
+ * (`list` names its filters) keeps showing the pages held, marked `rereading`, until
+ * `rereadIssuePage` has read as deep again under it; another list starts over.
+ */
 export function holdIssuePages(
   answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>,
   pages: ReadonlyMap<EnvironmentId, HeldIssuePage>,
+  list = "",
 ): ReadonlyMap<EnvironmentId, HeldIssuePage> {
   const next = new Map<EnvironmentId, HeldIssuePage>();
   for (const [environmentId, answer] of answers) {
     const previous = pages.get(environmentId);
     next.set(
       environmentId,
-      previous?.answer === answer
-        ? previous
-        : {
-            answer,
-            entries: answer.entries,
-            errors: answer.errors,
-            moreErrors: [],
-            nextCursors: answer.nextCursors,
-            moreFailure: null,
-          },
+      previous?.list !== list
+        ? freshIssuePage(answer, list)
+        : previous.answer === answer
+          ? previous
+          : Object.keys(previous.depth).length > 0
+            ? { ...previous, rereading: answer }
+            : freshIssuePage(answer, list),
     );
   }
   return next;
+}
+
+/** Reads the pages "Load more" had reached again under the newer first page, so they show what changed. */
+export async function rereadIssuePage(
+  page: HeldIssuePage & { readonly rereading: IssueListResult },
+  load: (cursors: IssueListCursors) => Promise<IssueListResult | { readonly failure: string }>,
+): Promise<HeldIssuePage> {
+  let next = freshIssuePage(page.rereading, page.list);
+  for (;;) {
+    const asked = Object.fromEntries(
+      Object.entries(next.nextCursors).filter(
+        ([key]) => (next.depth[key] ?? 0) < (page.depth[key] ?? 0),
+      ),
+    );
+    if (Object.keys(asked).length === 0) return next;
+    next = continueIssuePage(next, await load(asked), asked);
+    if (next.moreFailure !== null) return next;
+  }
+}
+
+/**
+ * Starts one reread per newer first page an environment shows. Only the reread of the first page
+ * it shows last is committed, so an older one that answers later cannot overwrite it.
+ */
+export function createIssuePageRereader() {
+  const latest = new Map<EnvironmentId, IssueListResult>();
+  return (
+    held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
+    load: (
+      environmentId: EnvironmentId,
+      cursors: IssueListCursors,
+    ) => Promise<IssueListResult | { readonly failure: string }>,
+    commit: (environmentId: EnvironmentId, page: HeldIssuePage) => void,
+  ) => {
+    for (const [environmentId, page] of held) {
+      const rereading = page.rereading;
+      if (rereading === null) latest.delete(environmentId);
+      if (rereading === null || latest.get(environmentId) === rereading) continue;
+      latest.set(environmentId, rereading);
+      void rereadIssuePage({ ...page, rereading }, (cursors) => load(environmentId, cursors)).then(
+        (next) => {
+          if (latest.get(environmentId) === rereading) commit(environmentId, next);
+        },
+      );
+    }
+  };
 }
 
 /** The cursors of one tracker host, so its "Load more" leaves the other trackers where they are. */
@@ -81,6 +149,7 @@ export function continueIssuePage(
   const moreErrors = page.moreErrors.filter((more) => !more.asked.some((key) => key in asked));
   if (next.errors.length > 0) moreErrors.push({ asked: Object.keys(asked), errors: next.errors });
   return {
+    list: page.list,
     answer: page.answer,
     entries: mergeIssueListPage(page.entries, next.entries),
     errors: [...page.answer.errors, ...moreErrors.flatMap((more) => more.errors)],
@@ -90,6 +159,11 @@ export function continueIssuePage(
       ...next.nextCursors,
     },
     moreFailure: null,
+    depth: {
+      ...page.depth,
+      ...Object.fromEntries(Object.keys(asked).map((key) => [key, (page.depth[key] ?? 0) + 1])),
+    },
+    rereading: page.rereading,
   };
 }
 
