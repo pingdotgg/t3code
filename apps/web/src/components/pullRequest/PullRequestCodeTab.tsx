@@ -420,11 +420,9 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
-// A test's fold belongs to the file even when filtering or a refresh replaces its viewer item.
+// A fold belongs to the file even when filtering or a refresh replaces its viewer item.
 function buildFileDiffFoldKey(fileDiff: FileDiffMetadata): string {
-  return isTestChangedFile(resolveFileDiffPath(fileDiff))
-    ? buildFileDiffIdentityKey(fileDiff)
-    : buildFileDiffRenderKey(fileDiff);
+  return buildFileDiffIdentityKey(fileDiff);
 }
 
 function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
@@ -653,7 +651,7 @@ function PullRequestCodeTab({
   const [withheldLoads, setWithheldLoads] = useState<{
     readonly scope: string;
     readonly paths: ReadonlyArray<string>;
-    /** The render key each loaded file was last shown under; a changed patch gets a new one. */
+    /** The fold key each loaded file was last shown under. */
     readonly shownKeys: ReadonlyMap<string, string>;
   }>({ scope: "", paths: NO_PATHS, shownKeys: new Map() });
   const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
