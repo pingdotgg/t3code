@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
@@ -24,7 +25,7 @@ function errorMessage(error: unknown): string {
     : m(msg("An error occurred."));
 }
 
-export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Promise<void>) {
+export function useNewProject() {
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -71,11 +72,14 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     void suggestAppAccessForRemote(input.environmentId, result.value.remoteUrl);
   };
 
-  return async (input: {
-    readonly environmentId: EnvironmentId;
-    readonly name: string;
-    readonly publishTo: NewProjectPublishTarget | null;
-  }): Promise<boolean> => {
+  return async (
+    input: {
+      readonly environmentId: EnvironmentId;
+      readonly name: string;
+      readonly publishTo: NewProjectPublishTarget | null;
+    },
+    openProject: (projectRef: ScopedProjectRef, project: EnvironmentProject) => Promise<void>,
+  ): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
       input: { name: input.name },
@@ -139,7 +143,7 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
       return null;
     });
     if (project === null) return true;
-    await openProject(projectRef).catch((error: unknown) => {
+    await openProject(projectRef, project).catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",

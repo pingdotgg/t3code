@@ -77,13 +77,18 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
 // Writer hides text whose character style sets text:display="none"; a style without it inherits from its
 // parent style, and a span whose styles set nothing inherits from the enclosing span.
 // ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
-function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
-  let style = styles.get(`auto\n${name}`) ?? styles.get(`span\n${name}`);
+// Paragraph styles hide their paragraph's text the same way, within the paragraph family.
+function odfStyleHidden(
+  styles: Map<string, XmlNode>,
+  family: "text" | "paragraph",
+  name = "",
+): boolean | undefined {
+  let style = styles.get(`auto\n${family}\n${name}`) ?? styles.get(`common\n${family}\n${name}`);
   for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
     seen.add(style);
     const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
     if (display) return display === "none";
-    style = styles.get(`span\n${style.attrs["style:parent-style-name"] ?? ""}`);
+    style = styles.get(`common\n${family}\n${style.attrs["style:parent-style-name"] ?? ""}`);
   }
   return undefined;
 }
@@ -191,9 +196,14 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const paragraph = node.name === "text:p" || node.name === "text:h";
   const childHidden =
-    node.name === "text:span"
-      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
+    node.name === "text:span" || paragraph
+      ? (odfStyleHidden(
+          listStyles,
+          paragraph ? "paragraph" : "text",
+          node.attrs["text:style-name"],
+        ) ?? hidden)
       : hidden;
   const repeatedRow =
     node.name === "table:table-row"
@@ -229,6 +239,7 @@ async function odfHtml(
       listEnds,
       childHidden,
     );
+  if (paragraph && childHidden && !children) return "";
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -328,10 +339,33 @@ export async function openDocument(
       type: "ods",
       sheets: visible.map((table) => {
         const rows: string[][] = [];
+        const rowIndexes: number[] = [];
         let truncated = false;
-        let pendingEmptyRows = 0;
+        const pendingEmptyRows: number[] = [];
+        // Calc hides rows and columns whose table:visibility is collapse or filter. The preview drops
+        // them and labels the rest with their real positions, so addresses still match Calc.
+        const shown = (node: XmlNode) =>
+          !["collapse", "filter"].includes(node.attrs["table:visibility"]?.trim() ?? "");
+        const hiddenColumns: boolean[] = [];
+        for (const column of find(table, "table:table-column")) {
+          const count = repeat(column.attrs["table:number-columns-repeated"], 1024);
+          for (let i = 0; i < count && hiddenColumns.length < 1024; i++)
+            hiddenColumns.push(!shown(column));
+        }
+        const columnIndexes: number[] = [];
+        for (let i = 0; columnIndexes.length < TABLE_PREVIEW_MAX_COLUMNS; i++)
+          if (!hiddenColumns[i]) columnIndexes.push(i);
+        let sourceRow = 0;
+        let hidesRows = false;
         for (const row of find(table, "table:table-row")) {
+          const firstRow = sourceRow;
+          sourceRow += repeat(row.attrs["table:number-rows-repeated"], Number.MAX_SAFE_INTEGER);
+          if (!shown(row)) {
+            hidesRows = true;
+            continue;
+          }
           const cells: string[] = [];
+          let column = 0;
           for (const cell of row.children.filter((child) =>
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
           )) {
@@ -345,33 +379,34 @@ export async function openDocument(
                   cell.attrs["office:boolean-value"] ||
                   cell.attrs["office:string-value"] ||
                   "";
-            const count = repeat(
-              cell.attrs["table:number-columns-repeated"],
-              TABLE_PREVIEW_MAX_COLUMNS + 1,
-            );
+            const count = repeat(cell.attrs["table:number-columns-repeated"], 1024);
             if (value && cells.length + count > TABLE_PREVIEW_MAX_COLUMNS) truncated = true;
             for (let i = 0; i < count && cells.length < TABLE_PREVIEW_MAX_COLUMNS; i++) {
               if (value.length > 10_000) throw new PreviewError({ code: "ods-cell-too-large" });
-              cells.push(value);
+              if (!hiddenColumns[column + i]) cells.push(value);
             }
+            column += count;
           }
           while (cells.at(-1) === "") cells.pop();
-          const count = repeat(row.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS + 1);
+          const count = Math.min(sourceRow - firstRow, TABLE_PREVIEW_MAX_ROWS + 1);
           if (!cells.length) {
-            pendingEmptyRows = Math.min(TABLE_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
+            for (let i = 0; i < count && pendingEmptyRows.length <= TABLE_PREVIEW_MAX_ROWS; i++)
+              pendingEmptyRows.push(firstRow + i);
             continue;
           }
-          while (pendingEmptyRows > 0 && rows.length < TABLE_PREVIEW_MAX_ROWS) {
+          for (const index of pendingEmptyRows) {
+            if (rows.length >= TABLE_PREVIEW_MAX_ROWS) break;
             rows.push([]);
-            pendingEmptyRows--;
+            rowIndexes.push(index);
           }
-          pendingEmptyRows = 0;
+          pendingEmptyRows.length = 0;
           if (rows.length + count > TABLE_PREVIEW_MAX_ROWS) truncated = true;
           if (rows.length >= TABLE_PREVIEW_MAX_ROWS) break;
           for (let i = 0; i < count && rows.length < TABLE_PREVIEW_MAX_ROWS; i++) {
             cellBytes += cells.reduce((size, cell) => size + cell.length, 0);
             if (cellBytes > 8 * 1024 * 1024) throw new PreviewError({ code: "ods-too-much-text" });
             rows.push(cells);
+            rowIndexes.push(firstRow + i);
           }
         }
         return {
@@ -380,6 +415,8 @@ export async function openDocument(
           rowCount: rows.length,
           columns: rows.length && rows.reduce((columns, row) => Math.max(columns, row.length), 1),
           truncated,
+          rowIndexes: hidesRows ? rowIndexes : undefined,
+          columnIndexes: hiddenColumns.includes(true) ? columnIndexes : undefined,
         };
       }),
     };
@@ -403,12 +440,14 @@ export async function openDocument(
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
     if (kind === "odt")
       for (const [prefix, part] of [
-        ...named.map((part) => ["span", part] as const),
+        ...named.map((part) => ["common", part] as const),
         ["auto", root] as const,
       ])
-        for (const style of find(part, "style:style", "office:body"))
-          if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
-            listStyles.set(`${prefix}\n${style.attrs["style:name"]}`, style);
+        for (const style of find(part, "style:style", "office:body")) {
+          const family = style.attrs["style:family"];
+          if ((family === "text" || family === "paragraph") && style.attrs["style:name"])
+            listStyles.set(`${prefix}\n${family}\n${style.attrs["style:name"]}`, style);
+        }
   }
   const rendered = [];
   for (const page of pages) {
@@ -453,8 +492,17 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
   const metadata = record(notebook.metadata);
+  const kernelspec = record(metadata.kernelspec);
+  const explicitLanguage = [record(metadata.language_info).name, kernelspec.language].find(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
   const language =
-    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
+    (
+      explicitLanguage ??
+      (typeof kernelspec.name === "string" && kernelspec.name.toLowerCase() === "python3"
+        ? "python"
+        : "")
+    )
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {

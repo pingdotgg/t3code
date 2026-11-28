@@ -66,6 +66,63 @@ const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
 
+const DETACHED_MARK = /[\p{Mark}\p{Default_Ignorable_Code_Point}\uDC00-\uDFFF]/u;
+const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
+const EMOJI_MODIFIER_BASE = /\p{Emoji_Modifier_Base}/u;
+const VARIATION_SELECTOR = /\p{Variation_Selector}/u;
+const REGIONAL_INDICATOR = /\p{Regional_Indicator}/u;
+
+/** The emoji base a modifier after `preceding` would attach to, past any variation selectors. */
+function emojiBaseBefore(preceding: Iterable<string>): string | undefined {
+  for (const character of preceding) {
+    if (!VARIATION_SELECTOR.test(character)) {
+      return EMOJI_MODIFIER_BASE.test(character) ? character : undefined;
+    }
+  }
+  return undefined;
+}
+
+function isDetachedTailStart(
+  character: string,
+  precedingCharacters: () => Iterable<string>,
+): boolean {
+  if (DETACHED_MARK.test(character)) return true;
+  if (EMOJI_MODIFIER.test(character)) return emojiBaseBefore(precedingCharacters()) !== undefined;
+  if (REGIONAL_INDICATOR.test(character)) {
+    let odd = false;
+    for (const preceding of precedingCharacters()) {
+      if (!REGIONAL_INDICATOR.test(preceding)) break;
+      odd = !odd;
+    }
+    return odd;
+  }
+  return false;
+}
+
+function* previousCharacters(text: string, end: number): Generator<string> {
+  while (end > 0) {
+    if (text[end - 1] === "m") {
+      let start = end - 1;
+      while (start > 0 && /[0-9;:]/u.test(text[start - 1]!)) start -= 1;
+      if (start >= 2 && text.startsWith(`${ESC}[`, start - 2)) {
+        end = start - 2;
+        continue;
+      }
+    }
+    const pair = end >= 2 ? text.codePointAt(end - 2)! : 0;
+    const start = end - (pair > 0xffff ? 2 : 1);
+    yield text.slice(start, end);
+    end = start;
+  }
+}
+
+function* previousRunCharacters(runs: Line, index: number, end: number): Generator<string> {
+  for (let previous = index; previous >= 0; previous -= 1) {
+    const { text } = runs[previous]!;
+    yield* previousCharacters(text, previous === index ? end : text.length);
+  }
+}
+
 function characterWidth(character: string): number {
   return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
 }
@@ -154,9 +211,8 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     let cut = Math.min(remaining, run.text.length);
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
-      const code = run.text.charCodeAt(cut);
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+      if (!isDetachedTailStart(character, () => previousRunCharacters(runs, dropped, cut))) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -690,7 +746,7 @@ export function terminalOutputTail(
     return { text: text.slice(newline + 1), truncated: true };
   }
   // Cutting inside a line: never split an escape, keep the colour in force, and skip
-  // zero-width marks and lone low surrogates left without their base character.
+  // detached marks and modifiers, and lone low surrogates.
   const style = styleAt(text, start);
   let prefix = style.prefix;
   start = style.start;
@@ -703,9 +759,8 @@ export function terminalOutputTail(
       start = end + 1;
       continue;
     }
-    const code = text.charCodeAt(start);
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+    if (!isDetachedTailStart(character, () => previousCharacters(text, start))) break;
     start += character.length;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
