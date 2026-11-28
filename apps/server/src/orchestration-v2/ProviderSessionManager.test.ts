@@ -185,6 +185,33 @@ const layerReleaseRecordedEventSink = (recorded: Deferred.Deferred<void>) =>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+// Holds the first stopped/error session write before it persists.
+const layerPausingReleaseStatusEventSink = (pause: {
+  readonly paused: Deferred.Deferred<void>;
+  readonly resume: Deferred.Deferred<void>;
+}) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        write: (input) =>
+          Effect.gen(function* () {
+            const releaseStatus = input.events.some(
+              (event) =>
+                event.type === "provider-session.updated" &&
+                (event.payload.status === "stopped" || event.payload.status === "error"),
+            );
+            if (releaseStatus && (yield* Deferred.succeed(pause.paused, undefined))) {
+              yield* Deferred.await(pause.resume);
+            }
+            return yield* delegate.write(input);
+          }),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const layerBeforeUnchangedWriteEventSink = (
   before: Ref.Ref<Effect.Effect<void>>,
   // One effect runs before each turn-item write, in order.
@@ -495,6 +522,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly scopeCloseGate?: Deferred.Deferred<void>;
     readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
   } = {},
 ) {
@@ -510,11 +538,20 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ),
   );
   // Register after countClose to wedge teardown before its finalizer, matching a provider stream that never yields.
+  // A gate holds only the first scope close; later sessions close normally.
   const hangClose = Effect.addFinalizer(() =>
     (options.scopeCloseReached === undefined
-      ? Effect.void
+      ? Effect.succeed(true)
       : Deferred.succeed(options.scopeCloseReached, undefined)
-    ).pipe(Effect.andThen(Effect.never)),
+    ).pipe(
+      Effect.flatMap((first) =>
+        options.scopeCloseGate === undefined
+          ? Effect.never
+          : first
+            ? Deferred.await(options.scopeCloseGate)
+            : Effect.void,
+      ),
+    ),
   );
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
@@ -687,8 +724,13 @@ function layerTest(input: {
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly scopeCloseGate?: Deferred.Deferred<void>;
   readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
   readonly releaseRecorded?: Deferred.Deferred<void>;
+  readonly pauseReleaseStatusWrite?: {
+    readonly paused: Deferred.Deferred<void>;
+    readonly resume: Deferred.Deferred<void>;
+  };
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
@@ -707,7 +749,9 @@ function layerTest(input: {
             ? layerFailingReleaseEventSink
             : input.releaseRecorded !== undefined
               ? layerReleaseRecordedEventSink(input.releaseRecorded)
-              : layerTestEventSink;
+              : input.pauseReleaseStatusWrite !== undefined
+                ? layerPausingReleaseStatusEventSink(input.pauseReleaseStatusWrite)
+                : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -742,6 +786,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.scopeCloseGate === undefined ? {} : { scopeCloseGate: input.scopeCloseGate }),
       ...(input.eventStreamsEnded === undefined
         ? {}
         : { eventStreamsEnded: input.eventStreamsEnded }),
@@ -4457,6 +4502,117 @@ it.effect("ProviderSessionManagerV2 release retries leave a replacement session 
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 a release status write in flight does not overwrite a replacement",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pause = { paused: yield* Deferred.make<void>(), resume: yield* Deferred.make<void>() };
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread-provider-session-manager-release-write-in-flight");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const latestStatus = projectionStore
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.providerSessions.at(-1)?.status));
+        yield* open;
+
+        // The old release has decided to write, and its stopped record is still persisting...
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        yield* Deferred.await(pause.paused);
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+
+        // ...when the same id reopens and records ready.
+        yield* open;
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.equal(yield* latestStatus, "ready");
+
+        yield* Deferred.succeed(pause.resume, undefined);
+        yield* Fiber.join(closing);
+
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.equal(yield* latestStatus, "ready");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, pauseReleaseStatusWrite: pause })),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 a late release keeps the status of a replacement that already ended",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      const scopeCloseGate = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread-provider-session-manager-release-after-replacement");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const latestStatus = projectionStore
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.providerSessions.at(-1)?.status));
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // The old runtime is still shutting down after it left the live map...
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        yield* Deferred.await(scopeCloseReached);
+
+        // ...while a replacement opens and fails, leaving the live map empty again.
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* manager.release({
+          providerSessionId,
+          reason: "runtime_error",
+          detail: "replacement failed",
+        });
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.equal(yield* latestStatus, "error");
+
+        yield* Deferred.succeed(scopeCloseGate, undefined);
+        yield* Fiber.join(closing);
+
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal(yield* latestStatus, "error");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+            scopeCloseGate,
+          }),
+        ),
+      );
+    }),
 );
 
 // regression: #15048 runs got stuck after a failed session release

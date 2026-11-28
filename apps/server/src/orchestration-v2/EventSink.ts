@@ -115,6 +115,8 @@ export interface EventSinkV2Shape {
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
+    /** Return no events unless this holds at commit time. */
+    readonly onlyIf?: Effect.Effect<boolean>;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -129,6 +131,7 @@ export interface EventSinkV2Shape {
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
+    readonly onlyIf?: Effect.Effect<boolean>;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -499,6 +502,9 @@ const layerBase: Layer.Layer<
       const { committed } = yield* commitThenPublish(
         projectedThreadIds(input.events),
         Effect.gen(function* () {
+          if (input.onlyIf !== undefined && !(yield* input.onlyIf)) {
+            return { committed: [], outcomes: [] };
+          }
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
           if (imported?.nativeThreadRef != null) {

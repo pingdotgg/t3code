@@ -341,6 +341,8 @@ interface LiveSessionEntry {
   >;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
+  /** Increases with every open, so a late release can tell a replacement took its session id. */
+  readonly openGeneration: number;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
@@ -574,6 +576,9 @@ export const layerWithOptions = (
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
+      const openGenerations = yield* Ref.make(0);
+      /** Kept until the latest open records its release, so an older release still sees it was replaced. */
+      const latestOpenGeneration = new Map<string, number>();
       const threadAttachment = yield* KeyedLock.make<string>();
       const threadAttachmentKey = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -799,6 +804,7 @@ export const layerWithOptions = (
         readonly threadIds: Iterable<ThreadId>;
         readonly type: "provider-session.attached" | "provider-session.updated";
         readonly payload: OrchestrationV2ProviderSession;
+        readonly onlyIf?: Effect.Effect<boolean>;
       }) {
         const now = yield* DateTime.now;
         const events = yield* Effect.forEach(input.threadIds, (threadId) =>
@@ -818,7 +824,10 @@ export const layerWithOptions = (
           }),
         );
         if (events.length > 0) {
-          yield* eventSink.write({ events });
+          yield* eventSink.write({
+            events,
+            ...(input.onlyIf === undefined ? {} : { onlyIf: input.onlyIf }),
+          });
         }
       });
 
@@ -872,11 +881,25 @@ export const layerWithOptions = (
           lastError:
             input.reason === "runtime_error" ? (input.detail ?? "Provider runtime failed.") : null,
         };
+        // The scope close runs outside the open lock, so the id may have reopened meanwhile. The
+        // projection keeps one status per session id: only the latest open records its release,
+        // checked in the write transaction so a replacement's status cannot commit in between.
+        const key = sessionKey(input.entry.runtime.providerSessionId);
+        const isLatestOpen = Effect.sync(
+          () => latestOpenGeneration.get(key) === input.entry.openGeneration,
+        );
         yield* writeProviderSessionEvents({
           runtime: input.entry.runtime,
           threadIds: input.entry.attachedThreadIds,
           type: "provider-session.updated",
           payload,
+          onlyIf: isLatestOpen,
+        });
+        // Compare and clear in one step: a replacement may publish its generation if this fiber yields.
+        yield* Effect.sync(() => {
+          if (latestOpenGeneration.get(key) === input.entry.openGeneration) {
+            latestOpenGeneration.delete(key);
+          }
         });
       });
 
@@ -1379,13 +1402,10 @@ export const layerWithOptions = (
         readonly releasedProviderThreads: ReadonlyArray<ReleasedProviderThread>;
         readonly releasedAt: DateTime.Utc;
         readonly detachedThreadId?: ThreadId;
-        readonly replaced: boolean;
       }) =>
         Effect.all(
           [
-            input.replaced
-              ? Effect.succeed(Exit.void)
-              : Effect.exit(writeReleasedSessionEvents(input)),
+            Effect.exit(writeReleasedSessionEvents(input)),
             Effect.exit(
               writeReleasedRuntimeRequestEvents(input).pipe(
                 input.entry.requestEventPermit.withPermits(1),
@@ -1399,19 +1419,11 @@ export const layerWithOptions = (
         ).pipe(Effect.flatMap(Exit.asVoidAll));
 
       // Retry after removal from the live map; later releases cannot clear stale ready sessions and approvals.
-      const retryReleaseRecords = (
-        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
-      ) => {
+      const retryReleaseRecords = (input: Parameters<typeof writeReleaseRecords>[0]) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            sessionOpen.withLock(
-              providerSessionId,
-              Effect.gen(function* () {
-                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
-                yield* writeReleaseRecords({ ...input, replaced });
-              }),
-            ),
+            sessionOpen.withLock(providerSessionId, writeReleaseRecords(input)),
           );
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
@@ -1612,9 +1624,7 @@ export const layerWithOptions = (
                     releasedAt,
                     ...detachedThread,
                   };
-                  const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
-                  );
+                  const recorded = yield* Effect.exit(writeReleaseRecords(records));
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
                     return yield* recorded;
@@ -3440,15 +3450,19 @@ export const layerWithOptions = (
                 eventSubscribers,
                 requestEventPermit: yield* Semaphore.make(1),
                 scope: sessionScope,
+                openGeneration: yield* Ref.updateAndGet(openGenerations, (last) => last + 1),
                 idleGeneration: 0,
                 busyTurns: new Set(),
                 idleFiber: null,
                 pinnedSinceMs: null,
                 idleThreadUnloads: new Map(),
               };
+              // Publish the entry and its generation in one step, so an interruption cannot leave a
+              // live replacement whose release still looks stale.
               yield* Ref.update(sessions, (current) => {
                 const updated = new Map(current);
                 updated.set(key, entry);
+                latestOpenGeneration.set(key, entry.openGeneration);
                 return updated;
               });
               yield* dropReservation;
