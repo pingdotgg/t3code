@@ -82,7 +82,7 @@ T3 Code is an open-source control plane for coding agents. It gives the coding a
 - [Claude](./providers-claude.md) — Multi-account `CLAUDE_CONFIG_DIR`, idle compaction, skills, MCP OAuth, Claude in Chrome, OpenRouter.
 - [Cursor](./cursor.md) — Local Cursor SDK sign-in, MCP/plugins, and Windows sandbox notes.
 - [Grok Build](./providers-grok.md) — Grok CLI setup, `XAI_API_KEY`, `GROK_HOME`, and permissions.
-- [Antigravity](./providers-antigravity.md) — Managed runtime, Google/Vertex sign-in methods, skills, and quotas.
+- [Antigravity](./providers-antigravity.md) — Managed runtime, Google/Vertex sign-in methods, skills, and multiple accounts.
 - [OpenCode](./providers-opencode.md) — OpenCode 1.x/2.x, local vs. external servers, compaction, and approvals.
 - [Kiro](./providers-kiro.md) — Kiro CLI V3, custom agents, and permissions.
 - [Pi](./providers-pi.md) — Pi setup, extensions, thinking/speed tiers, and folder trust.
