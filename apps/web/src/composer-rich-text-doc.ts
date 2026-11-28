@@ -499,7 +499,8 @@ const ComposerListItemExtension = ListItem.extend({
       joinForward:
         () =>
         ({ state, dispatch }) =>
-          deleteAcrossList(state, dispatch) || joinForward(state, dispatch),
+          (listItemTypeAt(state.selection.$from) !== null && deleteAcrossList(state, dispatch)) ||
+          joinForward(state, dispatch),
     };
   },
   addKeyboardShortcuts() {

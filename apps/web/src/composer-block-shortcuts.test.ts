@@ -141,6 +141,10 @@ describe("modified Delete in a list", () => {
     expect(press(value, "Delete", 4).value).toBe(joined);
     expect(press(value, "Mod-Delete", 4).value).toBe(joined);
   });
+
+  it("leaves Mod-Delete outside lists to the default, which removes a following rule", () => {
+    expect(press("a\n---\n```\nb\n```", "Mod-Delete", 2).value).toBe("a\n```\nb\n```");
+  });
 });
 
 describe("composer list normalization", () => {
