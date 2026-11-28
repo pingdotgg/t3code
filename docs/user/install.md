@@ -56,6 +56,7 @@ Download from [GitHub Releases](https://github.com/pingdotgg/t3code/releases) or
 | Arch Linux              | `yay -S t3code-bin` (or `yay -S t3code-nightly-bin`)             |
 | Nix (flakes, Nix 2.30+) | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`     |
 
+- **macOS**: Drag T3 Code to Applications, or to another writable drive, before opening it. Opened from the disk image, a read-only drive, or straight from Downloads (App Translocation), T3 Code disables automatic updates and explains why in **Settings → About**; move it with Finder and reopen it to turn updates back on.
 - **Linux AppImage**: `chmod +x ./T3-Code-*.AppImage && ./T3-Code-*.AppImage` (x86_64 and ARM64). `.deb` self-updates with a password prompt; update AUR packages via your AUR helper (`yay -Syu`).
 - **NixOS / Home Manager**: Add `pkgs.t3code` to `environment.systemPackages` or `home.packages` (`t3code-desktop` launches the app; `t3` is included). Update via Nix rather than the in-app updater.
 
