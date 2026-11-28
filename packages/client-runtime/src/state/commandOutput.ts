@@ -2,6 +2,7 @@ import type { OrchestrationV2CommandOutputFrame } from "@t3tools/contracts";
 import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
+  restoreTerminalOutput,
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
 
@@ -26,12 +27,12 @@ export function applyCommandOutputFrame(
   view: CommandOutputView,
   frame: OrchestrationV2CommandOutputFrame,
 ): CommandOutputView {
-  const base = frame.kind === "replace" ? EMPTY_TERMINAL_OUTPUT : view.output;
+  const output =
+    frame.kind === "replace"
+      ? restoreTerminalOutput(frame.text)
+      : appendTerminalOutput(view.output, frame.text);
   return {
-    output: appendTerminalOutput(
-      { ...base, truncated: base.truncated || frame.truncated },
-      frame.text,
-    ),
+    output: { ...output, truncated: output.truncated || frame.truncated },
     running: frame.running,
   };
 }

@@ -13,6 +13,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  restoreTerminalOutput,
   TERMINAL_OUTPUT_TAIL_CHARS,
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
@@ -57,9 +58,11 @@ function applyFrame(
   state: TerminalOutputState,
   frame: OrchestrationV2CommandOutputFrame,
 ): TerminalOutputState {
-  return frame.kind === "replace"
-    ? appendTerminalOutput({ ...EMPTY_TERMINAL_OUTPUT, truncated: frame.truncated }, frame.text)
-    : appendTerminalOutput(state, frame.text);
+  const output =
+    frame.kind === "replace"
+      ? restoreTerminalOutput(frame.text)
+      : appendTerminalOutput(state, frame.text);
+  return { ...output, truncated: output.truncated || frame.truncated };
 }
 
 const seedThread = Effect.gen(function* () {

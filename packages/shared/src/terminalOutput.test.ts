@@ -4,6 +4,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  restoreTerminalOutput,
   TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
   terminalOutputCollapseRedraws,
@@ -26,6 +27,9 @@ describe("terminalOutputCollapseRedraws", () => {
     ["12345\r进度", "进度5"],
     ["a界b\rXY", "XY b"],
     ["e\u0301a\rZ", "Za"],
+    ["abc\tZ\rabc X", "abc X   Z"],
+    ["123456789\r\tZ", "12345678Z"],
+    ["界abcde\tZ\rXY", "XYabcde Z"],
   ])("uses terminal columns for a saved redraw: %j", (input, expected) => {
     expect(terminalOutputCollapseRedraws(input)).toBe(expected);
   });
@@ -77,6 +81,20 @@ describe("appendTerminalOutput", () => {
         expected,
       );
     }
+  });
+
+  it("keeps text beyond a tab when a redraw overwrites an earlier column", () => {
+    const output = feed(["abc\tZ", "\u001b[5GX"]).text;
+    expect(terminalOutputPlainText(output)).toBe("abc X   Z");
+  });
+
+  it.each([
+    ["x".repeat(17), "\r\u001b[2K\tZ", "        Z"],
+    ["x".repeat(17), "\n\u001b[1J\u001b[A\tZ", "        Z\n"],
+    ["𐐀".repeat(8) + "界", "\u001b[8G\u001b[1K\r\tZ", "        Z"],
+    ["a\u001b[>7 t", "\tZ", "a       Z"],
+  ])("puts a tab at the column the row really reached: %j", (prefix, chunk, expected) => {
+    expect(feed([prefix, chunk], 16).text).toBe(expected);
   });
 
   it("redraws several lines in place when the cursor moves up", () => {
@@ -455,6 +473,18 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it.each([
+    ["abcdefghijklmno", "\tZ", "jklmno Z"],
+    ["abcdefghijklmno\r", "\tZ", "hZjklmno"],
+    ["abcde\nabcdEF\u001b[A", "\u001b[B\u001b[4G\tZ", "dEF  Z"],
+  ])("keeps the tab stops of a row trimmed before the resync: %j", (prefix, chunk, expected) => {
+    const source = feed([prefix], 8);
+    const viewer = restoreTerminalOutput(terminalOutputResumeText(source), 8);
+    for (const state of [source, viewer]) {
+      expect(appendTerminalOutput(state, chunk, 8).text).toBe(expected);
+    }
   });
 
   it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
