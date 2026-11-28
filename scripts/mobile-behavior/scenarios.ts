@@ -221,6 +221,24 @@ export const SCENARIOS = {
     } satisfies Metrics;
   }, failure),
 
+  /** Types a message, scrolls up, taps "Scroll to end", then taps Send once. */
+  scrollToEndThenSend: Effect.fn("scenario.scrollToEndThenSend")(function* (ctx: ScenarioContext) {
+    yield* openThread(ctx, ctx.fixtures.longThread);
+    const text = `Follow-up ${(yield* uuid).slice(0, 8)} [[eval:reply]]`;
+    yield* typeInComposer(ctx, text);
+    const { height, threadX } = yield* geometry(ctx);
+    yield* ctx.device.swipe(threadX, Math.round(height * 0.2), Math.round(height * 0.45));
+    yield* waitForStill(ctx);
+    yield* ctx.device.press('label="Scroll to end"');
+    yield* waitForStill(ctx);
+    const scrolledToEnd = (yield* ctx.device.state).feed?.atEnd === true;
+    // Nothing may touch the screen between these taps. The bug lost the first touch after the arrow.
+    yield* ctx.device.press('label="Send"');
+    yield* Effect.sleep("4 seconds");
+    const projection = yield* ctx.env.settled(ctx.fixtures.longThread);
+    return { scrolledToEnd, serverMessages: countUserText(projection, text) } satisfies Metrics;
+  }, failure),
+
   /** A thread in the background finishes while the long thread sits mid-scroll. */
   backgroundFinish: Effect.fn("scenario.backgroundFinish")(function* (ctx: ScenarioContext) {
     const key = `bg-${(yield* uuid).slice(0, 8)}`;
