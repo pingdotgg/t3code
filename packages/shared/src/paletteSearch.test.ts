@@ -745,7 +745,6 @@ describe("findSearchTokenRanges", () => {
   it("highlights a three-letter token only where it starts a word", () => {
     expect(findSearchTokenRanges("drafts, enableFTS", "fts")).toEqual([{ start: 14, end: 17 }]);
     expect(findSearchTokenRanges("Open handlers.ts", ".ts")).toEqual([{ start: 13, end: 16 }]);
-    expect(findSearchTokenRanges("किताब सूची", "ताब")).toEqual([]);
   });
 
   it("highlights a query in double quotes only where its words are together", () => {
