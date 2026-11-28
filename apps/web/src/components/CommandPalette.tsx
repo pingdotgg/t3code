@@ -2943,24 +2943,6 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const firstItemValue = autoHighlightsFirstRow ? resultRows.itemValues[0] : undefined;
-    if (
-      event.key === "ArrowDown" &&
-      highlightClearedRef.current &&
-      firstItemValue &&
-      !event.nativeEvent.isComposing
-    ) {
-      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
-      event.preventDefault();
-      highlightClearedRef.current = false;
-      setHighlightedItemValue(firstItemValue);
-      scrollCommandPaletteRowIntoView(
-        resultListRef.current,
-        resultRows.rowIndexByItemIndex[0] ?? 0,
-        true,
-      );
-      return;
-    }
-
     // Virtualization may unmount the highlighted row; handle Enter directly instead of Base UI's click.
     if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
       const highlightedItem = findHighlightedCommandPaletteItem(

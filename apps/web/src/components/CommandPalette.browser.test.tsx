@@ -385,3 +385,21 @@ describe("CommandPalette open intents", () => {
     await expect.element(palette).not.toBeInTheDocument();
   });
 });
+
+describe("CommandPalette keyboard navigation", () => {
+  it("moves to the second result on a single ArrowDown after typing", async () => {
+    setup({ projects: [makeProject("fleet"), makeProject("fleet-2"), makeProject("fleet-3")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
+    await userEvent.keyboard("fleet");
+    await expect.element(page.getByRole("option").first()).toHaveAttribute("data-highlighted");
+
+    await userEvent.keyboard("{ArrowDown}");
+    await expect.element(page.getByRole("option").nth(1)).toHaveAttribute("data-highlighted");
+    await expect.element(page.getByRole("option").first()).not.toHaveAttribute("data-highlighted");
+  });
+});
