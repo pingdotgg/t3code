@@ -28,6 +28,7 @@ import { Socket } from "effect/socket";
 
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 // Lightweight ACP agent that routes every turn through `T3_TEAM_PROXY_URL` using `T3_TEAM_PROXY_TOKEN`
 // (proving zero company keys reach the member's local environment) and reports which pre-prompt tags
@@ -166,6 +167,7 @@ async function createInviteLink(input: {
   readonly pseudo: string;
 }): Promise<string> {
   const { inviter, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -503,13 +505,18 @@ test("enforces Milestone 6 zero-config team providers, strict isolation, proxy z
   }
 
   // Configure `team-cursor-remote` (`remote-only`) via the real Settings -> Teams -> Providers UI as Alice!
+  await selectTeamSettingsTab(alice.page, "providers");
+  await alice.page
+    .getByTestId("team-provider-add-open")
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await alice.page.getByTestId("team-provider-add-open").click();
   await alice.page
     .getByTestId("team-provider-id-input")
     .waitFor({ state: "visible", timeout: 15_000 });
   await alice.page.getByTestId("team-provider-id-input").fill("team-cursor-remote");
   await alice.page.getByTestId("team-provider-name-input").fill("Team Cursor Remote");
   await alice.page.getByTestId("team-provider-strategy-select").click();
-  await alice.page.getByRole("option", { name: "remote-only" }).click();
+  await alice.page.getByRole("option", { name: "Remote environments only" }).click();
   await alice.page.getByTestId("team-provider-save-submit").click();
   await alice.page
     .getByTestId("team-provider-row-team-cursor-remote")
@@ -517,9 +524,11 @@ test("enforces Milestone 6 zero-config team providers, strict isolation, proxy z
 
   // Verify regular Bob sees team providers read-only (no add/save form) in Settings -> Teams -> Providers.
   await bob.open("/settings/teams");
+  await selectTeamSettingsTab(bob.page, "providers");
   await bob.page
     .getByTestId("team-provider-row-team-fake-llm")
     .waitFor({ state: "visible", timeout: 15_000 });
+  expect(await bob.page.getByTestId("team-provider-add-open").count()).toBe(0);
   expect(await bob.page.getByTestId("team-provider-form").count()).toBe(0);
 
   // 3. Assign `shared-m6-repo` to Milestone 6 Team via Project Settings.
@@ -562,10 +571,21 @@ test("enforces Milestone 6 zero-config team providers, strict isolation, proxy z
 
   //    - Charlie (`modo`) creates pure-Markdown skill `/team-review`, a `"thread"` pre-prompt, and a `"turn"` pre-prompt via the UI!
   await charlie.open("/settings/teams");
+  await selectTeamSettingsTab(charlie.page, "providers");
+  await charlie.page
+    .getByTestId("team-providers-list")
+    .waitFor({ state: "visible", timeout: 15_000 });
+  expect(await charlie.page.getByTestId("team-provider-add-open").count()).toBe(0);
+  expect(await charlie.page.getByTestId("team-provider-form").count()).toBe(0);
+
+  await selectTeamSettingsTab(charlie.page, "skills");
+  await charlie.page
+    .getByTestId("team-skill-add-open")
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await charlie.page.getByTestId("team-skill-add-open").click();
   await charlie.page
     .getByTestId("team-skill-slug-input")
     .waitFor({ state: "visible", timeout: 15_000 });
-  expect(await charlie.page.getByTestId("team-provider-form").count()).toBe(0);
   await charlie.page.getByTestId("team-skill-slug-input").fill("team-review");
   await charlie.page
     .getByTestId("team-skill-md-input")
@@ -577,6 +597,7 @@ test("enforces Milestone 6 zero-config team providers, strict isolation, proxy z
     .getByTestId("team-skill-row-team-review")
     .waitFor({ state: "visible", timeout: 15_000 });
 
+  await charlie.page.getByTestId("team-preprompt-add-open").click();
   await charlie.page.getByTestId("team-preprompt-name-input").fill("Thread Rules");
   await charlie.page
     .getByTestId("team-preprompt-content-input")
@@ -591,6 +612,7 @@ test("enforces Milestone 6 zero-config team providers, strict isolation, proxy z
     )
     .toContain("Thread Rules");
 
+  await charlie.page.getByTestId("team-preprompt-add-open").click();
   await charlie.page.getByTestId("team-preprompt-name-input").fill("Turn Safety Rule");
   await charlie.page.getByTestId("team-preprompt-scope-select").click();
   await charlie.page.getByRole("option", { name: /Every turn/i }).click();

@@ -27,6 +27,7 @@ import { Socket } from "effect/socket";
 import { TEAM_SCENARIOS_HOME } from "../../e2e.team.config.ts";
 import { rpcClient, runPromise } from "../t3.ts";
 import { startT3ServerProcess, startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 // Minimal ACP agent that logs its PID and injected T3 MCP endpoint/token on every prompt so the
 // E2E test can verify real actingMemberId-bound /mcp calls, warm session recycling on author
@@ -122,6 +123,7 @@ async function createInviteLink(input: {
   readonly pseudo: string;
 }): Promise<string> {
   const { inviter, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -370,6 +372,7 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
   };
 
   // Create "Staff Only" View (owner/admin/modo only) for MCP read-containment checks.
+  await selectTeamSettingsTab(alice.page, "access");
   await alice.page.getByTestId("team-view-create-open").click();
   await alice.page.getByTestId("team-view-name-input").fill("Staff Only");
   await alice.page.getByTestId("team-view-read-role-regular").click();

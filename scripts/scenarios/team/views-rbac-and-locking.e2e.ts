@@ -7,6 +7,7 @@ import { test } from "@e2e-dev/web";
 import { expect } from "e2e";
 
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 async function waitForAssistantTurnSettled(
   page: TeamMemberHandle["page"],
@@ -48,6 +49,7 @@ async function createInviteAndJoin(input: {
   readonly pseudo: string;
 }) {
   const { inviter, invitee, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -164,6 +166,7 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
   // 2. Alice creates two custom Views:
   //    - "Staff Only": read = owner/admin/modo, post = owner/admin/modo
   //    - "Announcements": read = all, post = owner/admin/modo
+  await selectTeamSettingsTab(alice.page, "access");
   await alice.page.getByTestId("team-view-create-open").click();
   await alice.page.getByTestId("team-view-name-input").fill("Staff Only");
   await alice.page.getByTestId("team-view-read-role-regular").click();
@@ -183,11 +186,13 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
 
   // Verify Bob (regular) cannot create views or manage roles in Settings -> Teams.
   await bob.open("/settings/teams");
+  await bob.page.getByTestId("team-member-charlie").waitFor({ state: "visible", timeout: 15_000 });
+  expect(await bob.page.getByTestId("team-member-role-select-charlie").count()).toBe(0);
+  await selectTeamSettingsTab(bob.page, "access");
   await bob.page.getByTestId("team-views-section").waitFor({ state: "visible", timeout: 15_000 });
   expect(await bob.page.getByTestId("team-view-create-open").count()).toBe(0);
   expect(await bob.page.getByTestId("team-view-row-Staff Only").count()).toBe(0);
   expect(await bob.page.getByTestId("team-view-row-Announcements").count()).toBe(1);
-  expect(await bob.page.getByTestId("team-member-role-select-charlie").count()).toBe(0);
 
   // 3. Enable colleagues view for Charlie and Bob on the main workspace.
   for (const member of [charlie, bob]) {

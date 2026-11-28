@@ -10,6 +10,11 @@ import * as Effect from "effect/Effect";
 
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import {
+  confirmDestructiveActionDialog,
+  openTeamInviteForm,
+  selectTeamSettingsTab,
+} from "./ui-helpers.ts";
 
 // Minimal ACP agent that runs real `git commit`, `git push`, and `gh api` inside each turn
 // using ONLY its inherited broker environment (never a static GH_TOKEN), logging results so
@@ -219,6 +224,7 @@ async function createInviteAndJoin(input: {
   readonly pseudo: string;
 }) {
   const { inviter, invitee, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -309,7 +315,9 @@ test("Milestone 7: per-turn GitHub identity forwarding, warm session recycle, an
   await alice.page.getByTestId("team-init-name").fill("Acme GitHub M7");
   await alice.page.getByTestId("team-init-pseudo").fill("alice");
   await alice.page.getByTestId("team-init-submit").click();
-  await alice.page.getByTestId("team-invite-create").waitFor({ state: "visible", timeout: 20_000 });
+  await alice.page
+    .getByTestId("teams-settings-tabs")
+    .waitFor({ state: "visible", timeout: 20_000 });
 
   const bobJoinLink = await createInviteAndJoin({
     inviter: alice,
@@ -320,6 +328,7 @@ test("Milestone 7: per-turn GitHub identity forwarding, warm session recycle, an
   expect(bobJoinLink.length).toBeGreaterThan(0);
 
   // 2. Alice connects PAT_ALICE in Settings -> Teams -> GitHub identity (verified against Fake GitHub API).
+  await selectTeamSettingsTab(alice.page, "providers");
   await alice.page.getByTestId("team-my-github-advanced-toggle").click();
   await alice.page.getByTestId("team-my-github-api-url-input").fill(fakeGitHub.origin);
   await alice.page.getByTestId("team-my-github-token-input").fill(fakeGitHub.tokens.alice);
@@ -353,6 +362,7 @@ test("Milestone 7: per-turn GitHub identity forwarding, warm session recycle, an
     )
     .toContain("@acme-bot");
   await alice.page.getByTestId("team-automation-github-clear").click();
+  await confirmDestructiveActionDialog(alice.page);
   await expect
     .poll(
       async () =>
@@ -368,6 +378,7 @@ test("Milestone 7: per-turn GitHub identity forwarding, warm session recycle, an
   //    - Does NOT see Alice's GitHub identity
   //    - Does NOT see the admin-only Team Automation GitHub section
   await bob.open("/settings/teams");
+  await selectTeamSettingsTab(bob.page, "providers");
   await bob.page
     .getByTestId("team-my-github-token-input")
     .waitFor({ state: "visible", timeout: 20_000 });
