@@ -59,6 +59,7 @@ const mocks = vi.hoisted(() => ({
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
   transcripts: [] as Array<string | Error>,
+  transcribeGate: null as Promise<void> | null,
   committed: vi.fn(),
   draft: "",
   appleSpeech: false,
@@ -212,6 +213,7 @@ function mockPlatform(
                 ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
                 : environmentId,
             );
+            await mocks.transcribeGate;
             const next = mocks.transcripts.shift() ?? "dictated";
             if (next instanceof Error) throw next;
             return next;
@@ -250,6 +252,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
+  mocks.transcribeGate = null;
   mocks.cleanupCalls = [];
   mocks.cleanupDraft.mockClear();
   mocks.cleanupOptions = [];
@@ -1002,6 +1005,27 @@ it("delivers a queued submission for a persistent draft after switching owners",
   expect(mocks.storedDraft).toBe("dictated");
 });
 
+it("reports a queued submission until the dictation delivers it", async () => {
+  setup({ destination: "env-a" });
+  const submit = vi.fn();
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.submitQueued).toBe(false);
+  let releaseTranscription = () => {};
+  mocks.transcribeGate = new Promise<void>((resolve) => {
+    releaseTranscription = resolve;
+  });
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
+  expect(mocks.voice.submitQueued).toBe(true);
+  expect(submit).not.toHaveBeenCalled();
+  await act(async () => releaseTranscription());
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
+  expect(mocks.voice.submitQueued).toBe(false);
+});
+
 it("drops a queued submission for a non-persistent draft when switching owners", async () => {
   setup({ destination: "env-a" });
   const submit = vi.fn();
@@ -1013,5 +1037,20 @@ it("drops a queued submission for a non-persistent draft when switching owners",
     await screen.rerender(<Probe ownerKey="thread-b" />);
   });
   await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("idle"));
+  expect(submit).not.toHaveBeenCalled();
+  expect(mocks.voice.submitQueued).toBe(false);
+});
+
+it("clears the queued submission when transcription fails", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed")];
+  const submit = vi.fn();
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("error"));
+  expect(mocks.voice.submitQueued).toBe(false);
   expect(submit).not.toHaveBeenCalled();
 });

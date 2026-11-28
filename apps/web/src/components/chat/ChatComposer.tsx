@@ -1379,19 +1379,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
     isSendBusy ||
-    composerSendHeld ||
     isSendDisabled ||
     noProviderAvailable ||
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!hasMessageToSend && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = composerSendHeld
-    ? gt("Sending when ready")
-    : showResumeAction
-      ? gt("Resume thread")
-      : props.resumeCompactionTokens !== null && !props.keepFullHistory
-        ? gt("Open composer to compact and send")
-        : gt("Send message");
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2073,6 +2065,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const sendHeld = composerSendHeld || speechInput.submitQueued;
+  const collapsedComposerPrimaryActionLabel = sendHeld
+    ? gt("Sending when ready")
+    : showResumeAction
+      ? gt("Resume thread")
+      : props.resumeCompactionTokens !== null && !props.keepFullHistory
+        ? gt("Open composer to compact and send")
+        : gt("Send message");
   // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
@@ -3935,9 +3935,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     type="button"
                     data-chat-composer-transition-actions="true"
                     className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
-                    disabled={collapsedComposerPrimaryActionDisabled}
+                    disabled={collapsedComposerPrimaryActionDisabled || sendHeld}
                     aria-label={collapsedComposerPrimaryActionLabel}
-                    aria-busy={composerSendHeld || isSendBusy || undefined}
+                    aria-busy={sendHeld || isSendBusy || undefined}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -3947,7 +3947,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       else submitComposer();
                     }}
                   >
-                    {composerSendHeld || isSendBusy ? (
+                    {sendHeld || isSendBusy ? (
                       <Spinner size="sm" aria-hidden="true" />
                     ) : showResumeAction ? (
                       <PlayIcon className="size-4 fill-current" aria-hidden="true" />
@@ -4250,7 +4250,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     )}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
-                    isSendHeld={composerSendHeld}
+                    isSendHeld={sendHeld}
                     sendDisabledReason={primaryActionSendDisabledReason}
                     isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                     isPreparingWorktree={isPreparingWorktree}

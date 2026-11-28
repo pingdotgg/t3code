@@ -332,6 +332,7 @@ it("tests the selected model after download and preserves its transcript across 
           recordingStartedAt: null,
           preparing: false,
           blocksSubmission: false,
+          submitQueued: false,
           freezesEditor: false,
           start: async () => {
             input.commitDraft(transcript, { start: transcript.length, end: transcript.length });
