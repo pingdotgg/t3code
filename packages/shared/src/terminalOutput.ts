@@ -690,11 +690,23 @@ export function terminalOutputTail(
   }
   // Cutting inside a line: never split an escape, and keep the colour in force.
   const style = styleAt(text, start);
+  let prefix = style.prefix;
   start = style.start;
-  // Never start on a lone low surrogate.
-  const first = text.charCodeAt(start);
-  if (first >= 0xdc00 && first <= 0xdfff) start += 1;
-  return { text: style.prefix + text.slice(start), truncated: true };
+  while (start < text.length) {
+    if (text.startsWith(`${ESC}[`, start)) {
+      const end = text.indexOf("m", start + 2);
+      if (end === -1) break;
+      const seq = text.slice(start, end + 1);
+      prefix = seq === sgr("") ? "" : seq;
+      start = end + 1;
+      continue;
+    }
+    const code = text.charCodeAt(start);
+    const character = String.fromCodePoint(text.codePointAt(start)!);
+    if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+    start += character.length;
+  }
+  return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
 }
 
 /**
