@@ -38,12 +38,13 @@ describe("provider instance rebuild", () => {
               yield* Deferred.succeed(rebuilding, undefined);
               yield* Deferred.await(finish);
             }
-            return {
+            const instance: Partial<ProviderInstance> = {
               instanceId: input.instanceId,
               enabled: input.enabled,
               continuationIdentity: { driverKind, continuationKey },
               refreshModels: () => Effect.sync(() => expect(open).toBe(true)),
-            } as ProviderInstance;
+            };
+            return instance as ProviderInstance;
           }),
       };
       const entry = {
