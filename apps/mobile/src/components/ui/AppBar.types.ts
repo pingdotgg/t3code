@@ -133,6 +133,8 @@ export interface AppBarProps {
     readonly onPress?: () => void;
   };
   readonly hideBottomBorder?: boolean;
+  /** iOS: content fades softly under the bar, as in Messages, instead of a bar-shaped blur. */
+  readonly softScrollEdge?: boolean;
   readonly trailing?: ReactNode;
   readonly matchSearchSurface?: boolean;
   readonly optionsVersion?: unknown;

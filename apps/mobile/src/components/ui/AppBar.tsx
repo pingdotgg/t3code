@@ -9,6 +9,7 @@ import { Pressable, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
+import { nativeHeaderScrollEdgeEffects } from "../../native/scrollEdgeEffects";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -175,6 +176,14 @@ export function AppBar(props: AppBarProps) {
               }
             : undefined),
           unstable_headerSubtitle: props.subtitle || undefined,
+          ...(props.softScrollEdge
+            ? {
+                scrollEdgeEffects: {
+                  ...nativeHeaderScrollEdgeEffects("ios", 0),
+                  top: "soft" as const,
+                },
+              }
+            : undefined),
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
             : undefined),

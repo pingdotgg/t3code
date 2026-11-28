@@ -4,6 +4,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useQuietThreadShell } from "../../state/entities";
 import { BotAvatar } from "./BotAvatar";
@@ -45,18 +46,21 @@ export function BotHeaderTitle(props: {
       onPress={props.onPress}
       className="max-w-56 items-center active:opacity-70"
     >
-      <BotHeaderAvatar botRef={props.botRef} size={34} />
-      <View className="-mt-1 flex-row items-center gap-0.5 rounded-full bg-subtle-strong px-2 py-0.5">
-        <Text className="shrink text-[11px] font-medium text-header-foreground" numberOfLines={1}>
-          {name}
-        </Text>
-        <SymbolView
-          name="chevron.right"
-          size={8}
-          tintColorClassName="accent-header-foreground"
-          type="monochrome"
-        />
-      </View>
+      <BotHeaderAvatar botRef={props.botRef} size={40} />
+      {/* Glass, as the bar has no background: the name stays legible over the messages. */}
+      <GlassSurface chrome="none" className="-mt-2" style={{ borderRadius: 999 }}>
+        <View className="flex-row items-center gap-0.5 px-2.5 py-1">
+          <Text className="shrink text-xs font-semibold text-header-foreground" numberOfLines={1}>
+            {name}
+          </Text>
+          <SymbolView
+            name="chevron.right"
+            size={8}
+            tintColorClassName="accent-header-foreground"
+            type="monochrome"
+          />
+        </View>
+      </GlassSurface>
     </Pressable>
   );
 }

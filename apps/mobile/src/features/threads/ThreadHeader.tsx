@@ -105,6 +105,7 @@ export function ThreadHeader(props: {
       actions={actions}
       menus={menus}
       hideBottomBorder
+      softScrollEdge={botChat !== null}
     />
   );
 }
