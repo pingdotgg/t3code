@@ -319,6 +319,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
     const failure = Result.isFailure(result) ? result.failure : undefined;
+    const timedOut = Result.isSuccess(result) && Option.isNone(result.success);
     const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
     const version = incompatible?.version ?? initialized?.agentInfo?.version;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
@@ -375,10 +376,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       } satisfies ServerProviderDraft;
       return {
         ...state,
-        draft:
-          errorMessage !== undefined && failure === undefined
-            ? markProviderProbeTimeout(updatedDraft)
-            : updatedDraft,
+        draft: timedOut ? markProviderProbeTimeout(updatedDraft) : updatedDraft,
       } satisfies AntigravityProviderState;
     };
     // This state is published as it changes, so a failure the managed provider discards stays out.
