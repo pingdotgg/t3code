@@ -1,5 +1,7 @@
-import { decodeOptions, mFallback } from "gt-react-native";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { decodeOptions } from "gt-react-native";
+import { describe, expect, it } from "vite-plus/test";
+
+import type { MessageResolver } from "../i18n/messages";
 
 import {
   composerChipSizeSuffix,
@@ -13,23 +15,20 @@ import {
   type MobileThemeVariables,
 } from "./mobileTheme";
 
-// The French catalogue's size units, keyed by source message like the real one.
-const FRENCH_UNITS: Record<string, string> = { "{size} KB": "{size} Ko", "{size} MB": "{size} Mo" };
-vi.mock("../i18n/messages", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../i18n/messages")>()),
-  m: (encodedMsg: string, options?: Record<string, unknown>) => {
-    const vars: Record<string, unknown> = { ...decodeOptions(encodedMsg), ...options };
-    const translated = FRENCH_UNITS[String(vars.$_source)];
-    return translated === undefined
-      ? mFallback(encodedMsg, options)
-      : translated.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key]));
-  },
-}));
-
 describe("composerChipSizeSuffix", () => {
   it("shows a file chip's size in the app language", () => {
-    expect(composerChipSizeSuffix({ kind: "file", sizeBytes: 12 * 1024 })).toBe("12 Ko");
-    expect(composerChipSizeSuffix({ kind: "image", sizeBytes: 3 * 1024 * 1024 })).toBe("3.0 Mo");
+    const french = ((message: string, options?: Record<string, unknown>) => {
+      const vars = { ...decodeOptions(message), ...options };
+      const units: Record<string, string> = { "{size} KB": "{size} Ko", "{size} MB": "{size} Mo" };
+      return (units[String(vars.$_source)] ?? String(vars.$_source)).replace(
+        "{size}",
+        String(vars.size),
+      );
+    }) as MessageResolver;
+    expect(composerChipSizeSuffix({ kind: "file", sizeBytes: 12 * 1024 }, french)).toBe("12 Ko");
+    expect(composerChipSizeSuffix({ kind: "image", sizeBytes: 3 * 1024 * 1024 }, french)).toBe(
+      "3.0 Mo",
+    );
   });
 });
 
