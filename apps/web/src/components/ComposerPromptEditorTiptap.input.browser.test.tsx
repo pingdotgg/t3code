@@ -1277,6 +1277,32 @@ describe("Markdown markers around styled text", () => {
     expect(textWithMark(editor, "bold")).toEqual(["bold"]);
   });
 
+  it("shows markers a mouse selection touches only once the button is released", async () => {
+    await using screen = await mountEditor("start **bold words** end");
+    const { editor } = screen;
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const point = (pos: number) => {
+      const { left, top, bottom } = editor.view.coordsAtPos(pos);
+      return { x: frame.left + left, y: frame.top + (top + bottom) / 2 };
+    };
+    const mouse = (
+      type: "mousePressed" | "mouseMoved" | "mouseReleased",
+      { x, y }: { x: number; y: number },
+    ) => cdp().send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    const end = editor.state.doc.content.size - 1;
+    const hidden = editor.state.doc.textContent;
+    await mouse("mousePressed", point(end));
+    for (const pos of [end - 2, "start bold wo".length + 1, "start bo".length + 1]) {
+      await mouse("mouseMoved", point(pos));
+      await vi.waitFor(() => expect(editor.state.selection.head).toBe(pos));
+      expect(editor.state.doc.textContent).toBe(hidden);
+    }
+    await mouse("mouseReleased", point("start bo".length + 1));
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("start **bold words** end"));
+    const { from, to } = editor.state.selection;
+    expect(editor.state.doc.textBetween(from, to)).toBe("ld words** end");
+  });
+
   it("keeps bold around a skill pasted inside it", async () => {
     await using screen = await mountEditor("**helloworld** after", true, [babysit]);
     const { editor } = screen;
