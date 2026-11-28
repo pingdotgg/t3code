@@ -13126,7 +13126,7 @@
   ],
   "bdce0ad68690fdc1": "Läser sessionshistoriken och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter.",
   "8d802467f2a7f93b": "Visa agenternas användning?",
-  "e686fad5b2c04511": "T3 Code läser det här från varje agents egna filer, utanför appen. Välj vilka agenter du tillåter.",
+  "7722abfa18e471c0": "T3 Code läser det här från varje agent, i hela systemet. Välj vilka agenter du tillåter.",
   "0ef08693f1224444": "Sessionshistorik och inloggning",
   "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
   "8380d6f1828fe191": "Konversationshistorik",

@@ -13119,7 +13119,7 @@
   ],
   "bdce0ad68690fdc1": "Lê o histórico de sessões e o login para associar os limites à sua conta e consultar na Anthropic seus créditos de redefinição.",
   "8d802467f2a7f93b": "Mostrar o uso dos agentes?",
-  "e686fad5b2c04511": "O T3 Code lê isso dos próprios arquivos de cada agente, fora do app. Escolha quais agentes permitir.",
+  "7722abfa18e471c0": "O T3 Code lê isso de cada agente em todo o sistema. Escolha quais agentes permitir.",
   "0ef08693f1224444": "Histórico de sessões e login",
   "bb9866823586b67a": "Banco de dados de uso e chave do Go",
   "8380d6f1828fe191": "Histórico de conversas",
