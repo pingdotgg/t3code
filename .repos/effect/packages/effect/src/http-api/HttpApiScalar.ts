@@ -66,6 +66,8 @@ export type ScalarConfig = {
   }
   /** Browser JavaScript function expression used by Scalar for documents and test requests */
   customFetch?: string
+  /** Set disabled to true to hide Scalar's Ask AI controls. */
+  agent?: { disabled?: boolean }
   /** Whether to show the sidebar */
   showSidebar?: boolean
   /**
@@ -154,6 +156,12 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
 }) => {
   const makeResponse = Function.memoize((api: HttpApi.HttpApi<Id, Groups>) => {
     const spec = OpenApi.fromApi(api)
+    // The bundled Scalar has no page-origin fallback for documents without servers, so its copy
+    // gets OpenAPI's implicit root server. layerCdn is left alone because the caller picks its Scalar.
+    // Scalar's config-level servers option is not used because it overrides operation servers.
+    const content = options.source._tag === "Inline" && !spec.servers?.length
+      ? { ...spec, servers: [{ url: "/" }] }
+      : spec
     const { customFetch, ...scalar } = options.scalar ?? {}
     const scalarConfig = {
       _integration: "html",
@@ -193,7 +201,7 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
     <script>
       window.Scalar.createApiReference(document.getElementById('api-reference-container'), {
         ...${Html.escapeJson(scalarConfig)},
-        content: ${Html.escapeJson(spec)}${
+        content: ${Html.escapeJson(content)}${
       customFetch === undefined ? "" : `,
         customFetch: ${customFetch}`
     }

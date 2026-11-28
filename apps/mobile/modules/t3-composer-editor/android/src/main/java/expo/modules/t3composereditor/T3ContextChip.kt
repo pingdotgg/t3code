@@ -9,12 +9,14 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.TextPaint
 import android.text.TextUtils
+import com.facebook.react.common.assets.ReactFontManager
 import kotlin.math.ceil
 import kotlin.math.min
 
 class T3ContextChip(
   content: Content,
   fontSize: Float,
+  chipTypeface: Typeface,
   private val color: Int,
   maximumWidth: Float,
   density: Float
@@ -29,14 +31,14 @@ class T3ContextChip(
 
   private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize
-    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    typeface = chipTypeface
     color = this@T3ContextChip.color
   }
   private val em = fontSize
 
   private val detailPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize * 0.84f
-    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    typeface = chipTypeface
     color = this@T3ContextChip.color
   }
   private val detailText = if (content.detail.isEmpty()) "" else " ${content.detail}"
@@ -86,6 +88,18 @@ class T3ContextChip(
   }
 
   companion object {
+    private const val DM_SANS_MEDIUM = "DMSans-Medium"
+
+    /** Matches the iOS chips: DM Sans text gets DM Sans Medium, anything else the platform medium. */
+    fun typefaceFor(fontFamily: String): Typeface {
+      val fonts = ReactFontManager.getInstance()
+      return if (fontFamily.startsWith("DMSans") && DM_SANS_MEDIUM in fonts.customFontFamilies) {
+        fonts.getTypeface(DM_SANS_MEDIUM, Typeface.NORMAL, null)
+      } else {
+        Typeface.create("sans-serif-medium", Typeface.NORMAL)
+      }
+    }
+
     fun color(
       value: String,
       fallback: Int

@@ -4,10 +4,13 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import type { LocalThreadMessage } from "../lib/threadActivity";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
-import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
+import { m, type MessageResolver } from "../i18n/messages";
+import { deriveUnsentThreadTitle } from "../lib/projectThreadStartTurn";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -133,8 +136,39 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
   };
 }
 
+/** Launches show as preparing from Send, before the server's shell exists, until their first run. */
+export function withLaunchingThreads(
+  input: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly launches: ReadonlyArray<QueuedThreadMessage>;
+    readonly hiddenThreadKeys: ReadonlySet<string>;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<EnvironmentThreadShell> {
+  if (input.launches.length === 0) return input.threads;
+  const launchByKey = new Map<string, QueuedThreadMessage>();
+  for (const message of input.launches) {
+    if (!message.creation || input.hiddenThreadKeys.has(threadKey(message))) continue;
+    launchByKey.set(scopedThreadKey(message.environmentId, message.threadId), message);
+  }
+  if (launchByKey.size === 0) return input.threads;
+  const threads = input.threads.map((thread) => {
+    const key = scopedThreadKey(thread.environmentId, thread.id);
+    const launch = launchByKey.get(key);
+    if (!launch) return thread;
+    launchByKey.delete(key);
+    return asLaunchingThread(thread);
+  });
+  for (const launch of launchByKey.values()) {
+    const shell = pendingThreadCreationShell(launch, resolve);
+    if (shell) threads.push(asLaunchingThread(shell));
+  }
+  return threads;
+}
+
 export function pendingThreadCreationShell(
   message: QueuedThreadMessage,
+  resolve: MessageResolver = m,
 ): EnvironmentThreadShell | null {
   const creation = message.creation;
   if (!creation || !message.modelSelection) {
@@ -144,7 +178,7 @@ export function pendingThreadCreationShell(
   return presentThreadShell(message.environmentId, {
     id: message.threadId,
     projectId: creation.projectId,
-    title: deriveThreadTitleFromPrompt(message.text),
+    title: deriveUnsentThreadTitle(message, resolve),
     providerInstanceId: message.modelSelection.instanceId,
     modelSelection: message.modelSelection,
     runtimeMode: message.runtimeMode ?? DEFAULT_RUNTIME_MODE,

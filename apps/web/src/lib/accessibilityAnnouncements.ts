@@ -1,3 +1,7 @@
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
+
 let latestOpen = false;
 let firstWritePending = false;
 
@@ -25,7 +29,7 @@ export function announceSidebarVisibility(open: boolean) {
     const next = first!.textContent ? second! : first!;
     first!.textContent = "";
     second!.textContent = "";
-    next.textContent = `Sidebar ${latestOpen ? "shown" : "hidden"}`;
+    next.textContent = latestOpen ? m(msg("Sidebar shown")) : m(msg("Sidebar hidden"));
   };
   // Screen readers ignore text written in the same task that inserts its live region.
   // Toggles during that delay only update the state the pending write announces.

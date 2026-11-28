@@ -396,6 +396,8 @@ export const make: (options: {
     headers: options.headers,
     compression: options.compression,
     maxBatchSize: "disabled",
+    // Each snapshot builds on the last one committed, so they go out one at a time.
+    concurrency: 1,
     exportEmpty: true,
     exportInterval: options.exportInterval ?? Duration.seconds(10),
     body: snapshot,
@@ -530,7 +532,7 @@ const ucumUnits = new Map([
   ["bytes", "By"]
 ])
 
-const toUcumUnit = (unit: string | undefined): string => unit === undefined ? "1" : ucumUnits.get(unit) ?? unit
+const toUcumUnit = (unit = ""): string => ucumUnits.get(unit) ?? unit
 
 /** OTLP/JSON accepts int64 as a decimal string, which keeps values beyond 2^53 exact */
 const bigintToInt64 = (value: bigint): number | string =>

@@ -1,7 +1,7 @@
 import { Linking } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { tryOpenExternalUrl } from "./openExternalUrl";
+import { tryOpenExternalUrl, tryOpenWebLink } from "./openExternalUrl";
 
 vi.mock("react-native", () => ({
   Linking: { openURL: vi.fn() },
@@ -32,5 +32,18 @@ describe("tryOpenExternalUrl", () => {
     expect(diagnostics).not.toContain("private-state");
     expect(diagnostics).not.toContain("private-challenge");
     expect(diagnostics).not.toContain("43123");
+  });
+});
+
+describe("tryOpenWebLink", () => {
+  it("opens web, mail and phone links only", async () => {
+    openURL.mockResolvedValue(undefined);
+    for (const url of ["https://example.com/a", "HTTP://example.com", "mailto:a@example.com"]) {
+      await expect(tryOpenWebLink(url, "pull-request")).resolves.toBe(true);
+    }
+    for (const url of ["otherapp://open", "intent://x#Intent;end", "/owner/repo", ""]) {
+      await expect(tryOpenWebLink(url, "pull-request")).resolves.toBe(false);
+    }
+    expect(openURL).toHaveBeenCalledTimes(3);
   });
 });

@@ -65,3 +65,11 @@
   include: true
   replacement: "Match.whenOr"
   note: "Each object pattern now rejects top-level keys absent from every variant of the remaining input type, including patterns spread from an array. Correct stale property names or narrow the input before matching."
+"effect/Match#discriminators":
+  include: true
+  replacement: "Match.discriminators"
+  note: "Only definitely defined handlers remove variants from the unmatched input type. Optional handlers, handlers that may be undefined, and handler-map alternatives without a handler leave those variants unmatched. Supply defined handlers for every case before Match.exhaustive, or handle the remaining variants with another case or Match.orElse. At runtime, undefined handlers are skipped."
+"effect/Match#tags":
+  include: true
+  replacement: "Match.tags"
+  note: "Only definitely defined handlers remove variants from the unmatched input type. Optional handlers, handlers that may be undefined, and handler-map alternatives without a handler leave those variants unmatched. Supply defined handlers for every case before Match.exhaustive, or handle the remaining variants with another case or Match.orElse. At runtime, undefined handlers are skipped."

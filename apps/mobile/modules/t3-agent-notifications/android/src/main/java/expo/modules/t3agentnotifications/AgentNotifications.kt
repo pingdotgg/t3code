@@ -17,6 +17,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.google.firebase.messaging.RemoteMessage
 import expo.modules.notifications.service.ExpoFirebaseMessagingService
+import java.security.MessageDigest
 
 class AgentMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -120,9 +121,12 @@ object AgentNotifications {
   fun receive(context: Context, data: Map<String, String>) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     val updatedAt = data["updated_at"]?.toLongOrNull() ?: return
+    val deviceId = prefs.getString("deviceId", null)
+    val userId = prefs.getString("userId", null)
     val registered = prefs.getBoolean("enabled", false) &&
-      data["device_id"] == prefs.getString("deviceId", null) &&
-      data["user_id"] == prefs.getString("userId", null)
+      deviceId != null && userId != null &&
+      data["device_id"] == deviceId &&
+      data["user_hash"] == userHash(userId, deviceId)
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
@@ -131,6 +135,11 @@ object AgentNotifications {
       updateActivity(context, prefs, data, updatedAt, alerted)
     }
   }
+
+  // The relay sends this hash instead of the account id, which FCM would see.
+  private fun userHash(userId: String, deviceId: String): String =
+    MessageDigest.getInstance("SHA-256").digest("$userId:$deviceId".toByteArray())
+      .joinToString("") { "%02x".format(it) }
 
   private fun showAlert(
     context: Context,
@@ -297,21 +306,21 @@ object AgentNotifications {
     )
     val presentation = ActivityPresentation(data, active)
     val openThread = contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID)
+    // Retained results still need Android's ongoing flag to remain promoted.
+    val ongoing = active || Build.VERSION.SDK_INT >= 36
     val builder = base(context, ACTIVITY_CHANNEL)
-      .setOngoing(active).setOnlyAlertOnce(true).setSilent(true)
+      .setOngoing(ongoing).setOnlyAlertOnce(true).setSilent(true)
       .setTimeoutAfter(remainingMs)
       // Live Updates must remain uncolorized to qualify for promotion.
       .setColorized(false)
-      .setRequestPromotedOngoing(active)
-      .setShortCriticalText(presentation.chip)
+      .setRequestPromotedOngoing(ongoing)
+      .setShortCriticalText(if (ongoing) presentation.chip else null)
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
     presentation.applyTo(builder, context)
     val action = presentation.action
-    if (action != null) {
-      if (openThread != null) builder.addAction(0, action, openThread)
-      builder.addAction(0, "Dismiss", dismissIntent)
-    }
+    if (action != null && openThread != null) builder.addAction(0, action, openThread)
+    if (ongoing) builder.addAction(0, "Dismiss", dismissIntent)
     manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, builder.build())
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       // Notification timeouts were added in API 26. One inexact alarm also

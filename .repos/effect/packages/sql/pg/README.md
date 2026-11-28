@@ -92,21 +92,35 @@ const program = Effect.gen(function*() {
 
 Strings bind to enum columns without any setup; the server infers the type.
 
-The fallback applies to every OID without a codec, not only enums, and it has
-two failure modes:
+The fallback applies to every OID without a codec, not only enums. A value
+that cannot be text fails with `PgTypes.CodecError`:
 
-- Invalid UTF-8 fails with `PgTypes.CodecError`, as it does for `text`. A codec
-  failure while reading a row is fatal to the connection, not just to the
-  query: the socket is destroyed, every other query pipelined on that
-  connection fails, an open transaction is lost, `LISTEN` channels on it are
-  torn down, and the pool replaces the connection. Columns of a binary
-  user-defined type such as a composite, a PostGIS geometry, or a pgvector
-  `vector` hold bytes that are usually not valid UTF-8, so register a codec
-  before querying them.
-- Bytes that happen to be valid UTF-8 decode as garbled text without any
-  error. Arrays of user-defined types, including enum arrays, land here: the
-  array header is all low bytes, so a `capability[]` column reads as a string
-  of control characters followed by the labels.
+- Invalid UTF-8 fails, as it does for `text`.
+- A NUL byte fails too. PostgreSQL text output never contains one, while
+  binary layouts almost always do, so it marks the value as binary data.
+  Columns of a binary user-defined type such as a composite, a PostGIS
+  geometry, or a pgvector `vector` land here, and so do arrays of user-defined
+  types, including enum arrays, whose array header holds zero bytes.
+
+The error names the column, its type OID, and its table OID and attribute
+number when the column comes from a table. It fails only the query that read
+the row: the rest of the result is discarded and the connection stays usable.
+Register a codec for these types, cast the column to `text` in the query, or
+read it with [`queryTextValues`](#values-as-text).
+
+A binary layout with no zero bytes at all, such as `ltree`, still decodes as
+garbled text without any error.
+
+Anonymous records (`ROW(...)`, `(a, b)`) are built in: a record decodes as an
+array of its field values, and each field uses the same codecs as a column.
+Named composite types (`CREATE TYPE ... AS (...)`) have their own OID and take
+the fallback above.
+
+Built-in ranges (`int4range`, `int8range`, `numrange`, `daterange`, `tsrange`,
+`tstzrange`), their multiranges, and arrays of both decode to
+`PgTypes.Range<A>` (finite bounds use the subtype codec) and
+`ReadonlyArray<PgTypes.Range<A>>`. User-defined ranges (`CREATE TYPE ... AS
+RANGE`) have their own OID and take the fallback above.
 
 Register a codec for a scalar user-defined type with
 `PgTypes.register(oid, codec)`; registered codecs take precedence over the
@@ -147,3 +161,22 @@ const PostgresLive = PgClient.layer({
 
 OIDs of user-defined types are assigned per database, so look them up in
 `pg_type` at startup rather than hard-coding them.
+
+## Values as text
+
+Read raw PostgreSQL text values without running result codecs (including custom
+`types`) with `queryTextValues`:
+
+```ts
+import { PgClient } from "@effect/sql-pg"
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  const sql = yield* PgClient.PgClient
+  const result = yield* sql.queryTextValues("SELECT now() AS at, 'infinity'::timestamptz AS until")
+  // result.fields: [{ name: "at", dataTypeId: 1184 }, { name: "until", dataTypeId: 1184 }]
+  // result.values: [["2026-11-24 22:31:05.123456+00", "infinity"]]
+})
+```
+
+Inside `withTransaction` it runs on the transaction's connection.

@@ -1,15 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
+  applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  pullRequestPendingEditsFor,
+  pullRequestHostAnswer,
+  type PullRequestPendingEdit,
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
+  type PullRequestFilesViewedResult,
   type PullRequestListInput,
   type PullRequestFilterOptionsInput,
   type PullRequestListStatsInput,
@@ -22,6 +29,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -63,6 +71,24 @@ export function newestPullRequestSummary(
   if (current === null) return observed;
   if (observed === null) return current;
   return compareSummaries(current, observed) >= 0 ? observed : current;
+}
+
+/** A stored snapshot carries no edit, so a shared summary dated the same wins over it. */
+export function newestDisplayedPullRequestSummary(
+  detail: PullRequestSummary | null,
+  fromSnapshot: boolean,
+  shared: PullRequestSummary | null,
+  reference: PullRequestRef,
+  edits: ReadonlyArray<PullRequestPendingEdit>,
+): PullRequestSummary | null {
+  // With no shared summary the snapshot is all there is, and no answer applied its edits yet.
+  return applyPullRequestSummaryEdits(
+    reference,
+    fromSnapshot
+      ? newestPullRequestSummary(detail, shared)
+      : newestPullRequestSummary(shared, detail),
+    edits,
+  );
 }
 
 export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
@@ -186,14 +212,23 @@ export function observePullRequestMetadata(
       });
 }
 
+const summariesWithChecks = new WeakMap<PullRequestSummary, PullRequestSummary>();
+
+/**
+ * One object per metadata and checks state: checks are reread often, and every sidebar row on the
+ * pull request re-renders for a new summary.
+ */
 export function observedPullRequestSummary(
   observations: PullRequestObservations,
 ): PullRequestSummary | null {
   const { metadata, checks } = observations;
   if (metadata === null) return null;
-  return checks === null
-    ? metadata.summary
-    : { ...metadata.summary, checksState: checks.checksState };
+  if (checks === null) return metadata.summary;
+  const cached = summariesWithChecks.get(metadata.summary);
+  if (cached?.checksState === checks.checksState) return cached;
+  const summary = { ...metadata.summary, checksState: checks.checksState };
+  summariesWithChecks.set(metadata.summary, summary);
+  return summary;
 }
 
 function recordObservation(
@@ -366,8 +401,58 @@ export function restoredPullRequestList(
   return restorePullRequestList(snapshotStorage(), targets);
 }
 
+const filesViewedAnswerListeners = new Map<
+  string,
+  Set<(answer: PullRequestFilesViewedResult) => void>
+>();
+
+function filesViewedAnswerKey({ environmentId, input }: EnvironmentQueryTarget<PullRequestRef>) {
+  return JSON.stringify([
+    environmentId,
+    input.projectId,
+    input.host,
+    input.expectedAccountId,
+    input.allowStale,
+    input.repository,
+    input.number,
+  ]);
+}
+
+export function subscribePullRequestFilesViewedAnswers(
+  target: EnvironmentQueryTarget<PullRequestRef>,
+  onAnswer: (answer: PullRequestFilesViewedResult) => void,
+) {
+  const key = filesViewedAnswerKey(target);
+  let listeners = filesViewedAnswerListeners.get(key);
+  if (listeners === undefined) filesViewedAnswerListeners.set(key, (listeners = new Set()));
+  listeners.add(onAnswer);
+  return () => {
+    listeners.delete(onAnswer);
+    if (listeners.size === 0) filesViewedAnswerListeners.delete(key);
+  };
+}
+
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  acceptedEdit: ({ environmentId, input }, edit, registry) =>
+    Effect.map(Clock.currentTimeMillis, (observedAt) => {
+      const saved = registry.get(
+        savedPullRequestSummaryAtom(savedPullRequestKey(environmentId, input)),
+      );
+      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
+        const summary = applyPullRequestSummaryEdits(
+          input,
+          newestPullRequestSummary(saved, observedPullRequestSummary(current)),
+          [edit],
+        );
+        return summary === null ? current : { ...current, metadata: { summary, observedAt } };
+      });
+    }),
+  filesViewed: (target, answer) =>
+    Effect.sync(() => {
+      for (const listener of filesViewedAnswerListeners.get(filesViewedAnswerKey(target)) ?? [])
+        listener(answer);
+    }),
   list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
       rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);
@@ -502,7 +587,9 @@ export function useSharedPullRequestSummary(
     environmentId === null || reference === null
       ? "none"
       : pullRequestSummaryKey(environmentId, reference);
-  const observations = useAtomValue(pullRequestObservationsAtom(key));
+  // Selected, so a reread that changes no field leaves its readers alone.
+  const observed = useAtomValue(pullRequestObservationsAtom(key), observedPullRequestSummary);
+  const edits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const saved = useAtomValue(
     savedPullRequestSummaryAtom(
       environmentId === null || reference === null
@@ -510,7 +597,7 @@ export function useSharedPullRequestSummary(
         : savedPullRequestKey(environmentId, reference),
     ),
   );
-  return newestPullRequestSummary(observedPullRequestSummary(observations), saved);
+  return applyPullRequestSummaryEdits(reference, newestPullRequestSummary(saved, observed), edits);
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
@@ -522,10 +609,36 @@ export interface EnvironmentQueryTarget<Input> {
   readonly input: Input;
 }
 
+interface EnvironmentQueryError {
+  readonly environmentId: EnvironmentId;
+  readonly message: string;
+}
+
 interface MergedEnvironmentQueryView<A> {
+  readonly observations: ReadonlyArray<readonly [EnvironmentId, A, number]>;
   readonly values: ReadonlyArray<readonly [EnvironmentId, A]>;
-  readonly error: string | null;
+  readonly error: EnvironmentQueryError | null;
   readonly isPending: boolean;
+}
+
+const failedListObservedAt = new WeakMap<object, number>();
+const isUnavailableList = Schema.is(PullRequestUnavailableError);
+const isFailedList = Schema.is(PullRequestOperationError);
+
+export function observeFailedPullRequestList(
+  result: AsyncResult.Failure<PullRequestListResult, unknown>,
+): { readonly value: PullRequestListResult; readonly observedAt: number } | undefined {
+  if (result.waiting) return undefined;
+  const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+  if ((!isUnavailableList(error) && !isFailedList(error)) || error.listResult === undefined) {
+    return undefined;
+  }
+  let observedAt = failedListObservedAt.get(result.cause);
+  if (observedAt === undefined) {
+    observedAt = Date.now();
+    failedListObservedAt.set(result.cause, observedAt);
+  }
+  return { value: error.listResult, observedAt };
 }
 
 // Use one derived atom for variable fan-out; unreachable environments must not hide other rows.
@@ -534,26 +647,52 @@ function createMergedEnvironmentQuery<Input, A>(
   atomFor: (
     target: EnvironmentQueryTarget<Input>,
   ) => Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
+  observeFailure?: (
+    result: AsyncResult.Failure<A, unknown>,
+  ) => { readonly value: A; readonly observedAt: number } | undefined,
 ) {
   const family = Atom.family((key: string) =>
     Atom.make((get): MergedEnvironmentQueryView<A> => {
       const targets = JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>;
       const values: Array<readonly [EnvironmentId, A]> = [];
-      let error: string | null = null;
+      const observations: Array<readonly [EnvironmentId, A, number]> = [];
+      const pendingEnvironments = new Set<EnvironmentId>();
+      let error: EnvironmentQueryError | null = null;
       let isPending = false;
       for (const target of targets) {
         const result = get(atomFor(target));
         isPending ||= result.waiting;
+        if (result.waiting) pendingEnvironments.add(target.environmentId);
         if (result._tag === "Failure" && error === null) {
-          error = formatEnvironmentQueryError(result.cause);
+          error = {
+            environmentId: target.environmentId,
+            message: formatEnvironmentQueryError(result.cause),
+          };
         }
         const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) values.push([target.environmentId, value]);
+        if (result._tag === "Success") {
+          observations.push([target.environmentId, result.value, result.timestamp]);
+        } else if (result._tag === "Failure") {
+          const observation = observeFailure?.(result);
+          if (observation !== undefined) {
+            observations.push([target.environmentId, observation.value, observation.observedAt]);
+          }
+        }
       }
-      return { values, error, isPending };
+      return {
+        values,
+        error,
+        isPending,
+        // Another batch can still find a readable checkout on this environment.
+        observations: observations.filter(
+          ([environmentId]) => !pendingEnvironments.has(environmentId),
+        ),
+      };
     }).pipe(Atom.withLabel(`${label}:${key}`)),
   );
   const empty = Atom.make<MergedEnvironmentQueryView<A>>({
+    observations: [],
     values: [],
     error: null,
     isPending: false,
@@ -568,13 +707,30 @@ function createMergedEnvironmentQuery<Input, A>(
         appAtomRegistry.refresh(atom);
       }
     };
-    return { ...view, refresh };
+    // Retry reloads only failed environments, so a read still in flight elsewhere is not restarted.
+    const retry = () => {
+      for (const atom of new Set(
+        (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>).map(atomFor),
+      )) {
+        const result = appAtomRegistry.get(atom);
+        if (result._tag === "Failure" && !result.waiting) appAtomRegistry.refresh(atom);
+      }
+    };
+    return { ...view, refresh, retry };
   };
 }
+
+const usePullRequestHostListsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:host-list",
+  (target: EnvironmentQueryTarget<PullRequestListInput>) =>
+    pullRequestHostAnswer(pullRequestEnvironment.list(target)),
+  observeFailedPullRequestList,
+);
 
 const usePullRequestListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list",
   pullRequestEnvironment.list,
+  observeFailedPullRequestList,
 );
 
 const usePullRequestStatsQuery = createMergedEnvironmentQuery(
@@ -608,17 +764,43 @@ export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number 
 
 export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
-  readonly error: string | null;
+  readonly error: EnvironmentQueryError | null;
   readonly isPending: boolean;
+  readonly observations: ReadonlyArray<readonly [EnvironmentId, PullRequestListResult, number]>;
   readonly refresh: (targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>) => void;
+  readonly retry: () => void;
 }
 
+// Merge inside each hook: the React Compiler memoizes it on `query.values` only there, and
+// PullRequestsPage sets state when the merged list's identity changes.
 export function usePullRequestList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestListView {
   const query = usePullRequestListsQuery(targets);
   const data = mergePullRequestLists(query.values);
-  return { data, error: query.error, isPending: query.isPending, refresh: query.refresh };
+  return {
+    data,
+    error: query.error,
+    isPending: query.isPending,
+    observations: query.observations,
+    refresh: query.refresh,
+    retry: query.retry,
+  };
+}
+
+export function usePullRequestHostList(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
+): MergedPullRequestListView {
+  const query = usePullRequestHostListsQuery(targets);
+  const data = mergePullRequestLists(query.values);
+  return {
+    data,
+    error: query.error,
+    isPending: query.isPending,
+    observations: query.observations,
+    refresh: query.refresh,
+    retry: query.retry,
+  };
 }
 
 export function usePullRequestListStats(

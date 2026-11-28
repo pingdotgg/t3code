@@ -44,6 +44,16 @@ const assertThrowsTagged = (tag: string, run: () => unknown) => {
   assert.fail(`Expected ${tag} to be thrown`)
 }
 
+const thrownCodecError = (run: () => unknown): PgTypesResult.CodecError => {
+  try {
+    run()
+  } catch (error) {
+    assert.instanceOf(error, PgTypesResult.CodecError)
+    return error as PgTypesResult.CodecError
+  }
+  return assert.fail("Expected PgTypesCodecError to be thrown")
+}
+
 /** Every value below was produced by PostgreSQL for the encoded parameter. */
 const roundTrips: Array<{
   readonly name: keyof typeof rows
@@ -242,6 +252,108 @@ describe("PgTypes", () => {
       ) {
         assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.encode(value, PgTypes.OID.interval))
       }
+    })
+  })
+  describe("records", () => {
+    it("uses the text fallback unless the registry has a field codec", () => {
+      const wire = bytes("000000010000008e000000043c612f3e") // ROW('<a/>'::xml)
+      assert.deepStrictEqual(PgTypes.decode(wire, PgTypes.OID.record, 1), ["<a/>"])
+      const registry = PgTypesResult.makeRegistry()
+      registry.register<string>(142, {
+        encode: (value) => Result.succeed(new TextEncoder().encode(value)),
+        decode: (value) => Result.succeed(new TextDecoder().decode(value).toUpperCase())
+      })
+      const decoded = PgTypesResult.decode(wire, PgTypes.OID.record, 1, registry)
+      assert.deepStrictEqual(success(decoded), ["<A/>"])
+    })
+
+    it("rejects malformed records and encoding", () => {
+      const truncated = bytes("000000010000001700000004000000") // int4 field missing its last byte
+      assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.decode(truncated, PgTypes.OID.record, 1))
+      assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.encode([1], PgTypes.OID.record))
+    })
+  })
+  describe("ranges", () => {
+    it("encodes, decodes, and writes range and multirange wire formats", () => {
+      const int4Range: PgTypesResult.Range<number> = {
+        lower: 1,
+        upper: 5,
+        lowerInclusive: true,
+        upperInclusive: false,
+        empty: false
+      }
+      const emptyRange: PgTypesResult.Range<number> = {
+        lower: null,
+        upper: null,
+        lowerInclusive: false,
+        upperInclusive: false,
+        empty: true
+      }
+      const unbounded: PgTypesResult.Range<string> = {
+        lower: null,
+        upper: null,
+        lowerInclusive: false,
+        upperInclusive: false,
+        empty: false
+      }
+      const int4Wire = bytes("0200000004000000010000000400000005")
+      assert.deepStrictEqual(PgTypes.encode(int4Range, PgTypes.OID.int4range), int4Wire)
+      assert.deepStrictEqual(PgTypes.decode(int4Wire, PgTypes.OID.int4range, 1), int4Range)
+      assert.deepStrictEqual(PgTypes.encode(emptyRange, PgTypes.OID.int4range), bytes("01"))
+      assert.deepStrictEqual(PgTypes.encode(unbounded, PgTypes.OID.daterange), bytes("18"))
+      assert.deepStrictEqual(PgTypes.decode(bytes("18"), PgTypes.OID.daterange, 1), unbounded)
+      assert.deepStrictEqual(PgTypes.decode(bytes("00000000"), PgTypes.OID.int4multirange, 1), [])
+
+      const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
+      const parameters = [
+        PgTypes.int4range(int4Range),
+        PgTypes.int4range(emptyRange),
+        PgTypes.daterange(unbounded),
+        PgTypes.int4multirange([int4Range])
+      ]
+      assert.deepStrictEqual(
+        encodeBind({ portal: "", statement: "", parameters }),
+        PgProtocol.encodeBind({
+          portal: "",
+          statement: "",
+          parameters: parameters.map(PgTypes.encodeParameter)
+        })
+      )
+    })
+
+    it("propagates registry overrides into range bounds, multiranges, and arrays", () => {
+      const registry = PgTypesResult.makeRegistry()
+      registry.register<bigint>(PgTypes.OID.timestamptz, {
+        encode: (value) => Result.succeed(int64Bytes(value)),
+        decode: (wire) => Result.succeed(new DataView(wire.buffer, wire.byteOffset, wire.byteLength).getBigInt64(0))
+      })
+      const value: ReadonlyArray<ReadonlyArray<PgTypesResult.Range<bigint>> | null> = [[{
+        lower: 123n,
+        upper: 456n,
+        lowerInclusive: true,
+        upperInclusive: false,
+        empty: false
+      }], null]
+      const wire = success(PgTypesResult.encode(value, PgTypes.OID.tstzmultirangeArray, registry))
+      assert.deepStrictEqual(success(PgTypesResult.decode(wire, PgTypes.OID.tstzmultirangeArray, 1, registry)), value)
+    })
+
+    it("rejects malformed wire values and invalid range inputs", () => {
+      for (const wire of ["", "0100", "02ffffffff", "02000000040000000100000004000000"]) {
+        assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.decode(bytes(wire), PgTypes.OID.int4range, 1))
+      }
+      for (const wire of ["0000", "ffffffff", "7fffffff", "000000010000000201", "0000000000"]) {
+        assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.decode(bytes(wire), PgTypes.OID.int4multirange, 1))
+      }
+      for (const value of [null, { lower: 1, upper: 5 }, { lower: 1, upper: 5, lowerInclusive: true, empty: false }]) {
+        assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.encode(value, PgTypes.OID.int4range))
+      }
+      assertThrowsTagged(
+        "PgTypesCodecError",
+        () => PgTypesResult.encode("not-a-multirange", PgTypes.OID.int4multirange)
+      )
+      const sparse = PgTypesResult.encode(new Array(1), PgTypes.OID.int4multirange)
+      assert.isTrue(Result.isFailure(sparse) && sparse.failure._tag === "PgTypesCodecError")
     })
   })
   it("returns codec failures as Result values", () => {
@@ -630,15 +742,15 @@ describe("PgTypes", () => {
       }
     })
 
-    it("rejects invalid UTF-8 with the same codec failure as text", () => {
-      for (const wire of ["ff", "c3", "c328"]) {
-        const expected = PgTypesResult.decode(bytes(wire), PgTypes.OID.text, 1)
-        const actual = PgTypesResult.decode(bytes(wire), 99999, 1)
-        assert.isTrue(Result.isFailure(expected))
-        assert.isTrue(Result.isFailure(actual))
-        if (Result.isFailure(expected) && Result.isFailure(actual)) {
-          assert.strictEqual(actual.failure._tag, "PgTypesCodecError")
-          assert.strictEqual(actual.failure.message, expected.failure.message)
+    it("rejects bytes that cannot be text with a codec failure naming the OID", () => {
+      // `0001000000000000` is pgvector's `'[0]'`: valid UTF-8, but binary data.
+      for (const [wire, reason] of [["ff", "UTF-8"], ["c3", "UTF-8"], ["c328", "UTF-8"], ["0001000000000000", "NUL"]]) {
+        const decoded = PgTypesResult.decode(bytes(wire), 99999, 1)
+        assert.isTrue(Result.isFailure(decoded))
+        if (Result.isFailure(decoded)) {
+          assert.strictEqual(decoded.failure._tag, "PgTypesCodecError")
+          assert.include(decoded.failure.message, reason)
+          assert.include(decoded.failure.message, "99999")
         }
       }
     })
@@ -920,6 +1032,11 @@ describe("PgTypes", () => {
       }
     })
 
+    it("keeps a leading U+FEFF when the string contains U+FFFD", () => {
+      const value = "\ufeffnote\ufffd"
+      assert.strictEqual(PgTypes.decode(PgTypes.encode(value, PgTypes.OID.text), PgTypes.OID.text, 1), value)
+    })
+
     it("rejects a stray high byte at every position of the fast path", () => {
       // A lone lead byte is not valid UTF-8, so the fast path has to hand it to
       // the decoder rather than read it as a character of its own.
@@ -1132,15 +1249,16 @@ describe("PgTypes", () => {
       assert.deepStrictEqual((messages[0] as PgProtocol.DataRow<unknown>).values, [7, "use_key", "gérer ☃", "", null])
     })
 
-    it("rejects invalid UTF-8 in an unregistered column with a codec error", () => {
-      for (const wire of ["ff", "c3", "c328"]) {
-        const parser = PgProtocol.makeParser({
-          readField: PgTypes.makeFieldReader(binary([PgTypes.OID.int4, 99999]))
-        })
-        assertThrowsTagged(
-          "PgTypesCodecError",
-          () => parser.push(dataRow([PgTypes.encode(7, PgTypes.OID.int4), bytes(wire)]))
-        )
+    it("rejects an unregistered column that cannot be text with a codec error naming it", () => {
+      const columns = [
+        { dataTypeOid: PgTypes.OID.int4, format: 1, name: "id" },
+        { dataTypeOid: 99999, format: 1, name: "embedding" }
+      ]
+      for (const wire of ["ff", "c3", "c328", "0001000000000000"]) {
+        const parser = PgProtocol.makeParser({ readField: PgTypes.makeFieldReader(columns) })
+        const error = thrownCodecError(() => parser.push(dataRow([PgTypes.encode(7, PgTypes.OID.int4), bytes(wire)])))
+        assert.include(error.message, "embedding")
+        assert.include(error.message, "99999")
       }
     })
 

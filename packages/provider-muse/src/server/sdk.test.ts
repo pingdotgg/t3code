@@ -263,7 +263,7 @@ describe("Muse launch", () => {
   const onWindows = (resolved: string | undefined, env: NodeJS.ProcessEnv = { ComSpec: CMD }) =>
     museLaunch("muse", env).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(SpawnExecutableResolution, () => resolved),
+      Effect.provideService(SpawnExecutableResolution, async () => resolved),
     );
 
   it.effect("runs an exe directly and a launcher script under cmd.exe on Windows", () =>
@@ -287,6 +287,29 @@ describe("Muse launch", () => {
         "C:\\Windows\\System32\\cmd.exe",
       );
       expect(yield* onWindows(undefined)).toEqual({ command: "muse", args: [] });
+    }),
+  );
+
+  // The SDK spawns natively: libuv would wait on a hung mount under the cwd or PATH.
+  it.effect("launches through env on Linux, which enters the cwd and searches PATH", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "linux") return;
+      const launched = (options: Parameters<typeof createMuseSdkHostEffect>[0]) =>
+        Effect.gen(function* () {
+          const createHost = vi.fn(async (_options: unknown) => ({}) as MuseSdkHost);
+          yield* createMuseSdkHostEffect(options, createHost);
+          return createHost.mock.calls[0]?.[0];
+        });
+      const throughEnv = yield* launched({ binaryPath: "muse", cwd: "/work space" });
+      expect(throughEnv).toMatchObject({
+        launch: { command: "/usr/bin/env", args: ["-C", "/work space", "--", "muse"] },
+      });
+      expect(throughEnv).not.toHaveProperty("cwd");
+      // env would read this path as an assignment.
+      expect(yield* launched({ binaryPath: "/opt/a=b/muse", cwd: "/work" })).toMatchObject({
+        launch: { command: "/opt/a=b/muse", args: [] },
+        cwd: "/work",
+      });
     }),
   );
 

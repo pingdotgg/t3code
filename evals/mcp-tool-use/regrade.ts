@@ -10,7 +10,7 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 
-import { gradeSample, McpToolUseCase, pastedText } from "./run.ts";
+import { gradeSample, McpToolUseCase, pastedText, worldFilePaths } from "./run.ts";
 
 const { values, positionals } = NodeUtil.parseArgs({
   allowPositionals: true,
@@ -36,7 +36,8 @@ for (const file of positionals) {
     const row = JSON.parse(line);
     const testCase = cases.get(row.id);
     if (testCase === undefined || row.error !== undefined) continue;
-    const failed = gradeSample(testCase.expect, row, pastedText(testCase)).filter(
+    const expect = row.arm === "raw" ? (testCase.expectRaw ?? testCase.expect) : testCase.expect;
+    const failed = gradeSample(expect, row, pastedText(testCase), worldFilePaths(testCase)).filter(
       (check) => !check.pass,
     );
     const cut = failed.length === 0 && row.stopReason === "failed_early";
