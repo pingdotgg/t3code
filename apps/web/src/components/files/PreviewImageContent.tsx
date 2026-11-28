@@ -2,6 +2,7 @@ import { useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
+import { useFormattingLocale } from "~/i18n/I18nProvider";
 import { observeResize } from "~/lib/observeResize";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { FileSurfaceAction, FileSurfaceFailure } from "./fileSurfaceChrome";
@@ -13,6 +14,7 @@ export default function PreviewImageContent(props: {
   readonly onError?: () => void;
 }) {
   const gt = useGT();
+  const sizeFormat = new Intl.NumberFormat(useFormattingLocale());
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -50,7 +52,7 @@ export default function PreviewImageContent(props: {
       <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
         <span className="tabular-nums">
           {natural.width
-            ? `${natural.width.toLocaleString()} × ${natural.height.toLocaleString()}`
+            ? `${sizeFormat.format(natural.width)} × ${sizeFormat.format(natural.height)}`
             : gt("Loading image…")}
         </span>
         <div className="flex items-center gap-1">
