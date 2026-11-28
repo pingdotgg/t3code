@@ -1349,8 +1349,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         return { runs: listed.rows.map(toRun), truncated: listed.truncated };
       }
       // Skipped runs are counted apart, as in the unfiltered list, so they cannot push out the rest.
-      const normal = yield* store.runsWherePage({ ...where, skippedTopLevel: false });
-      const skipped = yield* store.runsWherePage({ ...where, skippedTopLevel: true });
+      const { normal, skipped } = yield* store.runsWhereApart({
+        tag: filter.tag,
+        subject: filter.subject,
+      });
       const rows = [...normal.rows, ...skipped.rows];
       return {
         runs: rows.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).map(toRun),

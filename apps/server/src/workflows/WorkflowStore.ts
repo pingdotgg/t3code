@@ -450,6 +450,16 @@ export class WorkflowStore extends Context.Service<
     readonly runsWherePage: (
       filter: RunsWhereFilter,
     ) => Effect.Effect<Omit<WorkflowRunListPage, "skippedTruncated">>;
+    /**
+     * Runs `runsWherePage` for ordinary runs and top-level skipped runs in one snapshot, each with
+     * its own cap.
+     */
+    readonly runsWhereApart: (
+      filter: Omit<RunsWhereFilter, "skippedTopLevel" | "status">,
+    ) => Effect.Effect<{
+      readonly normal: Omit<WorkflowRunListPage, "skippedTruncated">;
+      readonly skipped: Omit<WorkflowRunListPage, "skippedTruncated">;
+    }>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */
@@ -1494,6 +1504,18 @@ export const make = Effect.gen(function* () {
       return (yield* runsWherePage(filter)).rows;
     }),
     runsWherePage,
+    runsWhereApart: Effect.fn("WorkflowStore.runsWhereApart")(
+      function* (filter) {
+        return {
+          normal: yield* runsWherePage({ ...filter, skippedTopLevel: false }),
+          skipped: yield* runsWherePage({ ...filter, skippedTopLevel: true }),
+        };
+      },
+      // Without one snapshot, a top-level run that skips itself between the two reads can appear
+      // in both lists.
+      (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
+      Effect.orDie,
+    ),
     runs: Effect.fn("WorkflowStore.runs")(
       function* (status) {
         if (status !== undefined) {

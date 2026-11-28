@@ -1395,6 +1395,40 @@ it.effect(
         // A newer ordinary run makes an ordinary run the 501st, which alone says rows were left out.
         yield* seed("ok-newest", 1, "completed", null, 1_700_005_000);
         assert.isTrue((yield* store.runs(undefined)).truncated);
+
+        // Another connection tries to mark the newest run skipped between the two partition reads.
+        // It must not appear in both. Here the read holds the lock, so the write is refused.
+        const skipper = new NodeSqlite.DatabaseSync(main!.file, { timeout: 0 });
+        const skips: Array<string> = [];
+        const apart = yield* store.runsWhereApart({ workflow: "demo" }).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.as(
+              statement.compile()[0].includes("? AND status = 'skipped'")
+                ? Effect.try({
+                    try: () =>
+                      skipper
+                        .prepare("UPDATE workflow_runs SET status = 'skipped' WHERE run_id = ?")
+                        .run("ok-newest-0000").changes,
+                    catch: (error) => String(error),
+                  }).pipe(
+                    Effect.match({
+                      onFailure: (error) => skips.push(error),
+                      onSuccess: (changes) => skips.push(`changed ${changes} rows`),
+                    }),
+                  )
+                : Effect.void,
+              statement,
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => skipper.close())),
+        );
+        assert.lengthOf(skips, 1);
+        assert.isTrue(
+          skips[0] === "changed 1 rows" || skips[0]!.includes("database is locked"),
+          skips[0],
+        );
+        const listedIds = [...apart.normal.rows, ...apart.skipped.rows].map((row) => row.run_id);
+        assert.equal(new Set(listedIds).size, listedIds.length);
       }),
     ),
 );
