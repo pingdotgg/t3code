@@ -5,5 +5,10 @@ export function truncate(text: string, maxLength = 50): string {
     return trimmed;
   }
 
-  return `${characters.slice(0, maxLength).join("").trimEnd()}...`;
+  let end = Math.trunc(maxLength);
+  while (end > 0 && /\p{M}/u.test(characters[end] ?? "")) {
+    end -= 1;
+  }
+
+  return `${characters.slice(0, end).join("").trimEnd()}...`;
 }
