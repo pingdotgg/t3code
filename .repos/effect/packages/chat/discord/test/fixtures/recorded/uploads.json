@@ -1,0 +1,218 @@
+{
+  "case": "Uploads around Discord's limit for the Janitor bot in a guild with no boosts: 10 MiB + 1 byte and 20 MiB are accepted, 20 MiB + 1 byte and 25 MiB are refused with a 413 and a JSON body",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord REST v10 with the Janitor bot token, from a local script. request.files[0] gives the size of the upload, whose bytes are all zero",
+    "where": "guild 840178841540362250 (Tim's test guild); #test 1570605581192929301",
+    "recordedAt": "2026-11-13T08:41Z, during EFF-3755",
+    "body": "Each response verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed. Every posted message was deleted"
+  },
+  "calls": [
+    {
+      "step": "upload-10MiB-plus-1",
+      "method": "POST",
+      "path": "/channels/1570605581192929301/messages",
+      "request": {
+        "payload_json": {
+          "content": "effect-chat probe: upload-over-limit",
+          "allowed_mentions": {
+            "parse": []
+          },
+          "attachments": [
+            {
+              "id": 0,
+              "filename": "probe.bin"
+            }
+          ]
+        },
+        "files[0]": {
+          "filename": "probe.bin",
+          "bytes": 10485761
+        }
+      },
+      "status": 200,
+      "response": {
+        "type": 0,
+        "content": "effect-chat probe: upload-over-limit",
+        "mentions": [],
+        "mention_roles": [],
+        "attachments": [
+          {
+            "id": "1570720143078850580",
+            "filename": "probe.bin",
+            "size": 10485761,
+            "url": "https://cdn.discordapp.com/attachments/1570605581192929301/1570720143078850580/probe.bin?scrubbed",
+            "proxy_url": "https://media.discordapp.net/attachments/1570605581192929301/1570720143078850580/probe.bin?scrubbed",
+            "content_type": "application/octet-stream",
+            "content_scan_version": 0
+          }
+        ],
+        "embeds": [],
+        "timestamp": "2026-11-13T08:41:05.398000+00:00",
+        "edited_timestamp": null,
+        "flags": 0,
+        "components": [],
+        "id": "1570720146094424165",
+        "channel_id": "1570605581192929301",
+        "author": {
+          "id": "1564742987727118426",
+          "username": "Janitor",
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701",
+          "discriminator": "5426",
+          "public_flags": 0,
+          "flags": 0,
+          "bot": true,
+          "banner": null,
+          "accent_color": null,
+          "global_name": null,
+          "avatar_decoration_data": null,
+          "collectibles": null,
+          "display_name_styles": null,
+          "banner_color": null,
+          "clan": null,
+          "primary_guild": null
+        },
+        "pinned": false,
+        "mention_everyone": false,
+        "tts": false
+      },
+      "contentType": "application/json",
+      "scrubbed": [
+        "$.attachments[0].url",
+        "$.attachments[0].proxy_url"
+      ]
+    },
+    {
+      "step": "upload-20MiB",
+      "method": "POST",
+      "path": "/channels/1570605581192929301/messages",
+      "request": {
+        "payload_json": {
+          "content": "effect-chat probe: upload-20971520",
+          "allowed_mentions": {
+            "parse": []
+          },
+          "attachments": [
+            {
+              "id": 0,
+              "filename": "probe.bin"
+            }
+          ]
+        },
+        "files[0]": {
+          "filename": "probe.bin",
+          "bytes": 20971520
+        }
+      },
+      "status": 200,
+      "response": {
+        "type": 0,
+        "content": "effect-chat probe: upload-20971520",
+        "mentions": [],
+        "mention_roles": [],
+        "attachments": [
+          {
+            "id": "1570720378395820032",
+            "filename": "probe.bin",
+            "size": 20971520,
+            "url": "https://cdn.discordapp.com/attachments/1570605581192929301/1570720378395820032/probe.bin?scrubbed",
+            "proxy_url": "https://media.discordapp.net/attachments/1570605581192929301/1570720378395820032/probe.bin?scrubbed",
+            "content_type": "application/octet-stream",
+            "content_scan_version": 0
+          }
+        ],
+        "embeds": [],
+        "timestamp": "2026-11-13T08:42:01.012000+00:00",
+        "edited_timestamp": null,
+        "flags": 0,
+        "components": [],
+        "id": "1570720379356581938",
+        "channel_id": "1570605581192929301",
+        "author": {
+          "id": "1564742987727118426",
+          "username": "Janitor",
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701",
+          "discriminator": "5426",
+          "public_flags": 0,
+          "flags": 0,
+          "bot": true,
+          "banner": null,
+          "accent_color": null,
+          "global_name": null,
+          "avatar_decoration_data": null,
+          "collectibles": null,
+          "display_name_styles": null,
+          "banner_color": null,
+          "clan": null,
+          "primary_guild": null
+        },
+        "pinned": false,
+        "mention_everyone": false,
+        "tts": false
+      },
+      "contentType": "application/json",
+      "scrubbed": [
+        "$.attachments[0].url",
+        "$.attachments[0].proxy_url"
+      ]
+    },
+    {
+      "step": "upload-20MiB-plus-1",
+      "method": "POST",
+      "path": "/channels/1570605581192929301/messages",
+      "request": {
+        "payload_json": {
+          "content": "effect-chat probe: upload-20971521",
+          "allowed_mentions": {
+            "parse": []
+          },
+          "attachments": [
+            {
+              "id": 0,
+              "filename": "probe.bin"
+            }
+          ]
+        },
+        "files[0]": {
+          "filename": "probe.bin",
+          "bytes": 20971521
+        }
+      },
+      "status": 413,
+      "response": {
+        "message": "Request entity too large",
+        "code": 40005
+      },
+      "contentType": "application/json"
+    },
+    {
+      "step": "upload-25MiB",
+      "method": "POST",
+      "path": "/channels/1570605581192929301/messages",
+      "request": {
+        "payload_json": {
+          "content": "effect-chat probe: upload-26214400",
+          "allowed_mentions": {
+            "parse": []
+          },
+          "attachments": [
+            {
+              "id": 0,
+              "filename": "probe.bin"
+            }
+          ]
+        },
+        "files[0]": {
+          "filename": "probe.bin",
+          "bytes": 26214400
+        }
+      },
+      "status": 413,
+      "response": {
+        "message": "Request entity too large",
+        "code": 40005
+      },
+      "contentType": "application/json"
+    }
+  ]
+}

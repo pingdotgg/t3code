@@ -34,7 +34,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -46,20 +46,23 @@ import {
 } from "~/components/issue/issueListPreferences";
 import { IssueGlyph, issueTrackerPresentation } from "~/components/issue/issuePresentation";
 import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
+import { PullRequestMarkdownPanelContext } from "~/components/pullRequest/PullRequestMarkdown";
 import { PullRequestListGhost } from "~/components/pullRequest/PullRequestGhosts";
 import {
   PullRequestFilterOptionIcon,
+  pullRequestProjectKey,
   PullRequestSearchInput,
   type PullRequestFilterOption,
 } from "~/components/pullRequest/PullRequestListFilters";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { resolveFilterOptions } from "../pullRequest/pullRequestListOptions";
 import { IssueFiltersMenu } from "./IssueListFilterPickers";
+import { issueFilterProjects, issueListTargets, issueProjectKeys } from "./issuesSearch.logic";
 import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
 import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs } from "~/components/RightPanelTabs";
+import { RightPanelTabs, type RightPanelTabsHandle } from "~/components/RightPanelTabs";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "~/components/WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
@@ -67,6 +70,7 @@ import { PanelLayoutControls } from "~/components/chat/PanelLayoutControls";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -93,7 +97,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useProjects } from "~/state/entities";
 import { useEnvironments, useIssuesSupported } from "~/state/environments";
-import { issueEnvironment, useIssueList, type IssueListTarget } from "~/state/issues";
+import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -199,6 +203,13 @@ export function IssuesPage() {
     (environment) => environment.serverConfig?.environment.capabilities.issues === true,
   );
   const environmentLabels = new Map(environments.map((e) => [e.environmentId, e.label] as const));
+  const filterProjects = issueFilterProjects(
+    projects.filter((project) =>
+      capableEnvironments.some((e) => e.environmentId === project.environmentId),
+    ),
+    environmentLabels,
+  );
+  const hiddenProjects = issueProjectKeys(search.hideProjects);
 
   const debouncedQuery = useDebouncedValue(search.q ?? "", 300);
   const listInput: IssueListInput = {
@@ -211,12 +222,25 @@ export function IssuesPage() {
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { sort: search.order } : {}),
   };
-  const targets: ReadonlyArray<IssueListTarget> = capableEnvironments.map((e) => ({
-    environmentId: e.environmentId,
-    input: listInput,
-  }));
+  const everyProjectHidden =
+    filterProjects.length > 0 &&
+    filterProjects.every((project) => hiddenProjects.has(pullRequestProjectKey(project)));
+  const targets = everyProjectHidden
+    ? []
+    : issueListTargets(
+        capableEnvironments.map((e) => e.environmentId),
+        filterProjects,
+        search.hideProjects,
+        listInput,
+      );
   const list = useIssueList(targets);
-  useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
+  // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
+  useLiveRefresh(
+    () => {
+      if (!list.isPending) list.reload();
+    },
+    { key: JSON.stringify(targets) },
+  );
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);
@@ -228,7 +252,9 @@ export function IssuesPage() {
     const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
     if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
     setLoadingMore(`${environmentId} ${host}`);
-    const result = await loadPage({ environmentId, input: { ...listInput, cursors } });
+    const input = targets.find((target) => target.environmentId === environmentId)?.input;
+    if (!input) return;
+    const result = await loadPage({ environmentId, input: { ...input, cursors } });
     setLoadingMore(null);
     const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
     setPages((current) => {
@@ -254,24 +280,49 @@ export function IssuesPage() {
   // would be, and each tracker's rows carry on from their own cursors.
   // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
   const chosenHost = search.host?.toLowerCase();
-  const shown = chosenHost
-    ? new Map(
-        [...held].map(([environmentId, page]) => [
-          environmentId,
-          {
-            ...page,
-            answer: {
-              ...page.answer,
-              trackers: page.answer.trackers.filter(
-                (tracker) => tracker.host.toLowerCase() === chosenHost,
+  // A server older than `excludeProjectIds` still answers for hidden projects.
+  const shown =
+    chosenHost || hiddenProjects.size > 0
+      ? new Map(
+          [...held].map(([environmentId, page]) => [
+            environmentId,
+            {
+              ...page,
+              entries: page.entries.filter(
+                (entry) =>
+                  !hiddenProjects.has(
+                    pullRequestProjectKey({ environmentId, id: entry.projectId }),
+                  ),
               ),
+              errors: page.errors.filter(
+                (error) =>
+                  !hiddenProjects.has(
+                    pullRequestProjectKey({ environmentId, id: error.projectId }),
+                  ),
+              ),
+              answer: {
+                ...page.answer,
+                scopes: page.answer.scopes?.filter(
+                  (scope) =>
+                    !hiddenProjects.has(
+                      pullRequestProjectKey({ environmentId, id: scope.projectId }),
+                    ),
+                ),
+                trackers: chosenHost
+                  ? page.answer.trackers.filter(
+                      (tracker) => tracker.host.toLowerCase() === chosenHost,
+                    )
+                  : page.answer.trackers,
+              },
             },
-          },
-        ]),
-      )
-    : held;
+          ]),
+        )
+      : held;
   const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(shown, projects);
+  const filterScopes = issueFilterScopes(
+    shown,
+    projects.filter((project) => !hiddenProjects.has(pullRequestProjectKey(project))),
+  );
 
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),
@@ -284,6 +335,7 @@ export function IssuesPage() {
     const next: IssuesSearch = {
       who: merged.who ?? search.who,
       status: merged.status ?? search.status,
+      ...(merged.hideProjects?.length ? { hideProjects: merged.hideProjects } : {}),
       ...(merged.host ? { host: merged.host } : {}),
       q: merged.q || undefined,
       ...(merged.label?.length ? { label: merged.label } : {}),
@@ -367,7 +419,7 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = (entry: IssueRowTarget) => {
+  const selectEntry = (entry: Omit<IssueRowTarget, "host"> & { readonly host?: string }) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openIssue(rightPanelRef, entry);
     updateSearch({
@@ -411,9 +463,12 @@ export function IssuesPage() {
     search.selectedEnvironmentId,
   ]);
 
-  const closeSurface = (surface: RightPanelSurface) => {
+  const closeSurfaces = (surfaces: readonly RightPanelSurface[]) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
+    useRightPanelStore.getState().closeSurfaces(
+      rightPanelRef,
+      surfaces.map((surface) => surface.id),
+    );
     selectSurfaceInUrl(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, rightPanelRef),
     );
@@ -430,15 +485,20 @@ export function IssuesPage() {
     selectSurfaceInUrl(panelSurface);
   };
 
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
   const onRightPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen() || panelSurface === null) return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
     });
-    if (command !== "rightPanel.toggle") return;
+    if (command === "rightPanel.close" && !rightPanelState.isOpen) return;
+    if (command !== "rightPanel.toggle" && command !== "rightPanel.close") return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) toggleRightPanel();
+    if (event.repeat) return;
+    if (command === "rightPanel.close") {
+      if (!rightPanelTabsRef.current?.closeSelectedTabs()) closeSurfaces([panelSurface]);
+    } else toggleRightPanel();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the document right panel shortcut
@@ -462,9 +522,25 @@ export function IssuesPage() {
   ) : noneAnswered && list.error ? (
     <PullRequestsUnavailableState
       error={list.error}
-      onRetry={list.refresh}
+      onRetry={list.retry}
       refreshing={list.isPending}
     />
+  ) : everyProjectHidden ? (
+    <Empty>
+      <EmptyMedia variant="icon">
+        <IssueGlyph.issue />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>
+          <T>Every project is hidden</T>
+        </EmptyTitle>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" onClick={() => updateSearch({ hideProjects: undefined })}>
+          <T>Show all projects</T>
+        </Button>
+      </EmptyContent>
+    </Empty>
   ) : groups.length === 0 ? (
     <Empty>
       <EmptyMedia variant="icon">
@@ -488,7 +564,7 @@ export function IssuesPage() {
               <Var>{list.error}</Var> Showing the issues that loaded.
             </T>
           </span>
-          <Button size="xs" variant="outline" onClick={list.refresh}>
+          <Button size="xs" variant="outline" onClick={list.retry}>
             <T>Retry</T>
           </Button>
         </div>
@@ -498,13 +574,13 @@ export function IssuesPage() {
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
         return (
           <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
-            <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
-              <presentation.Icon aria-hidden className="size-3.5" />
-              {presentation.providerName}
-              {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                <span className="font-normal">· {group.tracker.host}</span>
-              ) : null}
-              <span className="font-normal">
+            <h2 className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-3 text-xs font-medium text-muted-foreground">
+              <presentation.Icon aria-hidden className="size-3.5 shrink-0" />
+              <span className="shrink-0">{presentation.providerName}</span>
+              <span className="min-w-0 truncate font-normal">
+                {presentation.providerName.toLowerCase() !== group.tracker.host
+                  ? `· ${group.tracker.host} `
+                  : null}
                 ·{" "}
                 {gt("{count, plural, one {{count} project} other {{count} projects}}", {
                   count: group.tracker.projectCount,
@@ -670,6 +746,9 @@ export function IssuesPage() {
                   onLabels={(label) => updateSearch({ label })}
                   assignee={search.assignee}
                   onAssignee={(assignee) => updateSearch({ assignee })}
+                  projects={filterProjects}
+                  hiddenProjects={hiddenProjects}
+                  onHiddenProjects={(hideProjects) => updateSearch({ hideProjects })}
                 />
                 <SavedViewsMenu
                   kind={ISSUE_SAVED_VIEWS}
@@ -679,6 +758,7 @@ export function IssuesPage() {
                     updateSearch({
                       who: view.who,
                       status: view.status,
+                      hideProjects: view.hideProjects,
                       host: view.host,
                       q: view.q,
                       label: view.label,
@@ -715,6 +795,7 @@ export function IssuesPage() {
         panelEnvironmentId !== null &&
         rightPanelRef !== null ? (
           <RightPanelTabs
+            ref={rightPanelTabsRef}
             mode="inline"
             open={rightPanelState.isOpen}
             keybindings={keybindings}
@@ -732,7 +813,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
             }}
-            onCloseSurface={closeSurface}
+            onCloseSurface={(surface) => closeSurfaces([surface])}
+            onCloseSelectedSurfaces={closeSurfaces}
             onCloseOtherSurfaces={(surface) => {
               useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
@@ -750,8 +832,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().closeAllSurfaces(rightPanelRef);
               selectSurfaceInUrl(null);
             }}
-            onMoveSurface={(surfaceId, toIndex) =>
-              useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex)
+            onMoveSurfaces={(surfaceIds, targetId) =>
+              useRightPanelStore.getState().moveSurfaces(rightPanelRef, surfaceIds, targetId)
             }
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}
@@ -770,44 +852,53 @@ export function IssuesPage() {
             pullRequestsAvailable={false}
             deviceAvailable={false}
           >
-            {renderedSurface.kind === "issue" ? (
-              <IssueDetailPanel
-                key={renderedSurface.id}
-                environmentId={panelEnvironmentId}
-                listEntry={panelListEntry}
-                reference={{
-                  projectId: renderedSurface.projectId as ProjectId,
-                  tracker: renderedSurface.tracker as IssueTrackerKind,
-                  ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
-                  scope: renderedSurface.scope,
-                  key: renderedSurface.key,
-                }}
-                onSelectPullRequest={(reference) => {
-                  useRightPanelStore.getState().openPullRequest(rightPanelRef, {
-                    projectId: reference.projectId,
-                    repository: reference.repository,
-                    number: reference.number,
-                    ...(reference.host === undefined ? {} : { host: reference.host }),
-                    environmentId: panelEnvironmentId,
-                  });
-                }}
-              />
-            ) : (
-              <PullRequestDetailPanel
-                key={renderedSurface.id}
-                getShortcutContext={getShortcutContext}
-                shortcutsEnabled={panelSurface?.id === renderedSurface.id}
-                environmentId={panelEnvironmentId}
-                reference={{
-                  projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
-                  repository: (renderedSurface as PullRequestSurface).repository,
-                  number: (renderedSurface as PullRequestSurface).number,
-                  ...((renderedSurface as PullRequestSurface).host
-                    ? { host: (renderedSurface as PullRequestSurface).host }
-                    : {}),
-                }}
-              />
-            )}
+            <PullRequestMarkdownPanelContext value={rightPanelRef}>
+              {renderedSurface.kind === "issue" ? (
+                <IssueDetailPanel
+                  key={`${panelEnvironmentId}:${renderedSurface.id}`}
+                  environmentId={panelEnvironmentId}
+                  listEntry={panelListEntry}
+                  reference={{
+                    projectId: renderedSurface.projectId as ProjectId,
+                    tracker: renderedSurface.tracker as IssueTrackerKind,
+                    ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
+                    scope: renderedSurface.scope,
+                    key: renderedSurface.key,
+                  }}
+                  onSelectPullRequest={(reference) => {
+                    useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                      projectId: reference.projectId,
+                      repository: reference.repository,
+                      number: reference.number,
+                      ...(reference.host === undefined ? {} : { host: reference.host }),
+                      environmentId: panelEnvironmentId,
+                    });
+                  }}
+                  onSelectIssue={({ host, ...reference }) =>
+                    selectEntry({
+                      ...reference,
+                      ...(host === undefined ? {} : { host }),
+                      environmentId: panelEnvironmentId,
+                    })
+                  }
+                />
+              ) : (
+                <PullRequestDetailPanel
+                  key={renderedSurface.id}
+                  getShortcutContext={getShortcutContext}
+                  shortcutsEnabled={panelSurface?.id === renderedSurface.id}
+                  environmentId={panelEnvironmentId}
+                  reference={{
+                    projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
+                    repository: (renderedSurface as PullRequestSurface).repository,
+                    number: (renderedSurface as PullRequestSurface).number,
+                    ...((renderedSurface as PullRequestSurface).host
+                      ? { host: (renderedSurface as PullRequestSurface).host }
+                      : {}),
+                  }}
+                />
+              )}
+            </PullRequestMarkdownPanelContext>
           </RightPanelTabs>
         ) : null}
       </div>

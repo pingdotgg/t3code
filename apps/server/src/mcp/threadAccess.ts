@@ -5,6 +5,7 @@ import type {
 import {
   CommandId,
   type EnvironmentId,
+  isRuntimeModeAbove,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -19,6 +20,7 @@ import {
   threadLinkCandidates,
   threadLinkRefs,
 } from "@t3tools/shared/threadLinks";
+import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
@@ -30,7 +32,10 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const delegatedTaskPrefix = "thread:delegated-task:";
 
+const launchHash = /^[0-9a-f]{64}$/;
+
 const suggestedThreadId = (threadId: ThreadId) => {
+  if (launchHash.test(threadId)) return ThreadId.make(`mcp:launch:${threadId}`);
   if (!threadId.startsWith(delegatedTaskPrefix)) return ThreadId.make(`mcp:${threadId}`);
   const rest = threadId.slice(delegatedTaskPrefix.length);
   // encodeURIComponent throws on lone surrogates, which a JSON string can carry.
@@ -54,7 +59,7 @@ const candidateThreadIds = (threadId: ThreadId, environmentId: EnvironmentId) =>
 };
 
 /**
- * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, and thread links.
+ * Agents paste bare uuids for `mcp:<uuid>` threads, bare hashes for `mcp:launch:<hash>` threads, unencoded delegated-task ids, and thread links.
  * The id is never rewritten, so permission checks keyed on it still hold; the miss
  * only names a live thread the caller could read by its full id. Ids from another
  * machine miss here too. The link hint is static: listing links probes peers.
@@ -199,10 +204,7 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
-    (shell.pendingBackgroundTasks?.some(
-      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
-    ) ??
-      false));
+    hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, providerInstanceId));
 
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
 export function assertLiveCaller({ caller, scope }: Caller) {
@@ -221,6 +223,23 @@ export const assertFullAccess = (context: Caller, message: string) =>
   context.limits.runtimeMode === "full-access" && context.limits.interactionMode === "default"
     ? Effect.void
     : Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message }));
+
+/**
+ * For work whose definition picks its own modes: the caller must hold the broadest modes a
+ * thread may run in here, full access or an administrator's ceiling below it.
+ */
+export const assertBroadestAccess = (context: Caller, what: string) => {
+  const broadest = context.scope.runtimeModeCeiling ?? "full-access";
+  return !isRuntimeModeAbove(broadest, context.limits.runtimeMode) &&
+    context.limits.interactionMode === "default"
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `Only a caller with ${broadest}/default access can ${what}, because that work picks its own modes. This caller is limited to ${context.limits.runtimeMode}/${context.limits.interactionMode}.`,
+        }),
+      );
+};
 
 export const resolveProjectId = (context: Caller, projectId: ProjectId | undefined) =>
   projectId !== undefined

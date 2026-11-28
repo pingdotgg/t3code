@@ -4,7 +4,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
-  downloadEnvironmentSpeechModel,
+  installEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   type EnvironmentSpeechModel,
 } from "@t3tools/contracts";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useEffect, useState } from "react";
 import { Platform, Text as NativeText, View } from "react-native";
@@ -98,11 +99,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
         onConfirm: () =>
           void run(
             gt("Could not download the model"),
-            async () => {
-              await runSpeech(downloadEnvironmentSpeechModel(connection, model.id));
-              if (model.id !== status.modelId)
-                await runSpeech(selectEnvironmentSpeechModel(connection, model.id));
-            },
+            () => runSpeech(installEnvironmentSpeechModel(connection, model.id)),
             model.id,
           ),
       });
@@ -252,7 +249,10 @@ export function VoiceModelRow(props: {
         onPress={() => voice.select(model)}
       />
     );
-  const progress = model.downloaded === undefined ? undefined : model.downloaded / model.size;
+  const percent =
+    model.downloaded === undefined
+      ? undefined
+      : speechModelDownloadPercent(model.downloaded, model.size);
   if (isDownloading(model) || voice.requested === model.id)
     return (
       <View className={separated ? "border-t border-border-subtle" : ""}>
@@ -263,7 +263,7 @@ export function VoiceModelRow(props: {
             model.state === "verifying"
               ? gt("Verifying download…")
               : gt("{percent}% downloaded · Tap to cancel", {
-                  percent: Math.round((progress ?? 0) * 100),
+                  percent: percent ?? 0,
                 })
           }
           disabled={!voice.canManage || voice.busy}
@@ -271,7 +271,7 @@ export function VoiceModelRow(props: {
         />
         <Progress
           className="bg-grouped-card px-4 pb-3"
-          value={model.state === "verifying" ? undefined : progress}
+          percent={model.state === "verifying" ? undefined : percent}
           label={gt("{model} download progress", { model: model.name })}
         />
       </View>
@@ -322,8 +322,6 @@ export function LocalModelChoice(props: {
 
   const active = status.state === "missing-model" ? null : status;
   const pending = voice.models.find(isDownloading);
-  const progress =
-    pending?.downloaded === undefined ? undefined : pending.downloaded / pending.size;
   return (
     <ListRow
       label={active?.model ?? gt("Local model")}
@@ -333,7 +331,7 @@ export function LocalModelChoice(props: {
             ? gt("Verifying {model}…", { model: pending.name })
             : gt("Downloading {model} · {percent}%", {
                 model: pending.name,
-                percent: Math.round((progress ?? 0) * 100),
+                percent: speechModelDownloadPercent(pending.downloaded ?? 0, pending.size),
               })
           : active
             ? gt("Local model · {size}", { size: formatBytes(active.size) })

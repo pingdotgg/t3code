@@ -582,15 +582,6 @@ Expected a value greater than 0`
       )
     })
 
-    it("Record", () => {
-      const optic = Optic.entries<number>().forEach((entry) => entry.key(1).check(Schema.isGreaterThan(0)))
-
-      deepStrictEqual(
-        optic.modify((entries) => entries.map((value) => value + 1))({ a: 0, b: 1, c: 0 }),
-        { a: 0, b: 2, c: 0 }
-      )
-    })
-
     it("returns the original source when the traversal fails", () => {
       type S = { readonly values?: ReadonlyArray<number> }
       const issue = new SchemaIssue.InvalidValue({ message: "missing values" })

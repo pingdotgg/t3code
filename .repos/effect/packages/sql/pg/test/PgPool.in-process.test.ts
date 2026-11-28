@@ -1,13 +1,13 @@
 import { PgClient, PgPool } from "@effect/sql-pg"
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Effect, Fiber, Latch, Option, Queue, References, Tracer } from "effect"
+import { Cause, Clock, Effect, Fiber, Latch, Option, Queue, Redacted, References, Tracer } from "effect"
 import type * as Duration from "effect/Duration"
 import * as Reactivity from "effect/reactivity/Reactivity"
 import type * as Scope from "effect/Scope"
 import type { SqlError } from "effect/sql/SqlError"
 import * as Statement from "effect/sql/Statement"
 import * as TestClock from "effect/testing/TestClock"
-import { Duplex } from "node:stream"
+import { Duplex, type DuplexOptions } from "node:stream"
 
 const backendMessage = (tag: string, payload: Buffer): Buffer => {
   const length = Buffer.allocUnsafe(4)
@@ -227,8 +227,79 @@ describe("PgPool connection spans", () => {
         return span
       }
     })
-    return { tracer, named: (name: string) => spans.filter((span) => span.name === name) }
+    return { tracer, spans, named: (name: string) => spans.filter((span) => span.name === name) }
   }
+
+  it.effect.each([
+    {
+      name: "pooled URL-only",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres://postgres:postgres@127.0.0.1:55415/app") },
+      expected: ["app", "app", "127.0.0.1", 55415]
+    },
+    {
+      name: "single-connection URL-only",
+      make: PgClient.makeClient,
+      config: { url: Redacted.make("postgres://postgres:postgres@127.0.0.1:55415/app") },
+      expected: ["app", "app", "127.0.0.1", 55415]
+    },
+    {
+      name: "URL query parameters override authority and path",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres://test@original:5433/original?host=query&port=55416&dbname=query_db") },
+      expected: ["query_db", "query_db", "query", 55416]
+    },
+    {
+      name: "explicit options override URL query parameters",
+      make: PgClient.make,
+      config: {
+        url: Redacted.make("postgres://test@original:5433/original?host=query&port=55416&dbname=query_db"),
+        host: "explicit",
+        port: 55417,
+        database: "explicit_db"
+      },
+      expected: ["explicit_db", "explicit_db", "explicit", 55417]
+    },
+    {
+      name: "omitted database defaults to URL username",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres:///?user=app_user") },
+      expected: ["app_user", "app_user", "localhost", 5432]
+    }
+  ])("query span metadata: $name", ({ config, expected, make }) => {
+    const { spans, tracer } = recording()
+    return Effect.gen(function*() {
+      const sql = yield* make({
+        ...config,
+        prepare: false,
+        stream: () => {
+          let startup = true
+          const socket = new Duplex({
+            read() {},
+            write(chunk: Buffer, _encoding, callback) {
+              if (startup) {
+                startup = false
+                queueMicrotask(() => socket.push(ready))
+              } else if (chunk[0] === 0x50) {
+                queueMicrotask(() => socket.push(emptyQueryResult))
+              }
+              callback()
+            }
+          })
+          return socket
+        }
+      })
+      yield* sql`SELECT 1`
+      const span = spans.find((span) => span.attributes.has("db.system.name"))!
+      assert.ok(span)
+      assert.deepStrictEqual([
+        span.name,
+        span.attributes.get("db.namespace"),
+        span.attributes.get("server.address"),
+        span.attributes.get("server.port")
+      ], expected)
+    }).pipe(Effect.withTracer(tracer), Effect.provide(Reactivity.layer))
+  })
 
   const traced = <A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer, propagate: boolean) =>
     effect.pipe(Effect.withTracer(tracer), Effect.provideService(Statement.SpanPropagationEnabled, propagate))
@@ -419,6 +490,55 @@ describe("PgClient failed transaction cleanup", () => {
       Effect.scoped,
       Effect.provide(Reactivity.layer)
     ))
+
+  it.effect("retires a session left in a pin-owned transaction without retiring closed or caller-owned ones", () =>
+    Effect.scoped(Effect.gen(function*() {
+      let opened = 0
+      let status = "I"
+      const pool = yield* PgPool.make({
+        username: "test",
+        maxConnections: 1,
+        prepare: false,
+        stream: () => {
+          opened++
+          status = "I"
+          let startup = true
+          const socket = new Duplex({
+            read() {},
+            write(chunk: Buffer, _encoding, callback) {
+              if (startup) {
+                startup = false
+                queueMicrotask(() => socket.push(ready))
+              } else if (chunk[0] === 0x50) {
+                status = chunk.includes("BEGIN") ? "T" : "I"
+                queueMicrotask(() => socket.push(completed(status === "T" ? "BEGIN" : "COMMIT", status)))
+              }
+              callback()
+            }
+          })
+          return socket
+        }
+      })
+
+      yield* Effect.scoped(
+        Effect.flatMap(pool.reserve, (conn) => Effect.andThen(conn.query("BEGIN"), conn.query("COMMIT")))
+      )
+
+      // Caller-owned transaction: status stays T and COMMIT fails if the pin retired the session.
+      yield* Effect.scoped(Effect.gen(function*() {
+        const conn = yield* pool.get
+        yield* conn.query("BEGIN")
+        yield* Effect.scoped(conn.pin)
+        assert.strictEqual(status, "T")
+        yield* conn.query("COMMIT")
+      }))
+      assert.strictEqual(opened, 1)
+
+      yield* Effect.scoped(Effect.flatMap(pool.reserve, (conn) => conn.query("BEGIN")))
+      yield* Effect.scoped(pool.get)
+      assert.strictEqual(opened, 2)
+      assert.strictEqual(status, "I")
+    })))
 })
 
 const readyStream = () => {
@@ -465,4 +585,135 @@ describe("pool stats", () => {
         assert.deepStrictEqual(yield* sql.poolStats, leased)
       }))
     })).pipe(Effect.provide(Reactivity.layer)))
+})
+
+describe("PgPool transport capacity", () => {
+  const copyInResponse = backendMessage("G", Buffer.alloc(3))
+
+  // A backend that completes startup and answers every Parse with `response`.
+  const backend = (response: Buffer, options?: Pick<DuplexOptions, "destroy">) => {
+    let startup = true
+    const socket: Duplex = new Duplex({
+      ...options,
+      read() {},
+      write(chunk: Buffer, _encoding, callback) {
+        if (startup) {
+          startup = false
+          queueMicrotask(() => socket.push(ready))
+        } else if (chunk[0] === 0x50) {
+          queueMicrotask(() => socket.push(response))
+        }
+        callback()
+      }
+    })
+    return socket
+  }
+
+  it.effect.each([
+    {
+      name: "pool.use",
+      runFirst: (pool: PgPool.PgPool) => pool.use((conn) => conn.query("SELECT 1", [], false))
+    },
+    {
+      name: "held pool.get",
+      runFirst: (pool: PgPool.PgPool) => Effect.flatMap(pool.get, (conn) => conn.query("SELECT 1", [], false))
+    }
+  ])("keeps physical pool capacity occupied until a retired transport closes ($name)", ({ runFirst }) => {
+    let opened = 0
+    let firstSocket: Duplex | undefined
+    let finishDestroy: (() => void) | undefined
+    const releaseClose = () => {
+      const finish = finishDestroy
+      finishDestroy = undefined
+      finish?.()
+    }
+
+    return Effect.gen(function*() {
+      const pool = yield* PgPool.make({
+        username: "test",
+        maxConnections: 1,
+        prepare: false,
+        stream: () =>
+          ++opened > 1 ? backend(emptyQueryResult) : (firstSocket = backend(copyInResponse, {
+            destroy(error, callback) {
+              finishDestroy = () => callback(error)
+            }
+          }))
+      })
+
+      const failed = yield* Effect.flip(runFirst(pool))
+      assert.strictEqual(failed.reason._tag, "ConnectionError")
+
+      const successor = yield* Effect.forkChild(pool.use((conn) => conn.query("SELECT 2", [], false)))
+      yield* Effect.sleep("20 millis").pipe(TestClock.withLive)
+
+      assert.isTrue(firstSocket?.destroyed)
+      assert.isFalse(firstSocket?.closed)
+      assert.strictEqual(opened, 1)
+
+      releaseClose()
+      yield* Fiber.join(successor)
+      assert.strictEqual(opened, 2)
+    }).pipe(Effect.ensuring(Effect.sync(releaseClose)))
+  })
+
+  it.live.each([
+    { name: "pool.get", checkOut: (pool: PgPool.PgPool): Effect.Effect<unknown, SqlError, Scope.Scope> => pool.get },
+    { name: "pool.use", checkOut: (pool: PgPool.PgPool) => pool.use(() => Effect.void) }
+  ])(
+    "does not strand an expired lease when a TTL checkout is interrupted at the expiry check ($name)",
+    ({ checkOut }) =>
+      Effect.gen(function*() {
+        let opened = 0
+        let onExpiryCheck: (() => void) | undefined
+        const baseClock = yield* Clock.Clock
+        const hookedClock: Clock.Clock = Object.assign(Object.create(baseClock), {
+          currentTimeMillisUnsafe() {
+            const hook = onExpiryCheck
+            onExpiryCheck = undefined
+            hook?.()
+            return baseClock.currentTimeMillisUnsafe()
+          }
+        })
+        const pool = yield* PgPool.make({
+          username: "test",
+          maxConnections: 1,
+          connectionTTL: 0,
+          prepare: false,
+          stream: () => {
+            opened++
+            return backend(emptyQueryResult)
+          }
+        }).pipe(Effect.provideService(Clock.Clock, hookedClock))
+
+        yield* pool.use((conn) => conn.query("SELECT 1", [], false))
+
+        let interruptedAtExpiry = false
+        let checkout!: Fiber.Fiber<unknown, unknown>
+        onExpiryCheck = () => {
+          interruptedAtExpiry = true
+          checkout.interruptUnsafe()
+        }
+        checkout = yield* Effect.forkChild(checkOut(pool))
+        yield* Fiber.await(checkout)
+        assert.isTrue(interruptedAtExpiry)
+
+        yield* pool.use((conn) => conn.query("SELECT 2", [], false)).pipe(Effect.timeout("250 millis"))
+        assert.strictEqual(opened, 2)
+      })
+  )
+
+  it.live("closes a pool.use callback's scope with the callback on a TTL pool", () =>
+    Effect.gen(function*() {
+      const pool = yield* PgPool.make({
+        username: "test",
+        maxConnections: 1,
+        connectionTTL: "1 day",
+        prepare: false,
+        stream: () => backend(emptyQueryResult)
+      })
+      // Left to the test's scope, the pin would block the next statement.
+      yield* pool.use((conn) => conn.pin)
+      yield* pool.use((conn) => conn.query("SELECT 1", [], false)).pipe(Effect.timeout("250 millis"))
+    }))
 })

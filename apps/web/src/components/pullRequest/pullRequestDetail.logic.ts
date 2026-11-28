@@ -5,8 +5,10 @@ import {
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
-import type { Nodes as MdastNodes } from "mdast";
-import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "hast";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
+
+import { markdownHtmlComments, markdownTree } from "~/markdown/wordsHast";
 import {
   sourceControlClients,
   type ChangeRequestTerminology,
@@ -203,9 +205,9 @@ export function pullRequestPanelContext(
   },
 ): "page" | "thread" {
   if (thread.projectId !== surface.projectId) return "page";
+  const repository = surface.repository.toLowerCase();
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
-    const repository = surface.repository.toLowerCase();
     const target =
       surface.host === undefined
         ? null
@@ -220,7 +222,7 @@ export function pullRequestPanelContext(
   }
   const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
   return legacy !== null &&
-    legacy.repository === surface.repository &&
+    legacy.repository.toLowerCase() === repository &&
     legacy.number === surface.number
     ? "thread"
     : "page";
@@ -693,27 +695,18 @@ export function pagePullRequestConversationItems(
 function readableBody(raw: string): string | null {
   if (visibleBody(raw) === null) return null;
   const body = raw.replace(/\r\n?/gu, "\n");
-  const cuts: Array<[number, number]> = [];
-  const visit = (node: MdastNodes) => {
-    if (node.type === "html" && node.position?.start.offset !== undefined) {
-      cuts.push([node.position.start.offset, node.position.end.offset ?? body.length]);
-    }
-    if ("children" in node) for (const child of node.children) visit(child);
-  };
-  visit(fromMarkdown(body));
   let readable = "";
   let from = 0;
-  for (const [start, end] of cuts) {
+  for (const { start, end } of markdownHtmlComments(body)) {
+    // A comment opened inside another one ends with it.
+    if (start < from) continue;
     readable += body.slice(from, start);
-    // An HTML block can carry markup around its comment; only the comment itself is hidden.
-    const html = body.slice(start, end).replace(/<!--[\s\S]*?(?:-->|$)/gu, "");
     // A line that was all comment is dropped rather than left as a blank one.
     const ownLine = /(?:^|\n)[ \t>]*$/u.test(readable) && /^[ \t]*(?:\n|$)/u.test(body.slice(end));
-    if (ownLine && html.trim() === "") {
+    if (ownLine) {
       readable = readable.replace(/[ \t>]*$/u, "");
       from = end + (/^[ \t]*\n/u.exec(body.slice(end))?.[0].length ?? 0);
     } else {
-      readable += html;
       from = end;
     }
   }
@@ -740,24 +733,36 @@ const LINK_EXCERPT_LENGTH = 280;
 /** The words of a markdown body, without markup, HTML or images, for a short preview. */
 function markdownExcerpt(body: string): string | null {
   const words: string[] = [];
-  const visit = (node: MdastNodes) => {
-    if (node.type === "text" || node.type === "inlineCode") words.push(node.value);
-    if (node.type !== "code" && "children" in node) for (const child of node.children) visit(child);
+  const visit = (node: Nodes) => {
+    if (node.type === "text") words.push(node.value);
+    if (node.type === "element" && node.tagName === "pre") return;
+    // Footnote markers and the footnote list are not part of the comment's prose.
+    if (
+      node.type === "element" &&
+      (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+    )
+      return;
+    if (node.type === "element" && node.tagName === "blockquote") {
+      const paragraph = node.children.find((child) => child.type === "element");
+      const first = paragraph?.tagName === "p" ? paragraph.children[0] : undefined;
+      if (first?.type === "text") {
+        const marker = GITHUB_ALERT_MARKER.exec(first.value);
+        if (marker && (/[\r\n]$/.test(marker[0]) || paragraph?.children.length === 1)) {
+          first.value = first.value.slice(marker[0].length);
+        }
+      }
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
   };
-  visit(fromMarkdown(body));
-  // GitHub's alert marker (`> [!NOTE]`) parses as text but reads as markup.
-  const text = words
-    .join(" ")
-    .replace(/\[!(?:note|tip|important|warning|caution)\]/giu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+  visit(markdownTree(body, { skipHtml: true }));
+  const text = words.join(" ").replace(/\s+/gu, " ").trim();
   if (text === "") return null;
   if (text.length <= LINK_EXCERPT_LENGTH) return text;
   let end = LINK_EXCERPT_LENGTH - 1;
   // Never end on a lone high surrogate.
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end).trimEnd()}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
@@ -765,8 +770,8 @@ export function pullRequestLinkSubject(
   url: string,
   activity: Pick<PullRequestActivity, "comments" | "reviewThreads" | "commits">,
 ): PullRequestLinkSubject | null {
-  const oid = pullRequestLinkCommit(url)?.toLowerCase();
-  if (oid !== undefined) {
+  const oid = pullRequestLinkCommit(url);
+  if (oid !== null) {
     const commit = activity.commits.find((candidate) => candidate.oid.toLowerCase() === oid);
     return commit === undefined ? null : { kind: "commit", commit };
   }
@@ -937,7 +942,7 @@ function bounded(value: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${trimmed.slice(0, end)}...`;
+  return `${trimmed.slice(0, end).trimEnd()}...`;
 }
 
 function boundedField(value: string): string {
@@ -1072,8 +1077,7 @@ export function buildFixFindingsHandoff(input: {
   readonly inThisThread?: boolean;
 }): FixFindingsHandoff {
   const threads = input.reviewThreads.filter(
-    (thread) =>
-      !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
+    (thread) => !thread.isResolved && reviewThreadText(thread) !== "",
   );
   const attached = new Set(
     input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
@@ -1085,7 +1089,7 @@ export function buildFixFindingsHandoff(input: {
         !attached.has(comment.id),
     )
     .flatMap((comment) => {
-      const body = visibleBody(comment.body);
+      const body = readableBody(comment.body);
       if (body === null) return [];
       const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
@@ -1193,7 +1197,7 @@ export function buildFixFindingHandoff(input: {
   }
   if (input.finding.kind === "comment") {
     const comment = input.finding.comment;
-    const body = visibleBody(comment.body) ?? "";
+    const body = readableBody(comment.body) ?? "";
     const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
     return {
       prompt: [
@@ -1550,16 +1554,37 @@ const TOOL_NOISE = [
 
 const FAILURE_DETAIL_MAX_LENGTH = 320;
 
+/**
+ * The head a reader was first shown. A background refresh does not move it, so a merge or review
+ * keeps applying to the commits they read until they load the newer ones.
+ */
+export function seenPullRequestHead(
+  seen: { readonly key: string; readonly sha: string | undefined } | null,
+  key: string,
+  settledHead: string | undefined,
+) {
+  return seen !== null && seen.key === key && (seen.sha !== undefined || settledHead === undefined)
+    ? seen
+    : { key, sha: settledHead };
+}
+
+/** A merge lands the head the reader was shown, so it refuses a head that moved since. */
+export function mergeHeadPin(action: PullRequestAction, headSha: string | undefined) {
+  return (action === "merge" || action === "enable-auto-merge") && headSha !== undefined
+    ? { expectedHeadSha: headSha }
+    : {};
+}
+
 export function readableFailure(failure: unknown, hint: string): string {
   const raw =
     failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "";
   const detail = raw.replace(OPERATION_PREFIX, "").trim();
   if (detail.length === 0 || TOOL_NOISE.some((pattern) => pattern.test(detail))) return hint;
-  const bounded =
-    detail.length <= FAILURE_DETAIL_MAX_LENGTH
-      ? detail
-      : `${detail.slice(0, FAILURE_DETAIL_MAX_LENGTH - 1)}…`;
-  return bounded;
+  if (detail.length <= FAILURE_DETAIL_MAX_LENGTH) return detail;
+  let end = FAILURE_DETAIL_MAX_LENGTH - 1;
+  const last = detail.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${detail.slice(0, end).trimEnd()}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);
@@ -1612,7 +1637,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "delete-branch": false,
-  "approve-workflows": true,
+  "approve-workflows": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
@@ -1736,4 +1761,37 @@ export function resolveDisplayedPullRequestDetail(input: {
   return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
     ? input.cached
     : null;
+}
+
+const OBSERVATION_STAMPS = new Set(["observedAt", "readAt"]);
+
+/**
+ * Whether two reads of a pull request differ only in when they were observed. Every refresh
+ * restamps those, so the panel keeps the detail it shows instead of re-rendering its whole tree.
+ */
+export function samePullRequestReadExceptStamps(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => samePullRequestReadExceptStamps(item, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = (record: Record<string, unknown>) =>
+    Object.keys(record).filter((key) => !OBSERVATION_STAMPS.has(key));
+  const leftKeys = keys(leftRecord);
+  return (
+    leftKeys.length === keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        samePullRequestReadExceptStamps(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

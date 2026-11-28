@@ -15,8 +15,7 @@ import { ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
  */
 export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean }) {
   const gt = useGT();
-  const { prepared, grantId, cloudProvider, cloudModel } = useVoiceTranscriptionDestination();
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const session = useRetainedVoiceInputSession(useVoiceTranscriptionDestination());
   const { state, target, recordingStartedAt } = useVoiceInputSessionSnapshot(session);
   const presented = useVoiceOwnerPresented(target?.ownerKey ?? null);
   const { level } = useVoiceInputSessionActivity(
@@ -27,7 +26,7 @@ export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-100 flex justify-center px-4">
-      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5">
+      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5 [-webkit-app-region:no-drag]">
         <Button
           type="button"
           size="sm-pill"

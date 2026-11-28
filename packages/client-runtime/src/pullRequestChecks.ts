@@ -10,13 +10,20 @@ export function resolvePullRequestDetailChecks(
     detail.observedAt !== undefined && checks.observedAt !== undefined
       ? checks.observedAt >= detail.observedAt
       : checksAreNewer;
-  return newer
-    ? {
-        ...detail,
-        state: detail.state === "merged" ? "merged" : checks.state,
-        checks: checks.checks,
-      }
-    : detail;
+  if (!newer) return detail;
+  // Older servers omit the count. Their check rows can still confirm that nothing needs approval.
+  const workflowApprovalsRequired =
+    checks.workflowApprovalsRequired ??
+    (detail.workflowApprovalsRequired !== undefined &&
+    !checks.checks.some((check) => check.status === "action-required")
+      ? 0
+      : detail.workflowApprovalsRequired);
+  return {
+    ...detail,
+    state: detail.state === "merged" ? "merged" : checks.state,
+    checks: checks.checks,
+    ...(workflowApprovalsRequired === undefined ? {} : { workflowApprovalsRequired }),
+  };
 }
 
 /** Checks still running are worth a tighter poll than a settled head. */

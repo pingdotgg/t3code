@@ -149,7 +149,7 @@ export function pullRequestChecksSummary(
   if (required)
     return {
       label: resolve(
-        msg("{count, plural, one {{count} need attention} other {{count} need attention}}", {
+        msg("{count, plural, one {{count} needs attention} other {{count} need attention}}", {
           count: required,
         }),
       ),
@@ -225,17 +225,20 @@ export function pullRequestReviewSummary(
     if (!previous || Date.parse(review.createdAt) >= Date.parse(previous.createdAt))
       latest.set(key, { ...review, reviewState: state });
   }
-  const reviews = [
-    ...[...latest.values()].filter((review) => review.reviewState !== "DISMISSED"),
-    ...[...comments.entries()].filter(([key]) => !latest.has(key)).map(([, review]) => review),
-  ];
-  const requested = reviews.filter((review) => review.reviewState === "CHANGES_REQUESTED");
   const newestCommit = Math.max(
     0,
     ...(activity?.commits.map((commit) => Date.parse(commit.committedDate)) ?? []),
   );
+  const reviews = [
+    ...[...latest.values()].filter((review) => review.reviewState !== "DISMISSED"),
+    ...[...comments.entries()].filter(([key]) => !latest.has(key)).map(([, review]) => review),
+  ].map((review) => ({
+    ...review,
+    outdated: review.reviewState === "APPROVED" && Date.parse(review.createdAt) < newestCommit,
+  }));
+  const requested = reviews.filter((review) => review.reviewState === "CHANGES_REQUESTED");
   const approved = reviews.filter(
-    (review) => review.reviewState === "APPROVED" && Date.parse(review.createdAt) >= newestCommit,
+    (review) => review.reviewState === "APPROVED" && !review.outdated,
   );
   if (requested.length)
     return {

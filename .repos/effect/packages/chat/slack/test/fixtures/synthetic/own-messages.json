@@ -1,0 +1,444 @@
+{
+  "synthetic": "Hand-written, not read back from Slack: the test workspace was not available for EFF-3750. The shapes follow the recorded rich_text in ../recorded and Slack's rich_text docs. Replace each with a recording when one is made.",
+  "case": "Stage 0 fixture 13: the bot's own posts read back, for the constructs and message kinds the recordings lack (strike, quotes, lists, named links, broadcasts, user groups, emoji, buttons, file-only, literal Markdown characters, code span padding).",
+  "cases": [
+    {
+      "name": "strike, bold italic and a code span holding a backtick",
+      "markdown": "~~gone~~ ***both*** ``a ` b``",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000100",
+        "text": "~~gone~~ ***both*** ``a ` b``",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "gone",
+                    "style": {
+                      "strike": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "text",
+                    "text": "both",
+                    "style": {
+                      "bold": true,
+                      "italic": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "text",
+                    "text": "a ` b",
+                    "style": {
+                      "code": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a quote over two lines with a mention",
+      "markdown": "> quoted <@U0CCLMD4S1L>\n> second line",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000200",
+        "text": "&gt; quoted <@U0CCLMD4S1L>\n&gt; second line",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_quote",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "quoted "
+                  },
+                  {
+                    "type": "user",
+                    "user_id": "U0CCLMD4S1L"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\nsecond line"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a bullet list with a nested item, then an ordered list from 3",
+      "markdown": "- one\n  - nested\n- two\n3. three\n4. four",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000300",
+        "text": "- one\n  - nested\n- two\n3. three\n4. four",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_list",
+                "style": "bullet",
+                "indent": 0,
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "one"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "rich_text_list",
+                "style": "bullet",
+                "indent": 1,
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "nested"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "rich_text_list",
+                "style": "bullet",
+                "indent": 0,
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "two"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "rich_text_list",
+                "style": "ordered",
+                "indent": 0,
+                "offset": 2,
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "three"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "four"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a named link, a broadcast, a user group, a toned emoji and a custom one",
+      "markdown": "see [the docs](https://effect.website) <!here> <!subteam^S0123ABC> 👍🏼 :party-parrot:",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000400",
+        "text": "see &lt;https://effect.website|the docs&gt; <!here> <!subteam^S0123ABC> :+1::skin-tone-3: :party-parrot:",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "see "
+                  },
+                  {
+                    "type": "link",
+                    "url": "https://effect.website",
+                    "text": "the docs"
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "broadcast",
+                    "range": "here"
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "usergroup",
+                    "usergroup_id": "S0123ABC"
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "emoji",
+                    "name": "+1",
+                    "unicode": "1f44d-1f3fc",
+                    "skin_tone": 3
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "emoji",
+                    "name": "party-parrot"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "with buttons: the actions block adds nothing to text",
+      "markdown": "Pick one",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000500",
+        "text": "Pick one",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "Pick one"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "actions",
+            "block_id": "act",
+            "elements": [
+              {
+                "type": "button",
+                "action_id": "a1",
+                "value": "yes",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Approve"
+                }
+              },
+              {
+                "type": "button",
+                "action_id": "a2",
+                "value": "no",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Deny"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "file-only: the placeholder is the escaped file names",
+      "markdown": "report.pdf, data.csv",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000600",
+        "text": "report.pdf, data.csv",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "report.pdf, data.csv"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "files": [
+          {
+            "id": "F0SYN00001",
+            "name": "report.pdf",
+            "title": "report.pdf",
+            "mimetype": "application/pdf",
+            "size": 1024,
+            "url_private": "https://files.slack.com/files-pri/T05479Z6JBW-F0SYN00001/report.pdf"
+          },
+          {
+            "id": "F0SYN00002",
+            "name": "data.csv",
+            "title": "data.csv",
+            "mimetype": "text/csv",
+            "size": 12,
+            "url_private": "https://files.slack.com/files-pri/T05479Z6JBW-F0SYN00002/data.csv"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Markdown characters a text element holds as literals",
+      "markdown": "\\*not italic\\*, \\`not code\\`, \\~not struck\\~, \\[not\\](a link), snake_case, \\_edge\\_, C:\\dir\\\\\\*\n\\# not a heading\n\\- not a list\n1\\. not ordered\n\\> not a quote\n**2 \\* 3**",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000700",
+        "text": "*not italic*, `not code`, ~not struck~, [not](a link), snake_case, _edge_, C:\\dir\\*\n# not a heading\n- not a list\n1. not ordered\n&gt; not a quote\n*2 * 3*",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "*not italic*, `not code`, ~not struck~, [not](a link), snake_case, _edge_, C:\\dir\\*\n# not a heading\n- not a list\n1. not ordered\n> not a quote\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "2 * 3",
+                    "style": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a code span with a space at each end",
+      "markdown": "pad `  foo  ` end",
+      "message": {
+        "type": "message",
+        "user": "U0CCLMD4S1L",
+        "bot_id": "B0CCHBHDK7X",
+        "app_id": "A0CCHBHDK7X",
+        "team": "T05479Z6JBW",
+        "ts": "1794600000.000800",
+        "text": "pad ` foo ` end",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "syn",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "pad "
+                  },
+                  {
+                    "type": "text",
+                    "text": " foo ",
+                    "style": {
+                      "code": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " end"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

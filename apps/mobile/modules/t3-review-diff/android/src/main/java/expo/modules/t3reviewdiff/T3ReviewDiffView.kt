@@ -664,7 +664,10 @@ internal data class DiffStyle(
   val fileHeaderMetaFontSizePx: Float,
   val fileHeaderMetaFontWeight: String,
   val fileHeaderSubtextFontSizePx: Float,
-  val fileHeaderSubtextFontWeight: String
+  val fileHeaderSubtextFontWeight: String,
+  val codeFontFamily: String,
+  val uiFontFamily: String,
+  val uiBoldFontFamily: String
 ) {
   companion object {
     fun defaults(density: Float): DiffStyle = DiffStyle(
@@ -687,6 +690,9 @@ internal data class DiffStyle(
       fileHeaderMetaFontWeight = "semibold",
       fileHeaderSubtextFontSizePx = 11f * density,
       fileHeaderSubtextFontWeight = "medium",
+      codeFontFamily = "monospace",
+      uiFontFamily = "sans-serif",
+      uiBoldFontFamily = "sans-serif",
     )
 
     fun fromJson(value: String, fallback: DiffStyle, density: Float): DiffStyle = try {
@@ -743,6 +749,9 @@ internal data class DiffStyle(
           "fileHeaderSubtextFontWeight",
           fallback.fileHeaderSubtextFontWeight,
         ),
+        codeFontFamily = json.optString("codeFontFamily", fallback.codeFontFamily),
+        uiFontFamily = json.optString("uiFontFamily", fallback.uiFontFamily),
+        uiBoldFontFamily = json.optString("uiBoldFontFamily", fallback.uiBoldFontFamily),
       )
     } catch (_: Exception) {
       fallback
@@ -766,7 +775,7 @@ private class DiffCanvasView(context: Context) : View(context) {
         rowHitAt(event.y)?.let { hit ->
           val target = if (
             hit.row.kind == "file" &&
-            drawing.fileHeaderCheckboxRect(
+            drawing.fileHeaderCheckboxHitRect(
               hit.top,
               hit.bottom,
               width,
@@ -854,6 +863,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
+      drawing.applyFonts(value)
       rebuildOffsets()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
@@ -1314,12 +1324,13 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
+      // Source files hide the change bar (width 0); the selection marker still needs to show.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
         0f,
         top.toFloat(),
-        style.changeBarWidthPx,
+        maxOf(style.changeBarWidthPx, 4f * density),
         bottom.toFloat()
       )
     }
@@ -1329,9 +1340,10 @@ private class DiffCanvasView(context: Context) : View(context) {
     val firstLineBottom = top + lines.firstHeight(style.rowHeightPx.toInt())
     drawScrollableCode(canvas, top, bottom) { codeX ->
       drawing.configureCodePaint(theme.text, 0, style)
-      drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row, tokensByRowId[row.id], codeX, baseline, style, lines)
+      val tokens = tokensByRowId[row.id]
+      drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)

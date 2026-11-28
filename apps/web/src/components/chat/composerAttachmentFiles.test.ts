@@ -13,6 +13,7 @@ import {
   composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  imagesToAttachBesidePastedText,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
@@ -119,6 +120,34 @@ describe("composer attachment files", () => {
     expect(
       shouldHandleComposerAttachmentPaste({ files: [image], plainText: "Image caption" }),
     ).toBe(true);
+  });
+
+  it("leaves a Word image-and-text clipboard to the text path, with or without Paste as Text", () => {
+    const image = new File(["png"], "image.png", { type: "image/png" });
+    const input = { files: [image], plainText: "Hello from Word", bypassAutoAttachment: true };
+    expect(shouldHandleComposerAttachmentPaste(input)).toBe(false);
+    // A plain paste of the same Word clipboard keeps the text too.
+    expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
+      false,
+    );
+    // Firefox's Copy Image adds the image URL as text and only an <img> as HTML; the image attaches.
+    expect(
+      shouldHandleComposerAttachmentPaste({
+        files: [image],
+        plainText: "https://example.com/image.png",
+        htmlIsOnlyImage: true,
+      }),
+    ).toBe(true);
+    // Finder adds a copied file's name as text.
+    expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
+      true,
+    );
+    // A QQ or WeChat message has its text beside an <img> in the HTML: the image attaches too.
+    const message = { files: [image], plainText: "Look at this", htmlHasImageAndText: true };
+    expect(shouldHandleComposerAttachmentPaste(message)).toBe(false);
+    expect(imagesToAttachBesidePastedText(message)).toEqual([image]);
+    expect(imagesToAttachBesidePastedText({ ...message, htmlHasImageAndText: false })).toEqual([]);
+    expect(imagesToAttachBesidePastedText({ ...message, bypassAutoAttachment: true })).toEqual([]);
   });
 
   it("preserves text when the clipboard also includes generic image files", () => {

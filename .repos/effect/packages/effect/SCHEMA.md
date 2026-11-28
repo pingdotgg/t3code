@@ -493,6 +493,10 @@ Once you have elementary schemas, you can combine them into composite schemas th
 
 A struct schema describes a JavaScript object with a known set of keys. Each key maps to a schema that validates and types its value.
 
+`Schema.Struct(fields)` discovers definitions from the own enumerable properties of `fields`, including string and symbol keys. Non-enumerable and inherited definitions are ignored, as they are when copying an object with `{ ...fields }`. The same discovery rule applies when transforming field definitions with `mapFields`, `encodeKeys`, or `extendTo`.
+
+This rule selects the field definitions, not the properties that can be read from an input value. Once a field is declared, its input value is validated even if that property is non-enumerable or inherited. The `__proto__` field must be an own property of the input.
+
 ### Optional and Mutable Keys
 
 By default, every key in a struct is required and readonly. Use `Schema.optionalKey` to make a key optional (the key can be absent from the object), and `Schema.mutableKey` to make it writable.
@@ -2206,7 +2210,7 @@ const Tags = Schema.Literals(tagged.discriminants)
 
 #### Checking Membership in a Subset of Tags
 
-The `isAnyOf` method lets you check if a value belongs to a selected subset of tags.
+The `isAnyOf` method lets you check if a value belongs to a selected subset of tags. It only accepts tags of the union, and narrows the value in both branches based on the tags in the key list's type. For a tag list only known at runtime, use a plain boolean check such as `names.includes(value.type)` instead, because the false branch would also exclude tags the list does not contain at runtime.
 
 **Example** (Checking membership in a subset of union tags)
 
@@ -6012,7 +6016,6 @@ Use it when you need to:
 - store schemas on disk or send them over the network
 - rebuild runtime schemas with an explicit set of revivers
 - compile live representations to JSON Schema Draft 2020-12
-- generate TypeScript code from live representations
 
 At a high level:
 
@@ -6022,7 +6025,6 @@ At a high level:
 - `toJson` / `fromJson` cross the persistence boundary
 - `fromRepresentation` / `fromRepresentations` rebuild runtime schemas using explicit revivers
 - `toJsonSchemaDocument` compiles a live `Document` to JSON Schema Draft 2020-12
-- `toCodeDocument` compiles a live `MultiDocument` to runtime and TypeScript source fragments
 
 ```mermaid
 flowchart TD
@@ -6034,7 +6036,6 @@ flowchart TD
     LD -->|toJsonSchemaDocument|JD["JsonSchema.Document (draft-2020-12)"]
     JD -->|fromJsonSchemaDocument|S
     LD -->|toMultiDocument|LMD["live MultiDocument"]
-    LMD -->|toCodeDocument|CodeDocument
     LMD -->|toJsonSchemaMultiDocument|JMD[JsonSchema.MultiDocument]
     LMD -->|toJsonMultiDocument|JSON
 ```
@@ -6059,7 +6060,7 @@ References let the representation share definitions and support recursion.
 
 A `MultiDocument` stores multiple root representations that share the same `references` table.
 
-This is useful if you want to serialize a set of schemas together, or if you want to generate code for multiple schemas while emitting shared definitions only once.
+Use it to serialize multiple schemas together while sharing their definitions.
 
 ## Projection and persistence boundaries
 
@@ -6087,16 +6088,12 @@ Representations describe runtime schema structure, so they do not preserve
 TypeScript-only distinctions. `Schema.brand` is absent because it does not
 change the AST. A check introduced by `Schema.refine` can remain part of the
 runtime representation, but its narrowed TypeScript type cannot be recovered.
-Reapply these type-level operations after rebuilding a representation or
-generating schema code when needed.
+Reapply these type-level operations after rebuilding a representation when needed.
 
 ### Live and persisted documents
 
-A live `Document` can contain functions in its ordinary annotations. These callbacks allow compilers to handle custom
-behavior:
-
-- a check can provide `toJsonSchema`
-- a declaration or check can provide `toCode`
+A live `Document` can contain functions in its ordinary annotations. For example, a check can provide a `toJsonSchema`
+callback to customize its JSON Schema representation.
 
 Functions cannot cross the JSON persistence boundary. `toJson` removes them and keeps only JSON-valued ordinary
 annotations. Nested JSON arrays and objects are preserved; a complete annotation value is omitted when it contains a
@@ -6443,6 +6440,15 @@ An Effect struct exported with `additionalProperties: true` therefore imports wi
 even if the original struct had none. The imported decoder retains additional properties that the original decoder
 would strip. Use the imported schema's actual checks and parse options when reasoning about validation.
 
+Set `closeObjects: true` to close objects with declared properties when every contributing object omits
+`additionalProperties`. Closing happens after intersections are normalized, so inherited fields remain valid.
+Explicit additional-property constraints take precedence, and free-form objects stay open. This option changes excess-property behavior:
+the decoder strips excess keys by default, or rejects them with `onExcessProperty: "error"`.
+
+Typed additional properties can coexist with named properties when an unchecked primitive or `anyOf` catch-all
+provably accepts every declared property's values. Combinations requiring the index signature to exclude named
+properties remain unsupported.
+
 Import translates a Draft 2020-12 subset. `$dynamicRef`, `contains`, `dependentRequired`, `dependentSchemas`,
 active `if` / `then` / `else`, `unevaluatedItems`, and `unevaluatedProperties` are rejected with an error identifying
 the unsupported keyword. Inactive conditional keywords and `minContains` / `maxContains` without
@@ -6478,9 +6484,11 @@ collide, later values overwrite earlier ones according to the existing merge ord
 alternatives or unreachable children is discarded. The resulting schema can have a different structure from the input;
 retaining annotations does not provide a lossless round trip or enforce custom validation rules.
 
-Intersections of overlapping unions are limited to disjoint root-type partitions and finite primitive `anyOf` literal
-sets, which may also be duplicated across branches. Other union intersections, including cases that would duplicate any
-other nested choice, are rejected.
+Intersections of overlapping unions support alternatives separated by root types or required literal properties,
+including referenced objects. Incompatible alternatives are pruned before intersection. Finite primitive `anyOf`
+literal sets may also be duplicated across branches. Other intersections that would duplicate nested choices
+remain unsupported. Intersecting the same reference retains the shared definition, including recursive definitions.
+Other recursive intersections are rejected when normalization requires an unfinished definition or revisits the same operands.
 
 Regular expression constraints reached during translation are rejected by default because imported patterns use the
 runtime's native regular expression engine and may block validation for an unbounded amount of time. Set
@@ -6489,22 +6497,6 @@ This can admit values the source rejects, but it can also reject previously vali
 constraints makes multiple branches match. The policy includes `pattern`, the keys of
 `patternProperties`, and patterns nested in `propertyNames`. Ignoring `patternProperties` also skips its value constraints
 and `additionalProperties`, because matching keys cannot be determined without evaluating the patterns.
-
-## Code generation
-
-### `toCodeDocument`
-
-`toCodeDocument` compiles a live `MultiDocument` into runtime and TypeScript source fragments. It:
-
-- returns one `Code` value for each root
-- sorts non-recursive references in dependency order
-- keeps recursive references separate so callers can emit `Schema.suspend`
-- sanitizes reference names into valid JavaScript identifiers
-- collects symbol, enum, and import artifacts
-
-Opaque declarations and checks provide code through their `toCode` callbacks. `toCodeDocument` does not accept a
-reviver option. To generate code from persisted JSON, first reconstruct the schemas with `fromRepresentation` or
-`fromRepresentations`, then create a new live representation so the revivers can restore the callbacks.
 
 # Parsing Options
 

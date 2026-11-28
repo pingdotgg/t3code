@@ -17,6 +17,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -57,6 +58,15 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
 const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
+const provider = {
+  instanceId,
+  driver,
+  enabled: true,
+  installed: true,
+  status: "ready",
+  auth: { status: "authenticated" },
+  models: [{ slug: modelSelection.model, name: modelSelection.model, isCustom: false }],
+} as unknown as ServerProvider;
 
 // Cancellation races with turn completion and checkpoint capture; "recorded" restarts before the Stop outbox runs.
 const cancelBackgroundOnlyTask = (
@@ -66,7 +76,14 @@ const cancelBackgroundOnlyTask = (
     remote = false,
   }: {
     readonly remote?: boolean;
-    readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" | "monitor" | "refused";
+    readonly cancelAt?:
+      | "settled"
+      | "checkpoint"
+      | "turn"
+      | "recorded"
+      | "monitor"
+      | "refused"
+      | "delegate";
   } = {},
 ) =>
   Effect.scoped(
@@ -214,7 +231,9 @@ const cancelBackgroundOnlyTask = (
         Layer.provide(
           Layer.mergeAll(
             layerAdapters,
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([provider]),
+            }),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -359,7 +378,7 @@ const cancelBackgroundOnlyTask = (
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === child.turn.runId &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         );
         const nativeSubagentEvents = [
           {
@@ -529,9 +548,20 @@ const cancelBackgroundOnlyTask = (
           capabilities: new Set(["orchestration"]),
           issuedAt: 1,
         };
+        if (cancelAt === "delegate") {
+          // The child's run settled while its native subagent still runs, and that subagent delegates.
+          const childScope: McpInvocationScope = {
+            ...scope,
+            thread: { ...scope.thread!, threadId: task.childThreadId! },
+          };
+          const delegated = yield* service.delegateTask(childScope, { task: "Reply OK." });
+          assert.equal(delegated.status, "starting");
+          return undefined;
+        }
         const before = yield* service.taskStatus(scope, task.id);
         assert.equal(before.status, "running");
-        assert.equal(before.workState, turnSettled ? "waiting_for_children" : "working");
+        // The child's run completes when its turn ends, before its checkpoint capture runs.
+        assert.equal(before.workState, cancelAt === "turn" ? "working" : "waiting_for_children");
 
         const parentTask = Effect.map(orchestrator.getThreadProjection(parentThreadId), (parent) =>
           parent.subagents.find((entry) => entry.id === task.id),
@@ -563,7 +593,8 @@ const cancelBackgroundOnlyTask = (
                 event.payload.type === "run_interrupt_request",
             ),
           );
-          assert.equal((yield* parentTask)?.status, "running");
+          // The child's turn already ended, so the cancel settles its finished run in this commit.
+          assert.equal((yield* parentTask)?.status, "interrupted");
           return { scope, taskId: task.id, settled: undefined };
         }
         if (cancelAt === "refused") {
@@ -622,7 +653,11 @@ const cancelBackgroundOnlyTask = (
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
         assert.equal(childAfter.runs.length, cancelAt === "monitor" || cancelAt === "turn" ? 2 : 1);
-        assert.equal(childAfter.runs[0]!.status, "completed");
+        // A Stop accepted before the run's checkpoint settled it ends that run as interrupted.
+        assert.equal(
+          childAfter.runs.find((run) => run.id === child.turn.runId)?.status,
+          cancelAt === "checkpoint" || cancelAt === "turn" ? "interrupted" : "completed",
+        );
         assert.deepEqual(
           childAfter.runtimeRequests.map((request) => [request.id, request.status]),
           [
@@ -693,4 +728,8 @@ it.effect("a refused descendant stop does not settle or dispose its parent task"
 
 it.effect("task_cancel stops a remote descendant without reacquiring its parent lock", () =>
   cancelBackgroundOnlyTask("command", { remote: true }),
+);
+
+it.effect("a native background subagent delegates after its parent's run completes", () =>
+  cancelBackgroundOnlyTask("subagent", { cancelAt: "delegate" }),
 );

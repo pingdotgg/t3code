@@ -54,6 +54,8 @@ const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
   resolve: () => Effect.succeed(resolved),
   search: () => Effect.die("unused"),
   prepare: () => Effect.die("unused"),
+  refreshIndex: () => Effect.succeed(false),
+  invalidateIndex: () => Effect.void,
   uninstallManagedBinary: () => Effect.die("unused"),
 };
 
@@ -360,6 +362,22 @@ it.effect("does not report authentication when post-login verification fails", (
       failed.message,
       "The provider could not create a session after terminal sign-in. Authentication required",
     );
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("surfaces what the login command printed when it exits non-zero", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(terminalMethod);
+    yield* h.controller.start("owner", Effect.void, "terminal");
+    yield* h.phase("waiting");
+    h.data("Connect to the VPN, then sign in again.\r\n");
+    h.exit(1);
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "The provider login command did not finish successfully. Connect to the VPN, then sign in again.",
+    );
+    assert.deepEqual(h.changed, []);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

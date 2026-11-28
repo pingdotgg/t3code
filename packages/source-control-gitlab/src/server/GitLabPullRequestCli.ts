@@ -599,6 +599,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly removeAgentCreditsOnMerge?: boolean;
+      /** The head the caller reviewed; a merge refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
@@ -643,6 +645,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** The head the caller reviewed; an approval refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly replyToDiscussion: (input: {
@@ -1002,6 +1006,16 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
+/** REST names every label; GraphQL's `labels(first: 100)` only colours the ones on its page. */
+function colourLabels(
+  rest: ReadonlyArray<PullRequestLabel>,
+  graphql: ReadonlyArray<PullRequestLabel> | null,
+): ReadonlyArray<PullRequestLabel> {
+  if (graphql === null) return rest;
+  const byName = new Map(graphql.map((label) => [label.name, label]));
+  return rest.map((label) => byName.get(label.name) ?? label);
+}
+
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -1106,6 +1120,7 @@ export const make = Effect.gen(function* () {
         ...filterParams(input),
         ["order_by", "updated_at"],
         ["sort", "desc"],
+        ["with_labels_details", "true"],
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
@@ -2016,14 +2031,17 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
   }) =>
-    graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getLabelPermission",
-      query: LABEL_PERMISSION_GRAPHQL_QUERY,
-      variables: { fullPath: input.repository, iid: String(input.number) },
-      decode: decodeLabelPermissionJson,
-    }).pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(false)));
+    orWhenUnanswered(
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getLabelPermission",
+        query: LABEL_PERMISSION_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeLabelPermissionJson,
+      }),
+      { viewerCanEditLabels: false, labels: null },
+    );
 
   const sourceBranch = (input: {
     readonly cwd: string;
@@ -2327,18 +2345,20 @@ export const make = Effect.gen(function* () {
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
-        const [read, viewerCanEditLabels] = yield* Effect.all(
+        const [read, extras] = yield* Effect.all(
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
+        const labeled = { ...read, labels: colourLabels(read.labels, extras.labels) };
+        const viewerCanEditLabels = extras.viewerCanEditLabels;
         // Only a closed or merged merge request offers its branch for deletion, and only an open
         // fork's has maintainer edits to change, so each extra read is skipped elsewhere.
         const detail =
-          read.state === "open"
-            ? input.maintainerEdits === false || read.maintainerCanModify === undefined
-              ? { ...read, viewerCanEditLabels }
+          labeled.state === "open"
+            ? input.maintainerEdits === false || labeled.maintainerCanModify === undefined
+              ? { ...labeled, viewerCanEditLabels }
               : {
-                  ...read,
+                  ...labeled,
                   viewerCanEditLabels,
                   viewerCanEditMaintainerEdits: yield* orWhenUnanswered(
                     graphqlRead({
@@ -2353,7 +2373,7 @@ export const make = Effect.gen(function* () {
                   ),
                 }
             : {
-                ...read,
+                ...labeled,
                 viewerCanEditLabels,
                 viewerCanDeleteBranch: yield* orWhenUnanswered(
                   sourceBranch(input).pipe(Effect.map((source) => source?.canDelete === true)),
@@ -2828,11 +2848,27 @@ export const make = Effect.gen(function* () {
         const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
         if (input.action === "merge" || input.action === "enable-auto-merge") {
           if (input.mergeMethod === "rebase") {
+            // GitLab's rebase takes no SHA, so the reviewed head is checked just before it.
+            if (input.expectedHeadSha !== undefined) {
+              const current = yield* getDiffRefs(input);
+              if (current.headSha !== input.expectedHeadSha) {
+                return yield* new GitLabMutationRefusedError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "runMergeRequestAction",
+                  reasons: [`the head is now ${current.headSha}, not ${input.expectedHeadSha}`],
+                });
+              }
+            }
             // A rebase changes the source SHA, so wait for it before reading the merge guard.
             yield* executeMr("rebase");
           }
           const refs = yield* getDiffRefs(input);
-          flags.push("--sha", refs.headSha);
+          // After a rebase, the head checked above is replaced by its rebased commits.
+          flags.push(
+            "--sha",
+            input.mergeMethod === "rebase" ? refs.headSha : (input.expectedHeadSha ?? refs.headSha),
+          );
           if (input.removeAgentCreditsOnMerge === true) {
             // Read after the SHA guard, so a push since then fails the merge instead of
             // merging commits whose credits these messages don't cover.
@@ -2944,6 +2980,15 @@ export const make = Effect.gen(function* () {
       }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
+        // Line comments are placed on the head read here, so it must be the one reviewed.
+        if (input.expectedHeadSha !== undefined && refs.headSha !== input.expectedHeadSha) {
+          return yield* new GitLabMutationRefusedError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "submitReview",
+            reasons: [`the head is now ${refs.headSha}, not ${input.expectedHeadSha}`],
+          });
+        }
         const rangedFileHeaders = input.comments.flatMap((comment) =>
           comment.startPosition !== undefined &&
           (comment.startPosition.kind !== "context" || comment.position.kind !== "context")
@@ -3003,6 +3048,11 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
+          // GitLab answers 409 when `sha` is no longer the merge request's head.
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : // @effect-diagnostics-next-line globalJsonInEffect:off
+              { stdin: JSON.stringify({ sha: input.expectedHeadSha }) }),
         });
       }
     }),

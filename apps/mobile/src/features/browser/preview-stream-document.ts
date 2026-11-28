@@ -4,6 +4,7 @@ import type {
   PreviewStreamControl,
   PreviewStreamDownload,
   PreviewStreamFileChooser,
+  PreviewStreamSelectMenu,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 
 export interface PreviewStreamConfiguration {
@@ -32,9 +33,12 @@ export type PreviewStreamMessage =
   | { readonly type: "gone" }
   | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
+  /** The direction a drag scrolls the page, sent every few dozen pixels of it. */
+  | { readonly type: "scroll"; readonly direction: "up" | "down" }
   | { readonly type: "clipboard"; readonly text: string }
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
+  | { readonly type: "selectMenu"; readonly menu: PreviewStreamSelectMenu | null }
   | {
       readonly type: "pictureInPicture";
       readonly supported: boolean;

@@ -40,6 +40,7 @@ const workspaceFiles = [
   "packages/provider-kiro/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/issue-tracker-jira/package.json",
   "packages/issue-tracker-linear/package.json",
   "packages/secret-provider-core/package.json",
   "packages/secret-provider-definitions/package.json",
@@ -53,6 +54,7 @@ const workspaceFiles = [
   "packages/source-control-gitcafe/package.json",
   "packages/source-control-github/package.json",
   "packages/source-control-gitlab/package.json",
+  "packages/source-control-tanstack-source/package.json",
   "packages/source-control-testing/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
@@ -67,11 +69,12 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     NodeFS.cpSync(sourcePath, destinationPath);
   }
 
-  const mobileDependencies = NodePath.resolve(repoRoot, "apps/mobile/deps");
-  if (NodeFS.existsSync(mobileDependencies)) {
-    NodeFS.cpSync(mobileDependencies, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
-      recursive: true,
-    });
+  // Fork tarballs that file: dependencies install from.
+  for (const forks of ["apps/mobile/deps", "apps/web/deps"]) {
+    const source = NodePath.resolve(repoRoot, forks);
+    if (NodeFS.existsSync(source)) {
+      NodeFS.cpSync(source, NodePath.resolve(targetRoot, forks), { recursive: true });
+    }
   }
 
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
@@ -241,8 +244,6 @@ try {
       stdio: "inherit",
     },
   );
-
-  NodeFS.rmSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), { force: true });
 
   NodeChildProcess.execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
     cwd: tempRoot,

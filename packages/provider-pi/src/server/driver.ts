@@ -115,6 +115,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
       resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
+        npmCacheDir: pathService.join(host.paths.providerStatusCacheDir, "npm"),
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -140,13 +141,19 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
           }),
       ),
     );
-    const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
+    const textGeneration = yield* makePiTextGeneration(
+      effectiveConfig,
+      processEnv,
+      host.compatibility,
+    );
 
     const checkProvider = fileSystem
       .makeDirectory(probeCwd, { recursive: true })
       .pipe(
         Effect.ignore,
-        Effect.andThen(checkPiProviderStatus(effectiveConfig, processEnv, probeCwd)),
+        Effect.andThen(
+          checkPiProviderStatus(effectiveConfig, processEnv, probeCwd, host.compatibility),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );

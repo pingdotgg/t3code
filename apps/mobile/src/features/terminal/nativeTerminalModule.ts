@@ -40,6 +40,8 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly initialBuffer: string;
   readonly fontSize: number;
+  /** React Native family name; a system mono name selects the platform monospace font. */
+  readonly fontFamily: string;
   /** `[cols, rows]` of the shared PTY, or empty before the server reports one. */
   readonly sharedGrid?: ReadonlyArray<number>;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;

@@ -120,6 +120,18 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "BrowserCookieImport",
   },
   {
+    id: "PreviewTunnel",
+    title: "Allow the preview tunnel",
+    help: "Disabled stops other devices from opening this machine's local servers through T3 Code: no in-app browser tabs loaded on the device, no Open on this device, no port forwarding. Browser tabs still stream from this machine.",
+    toggle: "PreviewTunnel",
+  },
+  {
+    id: "WorktreeLayoutCommands",
+    title: "Allow project worktree layout commands",
+    help: "Disabled stops T3 Code from running the worktreeLayout commands a project's t3.json declares, whether or not a user approved them. Such a project gets no new worktree threads; existing thread folders are restored and removed without the project's commands.",
+    toggle: "WorktreeLayoutCommands",
+  },
+  {
     id: "Telemetry",
     title: "Allow usage data",
     help: "Disabled stops T3 Code from sending product usage data and relay connection traces. Enabled cannot turn them on for a user who turned them off.",
@@ -182,7 +194,9 @@ const escapeXml = (text: string) =>
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    // XML parsers can normalize literal carriage returns before decoding text.
+    .replaceAll("\r", "&#13;");
 
 // ADMX keys are relative to the hive the policy class picks.
 const ADMX_KEY = WINDOWS_POLICY_KEY.replace(/^HKLM\\/, "");

@@ -1,7 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
-  THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
   THREAD_LIST_V2_ROW_DIVIDERS,
   selectedThreadRowColors,
@@ -35,6 +35,7 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
@@ -46,17 +47,13 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import {
-  ProviderIcon,
-  ProviderInstanceIcon,
-  providerInstanceNameLabel,
-} from "../../components/ProviderIcon";
+import { ProviderInstanceIcon, providerInstanceNameLabel } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentScopeDenied } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -74,15 +71,15 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { threadCanArchive } from "../home/threadArchive";
+import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
-  THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  threadListV2ShowMoreAccessibilityLabel,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
@@ -91,6 +88,11 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import {
+  ThreadHostPressureIcon,
+  showThreadHostPressureNote,
+  useThreadHostPressureNote,
+} from "./ThreadHostPressureIcon";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
@@ -103,6 +105,24 @@ interface StatusLabel {
   readonly iconTintClassName: string;
 }
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
+  connecting: {
+    label: msg("Connecting", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  reconnecting: {
+    label: msg("Reconnecting", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  offline: {
+    label: msg("Offline", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   approval: {
     label: msg("Approval", { $context: "thread status, waiting for approval" }),
     icon: "exclamationmark.shield",
@@ -322,6 +342,8 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
+const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
+
 const SHELF_COPY = {
   working: {
     label: msg("Working", { $context: "thread list section" }),
@@ -392,6 +414,7 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
   readonly onPress: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const label =
     props.state === "loading"
       ? gt("Loading", { $context: "older threads are loading" })
@@ -406,12 +429,7 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
       accessibilityRole="button"
       accessibilityLabel={
         props.state === undefined
-          ? gt(
-              "{count, plural, one {Show {count} more settled threads} other {Show {count} more settled threads}}",
-              {
-                count: Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT),
-              },
-            )
+          ? threadListV2ShowMoreAccessibilityLabel(props.hiddenCount, messages)
           : label
       }
       disabled={props.state === "loading"}
@@ -638,12 +656,11 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             {branch ? (
               <Text
                 className={cn(
-                  "text-xs",
+                  "font-mono text-xs",
                   selected
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.mutedForegroundClassName,
                 )}
-                style={{ fontFamily: MONO_FONT }}
               >
                 {branch}
               </Text>
@@ -833,17 +850,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
-    const provider = props.providers?.find(
-      (candidate) =>
-        candidate.instanceId ===
-        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-    );
-    return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
-      providerIconUrl: provider?.iconUrl,
-    };
-  }, [thread, props.providers]);
+  const providerIconUrl = props.providers?.find(
+    (candidate) =>
+      candidate.instanceId ===
+      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+  )?.iconUrl;
 
   const providerInstance = props.providerInstance;
   const providerNameLabel = providerInstance
@@ -882,12 +893,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     label: statusEntry.label === null ? null : m(statusEntry.label),
   };
   const recede = shouldRecedeThreadRow({ status, selected });
+  const pendingSync = useAtomValue(
+    threadEnvironment.pendingSyncAtom(thread.environmentId),
+    (threads) => threads.has(thread.id),
+  );
   const isRegeneratingTitle = thread.titleRegeneration != null;
   // List items keep marked text so they stay the same objects across a language switch.
-  const timeLabel = props.timeLabel && m(props.timeLabel);
+  const timeLabel = pendingSync ? gt("Waiting to sync") : props.timeLabel && m(props.timeLabel);
   const snoozeWakeLabelText =
     props.snoozeWakeLabelText === undefined ? undefined : m(props.snoozeWakeLabelText);
-  const rowAccessibilityLabel = threadListV2RowAccessibilityLabel(
+  const hostPressure = useThreadHostPressureNote(thread.environmentId, thread.id);
+  const baseAccessibilityLabel = threadListV2RowAccessibilityLabel(
     {
       title: thread.title,
       variant,
@@ -900,13 +916,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ? gt("Waiting", { $context: "thread status" })
             : gt("Working", { $context: "thread status" }))),
       timeLabel,
-      snoozeWakeLabel: snoozedRow ? snoozeWakeLabelText : undefined,
+      snoozeWakeLabel: snoozedRow && !pendingSync ? snoozeWakeLabelText : undefined,
       providerNameLabel,
       hasQueuedMessages: props.hasQueuedMessages === true,
       regeneratingTitle: isRegeneratingTitle,
     },
     m,
   );
+  const rowAccessibilityLabel =
+    hostPressure === null
+      ? baseAccessibilityLabel
+      : `${baseAccessibilityLabel}, ${hostPressure.title}`;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
@@ -922,13 +942,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: gt("Dismiss Woke notification") }] : []),
+      ...(hostPressure ? [{ name: "hostPressure", label: hostPressure.title }] : []),
     ],
-    [gt, prBadgeLabel, showsWoke],
+    [gt, hostPressure, prBadgeLabel, showsWoke],
   );
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  // Until the host answers, only settle, snooze and their undo are offered: they can queue.
+  const triageOnly =
+    !useEnvironmentScopeDenied(thread.environmentId, AuthOrchestrationOperateScope) &&
+    !canOperateThread;
+  const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
+  const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1070,7 +1097,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         },
         m,
       ),
-      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
+      ...(thread.latestRun?.completedAt != null && threadCanArchive(thread.runtime)
+        ? [{ id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" }]
+        : []),
       ...(canTurnIntoProject
         ? [
             {
@@ -1087,6 +1116,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       props.titleRegenerationSupported,
+      thread.latestRun,
       thread.runtime,
       isRegeneratingTitle,
     ],
@@ -1106,6 +1136,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : []),
       { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+      ...(canShareWithGuest
+        ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
+        : []),
     ];
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions(
@@ -1185,6 +1218,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
   }, [
     autoSettleMenuItems,
+    canShareWithGuest,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1234,6 +1268,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "copy-thread-id") {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
+      if (nativeEvent.event === "share-guest") {
+        navigation.navigate("ThreadGuestShare", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
@@ -1259,6 +1299,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       m,
       onNewThreadOnBranch,
       thread,
+      navigation,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
@@ -1342,7 +1383,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
+  const canSwipe =
+    canOperateThread || (triageOnly && TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
+  const swipeAccessibilityHint = !canSwipe
     ? gt("Opens the thread")
     : secondaryAction === null
       ? primaryAction.swipeHint
@@ -1395,6 +1438,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               size={11}
               tintColorClassName={rowAppearance.mutedIconTintClassName}
               type="monochrome"
+            />
+          ) : null}
+          {hostPressure ? (
+            <ThreadHostPressureIcon
+              note={hostPressure}
+              tintColorClassName={
+                selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
+              }
             />
           ) : null}
           {showsWoke ? (
@@ -1561,8 +1612,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
+              className={cn("font-mono text-xs", pr.textClassName)}
             >
               {pr.label}
             </Text>
@@ -1570,16 +1620,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
-                  className="-mr-1 opacity-30"
-                >
-                  <ProviderIcon provider={driver} size={12} />
-                </View>
-              ) /* oxlint-enable react/no-array-index-key */,
-            )}
             <ProviderInstanceIcon
               iconUrl={providerIconUrl}
               provider={providerInstance.driverKind}
@@ -1631,6 +1671,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
           if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
+          if (event.nativeEvent.actionName === "hostPressure" && hostPressure) {
+            showThreadHostPressureNote(hostPressure);
+          }
         }}
         onPress={() => {
           close();
@@ -1723,22 +1766,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
-              "text-sm tabular-nums",
+              "font-mono text-sm tabular-nums",
               selected
                 ? selectedThreadRowColors.mutedForegroundClassName
                 : snoozedRow
                   ? rowAppearance.mutedForegroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
             )}
-            style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && snoozeWakeLabelText !== undefined ? snoozeWakeLabelText : timeLabel}
+            {!pendingSync && snoozedRow && snoozeWakeLabelText !== undefined
+              ? snoozeWakeLabelText
+              : timeLabel}
           </Text>
         </View>
       </RowPressable>
     );
 
-  if (!canOperateThread)
+  if (!canSwipe)
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
 
   return (
@@ -1768,7 +1812,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {(close) => (
           <Menu
             accessibilityLabel={rowAccessibilityLabel}
-            actions={menuActions}
+            actions={
+              triageOnly
+                ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
+                : menuActions
+            }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

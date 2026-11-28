@@ -21,6 +21,7 @@ import {
 } from "./PullRequestPresentation";
 import {
   pullRequestLabelColor,
+  pullRequestListDiffStatsLabel,
   pullRequestListReviewStatus,
   pullRequestListRowsAreEqual,
   type EnvironmentPullRequestListEntry,
@@ -122,6 +123,7 @@ export const PullRequestListRow = memo(
               ),
               item.title,
               status.label,
+              item.visibility === "private" ? gt("Private") : null,
               conflict ? conflict.label.toLowerCase() : null,
               gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
               review ? review.accessibleLabel : null,
@@ -133,10 +135,7 @@ export const PullRequestListRow = memo(
                   })
                 : null,
               item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
-              gt("{additions} additions, {deletions} deletions", {
-                additions: item.additions,
-                deletions: item.deletions,
-              }),
+              pullRequestListDiffStatsLabel(item, m),
             ]
               .filter((part) => part !== null)
               .join(", ")}
@@ -178,6 +177,17 @@ export const PullRequestListRow = memo(
                 <Text className={cn("min-w-0 flex-1 text-xs", mutedForeground)} numberOfLines={1}>
                   {item.repository} <Text className={tertiaryForeground}>#{item.number}</Text>
                 </Text>
+                {item.visibility === "private" ? (
+                  <View>
+                    <SymbolView
+                      name={PullRequestGlyph.private}
+                      size={11}
+                      tintColorClassName={
+                        props.sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted"
+                      }
+                    />
+                  </View>
+                ) : null}
                 {item.stack ? (
                   <View className="flex-row items-center gap-1">
                     <SymbolView

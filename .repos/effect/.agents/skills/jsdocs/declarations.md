@@ -63,6 +63,17 @@ Declaration tags appear in this order:
   `@category`, and reject `@default`.
 - Member JSDoc is optional; when present it permits stable-semver `@since` and
   non-empty `@default`, rejects `@category`, and follows the prose contract.
+- Preserve existing APIs' `@since` versions when changing their implementation
+  or documentation. Correct an existing version only with evidence of its
+  actual introduction release.
+- For new APIs, set `@since` to their first intended release version. Determine
+  that version from the affected package's current version and the agreed
+  changeset bump or explicit release target. Do not copy versions from nearby
+  declarations or the template above, and do not default to the major version's
+  initial release. For example, a new API targeting a patch after `4.1.4` uses
+  `@since 4.1.5`, while existing APIs keep their introduction versions.
+- Verify version selection separately from `pnpm jsdocs --check`: the checker
+  validates semver syntax, not whether an API existed in the specified release.
 - Any declaration permits one non-empty `@deprecated` and repeated non-empty
   `@see` tags.
 - Roots, export specifiers, and root namespaces require `@stability stable`,

@@ -4,3 +4,6 @@ export const gradePrContent = (generated: { title: string; body: string }) =>
   !/blocked|cannot access|can't start babysitting|restore GitHub|provide the PR number/i.test(
     `${generated.title}\n${generated.body}`,
   );
+
+export const hasConventionalCommitPrefix = (title: string) =>
+  /^[a-z]+(\([^()\n]+\))?!?: \S/.test(title);

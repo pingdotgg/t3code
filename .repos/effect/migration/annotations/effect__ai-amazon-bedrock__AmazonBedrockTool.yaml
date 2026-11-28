@@ -1,3 +1,3 @@
 "@effect/ai-amazon-bedrock/AmazonBedrockTool":
-  replacement: none
-  note: The @effect/ai-amazon-bedrock package and its Anthropic-on-Bedrock provider tools were removed from v4. Recreate the capability in a custom provider integration if the Bedrock model still requires it.
+  replacement: "none"
+  note: "The Bedrock package remains available, but its Anthropic-specific provider-tool constructors are removed. Define ordinary tools with effect/ai/Tool and handlers where suitable. If you need the exact Anthropic built-in protocol, use an API and provider that support it; ordinary Converse tools are not a drop-in replacement."

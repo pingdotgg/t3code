@@ -7,6 +7,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -28,6 +29,16 @@ export const IssueTrackerKind = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[a-z][a-z0-9-]*$/),
 ).pipe(Schema.brand("IssueTrackerKind"));
 export type IssueTrackerKind = typeof IssueTrackerKind.Type;
+
+/**
+ * One saved account of a standalone tracker. A tracker's first account has none: it predates
+ * accounts, and keeps its credential and bindings unchanged.
+ */
+export const IssueTrackerAccountId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+).pipe(Schema.brand("IssueTrackerAccountId"));
+export type IssueTrackerAccountId = typeof IssueTrackerAccountId.Type;
 
 export const IssueActor = PullRequestActor;
 export type IssueActor = typeof IssueActor.Type;
@@ -92,6 +103,13 @@ export const IssueScopeRef = Schema.Struct({
 });
 export type IssueScopeRef = typeof IssueScopeRef.Type;
 
+export const IssueCandidatesInput = Schema.Struct({
+  ...IssueScopeRef.fields,
+  /** A name or email to search people for, where the candidates offer `assigneeSearch`. */
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(320))),
+});
+export type IssueCandidatesInput = typeof IssueCandidatesInput.Type;
+
 /** One row of a listing. Carries everything a list needs and nothing a detail needs. */
 export const IssueSummary = Schema.Struct({
   tracker: IssueTrackerKind,
@@ -128,8 +146,14 @@ export const IssueComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   /** Absent from a tracker with no reactions, which differs from none on this comment. */
   reactions: Schema.optional(Schema.Array(IssueReaction)),
+  /** Hidden from the customer: a Jira Service Management internal note. */
+  internal: Schema.optional(Schema.Boolean),
 });
 export type IssueComment = typeof IssueComment.Type;
+
+/** Who a new comment is for where the issue has a customer: agents only, or the customer too. */
+export const IssueCommentAudience = Schema.Literals(["internal", "public"]);
+export type IssueCommentAudience = typeof IssueCommentAudience.Type;
 
 /**
  * Something that happened to an issue that nobody wrote words for: it was closed, labelled,
@@ -149,6 +173,14 @@ export const IssueEventKind = Schema.Literals([
 ]);
 export type IssueEventKind = typeof IssueEventKind.Type;
 
+export const IssueEventReference = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  kind: Schema.Literals(["issue", "pull-request"]),
+  url: TrimmedNonEmptyString,
+});
+export type IssueEventReference = typeof IssueEventReference.Type;
+
 export const IssueEvent = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: IssueEventKind,
@@ -156,6 +188,8 @@ export const IssueEvent = Schema.Struct({
   createdAt: IsoDateTime,
   /** What the event was about, where it has a subject: a label name, a login, a new title. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The issue or change request a `referenced` event came from, so a surface can open it. */
+  reference: Schema.optional(IssueEventReference),
 });
 export type IssueEvent = typeof IssueEvent.Type;
 
@@ -193,6 +227,8 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
+  /** Some issues keep internal notes apart from customer replies; see `commentAudiences`. */
+  internalComments: Schema.optional(Schema.Boolean),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -228,12 +264,21 @@ export const IssueDetail = Schema.Struct({
   body: Schema.String,
   reactions: Schema.optional(Schema.Array(IssueReaction)),
   comments: Schema.Array(IssueComment),
+  /** A new comment here is an internal note unless its audience is public. */
+  commentAudiences: Schema.optional(Schema.Boolean),
   /** Where older comments carry on; null once the conversation is whole. */
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
   events: Schema.Array(IssueEvent),
   linkedPullRequests: Schema.Array(IssueLinkedPullRequest),
 });
 export type IssueDetail = typeof IssueDetail.Type;
+
+export const IssueDetailInput = Schema.Struct({
+  ...IssueRef.fields,
+  /** An explicit refresh reads the tracker instead of a recently shared read. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type IssueDetailInput = typeof IssueDetailInput.Type;
 
 /** Older comments, one page past a cursor the detail or a previous page handed over. */
 export const IssueCommentsPageInput = Schema.Struct({
@@ -255,16 +300,24 @@ export const IssueListCursors = Schema.Record(
 );
 export type IssueListCursors = typeof IssueListCursors.Type;
 
+export const ISSUE_LIST_MAX_EXCLUDED_PROJECTS = 1_000;
+
 export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Projects left out of the listing, as the issues page hides them. */
+  excludeProjectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(ISSUE_LIST_MAX_EXCLUDED_PROJECTS)),
+  ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
   /** Carry on from an earlier answer: only the scopes named here are read, one slice each. */
   cursors: Schema.optional(IssueListCursors),
+  /** An explicit refresh of the first page may also refresh tracker metadata. */
+  refresh: Schema.optional(Schema.Boolean),
   /** Free text the trackers themselves are asked to match. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   /** Label names an issue must carry, every one of them. */
@@ -303,7 +356,7 @@ export const IssueListResult = Schema.Struct({
   /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
-  /** By update, newest first, across every scope this answer covers. */
+  /** Newest first by the requested `sort` (`updated` when absent), across every scope this answer covers. */
   entries: Schema.Array(IssueListEntry),
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
@@ -342,6 +395,8 @@ export type IssueCreateResult = typeof IssueCreateResult.Type;
 export const IssueCommentInput = Schema.Struct({
   ...IssueRef.fields,
   body: CommentBody,
+  /** Internal unless public where the detail has `commentAudiences`; internal is refused elsewhere. */
+  audience: Schema.optional(IssueCommentAudience),
 });
 export type IssueCommentInput = typeof IssueCommentInput.Type;
 
@@ -427,6 +482,8 @@ export type IssueAssigneeCandidate = typeof IssueAssigneeCandidate.Type;
 export const IssueCandidates = Schema.Struct({
   labels: Schema.Array(IssueLabelCandidate),
   assignees: Schema.Array(IssueAssigneeCandidate),
+  /** `assignees` is incomplete, and the tracker searches the rest by `IssueCandidatesInput.query`. */
+  assigneeSearch: Schema.optional(Schema.Boolean),
   /** The tracker has more than were read, so somebody missing is not necessarily ineligible. */
   truncated: Schema.Boolean,
 });
@@ -474,10 +531,11 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 503 });
   }
 
   override get message(): string {
@@ -528,6 +586,20 @@ export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey
   return threadIssueKeyOf(left) === threadIssueKeyOf(right);
 }
 
+/** The threads an issue is linked to, most recently active first. */
+export const IssueLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+      settled: Schema.Boolean,
+    }),
+  ),
+});
+export type IssueLinkedThreadsResult = typeof IssueLinkedThreadsResult.Type;
+
 /**
  * A tracker that is not a git host: it is reached with its own credential rather than a
  * checkout's, and a project opts into it by binding one of the tracker's scopes. Everything a
@@ -545,16 +617,46 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
     label: TrimmedNonEmptyString,
     /** Where to mint one, or null when the tracker has no stable page for it. */
     helpUrl: Schema.NullOr(TrimmedNonEmptyString),
+    /**
+     * What the tracker must be told beside the secret, in the order a form asks: a Jira site, the
+     * account's email. None of it is secret. Absent for a tracker its key alone identifies.
+     */
+    fields: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          key: TrimmedNonEmptyString,
+          label: TrimmedNonEmptyString,
+          placeholder: Schema.NullOr(TrimmedNonEmptyString),
+        }),
+      ),
+    ),
   }),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
-/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
+
+/**
+ * Which standalone tracker scopes a project's issues come from, beside its git host's own.
+ * `scope` is where agents file new issues; `additionalScopes` are listed and written too.
+ */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
+  /** The account the scope is read with; absent for the tracker's first account. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   scope: TrimmedNonEmptyString,
+  additionalScopes: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES),
+    ),
+  ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+export const issueTrackerBindingScopes = (binding: IssueTrackerProjectBinding) => [
+  binding.scope,
+  ...(binding.additionalScopes ?? []),
+];
 
 /** One container the connected account can read, offered when a project is bound. */
 export const IssueTrackerScope = Schema.Struct({
@@ -569,27 +671,51 @@ export type IssueTrackerScope = typeof IssueTrackerScope.Type;
  */
 export const IssueTrackerConnection = Schema.Struct({
   ...StandaloneIssueTrackerDescriptor.fields,
+  /** Which of the tracker's accounts this is; absent for its first. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   /** A credential is stored. It may still be rejected, which `account` being null reports. */
   connected: Schema.Boolean,
   /** Who the credential signs in as, or null when there is none or it was refused. */
   account: Schema.NullOr(TrimmedNonEmptyString),
   /** Why a stored credential did not work, when it did not. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The workspace the credential reaches, as its issue URLs name it; links elsewhere are foreign. */
+  workspace: Schema.optional(TrimmedNonEmptyString),
   scopes: Schema.Array(IssueTrackerScope),
+  /** What was saved for each of `credential.fields`, so a form can show and resend it. */
+  fields: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
+  /** Each standalone tracker's first account. */
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  /** The accounts added beside a tracker's first, oldest first. Absent from older servers. */
+  accounts: Schema.optional(Schema.Array(IssueTrackerConnection)),
+  /**
+   * Which standalone tracker scopes each project bound with a tracker's first account reads. A
+   * project bound with an added account is in `accountBindings` instead, so older clients never
+   * read another account's team as the first account's.
+   */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
+  /** Projects bound with an added account. Absent from older servers. */
+  accountBindings: Schema.optional(Schema.Record(ProjectId, IssueTrackerProjectBinding)),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
 
-/** A credential for one standalone tracker; `null` disconnects it and unbinds its projects. */
+/**
+ * A credential for one standalone tracker account; `null` disconnects it and unbinds its
+ * projects. `addAccount` saves the credential as a new account beside the existing ones.
+ */
 export const IssueTrackerConnectInput = Schema.Struct({
   tracker: IssueTrackerKind,
+  accountId: Schema.optional(IssueTrackerAccountId),
+  addAccount: Schema.optional(Schema.Boolean),
   token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+  /** A value for each of the tracker's `credential.fields`; ignored when disconnecting. */
+  fields: Schema.optional(
+    Schema.Record(Schema.String, TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  ),
 });
 export type IssueTrackerConnectInput = typeof IssueTrackerConnectInput.Type;
 
@@ -597,6 +723,8 @@ export const IssueTrackerBindProjectInput = Schema.Struct({
   projectId: ProjectId,
   /** Null unbinds. */
   binding: Schema.NullOr(IssueTrackerProjectBinding),
+  /** On an unbind, the account the binding was made with; absent for a tracker's first. */
+  accountId: Schema.optionalKey(IssueTrackerAccountId),
 });
 export type IssueTrackerBindProjectInput = typeof IssueTrackerBindProjectInput.Type;
 
@@ -612,10 +740,11 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
     detail: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 503 });
   }
 
   override get message(): string {

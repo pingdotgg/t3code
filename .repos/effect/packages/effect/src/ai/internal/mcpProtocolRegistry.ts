@@ -23,6 +23,7 @@ export interface ProtocolRegistry<
   readonly clientRpcs: AnyRpcGroup
   readonly select: (offeredVersion: string) => Protocol
   readonly protocolForInternalTag: (tag: string) => Protocol
+  readonly methodForInternalTag: (tag: string) => string
   readonly routeClientRequest: (
     protocol: Protocol,
     request: RpcMessage.RequestEncoded
@@ -73,6 +74,10 @@ export const make = Effect.fnUntraced(function*<
     select: (offeredVersion: string) => byVersion.get(offeredVersion) ?? snapshot[0],
     protocolForInternalTag: (tag: string) =>
       snapshot.find((protocol) => tag.startsWith(prefix(protocol))) ?? snapshot[0],
+    methodForInternalTag: (tag: string) => {
+      const protocol = snapshot.find((protocol) => tag.startsWith(prefix(protocol)))
+      return protocol === undefined ? tag : tag.slice(prefix(protocol).length)
+    },
     routeClientRequest: (
       protocol: Protocol,
       request: RpcMessage.RequestEncoded

@@ -12,7 +12,8 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
 import { AsyncResult } from "effect/reactivity";
-import { Linking, View } from "react-native";
+import { View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -103,7 +104,7 @@ export function ConnectionDiagnosisDetails(props: {
           label={gt("More info")}
           icon="safari"
           tone="secondary"
-          onPress={() => void Linking.openURL(moreInfoUrl).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(moreInfoUrl)}
         />
       ) : null}
     </View>

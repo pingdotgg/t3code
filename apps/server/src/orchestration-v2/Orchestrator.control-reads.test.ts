@@ -7,6 +7,9 @@ import {
   EventId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -25,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -39,6 +43,7 @@ import {
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -66,16 +71,26 @@ const adapter = {
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = Layer.mergeAll(
-  layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-  EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-  ProviderReplayHarness.layerWithRegistry(
-    { name: "control-reads" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
-  ),
-);
+const makeTestLayer = (
+  wrapProjectionStore?: (
+    store: ProjectionStore.ProjectionStoreV2Shape,
+  ) => ProjectionStore.ProjectionStoreV2Shape,
+) =>
+  Layer.mergeAll(
+    layerDatabase,
+    ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
+    EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+    ProviderReplayHarness.layerWithRegistry(
+      { name: "control-reads" },
+      ProviderAdapterRegistry.layerFromAdapters([adapter]),
+      {
+        databaseLayer: layerDatabase,
+        runEffectWorker: false,
+        ...(wrapProjectionStore ? { wrapProjectionStore } : {}),
+      },
+    ),
+  );
+const layerTest = makeTestLayer();
 
 it.effect.each(
   (["provider.switch", "thread.model-selection.set"] as const).flatMap((type) =>
@@ -242,7 +257,10 @@ it.effect.each(
     Effect.provide(
       Layer.mergeAll(
         layerDatabase,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layerDigest),
+          Layer.provide(layerDatabase),
+        ),
         EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
         ProviderReplayHarness.layerWithRegistry(
           { name: "instance-switch" },
@@ -1875,6 +1893,94 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
+it.effect.each(["after deletion", "concurrently"] as const)(
+  "preserves distinct provider-thread records when importing the same native session %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const firstRead = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const original = ThreadId.make("thread:native-import-original");
+      const testLayer =
+        scenario === "after deletion"
+          ? layerTest
+          : makeTestLayer((store) => ({
+              ...store,
+              hasProviderThread: (threadId, providerThreadId) =>
+                store
+                  .hasProviderThread(threadId, providerThreadId)
+                  .pipe(
+                    Effect.tap(() =>
+                      threadId === original
+                        ? Deferred.succeed(firstRead, undefined).pipe(
+                            Effect.andThen(Deferred.await(releaseFirst)),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+            }));
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const replacement = ThreadId.make("thread:native-import-replacement");
+        const ref = {
+          driver: adapter.driver,
+          nativeId: "native-reimport",
+          strength: "strong",
+        } as const;
+        const create = (threadId: ThreadId) =>
+          orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create:${threadId}`),
+            threadId,
+            projectId: ProjectId.make("project:native-reimport"),
+            title: "Imported session",
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+            importedNativeThread: { ref },
+          });
+
+        let originalProviderThreadId: ProviderThreadId | undefined;
+        if (scenario === "after deletion") {
+          yield* create(original);
+          const beforeDeletion = yield* projections.getThreadRecords(original, ["providerThreads"]);
+          originalProviderThreadId = beforeDeletion.providerThreads[0]?.id;
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("delete:native-import-original"),
+            threadId: original,
+          });
+          yield* create(replacement);
+        } else {
+          const first = yield* create(original).pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(firstRead);
+          const second = yield* create(replacement).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(releaseFirst, undefined);
+          yield* Fiber.join(first);
+          yield* Fiber.join(second);
+        }
+
+        const retained = yield* projections.getThreadRecords(original, ["providerThreads"]);
+        const imported = yield* projections.getThreadRecords(replacement, ["providerThreads"]);
+        assert.lengthOf(retained.providerThreads, 1);
+        assert.lengthOf(imported.providerThreads, 1);
+        if (scenario === "after deletion") {
+          assert.equal(retained.providerThreads[0]?.id, originalProviderThreadId);
+        }
+        assert.equal(retained.thread.activeProviderThreadId, retained.providerThreads[0]?.id);
+        assert.notEqual(imported.providerThreads[0]?.id, retained.providerThreads[0]?.id);
+        assert.equal(imported.thread.activeProviderThreadId, imported.providerThreads[0]?.id);
+        assert.deepEqual(imported.providerThreads[0]?.nativeThreadRef, ref);
+      }).pipe(Effect.provide(testLayer));
+    }),
+);
+
 it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1943,7 +2049,7 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("starts and finishes a delegated task without reading the parent's history", () =>
+it.effect("starts, finishes and follows up a task without reading the parent's history", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -2019,10 +2125,11 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       });
     }
 
-    // Keep the statements of the task start and finish operations, not of the recovery around them.
+    // Keep the statements of the task start, finish and follow-up, not of the recovery around them.
     const taskSpans = [
       "orchestrationV2.dispatch.delegatedTaskRequest",
       "Orchestrator.finalizeAppOwnedSubagent",
+      "test.followUp",
     ];
     const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
     const recordStatements = Effect.provideService(
@@ -2103,9 +2210,38 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       ["completed", "claimed", "completed", "completed", [task.id]],
     );
 
-    // Start and finish read the task's own records, so their VM steps, which are deterministic,
-    // must stay flat on a copy with a long parent history. Left out: the counts that number the
-    // task and its wake, which walk one index.
+    // A person's follow-up to the finished child binds a new task to the parent's running run.
+    yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("follow-up-long-parent"),
+        threadId: childThreadId,
+        messageId: MessageId.make("message:long-parent:follow-up"),
+        text: "One more thing",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.withSpan("test.followUp"), recordStatements);
+    const followedUp = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "turnItems",
+    ]);
+    const followUp = followedUp.subagents.find((candidate) => candidate.id !== task.id);
+    assert.deepEqual(
+      [
+        followUp?.runId,
+        followedUp.turnItems.find(
+          (item) => item.type === "subagent" && item.subagentId === followUp?.id,
+        )?.providerTurnId,
+      ],
+      [parentRun.id, providerTurnId],
+    );
+
+    // Start, finish and follow-up read the task's own records and the run it binds to, so their VM
+    // steps, which are deterministic, must stay flat on a copy with a long parent history. Left out:
+    // the counts that number the task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
@@ -2146,10 +2282,173 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       "target_thread_id",
     ]);
     addHistory("runs", "run_id");
+    // The history's runs have ended; only the parent's own run is still going.
+    copy.exec(`UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = requested_at WHERE run_id LIKE '%:history:%'`);
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
     assert.isAtMost(readSteps(), shortSteps * 1.1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records a secret and a link card without reading the thread's history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:long-cards");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-cards"),
+      threadId,
+      projectId: ProjectId.make("project:long-cards"),
+      title: "Cards",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-long-cards"),
+      threadId,
+      messageId: MessageId.make("message:long-cards"),
+      text: "Ask for a token and a link",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:long-cards");
+    yield* projections.apply({
+      id: EventId.make("event:long-cards:provider-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
+    const cardSpans = [
+      "orchestrationV2.dispatch.secretRequestRecord",
+      "orchestrationV2.dispatch.linkRequestRecord",
+    ];
+    const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const recordStatements = Effect.provideService(
+      Statement.CurrentTransformer,
+      (statement, _make, _fiber, span) => {
+        for (
+          let parent = Option.some<Tracer.AnySpan>(span);
+          Option.isSome(parent) && parent.value._tag === "Span";
+          parent = parent.value.parent
+        ) {
+          if (cardSpans.includes(parent.value.name)) {
+            statements.push(statement.compile());
+            break;
+          }
+        }
+        return Effect.succeed(statement);
+      },
+    );
+    const card = {
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      reason: "Needed for the work",
+    };
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "secret_request.record",
+        commandId: CommandId.make("record-long-cards:secret"),
+        turnItemId: TurnItemId.make("item:long-cards:secret"),
+        label: "Token",
+        secretStatus: "pending",
+      })
+      .pipe(recordStatements);
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "link_request.record",
+        commandId: CommandId.make("record-long-cards:link"),
+        turnItemId: TurnItemId.make("item:long-cards:link"),
+        url: "https://example.test",
+        linkStatus: "pending",
+      })
+      .pipe(recordStatements);
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["secret_request", "link_request"],
+    });
+    assert.deepEqual(
+      turnItems.map((item) => [item.type, item.providerTurnId]),
+      [
+        ["secret_request", providerTurnId],
+        ["link_request", providerTurnId],
+      ],
+    );
+
+    // A card reads its own run, so the rows and VM steps of its reads, which are deterministic,
+    // must stay flat on a copy where the thread has thousands of older runs.
+    const copyPath = "file:/card-reads?vfs=memdb";
+    using copy = new NodeSqlite.DatabaseSync(copyPath);
+    yield* sql`VACUUM INTO ${copyPath}`;
+    const replay = () =>
+      statements
+        .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
+        .reduce(
+          (total, [query, params]) => {
+            const statement = copy.prepare(query);
+            const rows = statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+            return {
+              rows: total.rows + rows.length,
+              steps: total.steps + statement.stat("vmStep"),
+            };
+          },
+          { rows: 0, steps: 0 },
+        );
+    const short = replay();
+    const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+      ["runs", "run_id", []],
+      ["run_attempts", "attempt_id", ["run_id"]],
+      ["nodes", "node_id", ["run_id"]],
+      ["provider_turns", "provider_turn_id", ["run_attempt_id"]],
+    ];
+    for (const [table, key, renamed] of history) {
+      const name = `orchestration_v2_projection_${table}`;
+      const columns = copy
+        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
+        .all()
+        .map((column) => String(column.name));
+      const values = columns.map((column) =>
+        column === key || renamed.includes(column)
+          ? `${column} || ':history:' || history.n`
+          : column === "ordinal"
+            ? "ordinal + history.n"
+            : column,
+      );
+      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 2000)
+        INSERT INTO ${name} (${columns.join(", ")})
+        SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
+    }
+    const long = replay();
+    assert.equal(long.rows, short.rows);
+    assert.isAtMost(long.steps, short.steps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2990,4 +3289,295 @@ it.effect(
       }
       assert.equal(yield* captureReads, quietParent);
     }).pipe(Effect.provide(layerTest)),
+);
+
+/** A copy of `value` whose `id` getter counts its reads. */
+const countingIdReads = <T extends { readonly id: string }>(
+  value: T,
+  reads: { count: number },
+): T =>
+  Object.defineProperty({ ...value }, "id", {
+    enumerable: true,
+    get: () => {
+      reads.count += 1;
+      return value.id;
+    },
+  });
+
+// The owner's active attempt is the newest and no provider turn is tagged with it, so the lookup
+// falls back to the turn the attempt names. The last two turns are untagged and share one id.
+it.each([
+  { ownerAttempt: "names no provider turn", providerTurnId: null, findsFirstLegacy: false },
+  {
+    ownerAttempt: "names a provider turn listed twice",
+    providerTurnId: "legacy",
+    findsFirstLegacy: true,
+  },
+  { ownerAttempt: "is missing", providerTurnId: null, findsFirstLegacy: false },
+] as const)(
+  "finds a run's provider turn in at most 2·(T + A) id reads when its attempt $ownerAttempt",
+  ({ ownerAttempt, providerTurnId, findsFirstLegacy }) => {
+    const size = 2_000;
+    const reads = { count: 0 };
+    const providerThreadId = ProviderThreadId.make("provider-thread:lookup");
+    const attempts = Array.from({ length: size }, (_, index) =>
+      countingIdReads<OrchestrationV2RunAttempt>(
+        {
+          id: RunAttemptId.make(`attempt:lookup:${index}`),
+          runId: RunId.make(`run:lookup:${index}`),
+          attemptOrdinal: 1,
+          rootNodeId: NodeId.make(`node:lookup:${index}`),
+          providerInstanceId: instanceId,
+          providerThreadId,
+          providerTurnId:
+            index < size - 1
+              ? ProviderTurnId.make(`provider-turn:lookup:${index}`)
+              : providerTurnId === null
+                ? null
+                : ProviderTurnId.make(`provider-turn:lookup:${providerTurnId}`),
+          reason: "initial",
+          status: index < size - 1 ? "completed" : "pending",
+          startedAt: null,
+          completedAt: null,
+        },
+        reads,
+      ),
+    );
+    const providerTurns = Array.from({ length: size }, (_, index) => {
+      const untagged = index >= size - 2;
+      return countingIdReads<OrchestrationV2ProviderTurn>(
+        {
+          id: ProviderTurnId.make(`provider-turn:lookup:${untagged ? "legacy" : index}`),
+          providerThreadId,
+          nodeId: NodeId.make(`node:lookup:${index}`),
+          runAttemptId: untagged ? null : RunAttemptId.make(`attempt:lookup:${index}`),
+          nativeTurnRef: null,
+          ordinal: index + 1,
+          status: "completed",
+          startedAt: null,
+          completedAt: null,
+        },
+        reads,
+      );
+    });
+    const owner: OrchestrationV2Run = {
+      id: RunId.make(`run:lookup:${size - 1}`),
+      threadId: ThreadId.make("thread:lookup"),
+      ordinal: size,
+      providerInstanceId: instanceId,
+      modelSelection,
+      providerThreadId,
+      userMessageId: MessageId.make("message:lookup"),
+      rootNodeId: NodeId.make(`node:lookup:${size - 1}`),
+      activeAttemptId:
+        ownerAttempt === "is missing"
+          ? RunAttemptId.make("attempt:lookup:missing")
+          : RunAttemptId.make(`attempt:lookup:${size - 1}`),
+      status: "starting",
+      requestedAt: DateTime.makeUnsafe(0),
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+
+    const turn = Orchestrator.providerTurnForRun({ attempts, providerTurns }, owner);
+
+    assert.strictEqual(turn, findsFirstLegacy ? providerTurns[size - 2] : undefined);
+    assert.isAtMost(reads.count, 2 * (size + size));
+  },
+);
+
+it.effect(
+  "binding a worktree while a run is active does not detach the run's provider session",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:bind-active");
+      const now = yield* DateTime.now;
+      const sessionId = ProviderSessionId.make("session:bind-active");
+      const providerThreadId = ProviderThreadId.make("provider-thread:bind-active");
+      const runId = RunId.make("run:bind-active");
+      const nodeId = NodeId.make("node:bind-active");
+      const attemptId = RunAttemptId.make("attempt:bind-active");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-bind-active"),
+        threadId,
+        projectId: ProjectId.make("project:bind-active"),
+        title: "Bind active",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:session"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: sessionId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: adapter.driver,
+            nativeId: "native:bind-active",
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:run"),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:bind-active"),
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:bind-active"),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: { driver: adapter.driver, nativeId: "native:turn", strength: "strong" },
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+
+      // Launch-time worktree preparation binds the worktree after a message already started run 1.
+      const commandId = CommandId.make("bind-active:workspace");
+      yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId,
+          threadId,
+          worktreePath: "/repo-worktrees/t3-bind-active",
+        })
+        .pipe(Effect.result);
+
+      const detaches = (yield* outbox.listByCommandId(commandId)).filter(
+        (effect) => effect.request.type === "provider-session.detach",
+      );
+      assert.deepEqual(
+        detaches.map((effect) => effect.request),
+        [],
+        "the running turn's session must not be unloaded mid-turn; its completion would never arrive",
+      );
+      const run = (yield* projections.getThreadProjection(threadId)).runs.find(
+        (candidate) => candidate.id === runId,
+      );
+      assert.equal(run?.status, "running");
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a message waits for the worktree a launch is still preparing", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    const threadId = ThreadId.make("thread:send-before-bind");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-send-before-bind"),
+      threadId,
+      projectId: ProjectId.make("project:send-before-bind"),
+      title: "Send before bind",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const release = yield* tracker.holdWorkspace(threadId);
+
+    const sent = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("send-before-bind"),
+        threadId,
+        messageId: MessageId.make("message:send-before-bind"),
+        text: "Run pwd",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.deepEqual((yield* projections.getThreadProjection(threadId)).runs, []);
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("send-before-bind:workspace"),
+      threadId,
+      worktreePath: "/repo-worktrees/t3-send-before-bind",
+    });
+    yield* release;
+    yield* Fiber.join(sent);
+
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/t3-send-before-bind");
+    assert.lengthOf(projection.runs, 1);
+  }).pipe(Effect.provide(Layer.mergeAll(layerTest, WorktreeSetupTracker.layer))),
 );

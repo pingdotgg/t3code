@@ -10,6 +10,7 @@ import {
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
+  type PreviewStreamSelectMenu,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
@@ -22,10 +23,13 @@ import {
 } from "react";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { Platform, Pressable, TextInput, View } from "react-native";
+import { LegendList } from "@legendapp/list/react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
 import { AppText } from "../../components/ui/AppText";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { Sheet } from "../../components/ui/Sheet";
 import { PdfPreview } from "../../components/PdfPreview";
 import { m } from "../../i18n/messages";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -57,6 +61,8 @@ type NativeStreamBridge = {
   readonly onRefused: (delayMs: number) => void;
   readonly onGone?: () => void;
   readonly onViewport?: (viewport: { readonly width: number; readonly height: number }) => void;
+  /** The direction a drag scrolls the page, every few dozen pixels of it. */
+  readonly onScrollDirection?: (direction: "up" | "down") => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. */
@@ -230,6 +236,7 @@ function PreviewStreamDocumentView({
   onUnauthorized,
   onGone,
   onViewport,
+  onScrollDirection,
   onControl,
   onPictureInPicture,
   onStreamingChange,
@@ -257,6 +264,7 @@ function PreviewStreamDocumentView({
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
   const dialogRef = useRef<PreviewStreamControl["dialog"]>(null);
   const [promptText, setPromptText] = useState("");
+  const [password, setPassword] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const answerFileChooser = (pick: boolean) => {
     const chooser = fileChooser;
@@ -269,6 +277,7 @@ function PreviewStreamDocumentView({
       ),
     );
   };
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const command = (input: PreviewStreamInput) =>
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
@@ -295,6 +304,7 @@ function PreviewStreamDocumentView({
     onStreamingChange?.(false);
     setControl(null);
     setFileChooser(null);
+    setSelectMenu(null);
     onControl?.(null);
     setError(message);
     setStatus("error");
@@ -340,19 +350,18 @@ function PreviewStreamDocumentView({
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
-      {!compact ? (
+      {/* With control, the bar's menu offers releasing it, so the row would only take space. */}
+      {!compact && control?.controller !== "you" ? (
         <View className="flex-row items-center justify-between gap-2 border-b border-secondary-border px-3 py-2">
           <AppText className="text-xs text-foreground-muted">
             {previewStreamControlLabel(control, messages)}
           </AppText>
           {control?.canOperate ? (
             <Button
-              label={control.controller === "you" ? gt("Release control") : gt("Take control")}
+              label={gt("Take control")}
               tone="secondary"
               disabled={control.controller === "another-viewer"}
-              onPress={() =>
-                command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-              }
+              onPress={() => command({ type: "takeControl" })}
             />
           ) : null}
         </View>
@@ -386,9 +395,11 @@ function PreviewStreamDocumentView({
             switch (message.type) {
               case "control": {
                 setControl(message);
+                if (message.controller !== "you") setSelectMenu(null);
                 const previousDialog = dialogRef.current;
                 dialogRef.current = message.dialog;
                 setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
+                setPassword((draft) => previewPromptText(previousDialog, message.dialog, draft));
                 onControl?.(message);
                 return;
               }
@@ -411,6 +422,9 @@ function PreviewStreamDocumentView({
               case "viewport":
                 onViewport?.(message);
                 return;
+              case "scroll":
+                onScrollDirection?.(message.direction);
+                return;
               case "clipboard":
                 void Clipboard.setStringAsync(message.text).catch(() => undefined);
                 return;
@@ -419,6 +433,9 @@ function PreviewStreamDocumentView({
                 return;
               case "fileChooser":
                 setFileChooser(message.chooser);
+                return;
+              case "selectMenu":
+                setSelectMenu(message.menu);
                 return;
               case "pictureInPicture":
                 onPictureInPicture?.(message, message.detail);
@@ -464,6 +481,40 @@ function PreviewStreamDocumentView({
           </View>
         </View>
       ) : null}
+      {!compact && selectMenu && control?.controller === "you" ? (
+        <Sheet
+          key={selectMenu.id}
+          title={gt("Choose an option")}
+          onClose={() =>
+            setSelectMenu((current) => (current?.id === selectMenu.id ? null : current))
+          }
+        >
+          {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; the sheet keeps its own header handling. */}
+          <LegendList
+            data={selectMenu.options}
+            // The page answers by option index.
+            keyExtractor={(_, index) => String(index)}
+            extraData={selectMenu}
+            estimatedItemSize={48}
+            className="flex-1"
+            nestedScrollEnabled
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{ padding: 16 }}
+            renderItem={({ item, index }) => (
+              <ListChoiceRow
+                label={item.label}
+                selected={index === selectMenu.selectedIndex}
+                separated={index > 0}
+                disabled={item.disabled}
+                onPress={() => {
+                  setSelectMenu(null);
+                  command({ type: "selectMenu", id: selectMenu.id, index });
+                }}
+              />
+            )}
+          />
+        </Sheet>
+      ) : null}
       {!compact && control?.dialog ? (
         <View className="absolute inset-x-3 top-16 gap-3 rounded-xl border border-secondary-border bg-secondary p-4">
           <AppText className="text-sm text-secondary-foreground">{control.dialog.message}</AppText>
@@ -479,11 +530,44 @@ function PreviewStreamDocumentView({
                   onChangeText={setPromptText}
                 />
               ) : null}
+              {control.dialog.type === "auth" ? (
+                <>
+                  <TextInput
+                    accessibilityLabel={gt("Username")}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="min-h-[48px] rounded-lg border border-input-border bg-input px-3 py-2 text-foreground android:min-h-[50px]"
+                    placeholder={gt("Username")}
+                    placeholderTextColorClassName="accent-placeholder"
+                    selectionColorClassName="accent-focus/32"
+                    value={promptText}
+                    onChangeText={setPromptText}
+                  />
+                  <TextInput
+                    accessibilityLabel={gt("Password")}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    className="min-h-[48px] rounded-lg border border-input-border bg-input px-3 py-2 text-foreground android:min-h-[50px]"
+                    placeholder={gt("Password")}
+                    placeholderTextColorClassName="accent-placeholder"
+                    selectionColorClassName="accent-focus/32"
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                </>
+              ) : null}
               <View className="flex-row justify-end gap-3">
                 <Button
                   label={gt("Dismiss", { $context: "rejects a page dialog" })}
                   tone="text"
-                  onPress={() => command({ type: "dialog", accept: false })}
+                  onPress={() =>
+                    command({
+                      type: "dialog",
+                      accept: false,
+                      authChallengeId: control.dialog?.authChallengeId,
+                    })
+                  }
                 />
                 <Button
                   label={gt("Accept", { $context: "accepts a page dialog" })}
@@ -493,6 +577,13 @@ function PreviewStreamDocumentView({
                       type: "dialog",
                       accept: true,
                       ...(control.dialog?.type === "prompt" ? { promptText } : {}),
+                      ...(control.dialog?.type === "auth"
+                        ? {
+                            authChallengeId: control.dialog.authChallengeId,
+                            username: promptText,
+                            password,
+                          }
+                        : {}),
                     })
                   }
                 />

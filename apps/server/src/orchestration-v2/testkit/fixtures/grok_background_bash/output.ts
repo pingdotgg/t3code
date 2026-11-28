@@ -63,7 +63,7 @@ export function assertGrokBackgroundBashOutput(
     (event) =>
       event.type === "run.updated" &&
       event.payload.id === rootRun?.id &&
-      (event.payload.status === "waiting" || event.payload.status === "completed"),
+      event.payload.status === "completed",
   );
   assert.isAtLeast(rootTurnEndedAt, 0);
   assert.isBelow(rootTurnEndedAt, commandCompletedAt, "run 1 waited for the command to end");

@@ -1,0 +1,351 @@
+{
+  "case": "upload a small text file into a channel thread with an initial_comment mentioning the bot; read back",
+  "recordedAt": "2026-11-12T18:43:52.706Z",
+  "calls": [
+    {
+      "method": "chat.postMessage",
+      "encoding": "json",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "markdown_text": "Fixture: file share thread root"
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "channel": "C0CH1LGJ4F3",
+        "ts": "1794509028.346289",
+        "message": {
+          "user": "U0CCLMD4S1L",
+          "type": "message",
+          "ts": "1794509028.346289",
+          "bot_id": "B0CCQH77VA5",
+          "app_id": "A0CCHBHDK7X",
+          "text": "Fixture: file share thread root",
+          "team": "T05479Z6JBW",
+          "bot_profile": {
+            "id": "B0CCQH77VA5",
+            "deleted": false,
+            "name": "Janitor",
+            "updated": 1793135255,
+            "app_id": "A0CCHBHDK7X",
+            "user_id": "U0CCLMD4S1L",
+            "icons": {
+              "image_36": "https://scrubbed.invalid/image_36",
+              "image_48": "https://scrubbed.invalid/image_48",
+              "image_72": "https://scrubbed.invalid/image_72"
+            },
+            "team_id": "T05479Z6JBW"
+          },
+          "blocks": [
+            {
+              "type": "rich_text",
+              "block_id": "kS27k6",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "Fixture: file share thread root"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "files.getUploadURLExternal",
+      "encoding": "form",
+      "note": "files.getUploadURLExternal requires form encoding",
+      "request": {
+        "filename": "fixture.txt",
+        "length": 51
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "upload_url": "https://scrubbed.invalid/upload_url",
+        "file_id": "F0CH6RHTMRU"
+      }
+    },
+    {
+      "method": "<upload to upload_url>",
+      "request": {
+        "body": "<51 bytes text/plain>"
+      },
+      "httpStatus": 200,
+      "response": {
+        "text": "OK - 51"
+      }
+    },
+    {
+      "method": "files.completeUploadExternal",
+      "encoding": "json",
+      "request": {
+        "files": [
+          {
+            "id": "F0CH6RHTMRU",
+            "title": "fixture.txt"
+          }
+        ],
+        "channel_id": "C0CH1LGJ4F3",
+        "thread_ts": "1794509028.346289",
+        "initial_comment": "Fixture: file for <@U0CCLMD4S1L>"
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "files": [
+          {
+            "id": "F0CH6RHTMRU",
+            "created": 1794509028,
+            "timestamp": 1794509028,
+            "mimetype": "",
+            "filetype": "",
+            "pretty_type": "",
+            "user": "U0CCLMD4S1L",
+            "user_team": "T05479Z6JBW",
+            "editable": false,
+            "size": 51,
+            "mode": "hosted",
+            "is_external": false,
+            "external_type": "",
+            "is_public": false,
+            "public_url_shared": false,
+            "display_as_bot": false,
+            "username": "",
+            "name": "fixture.txt",
+            "title": "fixture.txt",
+            "is_modified_by_ai": false,
+            "url_private": "https://scrubbed.invalid/url_private",
+            "url_private_download": "https://scrubbed.invalid/url_private_download",
+            "media_display_type": "unknown",
+            "permalink": "https://scrubbed.invalid/permalink",
+            "permalink_public": "https://scrubbed.invalid/permalink_public",
+            "comments_count": 0,
+            "is_starred": false,
+            "shares": {},
+            "channels": [],
+            "groups": [],
+            "ims": [],
+            "has_more_shares": false,
+            "has_rich_preview": false,
+            "file_access": "visible"
+          }
+        ]
+      }
+    },
+    {
+      "method": "conversations.replies",
+      "encoding": "form",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "ts": "1794509028.346289",
+        "limit": 10
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "messages": [
+          {
+            "user": "U0CCLMD4S1L",
+            "type": "message",
+            "ts": "1794509028.346289",
+            "bot_id": "B0CCQH77VA5",
+            "app_id": "A0CCHBHDK7X",
+            "text": "Fixture: file share thread root",
+            "team": "T05479Z6JBW",
+            "bot_profile": {
+              "id": "B0CCQH77VA5",
+              "deleted": false,
+              "name": "Janitor",
+              "updated": 1793135255,
+              "app_id": "A0CCHBHDK7X",
+              "user_id": "U0CCLMD4S1L",
+              "icons": {
+                "image_36": "https://scrubbed.invalid/image_36",
+                "image_48": "https://scrubbed.invalid/image_48",
+                "image_72": "https://scrubbed.invalid/image_72"
+              },
+              "team_id": "T05479Z6JBW"
+            },
+            "thread_ts": "1794509028.346289",
+            "reply_count": 1,
+            "reply_users_count": 1,
+            "latest_reply": "1794509028.831169",
+            "reply_users": [
+              "U0CCLMD4S1L"
+            ],
+            "is_locked": false,
+            "subscribed": false,
+            "blocks": [
+              {
+                "type": "rich_text",
+                "block_id": "kS27k6",
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Fixture: file share thread root"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "Fixture: file for <@U0CCLMD4S1L>",
+            "files": [
+              {
+                "id": "F0CH6RHTMRU",
+                "created": 1794509028,
+                "timestamp": 1794509028,
+                "mimetype": "text/plain",
+                "filetype": "text",
+                "pretty_type": "Plain Text",
+                "user": "U0CCLMD4S1L",
+                "user_team": "T05479Z6JBW",
+                "editable": true,
+                "size": 51,
+                "mode": "snippet",
+                "is_external": false,
+                "external_type": "",
+                "is_public": false,
+                "public_url_shared": false,
+                "display_as_bot": false,
+                "username": "",
+                "name": "fixture.txt",
+                "title": "fixture.txt",
+                "is_modified_by_ai": false,
+                "url_private": "https://scrubbed.invalid/url_private",
+                "url_private_download": "https://scrubbed.invalid/url_private_download",
+                "permalink": "https://scrubbed.invalid/permalink",
+                "permalink_public": "https://scrubbed.invalid/permalink_public",
+                "edit_link": "https://scrubbed.invalid/edit_link",
+                "preview": "hello from the @effect/chat-slack fixture recorder\n",
+                "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>hello from the @effect/chat-slack fixture recorder</pre></div>\n<div><pre></pre></div>\n</div>\n</div>\n",
+                "lines": 2,
+                "lines_more": 0,
+                "preview_is_truncated": false,
+                "is_starred": false,
+                "skipped_shares": true,
+                "has_rich_preview": false,
+                "file_access": "visible"
+              }
+            ],
+            "upload": true,
+            "user": "U0CCLMD4S1L",
+            "display_as_bot": false,
+            "blocks": [
+              {
+                "type": "rich_text",
+                "block_id": "mP=",
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Fixture: file for "
+                      },
+                      {
+                        "type": "user",
+                        "user_id": "U0CCLMD4S1L"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "type": "message",
+            "ts": "1794509028.831169",
+            "bot_id": "B0CCQH77VA5",
+            "thread_ts": "1794509028.346289",
+            "parent_user_id": "U0CCLMD4S1L"
+          }
+        ],
+        "has_more": false
+      }
+    },
+    {
+      "method": "conversations.history",
+      "encoding": "form",
+      "note": "thread replies are not in history (expected empty/other message)",
+      "request": {
+        "channel": "C0CH1LGJ4F3",
+        "latest": "1794509028.831169",
+        "inclusive": true,
+        "limit": 1
+      },
+      "httpStatus": 200,
+      "response": {
+        "ok": true,
+        "latest": "1794509028.831169",
+        "messages": [
+          {
+            "user": "U0CCLMD4S1L",
+            "type": "message",
+            "ts": "1794509028.346289",
+            "bot_id": "B0CCQH77VA5",
+            "app_id": "A0CCHBHDK7X",
+            "text": "Fixture: file share thread root",
+            "team": "T05479Z6JBW",
+            "bot_profile": {
+              "id": "B0CCQH77VA5",
+              "deleted": false,
+              "name": "Janitor",
+              "updated": 1793135255,
+              "app_id": "A0CCHBHDK7X",
+              "user_id": "U0CCLMD4S1L",
+              "icons": {
+                "image_36": "https://scrubbed.invalid/image_36",
+                "image_48": "https://scrubbed.invalid/image_48",
+                "image_72": "https://scrubbed.invalid/image_72"
+              },
+              "team_id": "T05479Z6JBW"
+            },
+            "thread_ts": "1794509028.346289",
+            "reply_count": 1,
+            "reply_users_count": 1,
+            "latest_reply": "1794509028.831169",
+            "reply_users": [
+              "U0CCLMD4S1L"
+            ],
+            "is_locked": false,
+            "subscribed": false,
+            "blocks": [
+              {
+                "type": "rich_text",
+                "block_id": "kS27k6",
+                "elements": [
+                  {
+                    "type": "rich_text_section",
+                    "elements": [
+                      {
+                        "type": "text",
+                        "text": "Fixture: file share thread root"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "has_more": true,
+        "pin_count": 0,
+        "channel_actions_ts": null,
+        "channel_actions_count": 0,
+        "response_metadata": {
+          "next_cursor": "bmV4dF90czoxNzk0NTA5MDA4MDc5NjA5"
+        }
+      }
+    }
+  ]
+}

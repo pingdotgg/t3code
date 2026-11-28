@@ -22,6 +22,7 @@ import { byTimestamp, relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
+import { collapsedTimelineCommentMarkdown } from "./PullRequestTimeline.logic";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 import { discussionCommentCountLabel } from "./pullRequestDiffComments";
 import { normalizedReviewState } from "./pullRequestStatus";
@@ -105,7 +106,7 @@ function TimelineComment({
       icon={approved ? "checkmark" : changes ? "doc.text" : "text.bubble"}
       tone={approved ? "success" : changes ? "danger" : undefined}
     >
-      <View className="flex-row items-center gap-2">
+      <View accessible accessibilityRole="header" className="flex-row items-center gap-2">
         <PullRequestAvatar actor={comment.author} size={22} />
         <View className="min-w-0 flex-1">
           <Text className="text-sm">
@@ -152,7 +153,9 @@ function TimelineComment({
         >
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
-              markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}
+              markdown={
+                long && !expanded ? collapsedTimelineCommentMarkdown(comment.body) : comment.body
+              }
               imageGroupMarkdown={comment.body}
             />
           </View>
@@ -275,7 +278,7 @@ export function pullRequestTimelineRows(
       date: thread.comments[0]?.createdAt ?? "",
       content: (
         <TimelineEvent icon="text.bubble" tone={thread.isResolved ? "success" : undefined}>
-          <View className="flex-row items-center gap-2">
+          <View accessible accessibilityRole="header" className="flex-row items-center gap-2">
             <PullRequestAvatar actor={thread.comments[0]?.author ?? null} size={22} />
             <Text className="flex-1 text-sm">
               <T>

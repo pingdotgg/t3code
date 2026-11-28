@@ -1,13 +1,16 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 import VirtualTablePreview from "./VirtualTablePreview";
+import { PreviewPositionKey } from "./previewPosition";
 
 import {
   Select,
@@ -21,6 +24,7 @@ import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./file
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewFailureText } from "./previewFailureMessages";
 
+const EpubViewer = lazy(() => import("./EpubViewer"));
 const DocumentPages = lazy(() => import("./DocumentPages"));
 const NotebookPreview = lazy(() => import("./NotebookPreview"));
 
@@ -76,6 +80,12 @@ function ExtendedOfficeViewer(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const [epub, setEpub] = useState<Extract<OfficeWorkerResult, { type: "epub" }> | null>(null);
+  const [epubPage, setEpubPage] = useState<Extract<
+    OfficeWorkerResult,
+    { type: "epub-page" }
+  > | null>(null);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -91,7 +101,9 @@ function ExtendedOfficeViewer(props: {
   const [count, setCount] = useState(0);
   const [fileSize, setFileSize] = useState(props.sizeBytes);
   const [page, setPage] = useState(0);
+  const filePositionKey = useContext(PreviewPositionKey);
   const workerRef = useRef<Worker | null>(null);
+  const submitPassword = useRef<((password: string) => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
@@ -111,18 +123,32 @@ function ExtendedOfficeViewer(props: {
       worker.terminate();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    timerRef.current = setTimeout(
-      () => fail(m(msg("This document took too long to preview. Open it in another app."))),
-      30_000,
-    );
+    const startTimeout = () =>
+      setTimeout(
+        () => fail(m(msg("This document took too long to preview. Open it in another app."))),
+        30_000,
+      );
+    timerRef.current = startTimeout();
+    submitPassword.current = (password) => {
+      timerRef.current = startTimeout();
+      worker.postMessage({ type: "unlock", password }, []);
+    };
     worker.addEventListener("error", () =>
       fail(m(msg("Could not load the Office viewer. Close the file and try again."))),
     );
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
       const result = event.data;
-      if (result.type === "error") fail(previewFailureText(result));
-      else if (result.type === "document") {
+      if (result.type === "password") {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setIncorrectPassword(result.incorrect);
+      } else if (result.type === "error") fail(previewFailureText(result));
+      else if (result.type === "epub") {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setEpub(result);
+      } else if (result.type === "epub-page") {
+        setEpubPage(result);
+      } else if (result.type === "document") {
         if (timerRef.current) clearTimeout(timerRef.current);
         setDocument(result);
         setCount(result.pages.length > 1 ? result.pages.length : 0);
@@ -155,6 +181,7 @@ function ExtendedOfficeViewer(props: {
         fail(thrownErrorMessage(cause, m) ?? m(msg("Could not read this file."))),
       );
     return () => {
+      submitPassword.current = null;
       controller.abort();
       worker.terminate();
       workerRef.current = null;
@@ -162,6 +189,9 @@ function ExtendedOfficeViewer(props: {
     };
   }, [props.src, props.kind, props.sizeBytes]);
   const selectPage = setPage;
+  const loadEpubPage = useStableCallback((index: number) =>
+    workerRef.current?.postMessage({ type: "epub-page", index }),
+  );
   if (error)
     return (
       <div
@@ -176,10 +206,32 @@ function ExtendedOfficeViewer(props: {
         </p>
       </div>
     );
+  if (incorrectPassword !== null)
+    return (
+      <FilePasswordPrompt
+        incorrect={incorrectPassword}
+        onSubmit={(password) => {
+          setIncorrectPassword(null);
+          submitPassword.current?.(password);
+        }}
+      />
+    );
   if (notebook)
     return (
       <Suspense fallback={<FileSurfaceLoading />}>
         <NotebookPreview notebook={notebook} sizeBytes={fileSize} />
+      </Suspense>
+    );
+  if (epub)
+    return (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <EpubViewer
+          name={props.name}
+          book={epub}
+          response={epubPage}
+          sizeBytes={fileSize}
+          loadPage={loadEpubPage}
+        />
       </Suspense>
     );
   const sheet = workbook?.sheets[page];
@@ -189,35 +241,20 @@ function ExtendedOfficeViewer(props: {
   const sheetName = (index: number) =>
     workbook?.sheets[index]?.name ?? gt("Sheet {number}", { number: String(index + 1) });
   const pageTitle = (index: number) =>
-    previewDocument?.pages[index]?.title ??
-    (navigation === "chapter"
-      ? gt("Chapter {number}", { number: String(index + 1) })
-      : gt("Page {number}", { number: String(index + 1) }));
+    previewDocument?.pages[index]?.title ?? gt("Page {number}", { number: String(index + 1) });
   const documentDetails =
-    navigation === "chapter"
-      ? gt("Chapter {page} of {count}", { page: String(page + 1), count: String(documentCount) })
-      : navigation === "slide"
-        ? gt("{count, plural, one {{count} slide} other {{count} slides}}", {
-            count: documentCount,
-          })
-        : navigation === "sheet"
-          ? gt("{count, plural, one {{count} sheet} other {{count} sheets}}", {
-              count: documentCount,
-            })
-          : gt("{count, plural, one {{count} page} other {{count} pages}}", {
-              count: documentCount,
-            });
+    navigation === "slide"
+      ? gt("{count, plural, one {{count} slide} other {{count} slides}}", { count: documentCount })
+      : gt("{count, plural, one {{count} page} other {{count} pages}}", { count: documentCount });
   const previousLabel = {
     sheet: gt("Previous sheet"),
     page: gt("Previous page"),
     slide: gt("Previous slide"),
-    chapter: gt("Previous chapter"),
   }[navigation];
   const nextLabel = {
     sheet: gt("Next sheet"),
     page: gt("Next page"),
     slide: gt("Next slide"),
-    chapter: gt("Next chapter"),
   }[navigation];
   const sizeDetails =
     fileSize !== undefined
@@ -252,29 +289,6 @@ function ExtendedOfficeViewer(props: {
                   {workbook.sheets.map((item, index) => (
                     <SelectItem key={index} value={index}>
                       {item.name ?? sheetName(index)}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
-          ) : previewDocument?.navigation === "chapter" ? (
-            <div className="min-w-0 flex-1">
-              <Select
-                value={page}
-                onValueChange={(value) => {
-                  if (value !== null) selectPage(value);
-                }}
-              >
-                <SelectTrigger
-                  aria-label={gt("Chapter", { $context: "noun, book chapter picker" })}
-                  size="xs"
-                >
-                  <SelectValue>{documentPage ? pageTitle(page) : undefined}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {previewDocument.pages.map((item, index) => (
-                    <SelectItem key={index} value={index}>
-                      {item.title ?? pageTitle(index)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -316,11 +330,9 @@ function ExtendedOfficeViewer(props: {
       ) : null}
       {documentPage ? (
         <>
-          {props.kind !== "epub" ? (
-            <FileSurfaceNotice>
-              <T>Text and images. Layout and embedded objects may differ from the original.</T>
-            </FileSurfaceNotice>
-          ) : null}
+          <FileSurfaceNotice>
+            <T>Text and images. Layout and embedded objects may differ from the original.</T>
+          </FileSurfaceNotice>
           <Suspense fallback={<FileSurfaceLoading />}>
             <DocumentPages
               html={documentPage.html}
@@ -347,19 +359,25 @@ function ExtendedOfficeViewer(props: {
               <T>This sheet is empty.</T>
             </p>
           ) : (
-            <VirtualTablePreview
-              key={page}
-              name={`${props.name}: ${sheetName(page)}`}
-              count={sheet.rowCount}
-              columns={sheet.columns}
-              getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
-              loadPage={(index) => {
-                const key = `${page}:${index}`;
-                if (pendingPages.current.has(key)) return;
-                pendingPages.current.add(key);
-                workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
-              }}
-            />
+            <PreviewPositionKey
+              value={filePositionKey === null ? null : `${filePositionKey}:${page}`}
+            >
+              <VirtualTablePreview
+                key={page}
+                name={`${props.name}: ${sheetName(page)}`}
+                count={sheet.rowCount}
+                columns={sheet.columns}
+                rowIndexes={sheet.rowIndexes}
+                columnIndexes={sheet.columnIndexes}
+                getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
+                loadPage={(index) => {
+                  const key = `${page}:${index}`;
+                  if (pendingPages.current.has(key)) return;
+                  pendingPages.current.add(key);
+                  workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
+                }}
+              />
+            </PreviewPositionKey>
           )}
         </>
       ) : (

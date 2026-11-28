@@ -1,7 +1,5 @@
 /**
  * Stateful lifecycle storage for MCP revisions before v2026-07-28.
- *
- * @internal
  */
 import * as Effect from "../../Effect.ts"
 import type * as Headers from "../../http/Headers.ts"

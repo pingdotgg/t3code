@@ -1,0 +1,429 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Real-app story: each beat is a frozen page of the real app (beats/<name>.html, written by
+      snapshot.mjs from a staging scenario), stacked as iframes in .app. The app was frozen at a
+      1440×720 viewport; .app scales it 1.0556× into the 1520×760 window, so a point (x, y) in a
+      beat is canvas (40 + 1.0556·x, 26 + 1.0556·y).
+    -->
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url(inter.woff2) format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: JB;
+        src: url(jbmono.woff2) format("woff2");
+        font-weight: 100 800;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --text: #f1f3f7;
+        --muted: #a3a3a3;
+        --dim: #636368;
+      }
+      html,
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: #000;
+        font-family: Inter, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .canvas {
+        position: relative;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background:
+          radial-gradient(1000px 520px at 50% 0%, rgba(52, 107, 241, 0.13), transparent 70%), #000;
+      }
+      .cam {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+      }
+      .win {
+        position: absolute;
+        left: 40px;
+        top: 26px;
+        width: 1520px;
+        height: 760px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #000;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      .app {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1440px;
+        height: 720px;
+        transform: scale(1.05556);
+        transform-origin: 0 0;
+      }
+      .app iframe {
+        position: absolute;
+        inset: 0;
+        width: 1440px;
+        height: 720px;
+        border: 0;
+        opacity: 0;
+        background: #000;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 20;
+        transform-origin: 4px 3px;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+      }
+      .shade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 190px;
+        background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.96) 42%);
+        z-index: 30;
+      }
+      .cap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 806px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        z-index: 31;
+        opacity: 0;
+      }
+      .cap .n {
+        width: 50px;
+        height: 50px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 25px;
+        font-weight: 700;
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      .cap .m {
+        color: var(--muted);
+        font-weight: 560;
+      }
+      .outro {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        opacity: 0;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        background:
+          radial-gradient(760px 460px at 50% 34%, rgba(52, 107, 241, 0.16), transparent 70%), #000;
+      }
+      .outro .logo {
+        width: 176px;
+        height: 176px;
+        display: block;
+        margin: 0 auto -10px;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35))
+          drop-shadow(0 18px 60px rgba(52, 107, 241, 0.35));
+      }
+      .outro h2 {
+        margin-top: 44px;
+        font-size: 76px;
+        line-height: 1.02;
+        font-weight: 760;
+        letter-spacing: -0.045em;
+      }
+      .outro h2 .and {
+        color: var(--muted);
+      }
+      .outro p {
+        margin-top: 22px;
+        font-size: 34px;
+        color: var(--muted);
+        font-weight: 550;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro p b {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .ver {
+        font-family: JB;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 6px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .outro .url {
+        margin-top: 46px;
+        font-family: JB;
+        font-size: 22px;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="cam">
+        <div class="win">
+          <div class="app">
+            <iframe data-beat="ask-empty" src="beats/ask-empty.html"></iframe>
+            <iframe data-beat="ask-typed" src="beats/ask-typed.html"></iframe>
+            <iframe data-beat="delegated" src="beats/delegated.html"></iframe>
+            <iframe data-beat="watch-install" src="beats/watch-install.html"></iframe>
+            <iframe data-beat="watch-e2e" src="beats/watch-e2e.html"></iframe>
+            <iframe data-beat="watch-e2e-late" src="beats/watch-e2e-late.html"></iframe>
+            <iframe data-beat="watch-done" src="beats/watch-done.html"></iframe>
+            <iframe data-beat="connected" src="beats/connected.html"></iframe>
+            <iframe data-beat="reply-typed" src="beats/reply-typed.html"></iframe>
+            <iframe data-beat="reply-sent" src="beats/reply-sent.html"></iframe>
+          </div>
+        </div>
+        <div class="cursor" id="cur">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 2.5 L4 19.5 L8.6 15.2 L11.6 21.6 L14.6 20.2 L11.7 14 L18 14 Z"
+              fill="#fff"
+              stroke="#000"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div class="shade"></div>
+      <div class="cap" id="cap1">
+        <span class="n">1</span
+        ><span>Delegate to another machine <span class="m">and it runs there.</span></span>
+      </div>
+      <div class="cap" id="cap2">
+        <span class="n">2</span><span>Watch it live <span class="m">without pairing.</span></span>
+      </div>
+      <div class="cap" id="cap3">
+        <span class="n">3</span
+        ><span>Connect to interact <span class="m">in one click.</span></span>
+      </div>
+    </div>
+    <div class="outro">
+      <div>
+        <img class="logo" src="logo-prod.png" />
+        <h2>Linked environments<br /><span class="and">every machine, one app</span></h2>
+        <p>Available now in <b>T3 Code</b> <span class="ver">0.1.12</span></p>
+        <div class="url">t3.codes</div>
+      </div>
+    </div>
+    <!-- kit.js last: Kit.ready waits for the beat iframes above. -->
+    <script src="kit.js"></script>
+    <script>
+      // Everything here is in animation seconds. capture.mjs calls setup() once the beats have loaded.
+      const B = (name) => `iframe[data-beat="${name}"]`;
+      const cap = (id, from, to) =>
+        Kit.anim(
+          id,
+          [
+            { opacity: 0, transform: "translateY(14px)" },
+            { opacity: 1, transform: "none", offset: 0.06 },
+            { opacity: 1, transform: "none", offset: 0.94 },
+            { opacity: 0, transform: "translateY(-8px)" },
+          ],
+          { at: from, dur: to - from, ease: "linear" },
+        );
+
+      window.setup = () => {
+        Kit.beats([
+          ["ask-empty", 0],
+          ["ask-typed", 1.2],
+          ["delegated", 3.4],
+          ["watch-install", 6.75],
+          ["watch-e2e", 8.9],
+          ["watch-e2e-late", 10.2],
+          ["watch-done", 11.5],
+          ["connected", 15.05],
+          ["reply-typed", 17.0],
+          ["reply-sent", 18.6],
+        ]);
+        Kit.anim(
+          ".win",
+          [
+            { opacity: 0, transform: "translateY(40px) scale(.98)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { at: 0, dur: 0.8 },
+        );
+
+        // 1. Ask, delegate
+        Kit.type("ask-typed >> [data-testid=composer-editor] p", 1.2, 1.7, 56);
+        Kit.press("ask-typed >> [data-chat-composer-form] button[type=submit]", 3.15);
+        Kit.pop("delegated >> [data-user-message-bubble]", 3.4, { origin: "right center" });
+        Kit.stagger("delegated >> [data-assistant-citation-source] p", 3.75, 0.25, "rise", {
+          y: 16,
+        });
+        Kit.pop("delegated >> button[data-v2-item-type=subagent]", 4.4, {
+          from: 0.8,
+          origin: "left center",
+        });
+        Kit.glow("delegated >> button[data-v2-item-type=subagent]", 4.7, 1.6);
+        cap("#cap1", 3.6, 7.4);
+
+        // 2. Open it read-only, watch it stream
+        Kit.slide("watch-install >> [data-workspace-area=panel]", 6.75, { x: 560, dur: 0.55 });
+        Kit.punch("watch-install >> button[data-v2-item-type=subagent]", 6.75, 1.04);
+        Kit.stagger(
+          "watch-done >> [data-workspace-area=panel] [data-assistant-citation-source] :is(p, li)",
+          11.6,
+          0.18,
+          "rise",
+          { y: 14 },
+        );
+        Kit.glow("watch-done >> [data-workspace-area=panel] [data-slot=composer-host]", 13.1, 1.4);
+        cap("#cap2", 7.6, 14.2);
+
+        // 3. Connect, reply
+        Kit.press(
+          "watch-done >> [data-workspace-area=panel] [data-slot=composer-host] button",
+          14.75,
+        );
+        Kit.pop("connected >> [data-position=top-right] > *", 15.25, {
+          from: 0.7,
+          origin: "top right",
+        });
+        Kit.glow(
+          "connected >> nav[aria-label='Thread breadcrumb'] li span[data-slot=tooltip-trigger]",
+          15.6,
+          1.4,
+        );
+        Kit.type("reply-typed >> [data-testid^=composer-editor] p", 17.0, 1.3, 47);
+        Kit.pop("reply-sent >> [data-user-message-body]", 18.6, { origin: "right center" });
+        cap("#cap3", 14.4, 20.0);
+
+        // Outro
+        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 20.1, dur: 0.5 });
+        Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 20.15, 0.08, "rise", {
+          y: 18,
+        });
+      };
+
+      window.layoutTime = 19.5;
+      window.placeCursor = () =>
+        Kit.measure(() => {
+          Kit.camera([
+            { t: 0, on: "full" },
+            { t: 0.7, on: "full" },
+            {
+              t: 1.15,
+              on: "ask-typed >> [data-chat-composer-form]",
+              s: 1.75,
+              ease: "cubic-bezier(.3,1.2,.4,1)",
+            },
+            { t: 3.2, on: "ask-typed >> [data-chat-composer-form]", s: 1.75 },
+            { t: 3.75, on: "delegated >> button[data-v2-item-type=subagent]", s: 1.65, y: 400 },
+            { t: 6.4, on: "delegated >> button[data-v2-item-type=subagent]", s: 1.65, y: 400 },
+            { t: 7.1, on: "watch-install >> [data-workspace-area=panel]", s: 1.6, y: 560 },
+            { t: 12.5, on: "watch-done >> [data-workspace-area=panel]", s: 1.6, y: 560 },
+            {
+              t: 13.1,
+              on: "watch-done >> [data-workspace-area=panel] [data-slot=composer-host]",
+              s: 1.55,
+              y: 520,
+            },
+            {
+              t: 15.0,
+              on: "watch-done >> [data-workspace-area=panel] [data-slot=composer-host]",
+              s: 1.55,
+              y: 520,
+            },
+            {
+              t: 15.4,
+              on: "connected >> [data-workspace-area=conversation]",
+              s: 1.3,
+              y: 470,
+              ease: "cubic-bezier(.2,.8,.2,1)",
+            },
+            { t: 16.7, on: "connected >> [data-workspace-area=conversation]", s: 1.3, y: 470 },
+            { t: 17.1, on: "reply-typed >> [data-chat-composer-form]", s: 1.6, y: 520 },
+            { t: 18.4, on: "reply-typed >> [data-chat-composer-form]", s: 1.6, y: 520 },
+            { t: 18.9, on: "reply-sent >> [data-user-message-body]", dx: -200, s: 1.5, y: 420 },
+            { t: 20.1, on: "reply-sent >> [data-user-message-body]", dx: -200, s: 1.5, y: 420 },
+          ]);
+          Kit.cursor("#cur", [
+            { t: 5.2, at: [1150, 700], hidden: true },
+            { t: 5.4 },
+            {
+              t: 6.4,
+              at: "delegated >> button[data-v2-item-type=subagent]",
+              dx: -120,
+              click: true,
+            },
+            { t: 7.0, hidden: true },
+            {
+              t: 13.4,
+              at: "watch-done >> [data-workspace-area=panel] [data-slot=composer-host]",
+              dx: -60,
+              hidden: true,
+            },
+            { t: 13.7 },
+            {
+              t: 14.6,
+              at: "watch-done >> [data-workspace-area=panel] [data-slot=composer-host] button",
+              click: true,
+            },
+            { t: 15.1 },
+            { t: 15.4, hidden: true },
+            { t: 20, hidden: true },
+          ]);
+        });
+      Kit.timeline([
+        [0.7, 0, 0.7],
+        [0.5, 0.7, 1.2],
+        [2.2, 1.2, 3.2],
+        [0.6, 3.2, 3.8],
+        [2.6, 3.8, 6.0],
+        [0.6, 6.0, 6.4],
+        [0.9, 6.4, 7.2],
+        [1.7, 7.2, 8.9],
+        [3.0, 8.9, 11.5],
+        [2.0, 11.5, 13.1],
+        [0.8, 13.1, 13.6],
+        [1.4, 13.6, 14.8],
+        [0.6, 14.8, 15.4],
+        [1.6, 15.4, 16.9],
+        [1.8, 16.9, 18.4],
+        [0.4, 18.4, 18.6],
+        [1.6, 18.6, 20.0],
+        [0.8, 20.0, 20.8],
+        [2.8, 20.8, 20.8],
+      ]);
+    </script>
+  </body>
+</html>

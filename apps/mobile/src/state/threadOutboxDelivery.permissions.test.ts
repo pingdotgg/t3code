@@ -27,6 +27,21 @@ const state = vi.hoisted(() => ({
   interaction: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
+  // Delivery runs commands as Effects; tests steer them with the settled results the mocks return.
+  command: (Effect: typeof import("effect/Effect"), settle: (input: unknown) => unknown) => ({
+    label: "command",
+    run: (_registry: unknown, input: unknown) =>
+      Effect.promise(
+        async () =>
+          (await settle(input)) as
+            | import("effect/reactivity").AsyncResult.Success<unknown>
+            | import("effect/reactivity").AsyncResult.Failure<unknown, Error>,
+      ).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Failure" ? Effect.failCause(result.cause) : Effect.succeed(result.value),
+        ),
+      ),
+  }),
   modelUnavailable: vi.fn(() => false),
   familyMount: vi.fn(() => () => {}),
   threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
@@ -48,11 +63,6 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
-  runAtomCommand: (_registry: unknown, command: (input: unknown) => unknown, input: unknown) =>
-    command(input),
-}));
 vi.mock("./session", async () => {
   const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
@@ -88,13 +98,14 @@ vi.mock("./server", async () => {
 });
 vi.mock("./threads", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
   state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {
-      startTurn: state.start,
-      updateMetadata: state.metadata,
-      setRuntimeMode: state.runtime,
-      setInteractionMode: state.interaction,
+      startTurn: state.command(Effect, state.start),
+      updateMetadata: state.command(Effect, state.metadata),
+      setRuntimeMode: state.command(Effect, state.runtime),
+      setInteractionMode: state.command(Effect, state.interaction),
     },
     environmentThreadShells: { threadShellsAtom: state.threadShells },
     threadFamilies: {
@@ -105,7 +116,11 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: { stateAtom: () => Atom.make(null) },
   };
 });
-vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
+vi.mock("./git", async () => ({
+  gitEnvironment: {
+    preparePullRequestThread: state.command(await import("effect/Effect"), state.checkout),
+  },
+}));
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));

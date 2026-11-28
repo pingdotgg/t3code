@@ -5,7 +5,7 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { View } from "react-native";
 import Animated from "react-native-reanimated";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -32,7 +32,9 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
-import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
+import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
+import { requestPullRequestFileJump } from "./pullRequestFileJump";
+import { fileDirectory, groupByDirectory } from "./pullRequestFileSections";
 import type { MessageResolver } from "../../i18n/messages";
 
 const BREAKDOWN_LABELS = {
@@ -43,11 +45,6 @@ const BREAKDOWN_LABELS = {
   docs: msg("Docs", { $context: "kind of changed file" }),
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
-function fileDirectory(path: string) {
-  const separator = path.lastIndexOf("/");
-  return separator < 0 ? "" : path.slice(0, separator);
-}
-
 function useChangedFiles(params: PullRequestDiffParams) {
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   // A commit's diff is part of the pull request, so the PR's file counts and viewed state don't apply.
@@ -57,7 +54,13 @@ function useChangedFiles(params: PullRequestDiffParams) {
   ).changeRequest;
   const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
-  const filter = usePullRequestFileFilter(diff.parsed);
+  const reviewDraft = usePullRequestReviewDraft(params);
+  const filter = usePullRequestFileFilter(
+    diff.parsed,
+    viewed,
+    undefined,
+    reviewDraft.draft.comments.map((comment) => comment.path),
+  );
   const parsed = filter.parsed;
   return {
     diff,
@@ -83,7 +86,7 @@ function describeFiles(
 ) {
   const count = parsed.fileCount;
   return [
-    filter.hiddenCount
+    filter.hiddenCount || filter.hiddenViewedCount
       ? resolve(
           msg("{count, plural, one {{count} visible file} other {{count} visible files}}", {
             count,
@@ -94,13 +97,20 @@ function describeFiles(
             count,
           }),
         ),
-    viewed.supported
-      ? resolve(
-          msg("{count, plural, one {{count} viewed} other {{count} viewed}}", {
-            count: parsed.files.filter((file) => viewed.isViewed(file.path)).length,
-          }),
-        )
-      : null,
+    !viewed.supported
+      ? null
+      : filter.hideViewedFiles
+        ? resolve(
+            msg(
+              "{count, plural, one {{count} viewed file hidden} other {{count} viewed files hidden}}",
+              { count: filter.hiddenViewedCount },
+            ),
+          )
+        : resolve(
+            msg("{count, plural, one {{count} viewed} other {{count} viewed}}", {
+              count: filter.viewedCount,
+            }),
+          ),
     filter.hideTestFiles
       ? resolve(
           msg("{count, plural, one {{count} test file hidden} other {{count} test files hidden}}", {
@@ -113,12 +123,13 @@ function describeFiles(
     .join(" · ");
 }
 
-function FileRow(props: {
+// Memoized: a pull request's rows rebuild as its detail, diff and viewed reads land.
+const FileRow = memo(function FileRow(props: {
   readonly file: ReviewRenderableFile;
   readonly viewed: boolean;
   /** Shown under the file name where files aren't grouped by directory. */
   readonly directory?: string;
-  readonly onPress: () => void;
+  readonly onPress: (path: string) => void;
 }) {
   const { file } = props;
   const gt = useGT();
@@ -128,10 +139,16 @@ function FileRow(props: {
       accessibilityRole="button"
       accessibilityLabel={
         props.viewed
-          ? gt("View diff for {path}, {additions} additions, {deletions} deletions, viewed", values)
-          : gt("View diff for {path}, {additions} additions, {deletions} deletions", values)
+          ? gt(
+              "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}, viewed",
+              values,
+            )
+          : gt(
+              "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}",
+              values,
+            )
       }
-      onPress={props.onPress}
+      onPress={() => props.onPress(file.path)}
       className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-3 active:opacity-70"
     >
       <PierreEntryIcon kind="file" path={file.path} size={20} />
@@ -163,7 +180,7 @@ function FileRow(props: {
       <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
     </RowPressable>
   );
-}
+});
 
 function FileRowSkeleton(props: { readonly index: number }) {
   return (
@@ -197,14 +214,26 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
+        ...(filter.canHideViewedFiles
+          ? [
+              {
+                id: "hide-viewed",
+                title: gt("Hide viewed files"),
+                image: "eye.slash",
+                state: filter.hideViewedFiles ? ("on" as const) : ("off" as const),
+              },
+            ]
+          : []),
       ]}
-      onPressAction={filter.toggle}
+      onPressAction={({ nativeEvent }) =>
+        nativeEvent.event === "hide-viewed" ? filter.toggleViewedFiles() : filter.toggle()
+      }
     >
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
           accessibilityLabel={gt("Filter review files")}
-          selected={filter.hideTestFiles}
+          selected={filter.hideTestFiles || filter.hideViewedFiles}
         />
       </View>
     </Menu>
@@ -214,6 +243,22 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
 function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
   const { diff, filter, parsed } = files;
   const gt = useGT();
+  if (parsed.kind === "files" && parsed.files.length === 0 && filter.hiddenViewedCount > 0) {
+    return (
+      <EmptyState
+        title={diff.nextCursor ? gt("No unviewed files loaded yet") : gt("All files are hidden")}
+        detail={gt("Viewed files are hidden from this review.")}
+        action={
+          <Button
+            label={gt("Show viewed files")}
+            tone="contrast"
+            onPress={filter.showViewedFiles}
+          />
+        }
+        variant="plain"
+      />
+    );
+  }
   if (parsed.kind === "files") {
     return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
       <EmptyState
@@ -240,7 +285,7 @@ function FilesFooter({ files }: { readonly files: ChangedFiles }) {
         <Button
           label={diff.error ? gt("Retry loading files") : gt("Load more files")}
           tone="secondary"
-          onPress={diff.error ? diff.refresh : diff.loadMore}
+          onPress={diff.error ? diff.retry : diff.loadMore}
           loading={diff.isPending}
           fullWidth
         />
@@ -294,6 +339,7 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
     composerPullRequests.changeBreakdown(pullRequestTarget(params)),
   ).data;
   const expected = pr ?? params.initialSummary;
+  const openFile = (path: string) => navigation.navigate("PullRequestFile", { ...params, path });
   return {
     refresh: diff.refresh,
     header: (
@@ -368,45 +414,12 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
               file={file}
               directory={fileDirectory(file.path)}
               viewed={viewed.isViewed(file.path)}
-              onPress={() => navigation.navigate("PullRequestFile", { ...params, path: file.path })}
+              onPress={openFile}
             />
           ),
         })),
     footer: <FilesFooter files={files} />,
   };
-}
-
-type SheetItem =
-  | {
-      readonly kind: "directory";
-      readonly key: string;
-      readonly directory: string;
-      readonly collapsed: boolean;
-    }
-  | { readonly kind: "file"; readonly key: string; readonly file: ReviewRenderableFile };
-
-function groupByDirectory(
-  files: ReadonlyArray<ReviewRenderableFile>,
-  collapsed: ReadonlySet<string>,
-) {
-  const sorted = files
-    .map((file) => ({ file, directory: fileDirectory(file.path) }))
-    .sort(
-      (a, b) => a.directory.localeCompare(b.directory) || a.file.path.localeCompare(b.file.path),
-    );
-  const items: SheetItem[] = [];
-  sorted.forEach(({ file, directory }, index) => {
-    if (directory !== sorted[index - 1]?.directory) {
-      items.push({
-        kind: "directory",
-        key: `directory:${directory}`,
-        directory,
-        collapsed: collapsed.has(directory),
-      });
-    }
-    if (!collapsed.has(directory)) items.push({ kind: "file", key: file.id, file });
-  });
-  return items;
 }
 
 function DirectoryRow(props: {
@@ -443,7 +456,6 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
   const navigation = useNavigation();
   const gt = useGT();
   const m = useMessages();
-  const jumpScope = pullRequestFileJumpScope(params);
   const files = useChangedFiles(params);
   const { diff, filter, viewed, parsed, loading } = files;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -472,6 +484,17 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 selected: filter.hideTestFiles,
                 onPress: filter.toggle,
               },
+              ...(filter.canHideViewedFiles
+                ? [
+                    {
+                      id: "hide-viewed",
+                      title: gt("Hide viewed files"),
+                      icon: "eye.slash",
+                      selected: filter.hideViewedFiles,
+                      onPress: filter.toggleViewedFiles,
+                    },
+                  ]
+                : []),
             ],
           },
         ]}
@@ -500,14 +523,10 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 <FileRow
                   file={item.file}
                   viewed={viewed.isViewed(item.file.path)}
-                  onPress={() => {
-                    requestPullRequestFileJump(jumpScope, item.file.path);
+                  onPress={(path) => {
+                    requestPullRequestFileJump(navigation.getState()?.routes ?? [], path);
                     navigation.dispatch(
-                      StackActions.popTo("PullRequestFile", {
-                        ...params,
-                        path: item.file.path,
-                        focus: undefined,
-                      }),
+                      StackActions.popTo("PullRequestFile", { ...params, path, focus: undefined }),
                     );
                   }}
                 />

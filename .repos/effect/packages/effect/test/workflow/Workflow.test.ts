@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Exit, Fiber, Scheduler } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Scheduler, Schema } from "effect"
 import { Activity, Workflow } from "effect/workflow"
 import { WorkflowInstance } from "effect/workflow/WorkflowEngine"
 
@@ -28,6 +28,108 @@ describe("persisted ids", () => {
         ),
         "26241ff2cf66bbddd1be618b7ccdf48f"
       )
+    }))
+})
+
+describe("Workflow.intoResult", () => {
+  it.effect("waits for handler cleanup before workflow finalizers on immediate interruption", () =>
+    Effect.gen(function*() {
+      const workflow = Workflow.make("CleanupOrder", {
+        payload: {},
+        idempotencyKey: () => "one"
+      })
+      const instance = WorkflowInstance.initial(workflow, "one")
+      const started = yield* Deferred.make<void>()
+      const order: Array<string> = []
+      const handler = Effect.gen(function*() {
+        yield* Workflow.addFinalizer(() =>
+          Effect.sync(() => {
+            order.push("workflow-finalizer")
+          })
+        )
+        yield* Deferred.succeed(started, undefined)
+        return yield* Effect.never
+      }).pipe(Effect.onExit(() =>
+        Effect.sync(() => {
+          order.push("handler-finalizer")
+        })
+      ))
+      const running = yield* handler.pipe(
+        Workflow.intoResult,
+        Effect.provideService(WorkflowInstance, instance),
+        Effect.forkChild
+      )
+      yield* Deferred.await(started)
+      // Do not yield between startup and interruption: that would hide the race.
+      order.push("interrupt")
+      yield* Fiber.interrupt(running)
+      assert.deepStrictEqual(order, ["interrupt", "handler-finalizer", "workflow-finalizer"])
+    }))
+
+  const workflow = Workflow.make("CompensationDefect", {
+    payload: {},
+    error: Schema.String,
+    idempotencyKey: () => "one"
+  })
+  const defects = (cause: Cause.Cause<unknown>) =>
+    cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)
+
+  it.effect("captures compensation defects in Complete results by default", () =>
+    Effect.gen(function*() {
+      const failed = yield* Effect.gen(function*() {
+        yield* Workflow.addFinalizer(() => Effect.die("compensation failed"))
+        return yield* Effect.fail("refused")
+      }).pipe(
+        Workflow.intoResult,
+        Effect.provideService(WorkflowInstance, WorkflowInstance.initial(workflow, "failed"))
+      )
+      assert(failed._tag === "Complete")
+      assert(Exit.isFailure(failed.exit))
+      assert.deepStrictEqual(
+        failed.exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error),
+        ["refused"]
+      )
+      assert.deepStrictEqual(defects(failed.exit.cause), ["compensation failed"])
+
+      const succeeded = yield* Effect.gen(function*() {
+        yield* Workflow.addFinalizer(() => Effect.die("compensation failed"))
+      }).pipe(
+        Workflow.intoResult,
+        Effect.provideService(WorkflowInstance, WorkflowInstance.initial(workflow, "succeeded"))
+      )
+      assert(succeeded._tag === "Complete")
+      assert(Exit.isFailure(succeeded.exit))
+      assert.deepStrictEqual(defects(succeeded.exit.cause), ["compensation failed"])
+    }))
+
+  it.effect("lets compensation defects escape when CaptureDefects is disabled", () =>
+    Effect.gen(function*() {
+      const exit = yield* Effect.gen(function*() {
+        yield* Workflow.addFinalizer(() => Effect.die("compensation failed"))
+        return yield* Effect.fail("refused")
+      }).pipe(
+        Workflow.intoResult,
+        Effect.provideService(
+          WorkflowInstance,
+          WorkflowInstance.initial(workflow.annotate(Workflow.CaptureDefects, false), "one")
+        ),
+        Effect.exit
+      )
+      assert(Exit.isFailure(exit))
+      assert.deepStrictEqual(defects(exit.cause), ["compensation failed"])
+    }))
+
+  it.effect("propagates finalizer interruption without producing a Complete result", () =>
+    Effect.gen(function*() {
+      const exit = yield* Effect.gen(function*() {
+        yield* Workflow.addFinalizer(() => Effect.interrupt)
+        return yield* Effect.fail("refused")
+      }).pipe(
+        Workflow.intoResult,
+        Effect.provideService(WorkflowInstance, WorkflowInstance.initial(workflow, "one")),
+        Effect.exit
+      )
+      assert(Exit.hasInterrupts(exit) && !Exit.hasDies(exit))
     }))
 })
 

@@ -311,7 +311,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
               ? `Queued a restart of the T3 Code service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
               : status.otherBaseDir !== undefined
                 ? `The T3 Code service serves ${status.otherBaseDir}, so it was not restarted. Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to restart it.`
-                : "T3 Code service is not installed.",
+                : status.installed
+                  ? `A T3 Code service definition was found, but its T3 home could not be determined, so it was not restarted. Check ${status.unitPath}.`
+                  : "T3 Code service is not installed.",
         );
       }),
     ),
@@ -325,19 +327,14 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
       flags,
       Effect.gen(function* () {
         const service = yield* BootService.BootService;
-        const path = yield* Path.Path;
-        const { baseDir } = yield* ServerConfig.ServerConfig;
         // An unreadable unit stays removable; only a unit known to serve another home is kept.
-        const installedBaseDir = yield* service.status.pipe(
-          Effect.map((status) => status.installedBaseDir),
+        const otherBaseDir = yield* service.status.pipe(
+          Effect.map((status) => status.otherBaseDir),
           Effect.orElseSucceed(() => undefined),
         );
-        if (
-          installedBaseDir !== undefined &&
-          path.resolve(installedBaseDir) !== path.resolve(baseDir)
-        ) {
+        if (otherBaseDir !== undefined) {
           yield* Console.log(
-            `The T3 Code service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
+            `The T3 Code service serves ${otherBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(otherBaseDir)}\` to remove it.`,
           );
           return;
         }

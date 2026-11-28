@@ -174,6 +174,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
+  it.effect("refuses a name that would leave the secrets directory", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const value = new TextEncoder().encode("planted");
+      for (const name of ["marker-x/../session-signing-key", "marker-x\\..\\session-signing-key"]) {
+        for (const write of [secretStore.create, secretStore.set]) {
+          assert.equal((yield* write(name, value).pipe(Effect.flip))._tag, "SecretStoreNameError");
+        }
+        assert.equal((yield* secretStore.get(name).pipe(Effect.flip))._tag, "SecretStoreNameError");
+        assert.equal(
+          (yield* secretStore.remove(name).pipe(Effect.flip))._tag,
+          "SecretStoreNameError",
+        );
+      }
+      assert.isTrue(Option.isNone(yield* secretStore.get("session-signing-key")));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
   it.effect("replaces an empty persisted secret with a fresh random one", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
