@@ -272,6 +272,13 @@ const htmlPreviewFrame = (
   ),
 });
 
+function workspaceAssetRevision(workspaceMutationId: string | null, refreshRevision = 0) {
+  if (refreshRevision === 0) return workspaceMutationId;
+  return workspaceMutationId === null
+    ? `refresh:${refreshRevision}`
+    : `${workspaceMutationId}:refresh:${refreshRevision}`;
+}
+
 export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -290,13 +297,7 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const refreshRevision = props.refreshRevision ?? 0;
-  const assetRevision =
-    refreshRevision > 0
-      ? props.workspaceMutationId === null
-        ? `refresh:${refreshRevision}`
-        : `${props.workspaceMutationId}:refresh:${refreshRevision}`
-      : props.workspaceMutationId;
+  const assetRevision = workspaceAssetRevision(props.workspaceMutationId, props.refreshRevision);
   // Each workspace mutation or manual refresh re-mints the URL: a file outside the workspace is
   // signed by its inode, which an atomic replace changes.
   const assetUrl = useAssetUrlState(props.environmentId, resource, assetRevision);
@@ -2127,13 +2128,11 @@ export function WorkspaceLargeTextPreview(props: {
       description: thrownErrorMessage(cause, m) ?? gt("Try again."),
     });
   };
-  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  // Each workspace mutation or manual refresh re-mints the URL, so an edited file loads its new bytes.
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.refreshRevision
-      ? `${props.workspaceMutationId ?? ""}:refresh:${props.refreshRevision}`
-      : props.workspaceMutationId,
+    workspaceAssetRevision(props.workspaceMutationId, props.refreshRevision),
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([
