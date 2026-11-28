@@ -132,6 +132,9 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
   parseProjected: (projected) => parseClaudeRecord(projected),
 };
 
+// Claude Code mirrors SSH-remote sessions under `projects/ssh-<sessionId>/`; a T3 server on the remote also counts them.
+const isClaudeSshMirrorDir = (name: string) => /^ssh-/i.test(name);
+
 export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> = {
   kind: "transcripts",
   provider: "claude",
@@ -144,6 +147,6 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     const home = configured
       ? expandHomePath(configured, homeDirectory)
       : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
-    return [{ dir: path.resolve(home, "projects") }];
+    return [{ dir: path.resolve(home, "projects"), mirrorTopLevelDir: isClaudeSshMirrorDir }];
   }),
 };

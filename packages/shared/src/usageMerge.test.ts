@@ -45,6 +45,8 @@ function summary(
     volumeId?: string;
     physicalSourceId?: string;
     distinctSessions?: number;
+    mirror?: true;
+    sessionKeys?: readonly string[];
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -71,6 +73,8 @@ function summary(
       malformedRecords: 0,
       distinctSessions: source.distinctSessions ?? 1,
       message: null,
+      ...(source.mirror === undefined ? {} : { mirror: source.mirror }),
+      ...(source.sessionKeys === undefined ? {} : { sessionKeys: source.sessionKeys }),
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
     scanDurationMs: 1,
@@ -82,6 +86,65 @@ function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
 }
 
 describe("mergeUsage", () => {
+  it("drops an SSH mirror only when another environment counts its sessions", () => {
+    const local = (mirrorKeys: readonly string[]) =>
+      environment(
+        "local",
+        summary(
+          [
+            bucket({ sourcePath: "/local/projects" }),
+            bucket({ sourcePath: "/local/projects/ssh-remote1" }),
+          ],
+          [
+            {
+              provider: "claude",
+              hostId: "local",
+              homePath: "/local/projects",
+              sessionKeys: ["local001"],
+            },
+            {
+              provider: "claude",
+              hostId: "local",
+              homePath: "/local/projects/ssh-remote1",
+              mirror: true,
+              sessionKeys: mirrorKeys,
+            },
+          ],
+        ),
+      );
+    const remote = environment(
+      "remote",
+      summary(
+        [bucket({ sourcePath: "/remote/projects" })],
+        [
+          {
+            provider: "claude",
+            hostId: "remote",
+            homePath: "/remote/projects",
+            sessionKeys: ["remote01"],
+          },
+        ],
+      ),
+    );
+    const cost = (environments: readonly EnvironmentUsage[]) =>
+      mergeUsage(environments, USAGE_CONTRACT_VERSION).providers[0]?.costUsd;
+
+    expect(cost([local(["remote01"])])).toBe(20);
+    expect(cost([local(["remote01"]), remote])).toBe(20);
+    expect(cost([local(["other001"]), remote])).toBe(30);
+    const partialRemote = {
+      ...remote,
+      summary: {
+        ...remote.summary,
+        sources: remote.summary.sources.map((source) => ({
+          ...source,
+          status: "partial" as const,
+        })),
+      },
+    };
+    expect(cost([local(["remote01"]), partialRemote])).toBe(30);
+  });
+
   it("counts a Cursor account once across servers while retaining each server's other providers", () => {
     const account = {
       provider: "cursor" as const,

@@ -181,10 +181,36 @@ function claimSources(
       a.environmentId.localeCompare(b.environmentId),
   );
 
+  // A mirror is a local copy of sessions another machine ran; drop it once another environment counts them all.
+  const sessionKeysByEnvironment = new Map<EnvironmentId, Set<string>>();
+  for (const environment of environments) {
+    const keys = new Set<string>();
+    for (const source of environment.summary.sources) {
+      // A partial scan may hold only some of a session's requests, so only a complete one claims it.
+      if (source.mirror === true || source.status !== "ok") continue;
+      for (const key of source.sessionKeys ?? [])
+        keys.add(`${source.fingerprint.provider}\u0000${key}`);
+    }
+    sessionKeysByEnvironment.set(environment.environmentId, keys);
+  }
+  const countedElsewhere = (environment: EnvironmentUsage, source: UsageSource) =>
+    source.mirror === true &&
+    source.sessionKeys !== undefined &&
+    source.sessionKeys.length > 0 &&
+    source.sessionKeys.every((key) =>
+      environments.some(
+        (other) =>
+          other.environmentId !== environment.environmentId &&
+          sessionKeysByEnvironment
+            .get(other.environmentId)
+            ?.has(`${source.fingerprint.provider}\u0000${key}`),
+      ),
+    );
+
   for (const status of ["ok", "partial", "failed"] as const) {
     for (const environment of ordered) {
       for (const source of environment.summary.sources) {
-        if (source.status !== status) continue;
+        if (source.status !== status || countedElsewhere(environment, source)) continue;
         const key = sourceKey(source.fingerprint);
         if (ownerScanByFingerprint.has(key)) {
           duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);

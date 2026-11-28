@@ -103,6 +103,13 @@ export const UsageSource = Schema.Struct({
   message: Schema.NullOr(TrimmedNonEmptyString),
   /** Cached response during refresh; repeat with awaitRefresh for fresh data. */
   refreshing: Schema.optionalKey(Schema.Literal(true)),
+  /** A local copy of sessions that ran on another machine (Claude Code's SSH remote mirrors). */
+  mirror: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * First 8 characters of each counted session id. Clients drop a mirror source when another
+   * environment's non-mirror source lists every one of its keys.
+   */
+  sessionKeys: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type UsageSource = typeof UsageSource.Type;
 

@@ -4610,4 +4610,42 @@ describe("UsageService", () => {
       );
     }),
   );
+
+  it.effect("reports Claude Code ssh-* mirrors as their own sources and keeps their history", () =>
+    Effect.gen(function* () {
+      const { home, transcript, settings } = yield* setup;
+      const sessionId = "1acabe71-751c-45b0-b3e0-8710bd7aeaae";
+      const mirrorDir = NodePath.join(home, "claude", "projects", `ssh-${sessionId}`);
+      const mirrorTranscript = NodePath.join(mirrorDir, `${sessionId}.jsonl`);
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(mirrorDir, { recursive: true });
+        await NodeFSP.writeFile(transcript, claudeLine(1, 25, "claude-fable-5", "local-session"));
+        await NodeFSP.writeFile(mirrorTranscript, claudeLine(2, 100, "claude-fable-5", sessionId));
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-ssh-mirror-test", home, settings })),
+      );
+      const claudeSummary = Effect.map(service.readSummary(WINDOW), (summary) => ({
+        outputTokens: summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+        sources: summary.sources
+          .filter((source) => source.fingerprint.provider === "claude" && source.scannedFiles > 0)
+          .map((source) => ({
+            folder: NodePath.basename(source.fingerprint.resolvedHomePath),
+            mirror: source.mirror ?? false,
+            sessionKeys: source.sessionKeys,
+          })),
+      }));
+      const expected = {
+        outputTokens: 125,
+        sources: [
+          { folder: "projects", mirror: false, sessionKeys: ["local-se"] },
+          { folder: `ssh-${sessionId}`, mirror: true, sessionKeys: ["1acabe71"] },
+        ],
+      };
+
+      assert.deepStrictEqual(yield* claudeSummary, expected);
+      yield* Effect.promise(() => NodeFSP.rm(mirrorDir, { recursive: true }));
+      assert.deepStrictEqual(yield* claudeSummary, expected);
+    }),
+  );
 });

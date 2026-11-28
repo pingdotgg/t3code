@@ -131,6 +131,8 @@ export type ProviderUsageReader<Config, R> =
         ReadonlyArray<{
           readonly dir: string;
           readonly fileName?: string;
+          /** Top-level folders holding copies of sessions another machine ran; each becomes its own mirror source. */
+          readonly mirrorTopLevelDir?: (name: string) => boolean;
           readonly refreshing?: true;
         }>,
         never,
