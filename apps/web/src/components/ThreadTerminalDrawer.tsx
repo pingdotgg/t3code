@@ -52,10 +52,21 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { PaneNotch } from "~/components/PaneNotch";
+import { closeLayoutTabOrSelectionByUser } from "~/layout/layoutActions";
 import { beginLayoutTabDrag } from "~/layout/layoutDrag";
+import {
+  handlePaneTabClick,
+  isLayoutTabSelected,
+  useIsLayoutTabSelected,
+} from "~/layout/paneTabSelection";
 import { useLayoutStore } from "~/layout/layoutStore";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
-import { LayoutPaneTab, LayoutPaneTabStrip, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
+import {
+  LayoutPaneTab,
+  LayoutPaneTabStrip,
+  showLayoutTabMenu,
+  useLayoutPaneSiblingTabs,
+} from "~/layout/PaneTabs";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -1501,12 +1512,14 @@ function TerminalTabStrip({
   children: ReactNode;
 }) {
   const gt = useGT();
-  const { tabId } = useLayoutPane();
+  const { tabId, paneId } = useLayoutPane();
+  const selected = useIsLayoutTabSelected(notch ? paneId : null, notch ? tabId : null);
   if (notch) {
     return (
       <div
         ref={ref}
         data-layout-pane-tab={tabId ?? undefined}
+        data-selected-tab={selected ? "" : undefined}
         className="flex shrink-0 items-center gap-1"
         role="tablist"
         aria-label={gt("Terminals")}
@@ -2083,6 +2096,21 @@ export default function ThreadTerminalDrawer({
                           ? (event) => beginLayoutTabDrag(event, layoutTabId)
                           : undefined
                       }
+                      onContextMenu={
+                        mode === "pane" && layoutTabId !== null
+                          ? (event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void showLayoutTabMenu(
+                                layoutTabId,
+                                { x: event.clientX, y: event.clientY },
+                                keybindings,
+                                undefined,
+                                contextMenuSourceOf(event),
+                              );
+                            }
+                          : undefined
+                      }
                       className={cn(
                         "group/tab flex h-7 shrink-0 items-center gap-1.75 rounded-control px-2.5 text-label",
                         isActive
@@ -2096,7 +2124,17 @@ export default function ThreadTerminalDrawer({
                         {/* The terminal icon turns into the close button on hover, like the panel tabs. */}
                         <PanelTabCloseButton
                           label={closeTerminalLabel}
-                          onClick={() => confirmCloseTerminal(terminalId)}
+                          onClick={() => {
+                            if (
+                              mode === "pane" &&
+                              layoutTabId !== null &&
+                              isLayoutTabSelected(layoutTabId)
+                            ) {
+                              closeLayoutTabOrSelectionByUser(layoutTabId);
+                              return;
+                            }
+                            confirmCloseTerminal(terminalId);
+                          }}
                         >
                           <SquareTerminal
                             aria-hidden
@@ -2119,7 +2157,16 @@ export default function ThreadTerminalDrawer({
                                   .filter(Boolean)
                                   .join(", ")}
                                 className="flex min-w-0 cursor-pointer items-center rounded-kbd outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
-                                onClick={() => onActiveTerminalChange(terminalId)}
+                                onClick={(event) => {
+                                  if (
+                                    mode === "pane" &&
+                                    layoutTabId !== null &&
+                                    handlePaneTabClick(event, layoutTabId, { active: isActive })
+                                  ) {
+                                    return;
+                                  }
+                                  onActiveTerminalChange(terminalId);
+                                }}
                               />
                             }
                           >

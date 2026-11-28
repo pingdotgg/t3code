@@ -29,6 +29,7 @@ import {
   Clock3Icon,
   MessagesSquareIcon,
   PencilIcon,
+  SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
@@ -58,9 +59,8 @@ import { m } from "../../i18n/messages";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
-import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
+import { useScheduledTaskTitle } from "./TimelineUserMessageRow";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 
 export interface EditQueuedRunRequest {
@@ -360,7 +360,7 @@ export function QueuedRunsControl({
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
               className={cn(
-                "group/queued flex min-h-7 w-full min-w-0 items-center gap-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
+                "group/queued grid min-h-7 w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
                 draggedRunId !== null && draggedRunId === item.runId && "bg-foreground/8 shadow-md",
               )}
               onDragOver={(event) => {
@@ -590,7 +590,7 @@ export function QueuedRunsControl({
 
 type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
 
-/** A queued turn wears its sent form's attribution; only the dashed edge and controls differ. */
+/** A queued turn wears its sent form's attribution, on one line in the stack's text size. */
 function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage | undefined;
@@ -618,165 +618,198 @@ function QueuedMessage(props: {
     props.message?.linkedSender?.environmentId ?? null,
   );
   const senderTitle = senderShell?.title.trim() || props.message?.linkedSender?.title.trim();
+  // Mentioned macOS paths can be NFD; compose them like the chips in the body.
+  const firstLine = (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "").normalize(
+    "NFC",
+  );
+  const automationName = taskTitle
+    ? gt("Automation: {title}", { title: taskTitle })
+    : gt("Automation");
+  // A folded row shows its first line; expanded, the prompt shows in full below the row.
   const fold =
     attribution === "automation"
-      ? {
-          icon: CalendarClockIcon,
-          label: gt("Automation"),
-          fitLabel: true,
-          summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
-        }
+      ? { icon: CalendarClockIcon, label: null, expandedSummary: taskTitle ?? automationName }
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
             label:
               senderTitle ||
               gt("Agent", { $context: "fallback name of the agent that sent a message" }),
-            fitLabel: !senderTitle,
-            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
+            expandedSummary: "",
           }
         : null;
-  const bodyVisible = fold === null || expanded;
   const thumbnail = props.thumbnails[0];
-  const automationLink = scheduledTaskId ? (
-    <InlineButton
-      tone="muted"
-      render={
-        <Link
-          to="/settings/scheduled-tasks"
-          search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
-        />
-      }
-    >
-      <T>Open automation</T>
-    </InlineButton>
+  const thumbnailPreview = thumbnail ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={gt("Preview {name}", { name: thumbnail.name })}
+            disabled={!thumbnail.previewUrl}
+            className="flex shrink-0 enabled:cursor-zoom-in"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const preview = buildExpandedImagePreview(props.thumbnails, thumbnail.id);
+              if (preview) props.onImageExpand(preview);
+            }}
+          />
+        }
+      >
+        <span className="flex items-center gap-1">
+          <span className="size-[1lh] shrink-0 overflow-hidden rounded-md border border-border/70 bg-background">
+            {thumbnail.previewUrl ? (
+              <AttachmentImage
+                src={thumbnail.previewUrl}
+                name={thumbnail.name}
+                alt={thumbnail.name}
+                className="size-full object-cover"
+              />
+            ) : (
+              <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+            )}
+          </span>
+          {props.thumbnails.length > 1 ? <span>+{props.thumbnails.length - 1}</span> : null}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup className="whitespace-pre-wrap">
+        {props.thumbnails.map((image) => image.name).join("\n")}
+      </TooltipPopup>
+    </Tooltip>
   ) : null;
+  const canOpenSender =
+    attribution === "agent" &&
+    senderRef !== null &&
+    // Only an environment this client is connected to can open the sender's thread there.
+    (props.message?.linkedSender === undefined || linkedSenderEnvironment !== null);
 
   return (
     <>
-      {attribution === "t3code" ? (
-        <p className="me-1 text-micro text-dim-foreground">
-          <T>Sent by T3 Code</T>
-        </p>
-      ) : null}
-      {presentation?.guestName === undefined ? null : (
-        <GuestMessageName name={presentation.guestName} />
-      )}
-      {/* Dashed: a turn that has not been sent yet. */}
       <div
         className={cn(
-          "min-w-0 flex-1 text-body",
-          props.isEditing
-            ? "border-primary/60 text-foreground"
-            : attribution === "guest"
-              ? "border-guest/50 text-muted-foreground"
-              : "border-muted-foreground/40 text-muted-foreground",
-          fold === null && "py-1",
-          fold !== null && expanded && "w-full",
+          "col-start-2 flex min-w-0 items-center gap-1.5 py-1",
+          props.isEditing ? "text-foreground" : "text-muted-foreground",
         )}
       >
-        {fold ? (
-          <FoldedMessageHeader
-            queued
-            icon={fold.icon}
-            label={fold.label}
-            fitLabel={fold.fitLabel}
-            summary={fold.summary}
-            expanded={expanded}
-            onToggle={() => setExpanded((value) => !value)}
-          />
+        {attribution === "t3code" ? (
+          <span className="shrink-0 text-dim-foreground">
+            <T>Sent by T3 Code</T>
+          </span>
         ) : null}
-        {bodyVisible ? (
-          <div
-            className={cn(
-              "flex min-w-0 items-center gap-2",
-              fold !== null && "max-h-96 overflow-auto px-3 pb-2 max-sm:block",
-            )}
-          >
-            {thumbnail ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("Preview {name}", { name: thumbnail.name })}
-                      disabled={!thumbnail.previewUrl}
-                      className="flex shrink-0 enabled:cursor-zoom-in"
-                      onPointerDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        const preview = buildExpandedImagePreview(props.thumbnails, thumbnail.id);
-                        if (preview) props.onImageExpand(preview);
-                      }}
-                    />
-                  }
-                >
-                  <span className="flex items-center gap-1">
-                    <span className="size-[1lh] shrink-0 overflow-hidden rounded-md border border-border/70 bg-background">
-                      {thumbnail.previewUrl ? (
-                        <AttachmentImage
-                          src={thumbnail.previewUrl}
-                          name={thumbnail.name}
-                          alt={thumbnail.name}
-                          className="size-full object-cover"
-                        />
-                      ) : (
-                        <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
-                      )}
-                    </span>
-                    {props.thumbnails.length > 1 ? (
-                      <span>+{props.thumbnails.length - 1}</span>
-                    ) : null}
-                  </span>
-                </TooltipTrigger>
-                <TooltipPopup className="whitespace-pre-wrap">
-                  {props.thumbnails.map((image) => image.name).join("\n")}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {/* In full, like a sent turn: a queued message is read before it is sent. */}
-            {props.previewText ? (
-              <p
-                className={
-                  fold && expanded
-                    ? "min-w-0 whitespace-pre-wrap wrap-anywhere"
-                    : "truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere"
-                }
+        {presentation?.guestName === undefined ? null : (
+          <span className="max-w-1/2 shrink-0 truncate text-guest-foreground">
+            {presentation.guestName}
+            <span className="sr-only">
+              {" "}
+              {gt("(guest)", { $context: "marks the sender of a message as a guest" })}
+            </span>
+          </span>
+        )}
+        {fold ? (
+          <>
+            {fold.label === null ? (
+              <SharedTooltipTrigger
+                render={<span className="flex shrink-0" />}
+                label={automationName}
+                side="top"
+                align="start"
               >
+                <fold.icon aria-hidden className="size-3.5 shrink-0 max-sm:size-4" />
+              </SharedTooltipTrigger>
+            ) : (
+              <fold.icon aria-hidden className="size-3.5 shrink-0 max-sm:size-4" />
+            )}
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              aria-expanded={expanded}
+              data-scroll-anchor-ignore
+              // Its padding hangs into the icon's gap, so the text starts where a plain row's does.
+              className="-my-1 -ms-[7px] min-w-0 shrink justify-start max-sm:h-auto"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {fold.label === null ? (
+                <span className="sr-only">{expanded ? gt("Automation") : automationName}</span>
+              ) : (
+                <span className="max-w-1/2 shrink-0 truncate">{fold.label}</span>
+              )}
+              <span className="min-w-0 truncate text-start max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere">
+                {expanded ? fold.expandedSummary : firstLine}
+              </span>
+              <ChevronDownIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none max-sm:size-4",
+                  expanded && "rotate-180",
+                )}
+              />
+            </Button>
+          </>
+        ) : (
+          <>
+            {thumbnailPreview}
+            {props.previewText ? (
+              <p className="truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere">
                 {props.previewText}
               </p>
             ) : null}
-            {automationLink ? (
-              <span className="mt-2 block text-meta sm:hidden">{automationLink}</span>
-            ) : null}
-          </div>
-        ) : null}
+          </>
+        )}
       </div>
-      <div className="flex shrink-0 items-center gap-0.5 text-meta text-dim-foreground">
-        {props.message ? (
-          <span className="flex items-center gap-1">
-            {attribution === "agent" &&
-            senderRef &&
-            // Only an environment this client is connected to can open the sender's thread there.
-            (props.message?.linkedSender === undefined || linkedSenderEnvironment !== null) ? (
-              <InlineButton
-                tone="muted"
+      <div className="col-start-3 flex shrink-0 items-center gap-0.5 text-meta text-dim-foreground">
+        {canOpenSender && senderRef ? (
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={gt("Open thread")}
                 onClick={() => props.onOpenThread(senderRef.threadId, senderRef.environmentId)}
-              >
-                <T>Open thread</T>
-              </InlineButton>
-            ) : null}
-            {automationLink ? <span className="max-sm:hidden">{automationLink}</span> : null}
-            <span className="sr-only">
-              <TimelineRowTimestamp
-                createdAt={DateTime.formatIso(props.message.createdAt)}
-                timestampFormat={props.timestampFormat}
-                alwaysVisible
               />
-            </span>
+            }
+            label={<T>Open thread</T>}
+          >
+            <SquareArrowOutUpRightIcon />
+          </SharedTooltipTrigger>
+        ) : null}
+        {scheduledTaskId ? (
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={gt("Open automation")}
+                render={
+                  <Link
+                    to="/settings/scheduled-tasks"
+                    search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
+                  />
+                }
+              />
+            }
+            label={<T>Open automation</T>}
+          >
+            <SquareArrowOutUpRightIcon />
+          </SharedTooltipTrigger>
+        ) : null}
+        {props.message ? (
+          <span className="sr-only">
+            <TimelineRowTimestamp
+              createdAt={DateTime.formatIso(props.message.createdAt)}
+              timestampFormat={props.timestampFormat}
+              alwaysVisible
+            />
           </span>
         ) : null}
         {props.children}
       </div>
+      {fold && expanded ? (
+        <div className="col-span-2 col-start-2 flex max-h-96 min-w-0 flex-col gap-1.5 overflow-auto pb-2 text-muted-foreground">
+          {thumbnailPreview}
+          {/* In full, like a sent turn: a queued message is read before it is sent. */}
+          <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
+        </div>
+      ) : null}
     </>
   );
 }

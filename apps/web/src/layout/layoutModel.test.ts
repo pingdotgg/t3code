@@ -5,7 +5,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canCloseLayoutTab,
   closeLayoutTab,
+  closeLayoutTabs,
   closedLayoutTabIds,
+  createLayoutLauncherContent,
   moveLayoutTabToNewWorkspace,
   createLayoutState,
   decodePersistedLayoutState,
@@ -15,6 +17,7 @@ import {
   isBlankLayoutWorkspace,
   layoutChatSwaps,
   moveLayoutTab,
+  moveLayoutTabs,
   moveLayoutTabToWorkspace,
   openLayoutGhostChat,
   openLayoutKeptTab,
@@ -912,6 +915,90 @@ describe("moveLayoutTab", () => {
       ["chat-pane", expect.closeTo(0.55)],
       ["other-pane", expect.closeTo(0.45)],
     ]);
+  });
+
+  it("moves a multi-selected group together across reorder, pane move, and split", () => {
+    const a: LayoutTabContent = { kind: "issues" };
+    const b: LayoutTabContent = { kind: "pull-requests" };
+    const c: LayoutTabContent = { kind: "workflows" };
+    let layout = openLayoutTab(createLayoutState(), chat);
+    layout = openLayoutTab(layout, a, { placement: "active-pane", position: "end" });
+    layout = openLayoutTab(layout, b, { placement: "active-pane", position: "end" });
+    layout = openLayoutTab(layout, c, { placement: "active-pane", position: "end" });
+    const pane = layout.workspaces[0]!.columns[0]!.panes[0]!;
+    const [t0, t1, t2, t3] = pane.tabs;
+    layout = focusLayoutTab(layout, t0!.id);
+
+    const reordered = moveLayoutTabs(layout, [t0!.id, t2!.id], {
+      kind: "pane",
+      paneId: pane.id,
+      index: 2,
+    });
+    expect(reordered.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([
+      t1!.id,
+      t3!.id,
+      t0!.id,
+      t2!.id,
+    ]);
+    expect(selectFocusedTab(reordered)?.id).toBe(t0!.id);
+
+    const split = moveLayoutTabs(reordered, [t0!.id, t2!.id], {
+      kind: "split",
+      paneId: pane.id,
+      side: "right",
+    });
+    expect(split.workspaces[0]!.columns).toHaveLength(2);
+    expect(split.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([
+      t1!.id,
+      t3!.id,
+    ]);
+    expect(split.workspaces[0]!.columns[1]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([
+      t0!.id,
+      t2!.id,
+    ]);
+    expect(selectFocusedTab(split)?.id).toBe(t0!.id);
+  });
+});
+
+describe("closeLayoutTabs", () => {
+  it("closes selected tabs atomically and keeps the fallback active slot", () => {
+    const a: LayoutTabContent = { kind: "issues" };
+    const b: LayoutTabContent = { kind: "pull-requests" };
+    const c: LayoutTabContent = { kind: "workflows" };
+    let layout = openLayoutTab(createLayoutState(), chat);
+    layout = openLayoutTab(layout, a, { placement: "active-pane", position: "end" });
+    layout = openLayoutTab(layout, b, { placement: "active-pane", position: "end" });
+    layout = openLayoutTab(layout, c, { placement: "active-pane", position: "end" });
+    const [t0, t1, t2, t3] = layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+    layout = focusLayoutTab(layout, t2!.id);
+
+    const after = closeLayoutTabs(layout, [t1!.id, t2!.id]);
+    expect(after.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([
+      t0!.id,
+      t3!.id,
+    ]);
+    expect(selectFocusedTab(after)?.id).toBe(t3!.id);
+
+    const blank = closeLayoutTabs(after, [t0!.id, t3!.id]);
+    expect(blank.workspaces[0]!.columns[0]!.panes[0]!.tabs).toHaveLength(1);
+    expect(blank.workspaces[0]!.columns[0]!.panes[0]!.tabs[0]!.content.kind).toBe("launcher");
+  });
+
+  it("collapses multiple blank launchers in the lone workspace down to one when all close", () => {
+    let layout = createLayoutState();
+    layout = openLayoutTab(layout, createLayoutLauncherContent(null), {
+      placement: "active-pane",
+      position: "end",
+    });
+    const tabs = layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+    expect(tabs).toHaveLength(2);
+
+    const after = closeLayoutTabs(
+      layout,
+      tabs.map((tab) => tab.id),
+    );
+    expect(after.workspaces[0]!.columns[0]!.panes[0]!.tabs).toHaveLength(1);
+    expect(after.workspaces[0]!.columns[0]!.panes[0]!.tabs[0]!.content.kind).toBe("launcher");
   });
 });
 

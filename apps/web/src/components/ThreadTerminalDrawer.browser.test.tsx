@@ -20,7 +20,20 @@ import { useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
+import { LayoutPaneContext } from "../layout/layoutPaneContext";
+import {
+  createLayoutLauncherContent,
+  createLayoutState,
+  THREAD_TERMINAL_SURFACE_ID,
+} from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
+import {
+  clearPaneTabSelection,
+  handlePaneTabClick,
+  hasPaneTabSelection,
+} from "../layout/paneTabSelection";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 
@@ -195,7 +208,8 @@ vi.mock("../state/terminalSessions", async () => {
       session(environmentId, terminal.threadId),
   };
 });
-vi.mock("../state/session", () => ({
+vi.mock("../state/session", async (importOriginal) => ({
+  ...(await importOriginal()),
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
 }));
@@ -744,4 +758,77 @@ it.each([false, true])("clears selected output only after chat accepts it: %s", 
   expect(fixture.clearSelection).not.toHaveBeenCalled();
   await act(() => accept(added));
   expect(fixture.clearSelection).toHaveBeenCalledTimes(added ? 1 : 0);
+});
+
+it("switches to a second internal terminal tab on plain click while pane tabs are selected", async () => {
+  const { other: threadRef } = setup();
+  const original = useLayoutStore.getState().layout;
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(
+    { kind: "surface", threadRef, surfaceId: THREAD_TERMINAL_SURFACE_ID },
+    { placement: "active-pane", position: "end" },
+  );
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!;
+  const [terminalTab, siblingTab] = pane.tabs;
+  store.focusTab(terminalTab!.id);
+  // Select both pane tabs.
+  handlePaneTabClick(
+    { shiftKey: true, metaKey: false, ctrlKey: false, altKey: false, preventDefault: () => {} },
+    siblingTab!.id,
+  );
+  expect(hasPaneTabSelection(pane.id)).toBe(true);
+
+  const onActiveTerminalChange = vi.fn();
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      useLayoutStore.setState({ layout: original });
+    },
+  };
+
+  await using _screen = await render(
+    <LayoutPaneContext
+      value={{
+        paneId: pane.id,
+        tabId: terminalTab!.id,
+        split: false,
+        narrow: false,
+        leadingEdge: true,
+        trailingEdge: true,
+        focused: true,
+        related: false,
+        visible: true,
+      }}
+    >
+      <ThreadTerminalDrawer
+        mode="pane"
+        threadRef={threadRef}
+        threadId={threadRef.threadId}
+        cwd="/repo"
+        height={240}
+        terminalIds={["term-1", "term-2"]}
+        activeTerminalId="term-1"
+        terminalGroups={[
+          { id: "group-1", terminalIds: ["term-1"] },
+          { id: "group-2", terminalIds: ["term-2"] },
+        ]}
+        activeTerminalGroupId="group-1"
+        onSplitTerminal={() => {}}
+        onSplitTerminalVertical={() => {}}
+        onNewTerminal={() => {}}
+        onActiveTerminalChange={onActiveTerminalChange}
+        onCloseTerminal={() => {}}
+        onHeightChange={() => {}}
+        onAddTerminalContext={undefined}
+        keybindings={[]}
+      />
+    </LayoutPaneContext>,
+  );
+
+  const tabs = page.getByRole("tab");
+  await userEvent.click(tabs.nth(1));
+  expect(hasPaneTabSelection(pane.id)).toBe(false);
+  expect(onActiveTerminalChange).toHaveBeenCalledWith("term-2");
 });

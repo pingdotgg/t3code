@@ -30,6 +30,7 @@ import {
   findLayoutChatForThread,
   findLayoutSurfaceTabs,
   LAYOUT_READABLE_COLUMN_PX,
+  selectFocusedPane,
   selectFocusedTab,
   type LayoutColumn,
   type LayoutTab,
@@ -41,6 +42,10 @@ import {
 } from "./layoutStore";
 import { LayoutDropZones } from "./DropZones";
 import { toggleThreadSidePane } from "./openRules";
+import { buildLayoutTabMenuItems, runLayoutTabMenuAction } from "./PaneTabs";
+import { useLayoutKeyboardCommands } from "./layoutCommands";
+import { clearPaneTabSelection, hasPaneTabSelection } from "./paneTabSelection";
+import { readLocalApi } from "../localApi";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
@@ -1692,4 +1697,459 @@ it.each([
   expect(
     usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.source,
   ).toEqual(floated ? { kind: "device", ...target } : undefined);
+});
+
+it("supports Shift-range, Cmd/Ctrl-toggle, Escape/plain-click clear, per-pane scope and close-selected on pane tabs", async () => {
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const original = useLayoutStore.getState().layout;
+  const settings = getClientSettings();
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const initialLayout = useLayoutStore.getState().layout;
+  const firstPane = initialLayout.workspaces[0]!.columns[0]!.panes[0]!;
+  const secondPane = initialLayout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [t0, t1, t2, t3] = firstPane.tabs;
+  const [p2t0, p2t1] = secondPane.tabs;
+  store.focusTab(t0!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await using _screen = await renderHost({ viewport: 1200 });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  // Shift-click range from active t0 to t2 selects t0, t1, t2 without switching active tab.
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Shift"] });
+  expect(focusedTabId()).toBe(t0!.id);
+  await expect.element(tabEl(t0!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Context menu offers "Close selected tabs" on selected tabs and "Close" on unselected ones.
+  const selectedMenu = buildLayoutTabMenuItems(useLayoutStore.getState().layout, t1!.id);
+  expect(selectedMenu.some((item) => item.id === "layout:close-selected-tabs")).toBe(true);
+  expect(selectedMenu.some((item) => item.id === "layout:close-tab")).toBe(false);
+  const unselectedMenu = buildLayoutTabMenuItems(useLayoutStore.getState().layout, t3!.id);
+  expect(unselectedMenu.some((item) => item.id === "layout:close-tab")).toBe(true);
+  expect(unselectedMenu.some((item) => item.id === "layout:close-selected-tabs")).toBe(false);
+
+  // Escape clears selection.
+  await userEvent.keyboard("{Escape}");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Cmd-click toggles individual tabs in and out, clearing when < 2 remain.
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t0!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+  await userEvent.click(tabEl(t3!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // Plain click clears selection and activates the clicked tab.
+  await userEvent.click(tabEl(t1!.id));
+  expect(focusedTabId()).toBe(t1!.id);
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Selection never spans panes: Shift-clicking in pane 2 clears pane 1 and selects in pane 2.
+  await userEvent.click(tabEl(t3!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(tabEl(p2t0!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(p2t0!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(p2t1!.id)).toHaveAttribute("data-selected-tab", "");
+
+  // Close button on a selected tab closes all selected tabs in that pane; menu action works too.
+  await userEvent.click(tabEl(t0!.id));
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Shift"] });
+  const closeButton = document
+    .querySelector<HTMLElement>(`[data-layout-pane-tab="${t1!.id}"]`)!
+    .parentElement!.querySelector<HTMLButtonElement>("[data-tab-close]")!;
+  await userEvent.click(closeButton);
+  await vi.waitFor(() => {
+    const remaining = useLayoutStore
+      .getState()
+      .layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id);
+    expect(remaining).toEqual([t3!.id]);
+  });
+
+  // Closing via context menu action closes selected tabs in pane 2.
+  await userEvent.click(tabEl(p2t1!.id));
+  await userEvent.click(tabEl(p2t0!.id), { modifiers: ["Shift"] });
+  await act(() => runLayoutTabMenuAction("layout:close-selected-tabs", p2t0!.id));
+  await vi.waitFor(() => {
+    expect(useLayoutStore.getState().layout.workspaces[0]!.columns).toHaveLength(1);
+  });
+});
+
+it("multi-selecting in an unfocused pane focuses it so Cmd+W closes that pane's selection", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const initialLayout = useLayoutStore.getState().layout;
+  const firstPane = initialLayout.workspaces[0]!.columns[0]!.panes[0]!;
+  const secondPane = initialLayout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [p1t0, p1t1] = firstPane.tabs;
+  const [p2t0, p2t1] = secondPane.tabs;
+  store.focusTab(p1t1!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  function HostWithCommands() {
+    useLayoutKeyboardCommands();
+    return <Host />;
+  }
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(<HostWithCommands />, { container });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  expect(selectFocusedPane(useLayoutStore.getState().layout)?.id).toBe(firstPane.id);
+  // Keyboard Shift+Enter on an inactive tab in unfocused pane 2 (no pointerdown) focuses pane 2
+  // while keeping p2t1 active.
+  const p2t0El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${p2t0!.id}"]`)!;
+  p2t0El.focus();
+  await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(selectFocusedPane(useLayoutStore.getState().layout)?.id).toBe(secondPane.id);
+  expect(focusedTabId()).toBe(p2t1!.id);
+  await expect.element(tabEl(p2t0!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(p2t1!.id)).toHaveAttribute("data-selected-tab", "");
+
+  // Cmd+W closes pane 2's selected tabs, leaving pane 1 untouched.
+  await userEvent.keyboard("{Meta>}w{/Meta}");
+  await vi.waitFor(() => {
+    const columns = useLayoutStore.getState().layout.workspaces[0]!.columns;
+    expect(columns).toHaveLength(1);
+    expect(columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([p1t0!.id, p1t1!.id]);
+  });
+});
+
+it("keeps keyboard focus ring on selected tabs and skips start-edge hover corner on selected first tab", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const [t0, t1, t2] = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+  // Make t2 active so t0 (first tab) and t1 are inactive.
+  store.focusTab(t2!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await using _screen = await renderHost({ insetSidebar: true, viewport: 1200 });
+  const t0El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t0!.id}"]`)!;
+  const t1El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t1!.id}"]`)!;
+  const t2El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t2!.id}"]`)!;
+  const header = t0El.closest<HTMLElement>("[data-pane-header]")!;
+  await vi.waitFor(() => expect(t2El.hasAttribute("data-joined")).toBe(true));
+
+  // Baseline: hovering unselected first tab sets data-pane-hover-start; keyboard focus shows inset ring.
+  t0El.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+  expect(header.hasAttribute("data-pane-hover-start")).toBe(true);
+  t0El.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+
+  // Tab from t0 onto unselected t1 to measure its keyboard focus-visible boxShadow.
+  t0El.focus();
+  for (let step = 0; step < 4 && document.activeElement !== t1El; step += 1) {
+    await userEvent.keyboard("{Tab}");
+  }
+  expect(document.activeElement).toBe(t1El);
+  expect(t1El.matches(":focus-visible")).toBe(true);
+  const unselectedFocusShadow = getComputedStyle(t1El).boxShadow;
+  expect(unselectedFocusShadow).not.toBe("none");
+
+  // Select [t0, t1, t2] via Shift-click on t0 (t2 is active), then move keyboard focus onto selected t1.
+  await userEvent.click(page.elementLocator(t0El), { modifiers: ["Shift"] });
+  await expect.element(page.elementLocator(t0El)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(page.elementLocator(t1El)).toHaveAttribute("data-selected-tab", "");
+
+  // Hovering a selected first tab must not light the start-edge corner patch.
+  t0El.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+  expect(header.hasAttribute("data-pane-hover-start")).toBe(false);
+
+  // Keyboard focus on a selected tab keeps the focus-visible inset ring.
+  t0El.focus();
+  for (let step = 0; step < 4 && document.activeElement !== t1El; step += 1) {
+    await userEvent.keyboard("{Tab}");
+  }
+  expect(document.activeElement).toBe(t1El);
+  expect(t1El.matches(":focus-visible")).toBe(true);
+  expect(getComputedStyle(t1El).boxShadow).toBe(unselectedFocusShadow);
+});
+
+it("lets Escape dismiss an open popover before clearing pane tab selection", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const [t0, t1] = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+  store.focusTab(t0!.id);
+
+  const popup = document.createElement("div");
+  popup.dataset.slot = "popover-popup";
+  popup.dataset.open = "";
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.textContent = "Popover trigger";
+  let bubbleEscapes = 0;
+  const onBubbleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") bubbleEscapes += 1;
+  };
+  window.addEventListener("keydown", onBubbleKeyDown);
+  document.body.append(trigger, popup);
+
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      window.removeEventListener("keydown", onBubbleKeyDown);
+      popup.remove();
+      trigger.remove();
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  function HostWithCommands() {
+    useLayoutKeyboardCommands();
+    return <Host />;
+  }
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(<HostWithCommands />, { container });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  await userEvent.click(tabEl(t1!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // With focus on a non-editable trigger and an open popover in the DOM, Escape must reach bubble
+  // listeners and leave the tab selection intact.
+  trigger.focus();
+  await userEvent.keyboard("{Escape}");
+  expect(bubbleEscapes).toBe(1);
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // Once the popover closes, Escape clears the tab selection.
+  popup.remove();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+});
+
+it("handles real right-click context menus on non-launcher tabs and multi-tab drag lifecycle", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const previousPanels = useRightPanelStore.getState().byThreadKey;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const threadRef = scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("ctx-menu-thread"));
+  useRightPanelStore.getState().open(threadRef, "diff");
+  useRightPanelStore.getState().openFile(threadRef, "notes.md");
+  const fileSurfaceId = useRightPanelStore
+    .getState()
+    .byThreadKey[scopedThreadKey(threadRef)]!.surfaces.find(
+      (surface) => surface.kind === "file",
+    )!.id;
+
+  const store = useLayoutStore.getState();
+  store.openTab(
+    { kind: "surface", threadRef, surfaceId: "diff" },
+    { placement: "active-pane", position: "end" },
+  );
+  store.openTab(
+    { kind: "surface", threadRef, surfaceId: fileSurfaceId },
+    { placement: "active-pane", position: "end" },
+  );
+  store.openTab({ kind: "issues" }, { placement: "active-pane", position: "end" });
+  store.openTab({ kind: "pull-requests" }, { placement: "active-pane", position: "end" });
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!;
+  const [diffTab, fileTab, issuesTab, prsTab] = pane.tabs;
+  store.focusTab(diffTab!.id);
+
+  const showMenuSpy = vi.spyOn(readLocalApi()!.contextMenu, "show").mockResolvedValue(null);
+
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      showMenuSpy.mockRestore();
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      useRightPanelStore.setState({ byThreadKey: previousPanels });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(
+    <>
+      <Host />
+      <LayoutDropZones />
+    </>,
+    { container },
+  );
+  const tabEl = (id: string) =>
+    document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!;
+  await vi.waitFor(() => expect(tabEl(issuesTab!.id)).not.toBeNull());
+
+  // Shift-select [diffTab, fileTab, issuesTab] (all non-launcher tabs).
+  await userEvent.click(page.elementLocator(tabEl(issuesTab!.id)), { modifiers: ["Shift"] });
+  await expect
+    .element(page.elementLocator(tabEl(fileTab!.id)))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.elementLocator(tabEl(issuesTab!.id)))
+    .toHaveAttribute("aria-pressed", "true");
+
+  // Real right-click on selected tab offers "Close selected tabs" (not "Close").
+  tabEl(issuesTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 16 }),
+  );
+  await vi.waitFor(() => expect(showMenuSpy).toHaveBeenCalledTimes(1));
+  const selectedItems = showMenuSpy.mock.calls[0]![0];
+  expect(selectedItems.some((item) => item.id === "layout:close-selected-tabs")).toBe(true);
+  expect(selectedItems.some((item) => item.id === "layout:close-tab")).toBe(false);
+
+  // Real right-click on unselected tab offers "Close" (not "Close selected tabs").
+  tabEl(prsTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 16 }),
+  );
+  await vi.waitFor(() => expect(showMenuSpy).toHaveBeenCalledTimes(2));
+  const unselectedItems = showMenuSpy.mock.calls[1]![0];
+  expect(unselectedItems.some((item) => item.id === "layout:close-tab")).toBe(true);
+  expect(unselectedItems.some((item) => item.id === "layout:close-selected-tabs")).toBe(false);
+
+  // Dragging a selected tab exercises beginLayoutTabDrag (multi-tab badge) and Escape cancels.
+  const issuesRect = tabEl(issuesTab!.id).getBoundingClientRect();
+  tabEl(issuesTab!.id).dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 11,
+      clientX: issuesRect.left + 8,
+      clientY: issuesRect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 11,
+      clientX: issuesRect.left + 40,
+      clientY: issuesRect.top + 8,
+    }),
+  );
+  await vi.waitFor(() => expect(isLayoutDragActive()).toBe(true));
+  expect(document.querySelector("[data-layout-drag-overlay]")?.textContent).toContain("3");
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11 }));
+  expect(isLayoutDragActive()).toBe(false);
+  expect(
+    useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id),
+  ).toEqual([diffTab!.id, fileTab!.id, issuesTab!.id, prsTab!.id]);
+
+  // Dragging an unselected tab clears the multi-selection once past the drag threshold.
+  expect(hasPaneTabSelection(pane.id)).toBe(true);
+  const prsRect = tabEl(prsTab!.id).getBoundingClientRect();
+  tabEl(prsTab!.id).dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 12,
+      clientX: prsRect.left + 8,
+      clientY: prsRect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 12,
+      clientX: prsRect.left + 40,
+      clientY: prsRect.top + 8,
+    }),
+  );
+  await vi.waitFor(() => expect(hasPaneTabSelection(pane.id)).toBe(false));
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 12 }));
+
+  // Re-select [issuesTab, prsTab] (starting from diffTab? select fileTab + issuesTab via Cmd-click)
+  // and choose "Close selected tabs" from the real right-click menu.
+  await userEvent.click(page.elementLocator(tabEl(issuesTab!.id)), { modifiers: ["Shift"] });
+  showMenuSpy.mockResolvedValueOnce("layout:close-selected-tabs");
+  tabEl(issuesTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 16 }),
+  );
+  await vi.waitFor(() => {
+    const remaining = useLayoutStore
+      .getState()
+      .layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id);
+    // diffTab + fileTab closed in rightPanelStore (and issuesTab closed in layoutStore); only prsTab remains in layout
+    // (diffTab/fileTab also leave layout when surfaceSync is mounted; here issuesTab leaves layout and both surfaces leave rightPanelStore).
+    expect(remaining).not.toContain(issuesTab!.id);
+    expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]).toBeUndefined();
+  });
 });

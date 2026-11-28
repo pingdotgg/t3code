@@ -138,41 +138,49 @@ export function WorkItemDetailCrumbs({
       {subject && toneClassName ? (
         <>
           {back ? <BackButton {...back} /> : null}
-          <SharedTooltipTrigger
-            render={
-              subject.scopeUrl ? (
-                <InlineButton
-                  tone="muted"
-                  className="min-w-16 shrink @max-sm/pr-header:hidden"
-                  onClick={(event) => {
-                    if (subject.scopeUrl)
-                      void openLink(subject.scopeUrl, { event }).catch(console.error);
-                  }}
-                  onAuxClick={(event) => {
-                    if (event.button === 1 && subject.scopeUrl)
-                      void openLink(subject.scopeUrl, { event }).catch(console.error);
-                  }}
-                >
-                  <span className="truncate">{subject.scope}</span>
-                </InlineButton>
-              ) : (
-                <span className="min-w-16 truncate @max-sm/pr-header:hidden">{subject.scope}</span>
-              )
-            }
-            label={
-              subject.scopeUrl
-                ? gt("Open {repository} repository", { repository: subject.scope })
-                : subject.scope
-            }
-          />
-          <KeyLink
-            subject={subject}
-            threadRef={threadRef}
-            toneClassName={toneClassName}
-            openOnHostText={openOnHostText}
-          />
-          {badge}
-          {children}
+          {/* Reversed, key first: once the scope no longer fits at its minimum width beside the key
+              and what follows it, it wraps onto a clipped second line. */}
+          <div className="flex h-6 min-w-0 grow flex-row-reverse flex-wrap items-center gap-x-1.5 gap-y-1 overflow-clip [overflow-clip-margin:2px]">
+            <SharedTooltipTrigger
+              render={
+                subject.scopeUrl ? (
+                  <InlineButton
+                    tone="muted"
+                    className="min-w-16 max-w-max grow-1000 basis-16"
+                    onClick={(event) => {
+                      if (subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
+                    onAuxClick={(event) => {
+                      if (event.button === 1 && subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
+                  >
+                    <span className="truncate">{subject.scope}</span>
+                  </InlineButton>
+                ) : (
+                  <span className="min-w-16 max-w-max grow-1000 basis-16 truncate">
+                    {subject.scope}
+                  </span>
+                )
+              }
+              label={
+                subject.scopeUrl
+                  ? gt("Open {repository} repository", { repository: subject.scope })
+                  : subject.scope
+              }
+            />
+            <span className="order-first flex h-full min-w-0 grow items-center gap-1.5">
+              <KeyLink
+                subject={subject}
+                threadRef={threadRef}
+                toneClassName={toneClassName}
+                openOnHostText={openOnHostText}
+              />
+              {badge}
+              {children}
+            </span>
+          </div>
         </>
       ) : null}
     </div>

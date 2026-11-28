@@ -3,6 +3,7 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+import { nextActiveIdAfterBulkClose, reorderTabGroup } from "../lib/tabSelection";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import type { LayoutNewTabPosition, LayoutWhenNoRoom } from "./layoutBehavior";
 
@@ -1763,6 +1764,70 @@ export function closeLayoutTabsWhere(
   return next;
 }
 
+/**
+ * Close a group of tabs in one pane atomically, choosing the fallback active
+ * tab with the same slot rule as main's right-panel bulk close.
+ */
+export function closeLayoutTabs(state: LayoutState, tabIds: readonly string[]): LayoutState {
+  if (tabIds.length === 0) return state;
+  if (tabIds.length === 1) return closeLayoutTab(state, tabIds[0]!);
+  const closing = new Set(tabIds);
+  const first = findLayoutTab(state, (tab) => closing.has(tab.id));
+  if (!first) return state;
+  const closingInPane = first.pane.tabs.filter((tab) => closing.has(tab.id));
+  if (closingInPane.length === 1) return closeLayoutTab(state, closingInPane[0]!.id);
+  const paneClosingIds = new Set(closingInPane.map((tab) => tab.id));
+  const remaining = first.pane.tabs.filter((tab) => !paneClosingIds.has(tab.id));
+  if (remaining.length > 0) {
+    const activeTabId = nextActiveIdAfterBulkClose(
+      first.pane.tabs,
+      (tab) => tab.id,
+      first.pane.activeTabId,
+      paneClosingIds,
+    );
+    return normalizeLayout(
+      mapPanes(state, (pane) =>
+        pane.id === first.pane.id ? { ...pane, tabs: remaining, activeTabId } : pane,
+      ),
+    );
+  }
+  // Every tab of the pane closes. If the workspace has no other tabs, replace with one blank tab
+  // (or close a blank workspace), matching `closeLayoutTab`.
+  if (workspaceTabCount(first.workspace) === closingInPane.length) {
+    if (closingInPane.every((tab) => tab.content.kind === "launcher")) {
+      const closedWorkspace = closeLayoutBlankWorkspace(state, first.workspace);
+      if (closedWorkspace !== state) return closedWorkspace;
+    }
+    const blank = createLayoutTab(createLayoutLauncherContent(null));
+    return normalizeLayout(
+      mapPanes(state, (pane) =>
+        pane.id === first.pane.id ? { ...pane, tabs: [blank], activeTabId: blank.id } : pane,
+      ),
+    );
+  }
+  const { workspace, column } = first;
+  const paneIndex = column.panes.indexOf(first.pane);
+  const columnIndex = workspace.columns.indexOf(column);
+  const neighbor =
+    column.panes[paneIndex - 1] ??
+    column.panes[paneIndex + 1] ??
+    workspace.columns[columnIndex - 1]?.panes[0] ??
+    workspace.columns[columnIndex + 1]?.panes[0] ??
+    null;
+  const emptied = mapPanes(state, (pane) =>
+    pane.id === first.pane.id ? { ...pane, tabs: [], activeTabId: null } : pane,
+  );
+  const refocused =
+    workspace.focusedPaneId === first.pane.id
+      ? mapWorkspaces(emptied, (candidate) =>
+          candidate.id === workspace.id
+            ? { ...candidate, focusedPaneId: neighbor?.id ?? null }
+            : candidate,
+        )
+      : emptied;
+  return normalizeLayout(refocused);
+}
+
 /** Move a tab into a pane, beside a pane as a split, or into a new column. */
 export function moveLayoutTab(
   state: LayoutState,
@@ -1835,6 +1900,116 @@ export function moveLayoutTab(
     destination.workspaceId,
     destination.index,
     createColumn(createPane(tab), location.column.width),
+  );
+}
+
+/** Move a group of selected tabs from one pane together, preserving their order. */
+export function moveLayoutTabs(
+  state: LayoutState,
+  tabIds: readonly string[],
+  destination: LayoutTabDestination,
+): LayoutState {
+  if (tabIds.length === 0) return state;
+  if (tabIds.length === 1) return moveLayoutTab(state, tabIds[0]!, destination);
+  const requested = new Set(tabIds);
+  const first = findLayoutTab(state, (tab) => requested.has(tab.id));
+  if (!first) return state;
+  const moving = first.pane.tabs.filter((tab) => requested.has(tab.id));
+  if (moving.length <= 1) {
+    return moving[0] ? moveLayoutTab(state, moving[0].id, destination) : state;
+  }
+  const movingIds = new Set(moving.map((tab) => tab.id));
+  if (destination.kind === "pane" && destination.paneId === first.pane.id) {
+    const remainingCount = first.pane.tabs.length - moving.length;
+    const reorderedTabs = reorderTabGroup(
+      first.pane.tabs,
+      (tab) => tab.id,
+      movingIds,
+      destination.index ?? remainingCount,
+    ).map((tab) => (movingIds.has(tab.id) ? keepLayoutTabObject(tab) : tab));
+    if (reorderedTabs.every((tab, index) => tab.id === first.pane.tabs[index]?.id)) return state;
+    const reordered = mapPanes(state, (pane) =>
+      pane.id === first.pane.id ? { ...pane, tabs: reorderedTabs } : pane,
+    );
+    return focusLayoutPane(reordered, first.pane.id);
+  }
+  if (destination.kind === "split" && destination.paneId === first.pane.id) {
+    if (first.pane.tabs.length === moving.length) return state;
+  }
+  if (destination.kind !== "column" && !findPane(state, destination.paneId)) return state;
+  if (
+    destination.kind === "column" &&
+    !state.workspaces.some((workspace) => workspace.id === destination.workspaceId)
+  ) {
+    return state;
+  }
+
+  const growPaneId =
+    destination.kind === "pane" &&
+    first.pane.tabs.length === moving.length &&
+    first.column.panes.some((pane) => pane.id === destination.paneId)
+      ? destination.paneId
+      : null;
+  const detached = mapPanes(state, (pane) => {
+    if (pane.id === growPaneId) return { ...pane, size: pane.size + first.pane.size };
+    if (pane.id !== first.pane.id) return pane;
+    const tabs = pane.tabs.filter((tab) => !movingIds.has(tab.id));
+    const activeTabId = nextActiveIdAfterBulkClose(
+      pane.tabs,
+      (tab) => tab.id,
+      pane.activeTabId,
+      movingIds,
+    );
+    return { ...pane, tabs, activeTabId };
+  });
+  const kept = moving.map(keepLayoutTabObject);
+  const groupActiveId =
+    (first.pane.activeTabId !== null && movingIds.has(first.pane.activeTabId)
+      ? first.pane.activeTabId
+      : kept[0]!.id) ?? kept[0]!.id;
+
+  if (destination.kind === "pane") {
+    const fills = findPane(detached, destination.paneId)?.workspace;
+    const inserted = mapPanes(detached, (pane) => {
+      if (pane.id !== destination.paneId) return pane;
+      if (fills && kept.some((tab) => givesWayTo(fills, tab))) {
+        return { ...pane, tabs: kept, activeTabId: groupActiveId };
+      }
+      const tabs = [...pane.tabs];
+      const at =
+        destination.index === undefined
+          ? tabs.length
+          : Math.max(0, Math.min(destination.index, tabs.length));
+      tabs.splice(at, 0, ...kept);
+      return { ...pane, tabs, activeTabId: groupActiveId };
+    });
+    return normalizeLayout(focusLayoutPane(inserted, destination.paneId));
+  }
+  if (destination.kind === "split") {
+    const split = splitPaneWithTab(
+      detached,
+      destination.paneId,
+      destination.side,
+      kept[0]!,
+      true,
+      destination.exact,
+    );
+    const landed = findLayoutTab(split, (tab) => tab.id === kept[0]!.id);
+    if (!landed) return normalizeLayout(split);
+    return normalizeLayout(
+      mapPanes(split, (pane) =>
+        pane.id === landed.pane.id ? { ...pane, tabs: kept, activeTabId: groupActiveId } : pane,
+      ),
+    );
+  }
+  return insertColumn(
+    detached,
+    destination.workspaceId,
+    destination.index,
+    createColumn(
+      { ...createPane(kept[0]!), tabs: kept, activeTabId: groupActiveId },
+      first.column.width,
+    ),
   );
 }
 

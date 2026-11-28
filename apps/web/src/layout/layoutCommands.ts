@@ -17,6 +17,7 @@ import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindin
 import { isEditableFocused } from "../lib/editableFocus";
 import { isKeybindingCaptureTarget } from "../lib/keybindingCapture";
 import { isModalDialogOpen } from "../lib/modalDialog";
+import { openLayerMatches } from "../lib/openLayers";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
@@ -28,7 +29,12 @@ import { renderWaitingChatNow } from "./chatRenderGate";
 import { isScrollingWorkspaceCommand, isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { isLayoutDragActive } from "./layoutDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
-import { closeLayoutTabByUser } from "./layoutActions";
+import { closeLayoutTabByUser, closeLayoutTabsByUser } from "./layoutActions";
+import {
+  clearPaneTabSelection,
+  hasPaneTabSelection,
+  readSelectedLayoutTabIds,
+} from "./paneTabSelection";
 import { toggleThreadSidePane, toggleThreadTerminalPane } from "./openRules";
 import { findThreadChat } from "./surfaceSync";
 import {
@@ -242,6 +248,19 @@ function isTypedText(event: KeyboardEvent): boolean {
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Alt", "Control", "Meta", "Shift"]);
 
+const ESCAPE_BLOCKING_POPUP_SLOTS = [
+  '[data-slot="popover-popup"]',
+  '[data-slot="select-popup"]',
+  '[data-slot="combobox-popup"]',
+  '[data-slot="menu-popup"]',
+  '[data-slot="autocomplete-popup"]',
+  '[data-slot="sheet-popup"]',
+];
+const ESCAPE_BLOCKING_POPUP_SELECTOR = ESCAPE_BLOCKING_POPUP_SLOTS.map(
+  (selector) => `${selector}:is([data-open],[data-ending-style])`,
+).join(",");
+const ESCAPE_BLOCKING_TARGET_SELECTOR = ESCAPE_BLOCKING_POPUP_SLOTS.join(",");
+
 /** Commands the chat route answers without a ChatView, so a new tab can keep waiting. */
 const CHAT_FREE_COMMANDS: ReadonlySet<string> = new Set([
   "tab.new",
@@ -281,24 +300,60 @@ export function useLayoutKeyboardCommands(): void {
       // Any other key lands queued keyboard focus first, so it reaches the
       // pane focus is going to; layout moves keep queueing onto it.
       if (!isLayoutCommand(command) && !MODIFIER_KEYS.has(event.key)) landPendingLayoutFocus();
-      // cmd+W closes the focused tab, whichever element holds DOM focus and
-      // whether or not a chat has rendered: the layout answers it, no pane.
-      // rightPanel.close (a retired default some keep) closes surfaces only.
-      if (command === "tab.close" || command === "rightPanel.close") {
-        const layout = useLayoutStore.getState().layout;
-        const focused = selectFocusedTab(layout);
-        // Nothing to close (the window's last blank tab): the key keeps its native meaning.
-        if (
-          !focused ||
-          !canCloseLayoutTab(layout, focused.id) ||
-          (command === "rightPanel.close" && focused.content.kind !== "surface")
-        ) {
-          return;
-        }
+      if (
+        event.key === "Escape" &&
+        hasPaneTabSelection() &&
+        !isLayoutDragActive() &&
+        !isEditableFocused(event.target) &&
+        !openLayerMatches(ESCAPE_BLOCKING_POPUP_SELECTOR) &&
+        !(event.target instanceof Element && event.target.closest(ESCAPE_BLOCKING_TARGET_SELECTOR))
+      ) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (!event.repeat) closeLayoutTabByUser(focused.id);
+        clearPaneTabSelection();
         return;
+      }
+      // cmd+W closes the selected tabs in the focused pane, or the focused tab
+      // when none are selected, whichever element holds DOM focus.
+      // rightPanel.close (a retired default some keep) closes surfaces only.
+      if (
+        command === "tab.close" ||
+        command === "rightPanel.close" ||
+        command === "terminal.close"
+      ) {
+        const layout = useLayoutStore.getState().layout;
+        const focusedPane = selectFocusedPane(layout);
+        const selectedTabIds = focusedPane ? readSelectedLayoutTabIds(focusedPane.id) : [];
+        if (selectedTabIds.length >= 2) {
+          const closable =
+            command === "rightPanel.close"
+              ? selectedTabIds.filter(
+                  (id) =>
+                    focusedPane?.tabs.find((tab) => tab.id === id)?.content.kind === "surface",
+                )
+              : selectedTabIds;
+          if (closable.length > 0) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (!event.repeat) closeLayoutTabsByUser(closable);
+            return;
+          }
+        }
+        if (command !== "terminal.close") {
+          const focused = selectFocusedTab(layout);
+          // Nothing to close (the window's last blank tab): the key keeps its native meaning.
+          if (
+            !focused ||
+            !canCloseLayoutTab(layout, focused.id) ||
+            (command === "rightPanel.close" && focused.content.kind !== "surface")
+          ) {
+            return;
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!event.repeat) closeLayoutTabByUser(focused.id);
+          return;
+        }
       }
       // A focused chat waiting for its first render must mount before replaying its shortcuts or
       // typed text; the overview retains its own keyboard ownership.

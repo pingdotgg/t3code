@@ -97,6 +97,8 @@ import {
 } from "./layoutModel";
 import {
   closeLayoutTabByUser,
+  closeLayoutTabOrSelectionByUser,
+  closeLayoutTabsByUser,
   closeOtherLayoutTabsByUser,
   createLayoutNewTabContent,
   openLayoutNewTab,
@@ -106,6 +108,16 @@ import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
+import {
+  clearPaneTabSelection,
+  handlePaneTabClick,
+  hasPaneTabSelection,
+  isLayoutTabSelected,
+  isTabToggleModifier,
+  readSelectedLayoutTabIds,
+  subscribePaneTabSelection,
+  useIsLayoutTabSelected,
+} from "./paneTabSelection";
 import { followLayoutCompanions } from "./openRules";
 import {
   scrollLeftByWheel,
@@ -470,6 +482,12 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     markHoverAtStart(entry, hoveredOutlineTab(strip, event.target)),
   );
   strip.addEventListener("pointerleave", () => markHoverAtStart(entry, null));
+  strip.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented || !hasPaneTabSelection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearPaneTabSelection();
+  });
   setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
   // A tab opening, closing or changing size moves the others without a render here.
   // Not observeResize: no React state changes, and its flushSync would force the
@@ -582,6 +600,16 @@ function markPaneJoinedAtStart(pane: HTMLElement | null): void {
 
 /** What a strip's hovered tab last marked. The strip moves between its pane's headers. */
 const hoverStartMarks = new WeakMap<HTMLElement, readonly [name: string, element: HTMLElement][]>();
+const hoveredStrips = new Set<PaneStrip>();
+
+subscribePaneTabSelection(() => {
+  if (hoveredStrips.size === 0 || typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => {
+    for (const entry of hoveredStrips) {
+      if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
+    }
+  });
+});
 
 function hoveredOutlineTab(strip: HTMLElement, target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
@@ -601,10 +629,18 @@ function hoveredOutlineTab(strip: HTMLElement, target: EventTarget | null): HTML
 function markHoverAtStart(entry: PaneStrip, tab: HTMLElement | null, force = false): void {
   if (!force && tab === entry.hoveredTab) return;
   entry.hoveredTab = tab;
+  if (tab) hoveredStrips.add(entry);
+  else hoveredStrips.delete(entry);
   const { strip } = entry;
   const next: [name: string, element: HTMLElement][] = [];
   // A scrolled strip fades its start, and the outline with it.
-  if (tab && !tab.hasAttribute("data-joined") && !entry.canStart && entry.atPaneEdge) {
+  if (
+    tab &&
+    !tab.hasAttribute("data-joined") &&
+    !tab.hasAttribute("data-selected-tab") &&
+    !entry.canStart &&
+    entry.atPaneEdge
+  ) {
     const row = strip.closest<HTMLElement>("[data-pane-header]");
     if (
       row &&
@@ -1312,6 +1348,7 @@ export type LayoutTabMenuId =
   | "layout:fill"
   | "layout:copy-link"
   | "layout:close-tab"
+  | "layout:close-selected-tabs"
   | "layout:close-other-tabs";
 
 /** Layout actions for a tab's context menu (pen lLm7Y 3). */
@@ -1376,7 +1413,17 @@ export function buildLayoutTabMenuItems(
       separatorBefore: true,
     });
   }
-  if (canCloseLayoutTab(layout, tabId)) {
+  const selectedInPane =
+    isLayoutTabSelected(tabId) && readSelectedLayoutTabIds(location.pane.id).length >= 2;
+  if (selectedInPane) {
+    items.push({
+      id: "layout:close-selected-tabs",
+      label: m(msg("Close selected tabs")),
+      icon: "x",
+      ...keys("tab.close"),
+      separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
+    });
+  } else if (canCloseLayoutTab(layout, tabId)) {
     items.push({
       id: "layout:close-tab",
       label: m(msg("Close")),
@@ -1450,6 +1497,9 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     }
     case "layout:close-tab":
       closeLayoutTabByUser(tabId);
+      return;
+    case "layout:close-selected-tabs":
+      closeLayoutTabsByUser(readSelectedLayoutTabIds(location.pane.id));
       return;
     case "layout:close-other-tabs":
       closeOtherLayoutTabsByUser(tabId);
@@ -1633,7 +1683,7 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
             aria-label={gt("Close {title}", { title })}
             className="absolute start-2.25 top-1/2 -translate-y-1/2"
             data-tab-close=""
-            onClick={() => closeLayoutTabByUser(tabId)}
+            onClick={() => closeLayoutTabOrSelectionByUser(tabId)}
           />
         }
       >
@@ -1773,6 +1823,8 @@ function LayoutPaneTabButton({
   onOpenMenu: (position: { x: number; y: number }, source?: ContextMenuSource) => void;
 }) {
   const gt = useGT();
+  const { paneId } = useLayoutPane();
+  const selected = useIsLayoutTabSelected(paneId, tab.id);
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
     followLayoutCompanions(() => useLayoutStore.getState().focusTab(tab.id));
@@ -1810,8 +1862,17 @@ function LayoutPaneTabButton({
               aria-label={
                 parentLink ? gt("Open parent thread: {title}", { title: label.title }) : undefined
               }
-              onClick={focusTab}
-              onDoubleClick={() => useLayoutStore.getState().keepTab(tab.id)}
+              data-selected-tab={selected ? "" : undefined}
+              aria-pressed={selected}
+              onClick={(event) => {
+                if (handlePaneTabClick(event, tab.id)) return;
+                focusTab();
+              }}
+              onDoubleClick={(event) => {
+                if (!event.shiftKey && !isTabToggleModifier(event)) {
+                  useLayoutStore.getState().keepTab(tab.id);
+                }
+              }}
               onAuxClick={(event) => closeLayoutTabOnMiddleClick(event, tab.id)}
               onPointerDown={(event) => beginLayoutTabDrag(event, tab.id)}
               onMouseDown={(event) => {
