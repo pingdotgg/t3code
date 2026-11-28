@@ -3,6 +3,7 @@ import {
   type OrchestrationV2LinkOrigin,
   type Project,
   type ProjectId,
+  type TaskFolderError,
   type TerminalCwdNotFoundError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -11,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -28,11 +30,16 @@ export class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateEr
   {
     worktreePath: Schema.String,
     branch: Schema.String,
+    branchInUse: Schema.optional(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not recreate the worktree for branch '${this.branch}' at ${this.worktreePath}.`;
+    const prefix = `Could not recreate the worktree for branch '${this.branch}' at ${this.worktreePath}`;
+    if (this.branchInUse) {
+      return `${prefix}: the branch is already checked out elsewhere. Run git worktree list in the repository to locate it. Ask the checkout's owner to free the branch, then retry.`;
+    }
+    return `${prefix}.`;
   }
 }
 
@@ -193,6 +200,24 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
   });
 
+  const mapRecreateError =
+    (worktreePath: string, branch: string) =>
+    (
+      cause:
+        | Effect.Error<ReturnType<typeof recreateMissingWorktree>>
+        | PlatformError
+        | TaskFolderError,
+    ) =>
+      cause._tag === "WorktreeRecreateNoBaseError"
+        ? cause
+        : new WorktreeRecreateError({
+            worktreePath,
+            branch,
+            branchInUse:
+              cause._tag === "GitCommandError" && cause.reason === "branch_checked_out_in_worktree",
+            cause,
+          });
+
   return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
     const { worktreePath, branch } = thread;
     if (worktreePath === null) return;
@@ -224,13 +249,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
               ),
             ),
         })
-        .pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "WorktreeRecreateNoBaseError"
-              ? cause
-              : new WorktreeRecreateError({ worktreePath, branch, cause }),
-          ),
-        );
+        .pipe(Effect.mapError(mapRecreateError(worktreePath, branch)));
     }
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
     const leftover = exists && (yield* isLeftoverFolder(worktreePath));
@@ -247,11 +266,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
     yield* (leftover ? clearLeftovers(worktreePath) : Effect.void).pipe(
       Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
-      Effect.mapError((cause) =>
-        cause._tag === "WorktreeRecreateNoBaseError"
-          ? cause
-          : new WorktreeRecreateError({ worktreePath, branch, cause }),
-      ),
+      Effect.mapError(mapRecreateError(worktreePath, branch)),
     );
     return { project, worktreePath };
   });

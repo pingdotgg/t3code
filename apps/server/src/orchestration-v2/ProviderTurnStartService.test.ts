@@ -2277,6 +2277,49 @@ effectIt.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+effectIt.effect("explains an occupied branch without starting the provider", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-recreate-occupied-",
+    });
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreesDir,
+      worktreePath,
+      fileSystem,
+    });
+    harness.createWorktree.mockImplementation(() =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: "/tmp/native-account-project",
+          reason: "branch_checked_out_in_worktree",
+          detail: "git worktree add failed",
+        }),
+      ),
+    );
+
+    yield* harness.start;
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        failure: {
+          message: expect.stringContaining(
+            "the branch is already checked out elsewhere. Run git worktree list in the repository to locate it.",
+          ),
+        },
+      },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
