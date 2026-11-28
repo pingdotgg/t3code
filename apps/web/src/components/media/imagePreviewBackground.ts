@@ -1,6 +1,5 @@
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
-import type { CSSProperties } from "react";
 import {
   readLocalStorageValue,
   useLocalStorage,
@@ -18,15 +17,12 @@ export const imagePreviewBackgroundOptions = [
   { value: "checker", label: msg("Checkerboard") },
 ] satisfies { value: ImagePreviewBackground; label: string }[];
 
-export const imagePreviewBackgroundStyles: Record<ImagePreviewBackground, CSSProperties> = {
-  theme: {},
-  light: { backgroundColor: "#ffffff", backgroundImage: "none" },
-  dark: { backgroundColor: "#18181b", backgroundImage: "none" },
-  checker: {
-    backgroundColor: "#ffffff",
-    backgroundImage: "conic-gradient(#e4e4e7 25%, #ffffff 0 50%, #e4e4e7 0 75%, #ffffff 0)",
-    backgroundSize: "24px 24px",
-  },
+export const imagePreviewBackgroundClassNames: Record<ImagePreviewBackground, string> = {
+  theme: "",
+  light: "bg-[#ffffff] bg-none",
+  dark: "bg-[#18181b] bg-none",
+  checker:
+    "bg-[#ffffff] bg-[conic-gradient(#e4e4e7_25%,#ffffff_0_50%,#e4e4e7_0_75%,#ffffff_0)] bg-size-[24px_24px]",
 };
 
 export function useImagePreviewBackground() {

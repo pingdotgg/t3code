@@ -59,6 +59,18 @@ vi.mock("../../rpc/atomRegistry", () => ({
   },
 }));
 vi.mock("./mediaContent", () => ({ downloadMedia: state.download, readMediaPng: state.png }));
+vi.mock("./imagePreviewBackground", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./imagePreviewBackground")>();
+  return {
+    ...original,
+    setImagePreviewBackground: (
+      value: Parameters<typeof original.setImagePreviewBackground>[0],
+    ) => {
+      original.setImagePreviewBackground(value);
+      state.menuFinished?.();
+    },
+  };
+});
 vi.mock("../ui/tooltip", () => ({
   Tooltip: "Tooltip",
   TooltipTrigger: "TooltipTrigger",
@@ -149,6 +161,8 @@ it("changes only the image background even when host file access is denied", asy
   const previous = readImagePreviewBackground();
   using _background = { [Symbol.dispose]: () => setImagePreviewBackground(previous) };
   setImagePreviewBackground("theme");
+  const completed = deferred<void>();
+  state.menuFinished = () => completed.resolve();
   state.showMenu.mockResolvedValue("image-background-checker");
   openMenu(hostSource());
   expect(state.showMenu).toHaveBeenCalledWith(
@@ -164,7 +178,8 @@ it("changes only the image background even when host file access is denied", asy
     { x: 1, y: 1 },
     "mouse",
   );
-  await vi.waitFor(() => expect(readImagePreviewBackground()).toBe("checker"));
+  await completed.promise;
+  expect(readImagePreviewBackground()).toBe("checker");
   expect(state.mint).not.toHaveBeenCalled();
   expect(state.download).not.toHaveBeenCalled();
   expect(state.clipboard).not.toHaveBeenCalled();

@@ -61,13 +61,12 @@ it("shares the image background across thumbnails and viewers and restores it on
     .toHaveTextContent("Dark");
   await userEvent.click(screen.getByRole("combobox", { name: "Image background" }));
   await userEvent.click(page.getByRole("option", { name: "Checkerboard", exact: true }));
-  await expect
-    .poll(
-      () =>
-        getComputedStyle(screen.getByRole("img", { name: "Chat thumbnail" }).element())
-          .backgroundImage,
-    )
-    .toContain("conic-gradient");
+  await vi.waitFor(() =>
+    expect(
+      getComputedStyle(screen.getByRole("img", { name: "Chat thumbnail" }).element())
+        .backgroundImage,
+    ).toContain("conic-gradient"),
+  );
   await userEvent.click(screen.getByRole("combobox", { name: "Image background" }));
   await userEvent.click(page.getByRole("option", { name: "Theme", exact: true }));
   await expect
