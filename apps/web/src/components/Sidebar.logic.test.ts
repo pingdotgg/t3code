@@ -26,6 +26,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarMarkerId,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1247,6 +1248,20 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+    });
+
+    it("appends drops to a closed Pinned shelf without reordering hidden pins", () => {
+      const pins = ["hidden", "p1"];
+      expect(
+        resolveSidebarDropTarget(items, "a1", sidebarMarkerId("pinned-header"), pins),
+      ).toMatchObject({ section: "pinned", pinnedOrder: ["hidden", "p1", "a1"] });
+      expect(
+        resolveSidebarDropTarget(items, "p1", sidebarMarkerId("pinned-header"), pins),
+      ).toMatchObject({ section: "pinned", pinnedOrder: pins });
+      expect(resolveSidebarDropTarget(items, "p1", "a2", pins)).toMatchObject({
+        section: "active",
+        pinnedOrder: ["hidden"],
+      });
     });
 
     it.each([

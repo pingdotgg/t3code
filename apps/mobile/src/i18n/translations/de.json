@@ -5772,5 +5772,8 @@
   "5d9bc70d1cb3b596": "{count} Rechnern geht der Speicherplatz aus",
   "7bb6d3c4fe5cea0f": "{count} Rechner sind überlastet",
   "b48a4b390016a4f0": "Belegt {usage}, während Arbeitsspeicher Agents ausbremst. Ihn zu stoppen hilft den übrigen.",
-  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen."
+  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen.",
+  "b2732f3a418e059c": "{count, plural, one {{count} angehefteter Thread} other {{count} angeheftete Threads}}",
+  "3004a11f7cf61872": "Klappt die angehefteten Threads ein.",
+  "27c975125ff3d459": "Klappt die angehefteten Threads aus."
 }

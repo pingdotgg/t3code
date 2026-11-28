@@ -5774,5 +5774,8 @@
   "5d9bc70d1cb3b596": "{count, plural, one {Na {count} maszynie prawie brak miejsca na dysku} other {Na {count} maszynach prawie brak miejsca na dysku}}",
   "7bb6d3c4fe5cea0f": "{count, plural, one {{count} maszyna jest przeciążona} few {{count} maszyny są przeciążone} many {{count} maszyn jest przeciążonych} other {{count} maszyny są przeciążone}}",
   "b48a4b390016a4f0": "Zajmuje {usage}, gdy pamięć spowalnia agentów. Zatrzymanie go pomoże pozostałym.",
-  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym."
+  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym.",
+  "b2732f3a418e059c": "{count, plural, one {{count} przypięty wątek} few {{count} przypięte wątki} many {{count} przypiętych wątków} other {{count} przypiętego wątku}}",
+  "3004a11f7cf61872": "Zwija przypięte wątki.",
+  "27c975125ff3d459": "Rozwija przypięte wątki."
 }

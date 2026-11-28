@@ -465,6 +465,44 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("folds pins except the selected thread, while search still finds hidden pins", () => {
+    const input = {
+      threads: ["first", "second"].map((id) =>
+        makeThread({
+          id: ThreadId.make(id),
+          title: id,
+          pinnedAt: NOW,
+        }),
+      ),
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    };
+    const collapsed = buildThreadListV2Items({
+      ...input,
+      pinnedShelfExpanded: false,
+      selectedThreadKey: `${environmentId}:first`,
+    });
+    expect(collapsed.pinnedCount).toBe(2);
+    expect(collapsed.items.map((item) => item.thread.id)).toEqual(["first"]);
+    expect(
+      buildThreadListV2ListItems({
+        items: collapsed.items,
+        pendingTasks: [],
+        pinnedCount: collapsed.pinnedCount,
+        pinnedShelfExpanded: false,
+      }).map((item) => item.type),
+    ).toEqual(["v2-pinned-shelf", "v2-thread"]);
+    expect(buildThreadListV2Items(input).items).toHaveLength(2);
+    const search = buildThreadListV2Items({
+      ...input,
+      pinnedShelfExpanded: false,
+      searchQuery: "second",
+    });
+    expect(search.items.map((item) => item.thread.id)).toEqual(["second"]);
+    expect(search.pinnedCount).toBe(0);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

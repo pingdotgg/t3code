@@ -5772,5 +5772,8 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "b2732f3a418e059c": "{count, plural, one {{count} fäst tråd} other {{count} fästa trådar}}",
+  "3004a11f7cf61872": "Fäller ihop de fästa trådarna.",
+  "27c975125ff3d459": "Fäller ut de fästa trådarna."
 }

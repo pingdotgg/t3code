@@ -345,6 +345,12 @@ type ThreadListV2ShelfHeaderProps = {
 const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
 
 const SHELF_COPY = {
+  pinned: {
+    label: msg("Pinned", { $context: "thread list section" }),
+    count: msg("{count, plural, one {{count} pinned thread} other {{count} pinned threads}}"),
+    collapse: msg("Collapses the pinned threads."),
+    expand: msg("Expands the pinned threads."),
+  },
   working: {
     label: msg("Working", { $context: "thread list section" }),
     count: msg("{count, plural, one {{count} working thread} other {{count} working threads}}"),
@@ -392,6 +398,12 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
+});
+
+export const ThreadListV2PinnedShelfHeader = memo(function ThreadListV2PinnedShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="pinned" />;
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(

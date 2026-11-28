@@ -377,6 +377,24 @@ describe("sidebar drag projection", () => {
     expect(result.get("s")?.y).toBe(32);
   });
 
+  it("keeps pins below a full-height collapsible header during a drag", () => {
+    const args = layout(pinned, "a1", "a1");
+    args.rects[0]!.height = 32;
+    args.rects[0]!.bottom += 32;
+    for (const rect of args.rects.slice(1)) {
+      rect.top += 32;
+      rect.bottom += 32;
+    }
+    const strategy = createSidebarSortingStrategy({
+      items: pinned,
+      settledOrder: [],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+    });
+    expect(strategy({ ...args, index: 1 })).toEqual(stationary);
+    expect(strategy({ ...args, index: 2 })).toEqual(stationary);
+  });
+
   it.each(["s1", "missing-target"])(
     "keeps label clearance when a settled drag is over %s",
     (over) => {
