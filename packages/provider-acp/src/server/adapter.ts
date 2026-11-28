@@ -6800,8 +6800,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* projectExtractedContextUsage(notification, true);
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
-          if (context !== null && (yield* projectDetachedUnawaitedTool(notification, context)))
+          if (context !== null && (yield* projectDetachedUnawaitedTool(notification, context))) {
+            // Mid-finalize, bufferPostSettleWake cannot see this completion; offer its wake here.
+            if (
+              context.finalized &&
+              context.finalizedStatus === "completed" &&
+              postSettleContinuationEnabled &&
+              (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+              acpPostSettleContinuationOfferEvidence(notification, flavor)
+            ) {
+              yield* offerContinuationRun(notification.sessionId);
+            }
             return;
+          }
           if (flavor.replyEndsWithUsageUpdate === true) {
             if (context === null) {
               // A reply can end before its continuation run starts; replay its end with its output.

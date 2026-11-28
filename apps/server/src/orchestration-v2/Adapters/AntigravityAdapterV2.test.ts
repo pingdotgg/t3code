@@ -1630,6 +1630,11 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    /** Finalization pauses here between marking the turn finalized and clearing it. */
+    readonly finalizeGate?: {
+      readonly reached: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    };
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1743,18 +1748,30 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     defaultModel: Effect.undefined,
     ...(profileDirectory === undefined ? {} : { profileDirectory }),
   };
+  const finalizeGate = options?.finalizeGate;
   const adapter =
     options === undefined
       ? yield* makeAntigravityAdapterV2(adapterOptions)
       : yield* makeAcpAdapterV2({
           instanceId,
-          flavor: makeAntigravityAcpAdapterFlavor({
-            ...adapterOptions,
-            random: crypto,
-            fileSystem: yield* FileSystem.FileSystem,
-            path,
-            host: yield* ProviderHost.ProviderHost,
-          }),
+          flavor: {
+            ...makeAntigravityAcpAdapterFlavor({
+              ...adapterOptions,
+              random: crypto,
+              fileSystem: yield* FileSystem.FileSystem,
+              path,
+              host: yield* ProviderHost.ProviderHost,
+            }),
+            ...(finalizeGate === undefined
+              ? {}
+              : {
+                  executedModel: () =>
+                    Deferred.succeed(finalizeGate.reached, undefined).pipe(
+                      Effect.andThen(Deferred.await(finalizeGate.release)),
+                      Effect.as(undefined),
+                    ),
+                }),
+          },
           selfInvocation,
           ...(adapterOptions.continuationRequests === undefined
             ? {}
@@ -2476,6 +2493,37 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.include(JSON.stringify(completedUpdate), "Command exited with code 0.");
       assert.lengthOf(offers, 1, "the released command still wakes the thread when it ends");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("wakes the thread when a released command ends while its run finalizes", () =>
+    Effect.gen(function* () {
+      const finalizeGate = {
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const { session, providerThread, command, offers, send, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 }, undefined, undefined, {
+          finalizeGate,
+        });
+      yield* startTurn(1, false);
+      yield* run.throughPromptSettled;
+      yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds: ["mock-session-1/task-2"],
+        awaited: false,
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(finalizeGate.reached);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* Deferred.succeed(finalizeGate.release, undefined);
+      yield* run.throughTerminal;
+      assert.lengthOf(offers, 1, "a completion during finalization still wakes the thread");
     }).pipe(Effect.provide(layerSession)),
   );
 
