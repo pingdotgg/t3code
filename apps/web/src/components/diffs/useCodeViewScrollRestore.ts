@@ -1,23 +1,69 @@
-import type { CodeViewScrollTarget } from "@pierre/diffs";
+import type { CodeViewScrollTarget, SelectionSide } from "@pierre/diffs";
 import { useEffect, useState } from "react";
 
 interface Viewer {
   getHeight(): number;
-  getScrollHeight(): number;
+  getScrollTop(): number;
+  getRenderedItems(): readonly {
+    id: string;
+    instance: {
+      getNumericScrollAnchor(
+        localViewportTop: number,
+      ): { lineNumber: number; top: number; side?: SelectionSide } | undefined;
+    };
+  }[];
+  getTopForItem(id: string): number | undefined;
 }
 
 interface ScrollRestoreHandle {
   getInstance(): Viewer | undefined;
+  getItem(id: string): { collapsed?: boolean } | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
+// A remounted viewer estimates the height of files it has not measured, so a pixel offset lands
+// in other content; the anchor is a file and line plus where it sat in the viewport.
+interface ScrollAnchor {
+  id: string;
+  offset: number;
+  line?: { lineNumber: number; side?: SelectionSide; offset: number };
+}
+
+// The panel's sticky file header, which Pierre keeps a line target below.
+const STICKY_HEADER_HEIGHT = 32;
+
 // Session-only, like the panel's folds.
-const scrollTopByScopeKey = new Map<string, number>();
+const anchorByScopeKey = new Map<string, ScrollAnchor>();
+
+function anchorAt(viewer: Viewer, scrollTop: number): ScrollAnchor | null {
+  if (scrollTop <= 0) return null;
+  const items = viewer.getRenderedItems().flatMap((item) => {
+    const top = viewer.getTopForItem(item.id);
+    return top === undefined ? [] : [{ item, top }];
+  });
+  const anchor = items.findLast(({ top }) => top <= scrollTop) ?? items[0];
+  if (anchor === undefined) return null;
+  const { item, top } = anchor;
+  const line = item.instance.getNumericScrollAnchor(scrollTop + STICKY_HEADER_HEIGHT - top);
+  return {
+    id: item.id,
+    offset: top - scrollTop,
+    ...(line
+      ? {
+          line: {
+            lineNumber: line.lineNumber,
+            ...(line.side ? { side: line.side } : {}),
+            offset: top + line.top - STICKY_HEADER_HEIGHT - scrollTop,
+          },
+        }
+      : {}),
+  };
+}
 
 /**
- * Puts a remounted code view back where its scope was last scrolled. `attach` is the viewer's
- * ref and `flush` its post-render handler; the position waits until the content can reach it,
- * loading more files while any remain, and clamps once nothing is left to load.
+ * Puts a remounted code view back on the file and line its scope was last scrolled to. `attach`
+ * is the viewer's ref and `flush` its post-render handler; the anchor waits until its file is
+ * loaded, loading more files while any remain, and falls back to the file once none are left.
  */
 export function createCodeViewScrollRestore() {
   let scopeKey: string | null = null;
@@ -25,18 +71,31 @@ export function createCodeViewScrollRestore() {
   let loadMore: (() => void) | null = null;
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
-  let pending: number | null = null;
+  let pending: ScrollAnchor | null = null;
+  let captureRequest = 0;
+  const capture = (source: object) => {
+    if (!handle || source !== viewer || pending !== null || scopeKey === null) return;
+    const scrollTop = viewer.getScrollTop();
+    const anchor = anchorAt(viewer, scrollTop);
+    if (anchor) anchorByScopeKey.set(scopeKey, anchor);
+    else if (scrollTop <= 0) anchorByScopeKey.delete(scopeKey);
+  };
   const flush = () => {
     if (pending === null || !viewer || !handle || viewer.getHeight() === 0) return;
-    const maxScrollTop = viewer.getScrollHeight() - viewer.getHeight();
-    if (maxScrollTop < pending && !settled) {
+    const item = handle.getItem(pending.id);
+    const loaded = item !== undefined && (pending.line === undefined || item.collapsed !== true);
+    if (!loaded && !settled) {
       loadMore?.();
       return;
     }
-    // Pierre lands an unclamped position target one sticky header (32px) above it.
-    const position = pending + 32 <= maxScrollTop ? pending + 32 : maxScrollTop;
+    const { id, offset, line } = pending;
     pending = null;
-    if (position > 0) handle.scrollTo({ type: "position", position });
+    if (item === undefined) return;
+    handle.scrollTo(
+      line && loaded
+        ? { type: "line", id, align: "start", ...line }
+        : { type: "item", id, align: "start", offset },
+    );
   };
   return {
     update(nextScopeKey: string | null, nextSettled: boolean, nextLoadMore: (() => void) | null) {
@@ -49,18 +108,25 @@ export function createCodeViewScrollRestore() {
       const instance = next?.getInstance();
       if (instance && instance !== viewer) {
         viewer = instance;
-        pending = scopeKey === null ? null : (scrollTopByScopeKey.get(scopeKey) ?? null);
+        pending = scopeKey === null ? null : (anchorByScopeKey.get(scopeKey) ?? null);
       }
       flush();
     },
-    onScroll(scrollTop: number, source: object) {
-      if (source !== viewer || pending !== null || scopeKey === null) return;
-      scrollTopByScopeKey.set(scopeKey, scrollTop);
+    onScroll(_scrollTop: number, source: object) {
+      if (source !== viewer || pending !== null) return;
+      // Pierre notifies before it renders the new viewport in the next frame, so the rendered
+      // items are read in the frame after the last scroll's render.
+      const request = ++captureRequest;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (request === captureRequest) capture(source);
+        }),
+      );
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {
       pending = null;
-      if (scopeKey !== null) scrollTopByScopeKey.delete(scopeKey);
+      if (scopeKey !== null) anchorByScopeKey.delete(scopeKey);
     },
     flush,
   };
@@ -73,7 +139,7 @@ export function useCodeViewScrollRestore(
 ) {
   const [restore] = useState(createCodeViewScrollRestore);
   restore.update(scopeKey, settled, loadMore);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a loaded batch can leave the viewer's rendered items alone, so no ref or post-render call re-checks the pending position
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a loaded batch can leave the viewer's rendered items alone, so no ref or post-render call re-checks the pending anchor
   useEffect(() => restore.flush());
   return restore;
 }
