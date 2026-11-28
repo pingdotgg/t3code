@@ -1173,6 +1173,49 @@ describe("rendered Markdown image refresh", () => {
   });
 });
 
+describe("large rendered Markdown image refresh", () => {
+  it("re-mints embedded workspace images when workspace files refresh", async () => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    const imageRevisions: Array<string | null | undefined> = [];
+    state.assetUrlForRevision = (revision) => {
+      if (!JSON.stringify(state.assetResources.at(-1)).includes("diagram.png")) {
+        return {
+          _tag: "Success",
+          url: "/assets/large-image.md",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        };
+      }
+      imageRevisions.push(revision);
+      return {
+        _tag: "Success",
+        url: `data:image/png;base64,${typeof revision === "string" ? "djI=" : "djE="}`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/large-image.md"
+          ? Promise.resolve(new Response("![diagram](diagram.png)\n\nPast the first megabyte\n"))
+          : realFetch(input, init),
+      );
+    await using screen = await render(markdownPreview(true, "![diagram](diagram.png)\n", "big.md"));
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
+    await vi.waitFor(() => expect(imageRevisions).not.toHaveLength(0));
+    const loaded = imageRevisions.at(-1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
+
+    await vi.waitFor(() => {
+      expect(imageRevisions.at(-1)).toEqual(expect.any(String));
+      expect(imageRevisions.at(-1)).not.toBe(loaded);
+    });
+  });
+});
+
 function withAppCss() {
   const style = document.createElement("style");
   style.textContent = appCss;

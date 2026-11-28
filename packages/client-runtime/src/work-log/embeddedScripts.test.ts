@@ -81,6 +81,16 @@ describe("embeddedScripts", () => {
     expect(python).toEqual(["python", `print("$HOME")\n`, `print(\\"\\$HOME\\")\n`]);
   });
 
+  it("maps attached short inline scripts back to exact source offsets", () => {
+    expect(scriptsOf(`bash -lc "python3 -c'print(\\"\\$HOME\\")'"`)).toEqual([
+      ["shellscript", `python3 -c'print("$HOME")'`, `python3 -c'print(\\"\\$HOME\\")'`],
+      ["python", `print("$HOME")`, `print(\\"\\$HOME\\")`],
+    ]);
+    expect(scriptsOf("python3 -c'x = 1\nprint(x)'")).toEqual([
+      ["python", "x = 1\nprint(x)", "x = 1\nprint(x)"],
+    ]);
+  });
+
   it.each([
     [`bash -Ec 'echo hi'`, "shellscript", "echo hi"],
     [`bash -euo pipefail -c 'echo hi'`, "shellscript", "echo hi"],
@@ -113,11 +123,24 @@ describe("embeddedScripts", () => {
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -ne 'print if /foo/' input.txt`, "ruby", "print if /foo/"],
     [`python3 -uc 'print(1)'`, "python", "print(1)"],
+    [`python3 -c'print(1)'`, "python", "print(1)"],
+    [`python3 -uc'print(1)'`, "python", "print(1)"],
+    [`python3 -uXdev -c'print(42)'`, "python", "print(42)"],
     [`node -pe 'process.version'`, "javascript", "process.version"],
     [`perl -E 'say 1'`, "perl", "say 1"],
+    [`perl -e'print 1'`, "perl", "print 1"],
     [`perl -pe 's/foo/bar/' input.txt`, "perl", "s/foo/bar/"],
+    [`perl -0777e'print 1'`, "perl", "print 1"],
+    [`perl -l0123e 'print 42'`, "perl", "print 42"],
     [`perl -0777ne 'print length' input.txt`, "perl", "print length"],
     [`perl -I lib -Mstrict -pe 's/foo/bar/' input.txt`, "perl", "s/foo/bar/"],
+    [`perl -nwIlib -e'print 1'`, "perl", "print 1"],
+    [`perl -e'print 1;' file.txt -e 'print 2'`, "perl", "print 1;"],
+    [`ruby -ne'puts $_' input.txt`, "ruby", "puts $_"],
+    [`ruby -0777e'puts 42'`, "ruby", "puts 42"],
+    [`ruby -W0e'puts 42'`, "ruby", "puts 42"],
+    [`ruby -Kue'puts 42'`, "ruby", "puts 42"],
+    [`ruby -e'puts 1' -- -e'puts 2'`, "ruby", "puts 1"],
     [`sqlite3 app.db "select * from users"`, "sql", "select * from users"],
     [`pwsh -NoProfile -Command "Get-ChildItem"`, "powershell", "Get-ChildItem"],
     [`env FOO=1 sudo -u bob python3 -c 'print(1)'`, "python", "print(1)"],
@@ -138,6 +161,25 @@ describe("embeddedScripts", () => {
     [`python3 <<< 'print(1)'`, "python", "print(1)"],
   ])("finds the inline script in %s", (command, language, script) => {
     expect(scriptsOf(command)).toEqual([[language, script, expect.any(String)]]);
+  });
+
+  it.each([
+    [
+      `perl -e'print 1;' -E 'say 2'`,
+      [
+        ["perl", "print 1;", "print 1;"],
+        ["perl", "say 2", "say 2"],
+      ],
+    ],
+    [
+      `ruby -e'puts 1' -e 'puts 2'`,
+      [
+        ["ruby", "puts 1", "puts 1"],
+        ["ruby", "puts 2", "puts 2"],
+      ],
+    ],
+  ])("finds repeated inline scripts in %s", (command, expected) => {
+    expect(scriptsOf(command)).toEqual(expected);
   });
 
   it.each([[`psql -c 'select 1' -c 'select 2'`], [`sqlite3 app.db "select 1" "select 2"`]])(
@@ -170,6 +212,28 @@ describe("embeddedScripts", () => {
     ["a perl -i backup suffix of e", `perl -pie 's/foo/bar/' input.txt`],
     ["a ruby -i backup suffix of e", `ruby -ie 'puts 1' input.txt`],
     ["a python -W value of c", `python3 -Wc 'print(1)'`],
+    ["an attached python -W value starting with c", `python3 -Wc'print(1)'`],
+    ["a bundled python -X consuming the next arg", `python3 -uX -c'print(42)'`],
+    ["a bundled python -W consuming the next arg", `python3 -uW -c'print(42)'`],
+    ["an attached python -m module before -c", `python3 -mthis -c'print(42)'`],
+    ["a bundled python -m module before -c", `python3 -um this -c'print(42)'`],
+    ["an attached perl -M module starting with e", `perl -Me'print 1'`],
+    ["a bundled perl -I consuming the next arg", `perl -nwI -e'print 1'`],
+    ["an invalid perl octal switch without leading 0", `perl -7e'print 1'`],
+    ["an attached ruby -r require starting with e", `ruby -re'puts 1'`],
+    ["a ruby -K option consuming e as its encoding", `ruby -Ke 'puts 42'`],
+    ["a bundled ruby -I consuming the next arg", `ruby -wI -e'puts 42'`],
+    ["a ruby -W category before e", `ruby -W:deprecatede'puts 42'`],
+    ["a node -e flag with an attached value", `node -e'console.log(1)'`],
+    ["an attached inline flag after --", `python3 -- -c'print(1)'`],
+    [
+      "a whitespace-only attached inline script before a heredoc",
+      `python3 -c'   ' <<'EOF'\nprint(2)\nEOF`,
+    ],
+    ["an empty attached python -c before a heredoc", `python3 -c'' <<'EOF'\nprint(2)\nEOF`],
+    ["an empty separate python -c before a heredoc", `python3 -c '' <<'EOF'\nprint(2)\nEOF`],
+    ["a bare python -c before a heredoc", `python3 -c <<'EOF'\nprint(2)\nEOF`],
+    ["a bare psql -c before a heredoc", `psql -c <<'EOF'\nselect 1;\nEOF`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
     [
       "a shell whose -c has only trailing options before a heredoc",

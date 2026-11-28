@@ -6602,6 +6602,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
+    // Git reports the prefix from its physical cwd, so aliases and 8.3 names need no comparison.
+    const prefix = yield* executeGit(
+      "GitVcsDriver.createWorktree.checkRoot",
+      input.cwd,
+      ["rev-parse", "--show-prefix"],
+      { timeoutMs: 5_000 },
+    );
+    // A tracked subfolder is a monorepo package; an untracked one only sits inside the repository.
+    if (
+      prefix.stdout.trim() !== "" &&
+      (yield* executeGit(
+        "GitVcsDriver.createWorktree.checkTracked",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", "HEAD:./"],
+        { timeoutMs: 5_000, allowNonZeroExit: true },
+      )).exitCode !== 0
+    ) {
+      const repositoryRoot = yield* readWorktreeRoot(input.cwd);
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        cwd: input.cwd,
+        detail: `Cannot create a worktree from "${input.cwd}" because it is not tracked by the Git repository at "${repositoryRoot ?? "an ancestor folder"}" that contains it. Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
+      });
+    }
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));

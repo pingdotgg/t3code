@@ -955,12 +955,19 @@ const make = Effect.gen(function* () {
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
       if (reused === undefined) {
+        // An existing worktree launched without a branch records its checkout's. Kept out of
+        // `branch` so a checkout on a temporary branch is not renamed below.
+        const recordedBranch =
+          branch ??
+          (worktreePath === null
+            ? null
+            : yield* git.currentBranch(worktreePath).pipe(Effect.orElseSucceed(() => null)));
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make(`${input.commandId}:workspace`),
             threadId,
-            branch,
+            branch: recordedBranch,
             worktreePath,
           })
           .pipe(

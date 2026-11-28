@@ -1590,6 +1590,10 @@ it.effect("starts snippets a few words before the match so one line shows it", (
       /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/,
     );
     assert.equal(snippet(`needle${" ".repeat(473)}🚀 tail`, "needle"), "needle 🚀…");
+    // Nor before a mark or skin tone that would lose the character it belongs to.
+    const thai = "ภาษาไทยเขียนต่อกันไม่เว้นวรรคระหว่างคำนะค้นหาคำนี้";
+    assert.equal(snippet(thai, "ค้นหา"), "…นไม่เว้นวรรคระหว่างคำนะค้นหาคำนี้");
+    assert.equal(snippet(`${"👍🏽".repeat(10)}OKneedle`, "needle"), `…${"👍🏽".repeat(5)}OKneedle`);
     // Emphasis and code marks go, as the thread shows the text.
     assert.equal(
       ThreadSearch.buildSearchSnippet("Use **bold** and `code` here", 0),
