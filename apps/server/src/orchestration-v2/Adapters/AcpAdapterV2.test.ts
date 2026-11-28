@@ -4689,7 +4689,7 @@ describe("AcpAdapterV2", () => {
                   assert.isDefined(handler);
                   assert.isDefined(createTerminal);
                   const fallbackTerminal = yield* createTerminal(
-                    { sessionId: "mock-session-1", command: "true acp-mcp-call task_status {}" },
+                    { sessionId: "mock-session-1", command: "true || acp-mcp-call task_status {}" },
                     { requestId: "child-mcp-terminal", method: "terminal/create" },
                   );
                   const updates = [

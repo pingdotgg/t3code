@@ -1717,6 +1717,12 @@ describe("extractMcpToolCallIdentity", () => {
         command: 'acp-mcp-call tool_call \'{"name":"html_render","arguments":{"path":"/p"}}\'',
         expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
       },
+      {
+        name: "compound shell command",
+        command:
+          'cd /tmp && env ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
     ] as const;
 
     for (const testCase of cases) {
@@ -1741,7 +1747,10 @@ describe("extractMcpToolCallIdentity", () => {
     for (const command of [
       'rg "acp-mcp-call" --hidden',
       "rg -n 'acp-mcp-call html_render' .",
+      "rg -n acp-mcp-call html_render",
+      "rg acp-mcp-call html_render",
       "grep -c 'acp-mcp-call html_render' f",
+      "echo acp-mcp-call html_render",
     ]) {
       expect(
         extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),

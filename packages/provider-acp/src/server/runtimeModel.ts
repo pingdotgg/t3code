@@ -1111,19 +1111,40 @@ export interface AcpMcpToolCallIdentity {
 
 const ACP_MCP_SHELL_EXECUTABLE = /(?:^|\/)(?:ba|z|da|k)?sh$/;
 const ACP_MCP_SHELL_COMMAND_FLAG = /^-[a-z]*c[a-z]*$/;
-const ACP_MCP_SHELL_SEPARATOR = /[\s;&|()<>]/;
+const ACP_MCP_SHELL_COMMAND_SEPARATOR = /[;&|()\r\n]/;
+const ACP_MCP_SHELL_WORD_SEPARATOR = /[\s<>]/;
+const ACP_MCP_ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ACP_MCP_LAUNCHER_EXECUTABLE =
+  /(?:^|[\\/])(?:node|nodejs|electron|bun|deno|t3(?:-code)?|t3 code[^\\/]*)(?:\.exe)?$/i;
+const ACP_MCP_LAUNCHER_ENV_REF = /(?:\$|\$\{)T3_ACP_MCP_NODE\b/;
 
 interface ShellWord {
   readonly text: string;
   readonly start: number;
 }
 
-function shellWords(command: string): ReadonlyArray<ShellWord> {
-  const words: Array<ShellWord> = [];
+function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>> {
+  const commands: Array<Array<ShellWord>> = [];
+  let words: Array<ShellWord> = [];
   let text = "";
   let hasWord = false;
   let start = -1;
   let index = 0;
+
+  const pushWord = () => {
+    if (!hasWord) return;
+    words.push({ text, start });
+    text = "";
+    hasWord = false;
+    start = -1;
+  };
+
+  const pushCommand = () => {
+    pushWord();
+    if (words.length === 0) return;
+    commands.push(words);
+    words = [];
+  };
 
   while (index < command.length) {
     const char = command[index]!;
@@ -1192,13 +1213,13 @@ function shellWords(command: string): ReadonlyArray<ShellWord> {
       }
       continue;
     }
-    if (ACP_MCP_SHELL_SEPARATOR.test(char)) {
-      if (hasWord) {
-        words.push({ text, start });
-        text = "";
-        hasWord = false;
-        start = -1;
-      }
+    if (ACP_MCP_SHELL_COMMAND_SEPARATOR.test(char)) {
+      pushCommand();
+      index += 1;
+      continue;
+    }
+    if (ACP_MCP_SHELL_WORD_SEPARATOR.test(char)) {
+      pushWord();
       index += 1;
       continue;
     }
@@ -1209,40 +1230,68 @@ function shellWords(command: string): ReadonlyArray<ShellWord> {
     text += char;
     index += 1;
   }
-  if (hasWord) {
-    words.push({ text, start });
+  pushCommand();
+  return commands;
+}
+
+function isAcpMcpCallInvocation(words: ReadonlyArray<ShellWord>, callIndex: number): boolean {
+  let commandStart = 0;
+  while (commandStart < callIndex && ACP_MCP_ENV_ASSIGNMENT.test(words[commandStart]!.text)) {
+    commandStart += 1;
   }
-  return words;
+  if (commandStart < callIndex && /(?:^|\/)env$/.test(words[commandStart]!.text)) {
+    commandStart += 1;
+    while (commandStart < callIndex) {
+      const current = words[commandStart]!.text;
+      if (ACP_MCP_ENV_ASSIGNMENT.test(current) || current === "-i" || current === "--") {
+        commandStart += 1;
+        continue;
+      }
+      if (current === "-u" && commandStart + 1 < callIndex) {
+        commandStart += 2;
+        continue;
+      }
+      break;
+    }
+  }
+  const prefix = words.slice(commandStart, callIndex);
+  if (prefix.length === 0) return true;
+  if (prefix.length > 2) return false;
+  if (prefix.some((word) => word.text.length === 0 || word.text.startsWith("-"))) return false;
+  const launcher = prefix[0]!.text;
+  return ACP_MCP_LAUNCHER_EXECUTABLE.test(launcher) || ACP_MCP_LAUNCHER_ENV_REF.test(launcher);
 }
 
 function acpMcpFallbackCall(command: string, nested = false): AcpMcpToolCallIdentity | undefined {
-  const words = shellWords(command);
-  for (let index = 0; index < words.length; index++) {
-    const word = words[index]!;
-    const tool = words[index + 1]?.text;
-    if (
-      word.text === "acp-mcp-call" &&
-      tool !== undefined &&
-      (T3_MCP_TOOL_NAMES.has(tool) || tool === T3_MCP_TOOL_CALL_PROXY || tool === "tool_search")
-    ) {
-      const arg = words[index + 2];
-      const input =
-        arg === undefined
-          ? undefined
-          : (acpMcpFallbackInput(arg.text) ?? acpMcpFallbackInput(command.slice(arg.start)));
-      return unwrapT3ToolCallProxy(
-        { server: "t3-code", tool, ...(input === undefined ? {} : { input }) },
-        input,
-      );
-    }
-    if (
-      !nested &&
-      tool !== undefined &&
-      ACP_MCP_SHELL_COMMAND_FLAG.test(word.text) &&
-      ACP_MCP_SHELL_EXECUTABLE.test(words[index - 1]?.text ?? "")
-    ) {
-      const found = acpMcpFallbackCall(tool, true);
-      if (found !== undefined) return found;
+  for (const words of shellCommands(command)) {
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index]!;
+      const tool = words[index + 1]?.text;
+      if (
+        word.text === "acp-mcp-call" &&
+        tool !== undefined &&
+        isAcpMcpCallInvocation(words, index) &&
+        (T3_MCP_TOOL_NAMES.has(tool) || tool === T3_MCP_TOOL_CALL_PROXY || tool === "tool_search")
+      ) {
+        const arg = words[index + 2];
+        const input =
+          arg === undefined
+            ? undefined
+            : (acpMcpFallbackInput(arg.text) ?? acpMcpFallbackInput(command.slice(arg.start)));
+        return unwrapT3ToolCallProxy(
+          { server: "t3-code", tool, ...(input === undefined ? {} : { input }) },
+          input,
+        );
+      }
+      if (
+        !nested &&
+        tool !== undefined &&
+        ACP_MCP_SHELL_COMMAND_FLAG.test(word.text) &&
+        ACP_MCP_SHELL_EXECUTABLE.test(words[index - 1]?.text ?? "")
+      ) {
+        const found = acpMcpFallbackCall(tool, true);
+        if (found !== undefined) return found;
+      }
     }
   }
   return undefined;

@@ -957,6 +957,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         title: "Revenue",
         height: 240,
       };
+      const stdinProxyInput = {
+        html: "<p>Stdin proxy report</p>",
+        title: "Revenue",
+        height: 240,
+      };
       let capturedMcpServers:
         | {
             readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -1153,10 +1158,10 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     status: "completed",
                     rawOutput: "Rendered the page.",
                   });
-                  const wrapperStdout = JSON.stringify({
+                  const wrapperStdout = `${JSON.stringify({
                     content: [],
                     structuredContent: { htmlRender: page("node-wrapper") },
-                  });
+                  })}\n{finished}`;
                   yield* send({
                     sessionUpdate: "tool_call",
                     toolCallId: "node-wrapper",
@@ -1175,8 +1180,46 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                   yield* send({
                     sessionUpdate: "tool_call_update",
                     toolCallId: "node-wrapper",
+                    status: "in_progress",
+                    rawOutput: "Summary mid-update.",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
                     status: "completed",
                     rawOutput: "Ran script.",
+                  });
+                  const stdinProxyStdout = JSON.stringify({
+                    content: [],
+                    structuredContent: { htmlRender: page("stdin-proxy") },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "stdin-proxy",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: {
+                      command:
+                        '"$T3_ACP_MCP_NODE" acp-mcp-call tool_call - <<\'EOF\'\n{"name":"html_render","arguments":{"html":"<p>Stdin proxy report</p>"}}\nEOF',
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(
+                    threadId,
+                    stdinProxyInput,
+                    page("stdin-proxy"),
+                  );
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "stdin-proxy",
+                    status: "completed",
+                    rawOutput: { stdout: stdinProxyStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "stdin-proxy",
+                    status: "completed",
+                    rawOutput: "Rendered via stdin proxy.",
                   });
                   yield* send({
                     sessionUpdate: "tool_call",
@@ -1328,6 +1371,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         "tool-call-proxy",
         "heredoc",
         "node-wrapper",
+        "stdin-proxy",
       ]) {
         assert.deepEqual(tool(name), {
           status: "completed",
@@ -1352,6 +1396,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, proxied), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, heredocInput), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, wrapperInput), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, stdinProxyInput), undefined);
       assert.isDefined(capturedMcpServers);
       const stdioServer = capturedMcpServers!.stdio[0];
       const httpServer = capturedMcpServers!.http[0];

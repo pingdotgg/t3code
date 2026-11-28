@@ -39,7 +39,7 @@ import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { HTML_RENDER_TOOL_NAME, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -1481,9 +1481,10 @@ function terminalMcpResult(rawOutput: unknown): Record<string, unknown> | undefi
     const line = lines[index]?.trim();
     if (line === undefined || !line.startsWith("{")) continue;
     try {
-      return unknownRecord(JSON.parse(line));
+      const parsed = unknownRecord(JSON.parse(line));
+      if (parsed !== undefined) return parsed;
     } catch {
-      return undefined;
+      // Skip non-JSON lines starting with `{` so an earlier MCP result line still matches.
     }
   }
   return undefined;
@@ -1957,6 +1958,7 @@ interface ActiveAcpTurn {
   /** `${toolCallId}\0${tool}\0${inputHash}` keys already tried for input-only recovery. */
   readonly attemptedInputRecoveryKeys: Set<string>;
   readonly terminalHtmlRenderCalls: Set<string>;
+  readonly claimedHtmlRenders: Map<string, HtmlRenderReference>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -5909,13 +5911,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               input: { title: page.title, height: page.height },
             };
           });
+          const extractedIdentity = extractMcpToolCallIdentity(toolCall, {
+            embeddedTerminalCommands: embeddedTerminalCommands(
+              context.nativeThreadId,
+              toolCall.toolCallId,
+            ),
+          });
+          const isUnresolvedT3Proxy =
+            extractedIdentity !== undefined &&
+            /^t3[-_ ]?code$/i.test(extractedIdentity.server) &&
+            extractedIdentity.tool === "tool_call";
           const mcpIdentity =
-            extractMcpToolCallIdentity(toolCall, {
-              embeddedTerminalCommands: embeddedTerminalCommands(
-                context.nativeThreadId,
-                toolCall.toolCallId,
-              ),
-            }) ?? (yield* terminalHtmlRenderIdentity(context, toolCall, status, rawOutput));
+            extractedIdentity === undefined || isUnresolvedT3Proxy
+              ? ((yield* terminalHtmlRenderIdentity(context, toolCall, status, rawOutput)) ??
+                extractedIdentity)
+              : extractedIdentity;
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary =
@@ -6025,10 +6035,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (status === "completed" && isHtmlRender && !isError) {
               const reportedPage = htmlRenderFromToolItem({ toolName, output });
               // Antigravity replaces MCP results with summaries, including on repeated completions.
-              const previousPage = htmlRenderFromToolItem({
-                toolName,
-                output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
-              });
+              const previousPage =
+                htmlRenderFromToolItem({
+                  toolName,
+                  output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
+                }) ?? context.claimedHtmlRenders.get(toolCall.toolCallId);
               if (reportedPage !== undefined) {
                 yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage);
               }
@@ -6037,6 +6048,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 previousPage ??
                 (yield* mcpSessions.takeHtmlRender(context.input.threadId, input));
               if (page !== undefined) {
+                context.claimedHtmlRenders.set(toolCall.toolCallId, page);
                 if (reportedPage === undefined) {
                   output = { htmlRender: page };
                 }
@@ -10946,6 +10958,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),
               terminalHtmlRenderCalls: new Set(),
+              claimedHtmlRenders: new Map(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
