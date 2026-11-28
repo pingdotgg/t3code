@@ -6,7 +6,7 @@ import {
   holdIssuePages,
   issueFilterScopes,
   issueOrder,
-  rereadIssuePage,
+  createIssuePageRereader,
   type EnvironmentIssueEntry,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
@@ -17,7 +17,6 @@ import type {
   IssueInvolvement,
   IssueListCursors,
   IssueListInput,
-  IssueListResult,
   IssueListSort,
   IssueListState,
 } from "@t3tools/contracts";
@@ -171,17 +170,12 @@ export function IssuesScreen(
       failure: failure instanceof Error ? failure.message : m(msg("The next page failed.")),
     };
   };
-  const rereads = useRef(new WeakSet<IssueListResult>());
+  const [rereadPages] = useState(createIssuePageRereader);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A refreshed first page reads the pages "Load more" had reached again from the server, so they show what changed.
   useEffect(() => {
-    for (const [environmentId, page] of held) {
-      const rereading = page.rereading;
-      if (rereading === null || rereads.current.has(rereading)) continue;
-      rereads.current.add(rereading);
-      void rereadIssuePage({ ...page, rereading }, (cursors) =>
-        readPage(environmentId, cursors),
-      ).then((next) => setPages((current) => new Map(current).set(environmentId, next)));
-    }
+    rereadPages(held, readPage, (environmentId, next) =>
+      setPages((current) => new Map(current).set(environmentId, next)),
+    );
   });
   const [loadingMore, setLoadingMore] = useState(false);
   const loading = useRef(false);

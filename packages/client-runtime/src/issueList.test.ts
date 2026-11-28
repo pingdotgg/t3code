@@ -10,11 +10,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   continueIssuePage,
+  createIssuePageRereader,
   groupIssues,
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
   rereadIssuePage,
+  type HeldIssuePage,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -161,6 +163,36 @@ describe("holdIssuePages", () => {
         environmentId,
       ),
     ).toBe(reread);
+  });
+});
+
+describe("createIssuePageRereader", () => {
+  it("keeps the newest refresh when an older reread answers after it", async () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const continued = continueIssuePage(
+      hold(answer({ entries: [entry({ key: "4" }), entry({ key: "3" })], nextCursors: cursors })),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #4, then #3: B still pages, C fits on one page.
+    const b = answer({ entries: [entry({ key: "3" }), entry({ key: "2" })], nextCursors: cursors });
+    const c = answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] });
+    let pages: ReadonlyMap<EnvironmentId, HeldIssuePage> = new Map([[environmentId, continued]]);
+    const reread = createIssuePageRereader();
+    const commit = (id: EnvironmentId, page: HeldIssuePage) => {
+      pages = new Map(pages).set(id, page);
+    };
+    let answerB: (value: IssueListResult) => void = () => {};
+    const slow = new Promise<IssueListResult>((resolve) => (answerB = resolve));
+    reread(holdIssuePages([[environmentId, b]], pages), () => slow, commit);
+    reread(holdIssuePages([[environmentId, c]], pages), () => slow, commit);
+    await Promise.resolve();
+    answerB(answer({ entries: [entry({ key: "1" })] }));
+    await slow;
+    await Promise.resolve();
+    const held = holdIssuePages([[environmentId, c]], pages).get(environmentId)!;
+    expect(held.rereading).toBeNull();
+    expect(held.entries.map((issue) => issue.key)).toEqual(["2", "1"]);
   });
 });
 

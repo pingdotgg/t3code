@@ -102,6 +102,34 @@ export async function rereadIssuePage(
   }
 }
 
+/**
+ * Starts one reread per newer first page an environment shows. Only the reread of the first page
+ * it shows last is committed, so an older one that answers later cannot overwrite it.
+ */
+export function createIssuePageRereader() {
+  const latest = new Map<EnvironmentId, IssueListResult>();
+  return (
+    held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
+    load: (
+      environmentId: EnvironmentId,
+      cursors: IssueListCursors,
+    ) => Promise<IssueListResult | { readonly failure: string }>,
+    commit: (environmentId: EnvironmentId, page: HeldIssuePage) => void,
+  ) => {
+    for (const [environmentId, page] of held) {
+      const rereading = page.rereading;
+      if (rereading === null) latest.delete(environmentId);
+      if (rereading === null || latest.get(environmentId) === rereading) continue;
+      latest.set(environmentId, rereading);
+      void rereadIssuePage({ ...page, rereading }, (cursors) => load(environmentId, cursors)).then(
+        (next) => {
+          if (latest.get(environmentId) === rereading) commit(environmentId, next);
+        },
+      );
+    }
+  };
+}
+
 /** The cursors of one tracker host, so its "Load more" leaves the other trackers where they are. */
 export function issueCursorsForHost(cursors: IssueListCursors, host: string): IssueListCursors {
   return Object.fromEntries(Object.entries(cursors).filter(([key]) => key.startsWith(`${host} `)));
