@@ -25,17 +25,12 @@ export function resolveChatListAnchoredEndSpace<Item, AnchorId>(
       continue;
     }
 
-    const itemAnchorId = getAnchorId(item);
-    if (itemAnchorId === null) {
-      continue;
+    if (getAnchorId(item) === anchorId) {
+      return {
+        anchorIndex: index,
+        anchorOffset: options.anchorOffset ?? CHAT_LIST_ANCHOR_OFFSET,
+      };
     }
-
-    return itemAnchorId === anchorId
-      ? {
-          anchorIndex: index,
-          anchorOffset: options.anchorOffset ?? CHAT_LIST_ANCHOR_OFFSET,
-        }
-      : undefined;
   }
 
   return undefined;
