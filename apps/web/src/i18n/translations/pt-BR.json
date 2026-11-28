@@ -12722,6 +12722,9 @@
   "1c635faa2fb45b8b": "Ainda não foi executado.",
   "156ff7b625287a1e": "Ocultar puladas",
   "69b985b97ab45e6b": "Mostrar puladas ({count})",
+  "9f49ebac8045c25e": "Execuções mais antigas podem estar faltando.",
+  "dccc1c3e490b838d": "Execuções puladas mais antigas podem estar faltando.",
+  "7e1ddb9e941e56b9": "Mostrar as {count} puladas mais recentes",
   "2400254d362de84d": "Carregando execuções de workflow…",
   "145e1f7503ba3b2c": [
     "Este ambiente não tem nenhuma execução com esse link.",

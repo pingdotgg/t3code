@@ -28,6 +28,7 @@ import {
   defaultWorkflowRunId,
   groupWorkflowRuns,
   listedWorkflowRuns,
+  workflowListLimitNotice,
   workflowQuestionKinds,
   workflowReferenceThreadId,
   workflowRunAskingKind,
@@ -204,7 +205,8 @@ export function WorkflowRunsView({
   const openedSkipped = snapshot.runs.some(
     (run) => run.runId === selectedRunId && run.status === "skipped",
   );
-  const visible = listedWorkflowRuns(snapshot.runs, showSkipped || openedSkipped);
+  const showingSkipped = showSkipped || openedSkipped;
+  const visible = listedWorkflowRuns(snapshot.runs, showingSkipped);
   const groups = groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions);
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
@@ -250,13 +252,12 @@ export function WorkflowRunsView({
   const openRunId = listedFor(selected);
   // The run that is open stays listed whatever it asks, as one opened by its link may ask
   // another kind: the list never points at nothing.
-  const listed =
+  const matchesKind =
     kind === EVERY_KIND
-      ? ofWorkflow
-      : ofWorkflow.filter(
-          (node) =>
-            workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId,
-        );
+      ? undefined
+      : (node: WorkflowRunNode) =>
+          workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId;
+  const listed = matchesKind === undefined ? ofWorkflow : ofWorkflow.filter(matchesKind);
   // With no run named, the one shown is one the list has: with a kind picked, one that asks it.
   const fallback = all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null;
   const shown =
@@ -287,6 +288,14 @@ export function WorkflowRunsView({
     onSelect((row === undefined ? null : askingKind([row], kind)?.run.runId) ?? runId);
   };
   const currentRunId = listedFor(shown);
+  const limitNotice = workflowListLimitNotice(
+    snapshot,
+    tab,
+    // With none of the picked workflow's skipped runs left, no toggle says the list was cut.
+    showingSkipped || skipped === 0,
+    m,
+    section === null ? undefined : { workflow: section.name, groups, matchesKind },
+  );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}
@@ -393,34 +402,43 @@ export function WorkflowRunsView({
             <nav aria-label={gt("Workflow runs")} className="p-2 pt-1">
               {listed.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  {section?.neverRan
-                    ? gt("Has not run yet.")
-                    : kind === EVERY_KIND
-                      ? m(NOTHING[tab])
-                      : gt("No questions of this kind wait on you.")}
+                  {limitNotice ??
+                    (section?.neverRan
+                      ? gt("Has not run yet.")
+                      : kind === EVERY_KIND
+                        ? m(NOTHING[tab])
+                        : gt("No questions of this kind wait on you."))}
                 </p>
               ) : (
-                <ul className="space-y-0.5">
-                  {listed.map((node) => (
-                    <WorkflowRunListItem
-                      key={node.run.runId}
-                      node={node}
-                      current={node.run.runId === currentRunId}
-                      subjectOpen={
-                        node.run.runId === selectedRunId && subjectShows(node.run.subject, shownTab)
-                      }
-                      onSelect={openListed}
-                      onOpenSubject={(subject) => onOpenReference(node.run.runId, subject)}
-                    />
-                  ))}
-                </ul>
+                <>
+                  {limitNotice === null ? null : (
+                    <p className="px-2 pb-1.5 text-xs text-muted-foreground">{limitNotice}</p>
+                  )}
+                  <ul className="space-y-0.5">
+                    {listed.map((node) => (
+                      <WorkflowRunListItem
+                        key={node.run.runId}
+                        node={node}
+                        current={node.run.runId === currentRunId}
+                        subjectOpen={
+                          node.run.runId === selectedRunId &&
+                          subjectShows(node.run.subject, shownTab)
+                        }
+                        onSelect={openListed}
+                        onOpenSubject={(subject) => onOpenReference(node.run.runId, subject)}
+                      />
+                    ))}
+                  </ul>
+                </>
               )}
               {tab === "all" && skipped > 0 && !openedSkipped ? (
                 <div className="flex justify-center pt-2">
                   <Button size="xs" variant="ghost" onClick={() => setShowSkipped(!showSkipped)}>
                     {showSkipped
                       ? gt("Hide skipped")
-                      : gt("Show {count} skipped", { count: skipped })}
+                      : snapshot.skippedTruncated
+                        ? gt("Show newest {count} skipped", { count: skipped })
+                        : gt("Show {count} skipped", { count: skipped })}
                   </Button>
                 </div>
               ) : null}

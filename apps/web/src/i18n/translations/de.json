@@ -12724,6 +12724,9 @@
   "1c635faa2fb45b8b": "Noch nie gelaufen.",
   "156ff7b625287a1e": "Übersprungene ausblenden",
   "69b985b97ab45e6b": "{count} übersprungene anzeigen",
+  "9f49ebac8045c25e": "Ältere Ausführungen fehlen möglicherweise.",
+  "dccc1c3e490b838d": "Ältere übersprungene Ausführungen fehlen möglicherweise.",
+  "7e1ddb9e941e56b9": "Neueste {count} übersprungene anzeigen",
   "2400254d362de84d": "Workflow-Ausführungen werden geladen…",
   "145e1f7503ba3b2c": [
     "Diese Umgebung hat keinen Lauf mit diesem Link.",

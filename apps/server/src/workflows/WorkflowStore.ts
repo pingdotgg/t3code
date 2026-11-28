@@ -9,6 +9,7 @@ import {
   WorkflowStep,
 } from "@t3tools/contracts";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -204,6 +205,30 @@ const prefixUpperBound = (prefix: string): string | null => {
   }
   return null;
 };
+
+const RUN_LIST_LIMIT = 500;
+
+export interface WorkflowRunListPage {
+  readonly rows: ReadonlyArray<RunSummaryRow>;
+  /** Older runs in this list (outside top-level skipped runs when unfiltered) were omitted at the limit. */
+  readonly truncated: boolean;
+  /** Older top-level skipped runs were omitted at their separate limit (only on unfiltered lists). */
+  readonly skippedTruncated?: boolean | undefined;
+}
+
+interface RunsWhereFilter {
+  readonly workflow?: string | undefined;
+  readonly status?: WorkflowRunStatus | undefined;
+  readonly keyPrefix?: string | undefined;
+  /** Runs with an open question of this kind. */
+  readonly kind?: string | undefined;
+  /** Runs tagged with this. */
+  readonly tag?: string | undefined;
+  /** Runs about this: the subject's kind and key, or text that is its web address or key. */
+  readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
+  /** Only skipped runs no other run invoked (true), or only the rest (false). */
+  readonly skippedTopLevel?: boolean | undefined;
+}
 
 export class WorkflowStore extends Context.Service<
   WorkflowStore,
@@ -418,23 +443,23 @@ export class WorkflowStore extends Context.Service<
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
     /** The run a workflow was started as under `key`, of whichever version. */
     readonly runByKey: (workflow: string, key: string) => Effect.Effect<RunRow | undefined>;
-    readonly runs: (
-      status: WorkflowRunStatus | undefined,
-    ) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
+    readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<WorkflowRunListPage>;
     /** Runs by what they are a run of and what they were started as, newest first. */
-    readonly runsWhere: (filter: {
-      readonly workflow?: string | undefined;
-      readonly status?: WorkflowRunStatus | undefined;
-      readonly keyPrefix?: string | undefined;
-      /** Runs with an open question of this kind. */
-      readonly kind?: string | undefined;
-      /** Runs tagged with this. */
-      readonly tag?: string | undefined;
-      /** Runs about this: the subject's kind and key, or text that is its web address or key. */
-      readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
-      /** Only skipped runs no other run invoked (true), or only the rest (false). */
-      readonly skippedTopLevel?: boolean | undefined;
-    }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
+    readonly runsWhere: (filter: RunsWhereFilter) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
+    /** `runsWhere`, saying whether older runs were left out at the limit. */
+    readonly runsWherePage: (
+      filter: RunsWhereFilter,
+    ) => Effect.Effect<Omit<WorkflowRunListPage, "skippedTruncated">>;
+    /**
+     * Runs `runsWherePage` for ordinary runs and top-level skipped runs in one snapshot, each with
+     * its own cap.
+     */
+    readonly runsWhereApart: (
+      filter: Omit<RunsWhereFilter, "skippedTopLevel" | "status">,
+    ) => Effect.Effect<{
+      readonly normal: Omit<WorkflowRunListPage, "skippedTruncated">;
+      readonly skipped: Omit<WorkflowRunListPage, "skippedTruncated">;
+    }>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */
@@ -673,6 +698,54 @@ export const make = Effect.gen(function* () {
     }
     return given;
   });
+
+  const runsWherePage: WorkflowStore["Service"]["runsWherePage"] = Effect.fn(
+    "WorkflowStore.runsWherePage",
+  )(function* (filter) {
+    const prefix = filter.keyPrefix ?? null;
+    const prefixEnd = prefix === null ? null : prefixUpperBound(prefix);
+    // Only the filters given, so SQLite can use an index for them.
+    const where = sql.and([
+      ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
+      ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
+      // A range, not LIKE, which would read `%` and `_` in a key as patterns.
+      ...(prefix === null ? [] : [sql`idempotency_key >= ${prefix}`]),
+      ...(prefixEnd === null ? [] : [sql`idempotency_key < ${prefixEnd}`]),
+      ...(filter.skippedTopLevel === undefined
+        ? []
+        : filter.skippedTopLevel
+          ? [sql`status = 'skipped' AND parent_run_id IS NULL`]
+          : [sql`NOT (status = 'skipped' AND parent_run_id IS NULL)`]),
+      ...(filter.tag === undefined
+        ? []
+        : [
+            sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
+          ]),
+      ...(filter.subject === undefined
+        ? []
+        : typeof filter.subject === "string"
+          ? [sql`(subject_url = ${filter.subject} OR subject_key = ${filter.subject})`]
+          : [sql`subject_kind = ${filter.subject.kind} AND subject_key = ${filter.subject.key}`]),
+      ...(filter.kind === undefined
+        ? []
+        : [
+            sql`EXISTS (
+                SELECT 1 FROM workflow_waits w
+                WHERE w.run_id = r.run_id AND w.signalled_at IS NULL AND w.request_json IS NOT NULL
+                  AND json_extract(w.request_json, '$.kind') = ${filter.kind}
+              )`,
+          ]),
+    ]);
+    const rows = yield* sql<RunSummaryRow>`
+        SELECT ${summaryColumns} FROM workflow_runs r
+        WHERE ${where}
+        ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_LIST_LIMIT + 1}
+      `;
+    return {
+      rows: rows.slice(0, RUN_LIST_LIMIT),
+      truncated: rows.length > RUN_LIST_LIMIT,
+    };
+  }, Effect.orDie);
 
   return WorkflowStore.of({
     placeAsked: Effect.fn("WorkflowStore.placeAsked")(function* (place) {
@@ -1428,79 +1501,111 @@ export const make = Effect.gen(function* () {
       return rows[0];
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
-      const prefix = filter.keyPrefix ?? null;
-      const prefixEnd = prefix === null ? null : prefixUpperBound(prefix);
-      // Only the filters given, so SQLite can use an index for them.
-      const where = sql.and([
-        ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
-        ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
-        // A range, not LIKE, which would read `%` and `_` in a key as patterns.
-        ...(prefix === null ? [] : [sql`idempotency_key >= ${prefix}`]),
-        ...(prefixEnd === null ? [] : [sql`idempotency_key < ${prefixEnd}`]),
-        ...(filter.skippedTopLevel === undefined
-          ? []
-          : filter.skippedTopLevel
-            ? [sql`status = 'skipped' AND parent_run_id IS NULL`]
-            : [sql`NOT (status = 'skipped' AND parent_run_id IS NULL)`]),
-        ...(filter.tag === undefined
-          ? []
-          : [
-              sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
-            ]),
-        ...(filter.subject === undefined
-          ? []
-          : typeof filter.subject === "string"
-            ? [sql`(subject_url = ${filter.subject} OR subject_key = ${filter.subject})`]
-            : [sql`subject_kind = ${filter.subject.kind} AND subject_key = ${filter.subject.key}`]),
-        ...(filter.kind === undefined
-          ? []
-          : [
-              sql`EXISTS (
-                SELECT 1 FROM workflow_waits w
-                WHERE w.run_id = r.run_id AND w.signalled_at IS NULL AND w.request_json IS NOT NULL
-                  AND json_extract(w.request_json, '$.kind') = ${filter.kind}
-              )`,
-            ]),
-      ]);
-      return yield* sql<RunSummaryRow>`
-        SELECT ${summaryColumns} FROM workflow_runs r
-        WHERE ${where}
-        ORDER BY started_at DESC, rowid DESC LIMIT 500
-      `.pipe(Effect.orDie);
+      return (yield* runsWherePage(filter)).rows;
     }),
-    runs: Effect.fn("WorkflowStore.runs")(function* (status) {
-      return yield* (
-        status === undefined
-          ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-            // not push the runs that did something out of the list. A paused run or one with a
-            // question open is listed however old, since what waits on a person is built from it.
-            // rowid breaks ties: of a burst of runs sharing one started_at, the newest are kept.
-            sql<RunSummaryRow>`
-              SELECT ${summaryColumns} FROM (
-                SELECT ${summaryColumns} FROM workflow_runs
-                WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
-                ORDER BY started_at DESC, rowid DESC LIMIT 500
-              )
-              UNION ALL
-              SELECT ${summaryColumns} FROM (
-                SELECT ${summaryColumns} FROM workflow_runs
-                WHERE status = 'skipped' AND parent_run_id IS NULL
-                ORDER BY started_at DESC, rowid DESC LIMIT 500
-              )
-              UNION
-              SELECT ${summaryColumns} FROM workflow_runs
-              WHERE status = 'paused' OR run_id IN (
-                SELECT run_id FROM workflow_waits
-                WHERE request_json IS NOT NULL AND signalled_at IS NULL
-              )
-              ORDER BY started_at DESC
-            `
-          : sql<RunSummaryRow>`
-              SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
-              ORDER BY started_at DESC, rowid DESC LIMIT 500
-            `
-      ).pipe(Effect.orDie);
-    }),
+    runsWherePage,
+    runsWhereApart: Effect.fn("WorkflowStore.runsWhereApart")(
+      function* (filter) {
+        return {
+          normal: yield* runsWherePage({ ...filter, skippedTopLevel: false }),
+          skipped: yield* runsWherePage({ ...filter, skippedTopLevel: true }),
+        };
+      },
+      // Without one snapshot, a top-level run that skips itself between the two reads can appear
+      // in both lists.
+      (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
+      Effect.orDie,
+    ),
+    runs: Effect.fn("WorkflowStore.runs")(
+      function* (status) {
+        if (status !== undefined) {
+          const rows = yield* sql<RunSummaryRow>`
+            SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
+            ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_LIST_LIMIT + 1}
+          `;
+          return {
+            rows: rows.slice(0, RUN_LIST_LIMIT),
+            truncated: rows.length > RUN_LIST_LIMIT,
+          };
+        }
+        // Skipped runs are counted apart, so a trigger that skips most of what it brings does
+        // not push the runs that did something out of the list. A paused run or one with a
+        // question open is listed however old, since what waits on a person is built from it.
+        // Fetching one row past each cap detects truncation without adding a query.
+        const tagged = yield* sql<
+          RunSummaryRow & { readonly part: number | bigint; readonly list_rowid: number | bigint }
+        >`
+          SELECT 0 AS part, list_rowid, ${summaryColumns} FROM (
+            SELECT rowid AS list_rowid, ${summaryColumns} FROM workflow_runs
+            WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
+            ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_LIST_LIMIT + 1}
+          )
+          UNION ALL
+          SELECT 1 AS part, list_rowid, ${summaryColumns} FROM (
+            SELECT rowid AS list_rowid, ${summaryColumns} FROM workflow_runs
+            WHERE status = 'skipped' AND parent_run_id IS NULL
+            ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_LIST_LIMIT + 1}
+          )
+          UNION ALL
+          SELECT 2 AS part, rowid AS list_rowid, ${summaryColumns} FROM workflow_runs
+          WHERE status = 'paused' OR run_id IN (
+            SELECT run_id FROM workflow_waits
+            WHERE request_json IS NOT NULL AND signalled_at IS NULL
+          )
+        `;
+        const normal: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        const skipped: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        const needsYou: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        for (const { part, ...row } of tagged) {
+          if (Number(part) === 0) normal.push(row);
+          else if (Number(part) === 1) skipped.push(row);
+          else needsYou.push(row);
+        }
+        const needsYouIds = new Set(needsYou.map((row) => row.run_id));
+        let truncated = false;
+        if (normal.length > RUN_LIST_LIMIT) {
+          const overflow = normal[RUN_LIST_LIMIT]!;
+          if (!needsYouIds.has(overflow.run_id)) {
+            truncated = true;
+          } else {
+            // The 501st row is itself listed by the Needs you branch; check if any non-Needs-you
+            // run sits past the 500th row so a complete list is not reported as truncated.
+            const cutoff = normal[RUN_LIST_LIMIT - 1]!;
+            const omitted = yield* sql<{ readonly found: number | bigint }>`
+              SELECT 1 AS found FROM workflow_runs
+              WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
+                AND (started_at, rowid) < (${cutoff.started_at}, ${cutoff.list_rowid})
+                AND status != 'paused'
+                AND run_id NOT IN (
+                  SELECT run_id FROM workflow_waits
+                  WHERE request_json IS NOT NULL AND signalled_at IS NULL
+                )
+              LIMIT 1
+            `;
+            truncated = omitted.length > 0;
+          }
+        }
+        const byId = new Map<string, RunSummaryRow>();
+        for (const { list_rowid: _rowid, ...row } of [
+          ...normal.slice(0, RUN_LIST_LIMIT),
+          ...skipped.slice(0, RUN_LIST_LIMIT),
+          ...needsYou,
+        ]) {
+          if (!byId.has(row.run_id)) byId.set(row.run_id, row);
+        }
+        const rows = [...byId.values()].sort((left, right) =>
+          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
+        );
+        return {
+          rows,
+          truncated,
+          skippedTruncated: skipped.length > RUN_LIST_LIMIT,
+        };
+      },
+      // The list and the check for runs it left out must read the same state.
+      (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
+      Effect.orDie,
+    ),
     triggerNext: Effect.fn("WorkflowStore.triggerNext")(function* (triggerId) {
       const rows = yield* sql<{ next_at: string }>`
         SELECT next_at FROM workflow_triggers WHERE trigger_id = ${triggerId}

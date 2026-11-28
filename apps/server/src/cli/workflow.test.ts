@@ -264,3 +264,28 @@ it.effect("list --tag and questions --kind ask the server for only those", () =>
     assert.include((yield* TestConsole.logLines).join("\n"), "run-1  wanted  feature");
   }),
 );
+
+it.effect("list reports truncation on stderr while keeping --json stdout a bare array", () =>
+  Effect.gen(function* () {
+    const sample = [makeRun("completed"), makeRun("skipped")];
+    const jsonTruncated = yield* runCli(["list", "--json"], () =>
+      Effect.succeed({ structuredContent: { runs: sample, truncated: true } }),
+    );
+    assert.isUndefined(jsonTruncated.error);
+    const parsed = JSON.parse((yield* TestConsole.logLines).at(-1) as string);
+    assert.isTrue(Array.isArray(parsed));
+    assert.equal(parsed.length, 1);
+    assert.lengthOf(jsonTruncated.errors, 1);
+
+    const complete = yield* runCli(["list", "--status", "waiting", "--json"], () =>
+      Effect.succeed({
+        structuredContent: { runs: [makeRun("waiting")], truncated: false },
+      }),
+    );
+    assert.isUndefined(complete.error);
+    assert.deepStrictEqual(JSON.parse((yield* TestConsole.logLines).at(-1) as string), [
+      makeRun("waiting"),
+    ]);
+    assert.deepStrictEqual(complete.errors, jsonTruncated.errors);
+  }),
+);

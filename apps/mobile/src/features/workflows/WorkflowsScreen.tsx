@@ -3,6 +3,7 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowChip,
+  workflowListLimitNotice,
   workflowQuestionKinds,
   workflowRunAsksKind,
   workflowRunLists,
@@ -161,6 +162,7 @@ function EnvironmentRuns(props: {
     kind === null
       ? inTab
       : inTab.filter((node) => workflowRunAsksKind(snapshot.workflows, node, kind));
+  const limitNotice = workflowListLimitNotice(snapshot, tab, showSkipped, m);
   return (
     <View>
       {props.label === null ? null : (
@@ -170,22 +172,30 @@ function EnvironmentRuns(props: {
       )}
       {listed.length === 0 ? (
         <Text className="px-5 py-6 text-center text-sm text-foreground-muted">
-          {kind === null ? m(NOTHING[tab]) : gt("No questions of this kind wait on you.")}
+          {limitNotice ??
+            (kind === null ? m(NOTHING[tab]) : gt("No questions of this kind wait on you."))}
         </Text>
       ) : (
-        listed.map((node) => (
-          <RunRow
-            key={node.run.runId}
-            node={node}
-            onOpenSubject={node.run.subject === undefined ? null : subjectOpener(node.run.subject)}
-            onOpen={() =>
-              navigation.navigate("WorkflowRun", {
-                environmentId: props.environmentId,
-                runId: node.run.runId,
-              })
-            }
-          />
-        ))
+        <>
+          {limitNotice === null ? null : (
+            <Text className="px-5 pb-2 pt-1 text-xs text-foreground-muted">{limitNotice}</Text>
+          )}
+          {listed.map((node) => (
+            <RunRow
+              key={node.run.runId}
+              node={node}
+              onOpenSubject={
+                node.run.subject === undefined ? null : subjectOpener(node.run.subject)
+              }
+              onOpen={() =>
+                navigation.navigate("WorkflowRun", {
+                  environmentId: props.environmentId,
+                  runId: node.run.runId,
+                })
+              }
+            />
+          ))}
+        </>
       )}
       {tab === "all" && visible.skipped > 0 ? (
         <Pressable
@@ -196,7 +206,9 @@ function EnvironmentRuns(props: {
           <Text className="text-xs text-foreground-muted">
             {showSkipped
               ? gt("Hide skipped")
-              : gt("Show {count} skipped", { count: visible.skipped })}
+              : snapshot.skippedTruncated
+                ? gt("Show newest {count} skipped", { count: visible.skipped })
+                : gt("Show {count} skipped", { count: visible.skipped })}
           </Text>
         </Pressable>
       ) : null}

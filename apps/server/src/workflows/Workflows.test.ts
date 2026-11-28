@@ -1946,7 +1946,7 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
         const workflows = yield* Workflows.Workflows;
         // The kid of a parent that waits on it, once the kid itself waits.
         const heldKid = Effect.gen(function* () {
-          const kid = (yield* workflows.list({})).find(
+          const kid = (yield* workflows.list({})).runs.find(
             (run) =>
               run.workflow === "kid" && (run.status === "running" || run.status === "waiting"),
           );
@@ -1998,7 +1998,7 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
           'named "kid"',
         );
         assert.deepStrictEqual(
-          (yield* workflows.list()).filter((run) => run.parentRunId === clash.runId),
+          (yield* workflows.list()).runs.filter((run) => run.parentRunId === clash.runId),
           [],
         );
         const byName = yield* workflows.start("clash", { byName: true }, { idempotencyKey: "n" });
@@ -2035,7 +2035,7 @@ it.effect("a cancel cut off midway still tells the run that invoked it", () =>
         const workflows = yield* Workflows.Workflows;
         const parent = yield* workflows.start("parent", { mode: "hold" }, { idempotencyKey: "h" });
         yield* workflows.waitFor(parent.runId, (run) => run.detail === "kid");
-        const kid = (yield* workflows.list({})).find((run) => run.workflow === "kid");
+        const kid = (yield* workflows.list({})).runs.find((run) => run.workflow === "kid");
         yield* workflows.waitFor(kid!.runId, status("waiting"));
         const cancelling = yield* Effect.forkChild(workflows.cancel(kid!.runId, "changed my mind"));
         yield* Deferred.await(reached);
@@ -2221,7 +2221,9 @@ it.effect(
     Effect.gen(function* () {
       const { boot } = yield* harness();
       const nightly = (workflows: Workflows.Workflows["Service"]) =>
-        Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "nightly"));
+        Effect.map(workflows.list(), ({ runs }) =>
+          runs.filter((run) => run.workflow === "nightly"),
+        );
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -2287,7 +2289,7 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
     );
     const { boot, forge } = yield* harness(store);
     const triaged = (workflows: Workflows.Workflows["Service"]) =>
-      Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "triage"));
+      Effect.map(workflows.list(), ({ runs }) => runs.filter((run) => run.workflow === "triage"));
     forge.open.push(issueAt("1", "1969-12-31T23:00:00.000Z"));
     // Before the mark too, written the way some hosts write a time.
     forge.open.push(issueAt("3", "1970-01-01T00:30:00+01:00"));
@@ -2873,7 +2875,7 @@ it.effect("a list by tag keeps the runs that did something apart from skipped on
           `,
         ).pipe(Effect.provide(database));
         assert.include(
-          (yield* workflows.list({ tag: "pr" })).map((listed) => listed.runId),
+          (yield* workflows.list({ tag: "pr" })).runs.map((listed) => listed.runId),
           run.runId,
         );
       }),
@@ -2934,11 +2936,11 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
           [["pr", "backlog"], ["pr"], undefined],
         );
         assert.deepStrictEqual(
-          (yield* workflows.list({ tag: "backlog" })).map((run) => run.runId),
+          (yield* workflows.list({ tag: "backlog" })).runs.map((run) => run.runId),
           [feature.runId],
         );
         assert.deepStrictEqual(
-          (yield* workflows.list({ tag: "pr", status: "completed" })).map((run) => run.runId),
+          (yield* workflows.list({ tag: "pr", status: "completed" })).runs.map((run) => run.runId),
           [],
         );
         const find = Effect.fn(function* (
@@ -3296,11 +3298,11 @@ it.effect("a run says what it is about, and is found by it", () =>
           ["issue"],
         );
         assert.deepStrictEqual(
-          (yield* workflows.list({ subject: issue.url })).map((run) => run.runId),
+          (yield* workflows.list({ subject: issue.url })).runs.map((run) => run.runId),
           [onIssue.runId],
         );
         assert.deepStrictEqual(
-          (yield* workflows.list({ subject: "thread-1" })).map((run) => run.runId),
+          (yield* workflows.list({ subject: "thread-1" })).runs.map((run) => run.runId),
           [moved.runId],
         );
 

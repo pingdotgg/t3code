@@ -12722,6 +12722,9 @@
   "1c635faa2fb45b8b": "Pas encore exécuté.",
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
+  "9f49ebac8045c25e": "Des exécutions plus anciennes peuvent manquer.",
+  "dccc1c3e490b838d": "Des exécutions ignorées plus anciennes peuvent manquer.",
+  "7e1ddb9e941e56b9": "Afficher les {count} ignorés les plus récents",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
   "145e1f7503ba3b2c": [
     "Cet environnement n’a aucune exécution avec ce lien.",

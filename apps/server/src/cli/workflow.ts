@@ -19,7 +19,10 @@ import {
 } from "./thread.ts";
 
 const RunResult = Schema.Struct({ run: WorkflowRun, steps: Schema.Array(WorkflowStep) });
-const RunsResult = Schema.Struct({ runs: Schema.Array(WorkflowRun) });
+const RunsResult = Schema.Struct({
+  runs: Schema.Array(WorkflowRun),
+  truncated: Schema.optional(Schema.Boolean),
+});
 const QuestionsResult = Schema.Struct({ questions: Schema.Array(Workflows.WorkflowQuestion) });
 const HooksResult = Schema.Struct({ hooks: Schema.Array(WorkflowHook) });
 const WithdrawResult = Schema.Struct({
@@ -96,6 +99,12 @@ const startCommand = Command.make("start", {
   ),
 );
 
+const truncatedNotice = (count: number, status: Option.Option<WorkflowRunStatus>) =>
+  Option.isSome(status)
+    ? `Showing the newest ${count} ${status.value} runs; older ones are omitted.`
+    : // An unfiltered list also holds runs that wait on a person however old, so not only the newest.
+      `Showing ${count} runs; some older ones are omitted.`;
+
 const listCommand = Command.make("list", {
   ...projectLocationFlags,
   status: Flag.Literals("status", WorkflowRunStatus.literals).pipe(
@@ -119,7 +128,7 @@ const listCommand = Command.make("list", {
     withThreadTools(
       flags,
       Effect.fn("cli.workflow.list")(function* (tools) {
-        const { runs } = yield* tools.call(
+        const { runs, truncated } = yield* tools.call(
           "t3_workflow",
           {
             action: "list",
@@ -133,8 +142,14 @@ const listCommand = Command.make("list", {
         const listed = Option.isSome(flags.status)
           ? runs
           : runs.filter((run) => run.status !== "skipped" || run.parentRunId !== null);
-        if (flags.json) return yield* printJson(listed);
-        for (const run of listed) yield* Console.log(runLine(run));
+        if (flags.json) {
+          yield* printJson(listed);
+        } else {
+          for (const run of listed) yield* Console.log(runLine(run));
+        }
+        if (truncated === true) {
+          yield* Console.error(truncatedNotice(listed.length, flags.status));
+        }
       }),
     ).pipe(reportThreadErrors),
   ),

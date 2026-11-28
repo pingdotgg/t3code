@@ -245,7 +245,7 @@ it.effect(
         assert.deepStrictEqual(yield* definitions.remove("hold.ts"), saved);
         assert.equal((yield* workflows.get(held.runId)).run.status, "completed");
         assert.includeMembers(
-          (yield* workflows.list()).map((run) => run.runId),
+          (yield* workflows.list()).runs.map((run) => run.runId),
           [held.runId, greeted.runId],
         );
       }).pipe(

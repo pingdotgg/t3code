@@ -87,6 +87,8 @@ const WATCH_SETTLE = Duration.millis(100);
 interface Sent {
   readonly runs: Map<string, string>;
   readonly questions: Map<string, { runId: string; name: string; text: string }>;
+  readonly truncated: boolean;
+  readonly skippedTruncated: boolean;
 }
 const END_TRIES = 5;
 // How long a cancelled run's cleanup rests after each failed try before the sweep tries again.
@@ -933,10 +935,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
   const snapshot = Effect.all({
-    workflows: Effect.succeed(summaries),
-    runs: Effect.map(store.runs(undefined), (rows) => rows.map(toRun)),
+    listed: store.runs(undefined),
     questions,
-  });
+  }).pipe(
+    Effect.map(({ listed, questions }) => ({
+      workflows: summaries,
+      runs: listed.rows.map(toRun),
+      questions,
+      truncated: listed.truncated,
+      skippedTruncated: listed.skippedTruncated ?? false,
+    })),
+  );
   const watch: Workflows["Service"]["watch"] = Stream.unwrap(
     Effect.gen(function* () {
       // Subscribed before the first look, so a change in between is not missed.
@@ -962,6 +971,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
                   { runId: question.runId, name: question.name, text: JSON.stringify(question) },
                 ]),
               ),
+              truncated: next.truncated,
+              skippedTruncated: next.skippedTruncated,
             };
             const update: WorkflowRunsUpdate =
               sent === undefined
@@ -979,6 +990,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
                     closed: [...sent.questions]
                       .filter(([key]) => !now.questions.has(key))
                       .map(([, { runId, name }]) => ({ runId, name })),
+                    ...(now.truncated === sent.truncated ? {} : { truncated: now.truncated }),
+                    ...(now.skippedTruncated === sent.skippedTruncated
+                      ? {}
+                      : { skippedTruncated: now.skippedTruncated }),
                   };
             return [now, [update]] as const;
           },
@@ -1318,16 +1333,32 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      if (filter?.tag === undefined && filter?.subject === undefined)
-        return (yield* store.runs(filter?.status)).map(toRun);
+      if (filter?.tag === undefined && filter?.subject === undefined) {
+        const listed = yield* store.runs(filter?.status);
+        return {
+          runs: listed.rows.map(toRun),
+          truncated: listed.truncated,
+          ...(listed.skippedTruncated === undefined
+            ? {}
+            : { skippedTruncated: listed.skippedTruncated }),
+        };
+      }
       const where = { status: filter.status, tag: filter.tag, subject: filter.subject };
-      if (filter.status !== undefined) return (yield* store.runsWhere(where)).map(toRun);
+      if (filter.status !== undefined) {
+        const listed = yield* store.runsWherePage(where);
+        return { runs: listed.rows.map(toRun), truncated: listed.truncated };
+      }
       // Skipped runs are counted apart, as in the unfiltered list, so they cannot push out the rest.
-      const rows = [
-        ...(yield* store.runsWhere({ ...where, skippedTopLevel: false })),
-        ...(yield* store.runsWhere({ ...where, skippedTopLevel: true })),
-      ];
-      return rows.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).map(toRun);
+      const { normal, skipped } = yield* store.runsWhereApart({
+        tag: filter.tag,
+        subject: filter.subject,
+      });
+      const rows = [...normal.rows, ...skipped.rows];
+      return {
+        runs: rows.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).map(toRun),
+        truncated: normal.truncated,
+        skippedTruncated: skipped.truncated,
+      };
     }),
     about: Effect.fn("Workflows.about")(function* (item) {
       // Keyed as the subject was kept, so an item named without its address is found too.

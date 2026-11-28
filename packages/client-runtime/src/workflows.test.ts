@@ -22,6 +22,7 @@ import {
   workflowWithdrawal,
   workflowChip,
   workflowFlowFocus,
+  workflowListLimitNotice,
   workflowPausedBeat,
   workflowResultLines,
   workflowRunInvolves,
@@ -237,6 +238,38 @@ describe("the list of runs", () => {
       ),
     ).all;
     expect(ids(invoked.filter((node) => workflowRunInvolves(node, "check")))).toEqual(["parent"]);
+  });
+
+  it("reports truncation only on tabs whose list can miss runs", () => {
+    const both = { truncated: true, skippedTruncated: true };
+    expect(workflowListLimitNotice(both, "needs-you", true)).toBeNull();
+    // With a workflow picked, Needs you can miss an entry only through a run the list left out.
+    const done = run("done", { status: "completed", startedAt: at(10), endedAt: at(11) });
+    const picked = (workflow: string, asking: WorkflowRun, matchesKind?: () => boolean) =>
+      workflowListLimitNotice(both, "needs-you", true, undefined, {
+        workflow,
+        groups: groupWorkflowRuns([], [done, asking], [question(asking.runId)]),
+        matchesKind,
+      });
+    // The triage run that invoked this one fell off the list.
+    const orphan = run("review", { workflow: "review", parentRunId: "gone", startedAt: at(20) });
+    expect(picked("triage", orphan)).toBe("Older runs may be missing.");
+    expect(picked("review", orphan)).toBeNull();
+    // Under a question kind it does not ask, it could not show anyway.
+    expect(picked("triage", orphan, () => false)).toBeNull();
+    // Only an entry older than the cut can have lost a triage run it invoked.
+    const deploy = (minute: number) => run("deploy", { workflow: "deploy", startedAt: at(minute) });
+    expect(picked("triage", deploy(20))).toBeNull();
+    expect(picked("triage", deploy(5))).toBe("Older runs may be missing.");
+    expect(workflowListLimitNotice(both, "running", false)).toBe("Older runs may be missing.");
+    expect(workflowListLimitNotice(both, "all", true)).toBe("Older runs may be missing.");
+
+    const skippedOnly = { truncated: false, skippedTruncated: true };
+    expect(workflowListLimitNotice(skippedOnly, "all", false)).toBeNull();
+    expect(workflowListLimitNotice(skippedOnly, "all", true)).toBe(
+      "Older skipped runs may be missing.",
+    );
+    expect(workflowListLimitNotice({}, "all", true)).toBeNull();
   });
 
   it("counts the open questions by kind, in the order declared, with the rest as other", () => {

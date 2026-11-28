@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -157,8 +159,8 @@ it.effect("lists of runs leave out what each run was started with", () =>
         input,
       });
       const listed = [
-        ...(yield* store.runs(undefined)),
-        ...(yield* store.runs("running")),
+        ...(yield* store.runs(undefined)).rows,
+        ...(yield* store.runs("running")).rows,
         ...(yield* store.runsWhere({ workflow: "intake" })),
       ];
       assert.deepStrictEqual(
@@ -750,7 +752,7 @@ it.effect("keeps each workflow's latest skipped runs and deletes older ones with
       assert.equal(yield* store.pruneSkipped(2, 100), 1);
       assert.equal(yield* store.pruneSkipped(2, 100), 0);
 
-      const left = (yield* store.runs(undefined)).map((run) => run.run_id).toSorted();
+      const left = (yield* store.runs(undefined)).rows.map((run) => run.run_id).toSorted();
       assert.deepStrictEqual(left, [
         "done",
         "invoked",
@@ -765,12 +767,10 @@ it.effect("keeps each workflow's latest skipped runs and deletes older ones with
 
       // Keeping none deletes every skipped run the rules allow, in every workflow.
       assert.equal(yield* store.pruneSkipped(0, 100), 3);
-      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
-        "done",
-        "invoked",
-        "journaled",
-        "parent",
-      ]);
+      assert.deepStrictEqual(
+        (yield* store.runs(undefined)).rows.map((run) => run.run_id).toSorted(),
+        ["done", "invoked", "journaled", "parent"],
+      );
     }),
   ),
 );
@@ -801,10 +801,10 @@ it.effect("prunes past the kept number when runs share a start time, and tells w
           assert.equal(yield* PubSub.remaining(told), 1);
         }),
       );
-      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
-        "c",
-        "d",
-      ]);
+      assert.deepStrictEqual(
+        (yield* store.runs(undefined)).rows.map((run) => run.run_id).toSorted(),
+        ["c", "d"],
+      );
     }),
   ),
 );
@@ -835,7 +835,7 @@ it.effect("tells watchers of the deletions that committed when a later workflow'
         }),
       );
       assert.deepStrictEqual(
-        (yield* store.runs(undefined)).map((run) => run.run_id),
+        (yield* store.runs(undefined)).rows.map((run) => run.run_id),
         ["b1"],
       );
     }),
@@ -984,9 +984,13 @@ it.effect("a run waiting on you is listed however many runs started after it", (
         ["old"],
       );
       // Needs you lists the paused runs and open questions it is sent; one it is not sent is lost.
-      const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
-      assert.isTrue(listed.has("old"));
-      assert.isTrue(listed.has("paused"));
+      const listed = yield* store.runs(undefined);
+      const ids = new Set(listed.rows.map((run) => run.run_id));
+      assert.isTrue(ids.has("old"));
+      assert.isTrue(ids.has("paused"));
+      // Every run in the store was returned (500 completed + 2 rescued by Needs you), so nothing was cut.
+      assert.isFalse(listed.truncated);
+      assert.isFalse(listed.skippedTruncated);
     }),
   ),
 );
@@ -1268,4 +1272,163 @@ it.effect("a run paused again before its places came back keeps nobody waiting",
       assert.deepStrictEqual(yield* leave("z", "lock"), ["a/lock"]);
     }),
   ),
+);
+
+it.effect(
+  "runs and runsWherePage report truncation only when rows are omitted past the limit",
+  () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* WorkflowStore.WorkflowStore;
+        const sql = yield* SqlClient.SqlClient;
+        const seed = (
+          prefix: string,
+          count: number,
+          status: "completed" | "skipped",
+          parentRunId: string | null = null,
+          baseEpochSec = 1_700_000_000,
+        ) =>
+          sql.withTransaction(
+            Effect.forEach(
+              Array.from({ length: count }, (_, i) => i),
+              (i) => {
+                const id = `${prefix}-${String(i).padStart(4, "0")}`;
+                const at = DateTime.formatIso(DateTime.makeUnsafe((baseEpochSec + i) * 1000));
+                return sql`
+              INSERT INTO workflow_runs (
+                run_id, workflow, version, engine_tag, idempotency_key, title, status,
+                started_at, updated_at, ended_at, parent_run_id
+              ) VALUES (
+                ${id}, 'demo', 1, 'demo@1', ${id}, ${id}, ${status},
+                ${at}, ${at}, ${at}, ${parentRunId}
+              )
+            `;
+              },
+            ),
+          );
+
+        // Exact limit in both partitions: 499 completed + 1 skipped child (= 500 non-top-level-skipped)
+        // plus 500 top-level skipped. Nothing is omitted.
+        yield* seed("ok", 499, "completed", null, 1_700_000_000);
+        yield* seed("child-skip", 1, "skipped", "ok-0000", 1_700_001_000);
+        yield* seed("skip", 500, "skipped", null, 1_700_002_000);
+
+        const atLimit = yield* store.runs(undefined);
+        assert.equal(atLimit.rows.length, 1000);
+        assert.isFalse(atLimit.truncated);
+        assert.isFalse(atLimit.skippedTruncated);
+        assert.isFalse(
+          (yield* store.runsWherePage({ workflow: "demo", status: "completed" })).truncated,
+        );
+
+        // One extra top-level skipped run truncates only the skipped partition (and status='skipped').
+        yield* seed("skip-extra", 1, "skipped", null, 1_700_003_000);
+        const skippedOnly = yield* store.runs(undefined);
+        assert.equal(skippedOnly.rows.length, 1000);
+        assert.isFalse(skippedOnly.truncated);
+        assert.isTrue(skippedOnly.skippedTruncated);
+        assert.isFalse(skippedOnly.rows.some((row) => row.run_id === "skip-0000"));
+
+        const byStatusSkipped = yield* store.runs("skipped");
+        assert.equal(byStatusSkipped.rows.length, 500);
+        assert.isTrue(byStatusSkipped.truncated);
+        assert.isUndefined(byStatusSkipped.skippedTruncated);
+
+        // Adding an older paused run past the 500 normal runs still omits nothing because Needs you
+        // keeps it; adding one more completed run past it truly omits a run.
+        yield* seed("old-paused", 1, "completed", null, 1_699_999_000);
+        yield* sql`UPDATE workflow_runs SET status = 'paused', ended_at = NULL WHERE run_id = 'old-paused-0000'`;
+        const rescued = yield* store.runs(undefined);
+        assert.isTrue(rescued.rows.some((row) => row.run_id === "old-paused-0000"));
+        assert.isFalse(rescued.truncated);
+        assert.isTrue(rescued.skippedTruncated);
+
+        yield* seed("ok-extra", 1, "completed", null, 1_699_998_000);
+        const bothCut = yield* store.runs(undefined);
+        assert.isTrue(bothCut.truncated);
+        assert.isTrue(bothCut.skippedTruncated);
+        assert.isFalse(bothCut.rows.some((row) => row.run_id === "ok-extra-0000"));
+        // The engine's own fibers read integers as BigInts.
+        const asBigInts = yield* store
+          .runs(undefined)
+          .pipe(Effect.provideService(SqlClient.SafeIntegers, true));
+        assert.isTrue(asBigInts.truncated);
+        assert.equal(asBigInts.rows.length, bothCut.rows.length);
+
+        const pageCut = yield* store.runsWherePage({ workflow: "demo", skippedTopLevel: false });
+        assert.equal(pageCut.rows.length, 500);
+        assert.isTrue(pageCut.truncated);
+
+        // Another connection tries to pause the omitted run between the list and its check for
+        // omitted runs. It must not be missing from both. Here the read holds the lock.
+        const [main] = yield* sql<{ readonly file: string }>`PRAGMA database_list`;
+        const other = new NodeSqlite.DatabaseSync(main!.file, { timeout: 0 });
+        const writes: Array<string> = [];
+        const raced = yield* store.runs(undefined).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.as(
+              statement.compile()[0].includes("AS found")
+                ? Effect.try({
+                    try: () =>
+                      other
+                        .prepare("UPDATE workflow_runs SET status = 'paused' WHERE run_id = ?")
+                        .run("ok-extra-0000"),
+                    catch: (error) => String(error),
+                  }).pipe(
+                    Effect.match({
+                      onFailure: (error) => writes.push(error),
+                      onSuccess: () => writes.push("paused"),
+                    }),
+                  )
+                : Effect.void,
+              statement,
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => other.close())),
+        );
+        assert.isTrue(raced.truncated || raced.rows.some((row) => row.run_id === "ok-extra-0000"));
+        assert.deepStrictEqual(
+          writes.map((write) => write.includes("database is locked")),
+          [true],
+        );
+
+        // A newer ordinary run makes an ordinary run the 501st, which alone says rows were left out.
+        yield* seed("ok-newest", 1, "completed", null, 1_700_005_000);
+        assert.isTrue((yield* store.runs(undefined)).truncated);
+
+        // Another connection tries to mark the newest run skipped between the two partition reads.
+        // It must not appear in both. Here the read holds the lock, so the write is refused.
+        const skipper = new NodeSqlite.DatabaseSync(main!.file, { timeout: 0 });
+        const skips: Array<string> = [];
+        const apart = yield* store.runsWhereApart({ workflow: "demo" }).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.as(
+              statement.compile()[0].includes("? AND status = 'skipped'")
+                ? Effect.try({
+                    try: () =>
+                      skipper
+                        .prepare("UPDATE workflow_runs SET status = 'skipped' WHERE run_id = ?")
+                        .run("ok-newest-0000").changes,
+                    catch: (error) => String(error),
+                  }).pipe(
+                    Effect.match({
+                      onFailure: (error) => skips.push(error),
+                      onSuccess: (changes) => skips.push(`changed ${changes} rows`),
+                    }),
+                  )
+                : Effect.void,
+              statement,
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => skipper.close())),
+        );
+        assert.lengthOf(skips, 1);
+        assert.isTrue(
+          skips[0] === "changed 1 rows" || skips[0]!.includes("database is locked"),
+          skips[0],
+        );
+        const listedIds = [...apart.normal.rows, ...apart.skipped.rows].map((row) => row.run_id);
+        assert.equal(new Set(listedIds).size, listedIds.length);
+      }),
+    ),
 );

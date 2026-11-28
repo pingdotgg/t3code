@@ -12731,6 +12731,9 @@
   "1c635faa2fb45b8b": "Has not run yet.",
   "156ff7b625287a1e": "Hide skipped",
   "69b985b97ab45e6b": "Show {count} skipped",
+  "9f49ebac8045c25e": "Older runs may be missing.",
+  "dccc1c3e490b838d": "Older skipped runs may be missing.",
+  "7e1ddb9e941e56b9": "Show newest {count} skipped",
   "2400254d362de84d": "Loading workflow runs…",
   "145e1f7503ba3b2c": [
     "This environment has no run with that link.",

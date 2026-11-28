@@ -12717,6 +12717,9 @@
   "1c635faa2fb45b8b": "Aún no se ha ejecutado.",
   "156ff7b625287a1e": "Ocultar omitidos",
   "69b985b97ab45e6b": "Mostrar {count} omitidos",
+  "9f49ebac8045c25e": "Es posible que falten ejecuciones anteriores.",
+  "dccc1c3e490b838d": "Es posible que falten ejecuciones omitidas anteriores.",
+  "7e1ddb9e941e56b9": "Mostrar los {count} omitidos más recientes",
   "2400254d362de84d": "Cargando ejecuciones de flujos de trabajo…",
   "145e1f7503ba3b2c": [
     "Este entorno no tiene ninguna ejecución con ese enlace.",

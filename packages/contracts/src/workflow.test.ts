@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { WorkflowRunsSubscribeInput, WorkflowRunsUpdate } from "./workflow.ts";
+import {
+  applyWorkflowRunsUpdate,
+  WorkflowRunsSubscribeInput,
+  WorkflowRunsUpdate,
+} from "./workflow.ts";
 
 const decodeUpdate = Schema.decodeUnknownSync(WorkflowRunsUpdate);
 const encodeInput = Schema.encodeSync(WorkflowRunsSubscribeInput);
@@ -16,5 +20,44 @@ describe("workflows.subscribe across versions", () => {
 
   it("asks for changes in a way an older server ignores", () => {
     expect(() => decodeOlderInput(encodeInput({ changes: true }))).not.toThrow();
+  });
+
+  it("carries truncation flags across incremental change frames and preserves omitted ones", () => {
+    const initial = applyWorkflowRunsUpdate(
+      undefined,
+      decodeUpdate({
+        workflows: [],
+        runs: [],
+        questions: [],
+        truncated: false,
+        skippedTruncated: false,
+      }),
+    );
+    expect([initial.truncated, initial.skippedTruncated]).toEqual([false, false]);
+
+    const crossed = applyWorkflowRunsUpdate(
+      initial,
+      decodeUpdate({
+        _tag: "changed",
+        runs: [],
+        removed: [],
+        questions: [],
+        closed: [],
+        truncated: true,
+      }),
+    );
+    expect([crossed.truncated, crossed.skippedTruncated]).toEqual([true, false]);
+
+    const unchanged = applyWorkflowRunsUpdate(
+      crossed,
+      decodeUpdate({
+        _tag: "changed",
+        runs: [],
+        removed: [],
+        questions: [],
+        closed: [],
+      }),
+    );
+    expect([unchanged.truncated, unchanged.skippedTruncated]).toEqual([true, false]);
   });
 });

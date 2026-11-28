@@ -12730,6 +12730,9 @@
   "1c635faa2fb45b8b": "Har inte körts än.",
   "156ff7b625287a1e": "Dölj överhoppade",
   "69b985b97ab45e6b": "Visa överhoppade ({count})",
+  "9f49ebac8045c25e": "Äldre körningar kan saknas.",
+  "dccc1c3e490b838d": "Äldre överhoppade körningar kan saknas.",
+  "7e1ddb9e941e56b9": "Visa de senaste överhoppade ({count})",
   "2400254d362de84d": "Läser in arbetsflödeskörningar…",
   "145e1f7503ba3b2c": [
     "Den här miljön har ingen körning med den länken.",

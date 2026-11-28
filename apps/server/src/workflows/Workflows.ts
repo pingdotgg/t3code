@@ -75,6 +75,14 @@ export type WorkflowError =
   | WorkflowInputError
   | WorkflowHookBusyError;
 
+export interface WorkflowRunsListResult {
+  readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
+  /** Older runs in this list (outside top-level skipped runs when unfiltered) were omitted at the limit. */
+  readonly truncated: boolean;
+  /** Older top-level skipped runs were omitted at their separate limit (only on unfiltered lists). */
+  readonly skippedTruncated?: boolean | undefined;
+}
+
 export class Workflows extends Context.Service<
   Workflows,
   {
@@ -145,7 +153,7 @@ export class Workflows extends Context.Service<
       readonly tag?: string;
       /** Only runs about this: their subject's web address, or its key, such as a thread id. */
       readonly subject?: string;
-    }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
+    }) => Effect.Effect<WorkflowRunsListResult, WorkflowInputError>;
     /**
      * The runs about an item, by its web address (as `list` reads `subject`) or by the issue or
      * pull request it is, and the questions they have open, for the item's own view: the runs
@@ -223,7 +231,7 @@ export const disabled = Workflows.of({
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
   list: Effect.fn("Workflows.list")(function* () {
-    return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
+    return yield* Effect.succeed({ runs: [], truncated: false });
   }),
   about: Effect.fn("Workflows.about")(function* () {
     return yield* Effect.succeed({ runs: [], questions: [] });

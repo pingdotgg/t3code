@@ -151,7 +151,7 @@ it.effect("a caller below the broadest mode reads runs but does not start or cha
             storeDelete: reach("storeDelete"),
             stored: () => Effect.succeed([]),
             get: () => Effect.succeed(emptyRun),
-            list: () => Effect.succeed([]),
+            list: () => Effect.succeed({ runs: [], truncated: false, skippedTruncated: false }),
             questions: Effect.succeed([]),
           },
           { client: supervised },
@@ -162,7 +162,10 @@ it.effect("a caller below the broadest mode reads runs but does not start or cha
       expect(result).toMatchObject({ code: "capability_denied" });
     }
     expect(reached).toEqual([]);
-    expect(results.slice(changes.length)).toEqual([{ runs: [] }, { questions: [] }]);
+    expect(results.slice(changes.length)).toEqual([
+      { runs: [], truncated: false, skippedTruncated: false },
+      { questions: [] },
+    ]);
   }),
 );
 
@@ -228,7 +231,7 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
           toolkit.handle("t3_workflow", input).pipe(
             Stream.unwrap,
             Stream.runCollect,
-            Effect.map((parts) => parts.at(-1)?.result),
+            Effect.map((parts) => parts.at(-1)),
           ),
       );
     }).pipe(
@@ -242,16 +245,21 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
           list: (filter) =>
             Effect.sync(() => {
               filters.push(filter);
-              return [];
+              return { runs: [], truncated: true, skippedTruncated: true };
             }),
         }),
       ),
     );
-    expect(results[0]).toMatchObject({ questions: [{ name: "wanted" }] });
-    expect(results[1]).toMatchObject({
+    expect(results[0]?.result).toMatchObject({ questions: [{ name: "wanted" }] });
+    expect(results[1]?.result).toMatchObject({
       questions: [{ name: "wanted" }, { name: "meant" }, { name: "plain" }],
     });
     expect(filters).toEqual([{ tag: "backlog" }]);
+    expect(results[2]?.encodedResult).toEqual({
+      runs: [],
+      truncated: true,
+      skippedTruncated: true,
+    });
   }),
 );
 
