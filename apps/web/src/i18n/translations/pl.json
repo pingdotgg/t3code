@@ -12730,6 +12730,9 @@
   "1c635faa2fb45b8b": "Jeszcze się nie uruchomiło.",
   "156ff7b625287a1e": "Ukryj pominięte",
   "69b985b97ab45e6b": "Pokaż {count} pominiętych",
+  "9f49ebac8045c25e": "Może brakować starszych uruchomień.",
+  "dccc1c3e490b838d": "Może brakować starszych pominiętych uruchomień.",
+  "7e1ddb9e941e56b9": "Pokaż {count} najnowszych pominiętych",
   "2400254d362de84d": "Wczytywanie uruchomień workflowów…",
   "145e1f7503ba3b2c": [
     "To środowisko nie ma uruchomienia z tym linkiem.",
