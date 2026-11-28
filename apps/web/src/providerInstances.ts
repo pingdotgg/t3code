@@ -154,10 +154,22 @@ export function applyProviderInstanceSettings(
   settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
   projectId: ProjectId | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  return entries.map((entry) => {
-    const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
+  const siblings = entries.map((entry) => ({
+    instanceId: entry.instanceId,
+    driver: entry.driverKind,
+    enabled: resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId),
+  }));
+  return entries.map((entry, index) => {
+    const { enabled } = siblings[index]!;
+    // Automatic colors depend on which siblings are enabled, so resolve them after overrides.
+    const accentColor = resolveProviderInstanceAccentColor(
+      { ...siblings[index]!, accentColor: entry.snapshot.accentColor },
+      siblings,
+    );
     return applyProviderInstanceBranding(
-      enabled === entry.enabled ? entry : { ...entry, enabled },
+      enabled === entry.enabled && accentColor === entry.accentColor
+        ? entry
+        : { ...entry, enabled, accentColor },
       settings,
     );
   });
