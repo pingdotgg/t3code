@@ -386,7 +386,9 @@ export function WorktreeSetupRows({
 }) {
   const gt = useGT();
   const stages = snapshot.stages.filter((stage) => shownStage(stage, snapshot));
-  const clean = snapshot.phase === "done" && !stages.some((stage) => stage.status === "failed");
+  const hasFailedStage = stages.some((stage) => stage.status === "failed");
+  const clean = snapshot.phase === "done" && !hasFailedStage;
+  const phaseFailed = snapshot.phase === "failed" && !hasFailedStage;
   const agent = snapshot.stages.find((stage) => stage.id === "agent");
   const starting =
     snapshot.phase === "running" || snapshot.phase === "done"
@@ -429,7 +431,26 @@ export function WorktreeSetupRows({
           ) : null}
         </SettledRow>
       ) : (
-        stageRows
+        <>
+          {stageRows}
+          {phaseFailed ? (
+            <SettledRow
+              data-worktree-setup-stage="failure"
+              data-worktree-setup-status="failed"
+              icon={FolderGit2Icon}
+              label={gt("Worktree setup failed")}
+              failed
+              body={snapshot.error}
+              trailing={
+                <Elapsed
+                  startedAt={snapshot.startedAt}
+                  endedAt={snapshot.endedAt}
+                  environmentId={environmentId}
+                />
+              }
+            />
+          ) : null}
+        </>
       )}
       {starting ? <LiveStageRow icon={BrainIcon} label={starting} /> : null}
     </section>

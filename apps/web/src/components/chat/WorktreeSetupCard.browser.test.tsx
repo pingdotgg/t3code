@@ -1,5 +1,6 @@
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { WorktreeSetupRows } from "./WorktreeSetupCard";
@@ -85,4 +86,37 @@ it("keeps the finished setup duration at its end", async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
   expect(section.element().textContent).toContain("Set up worktree t3/feature5s");
+});
+
+it("shows a failed row with the error when setup fails without a failed visible stage", async () => {
+  const failed = snapshot({
+    phase: "failed",
+    endedAt: "2026-10-26T12:00:04.000Z",
+    error: "fatal: repository not found",
+    stages: [
+      {
+        id: "fetch",
+        status: "done",
+        startedAt: "2026-10-26T12:00:00.000Z",
+        endedAt: "2026-10-26T12:00:02.000Z",
+        percent: null,
+        detail: null,
+        tail: [],
+      },
+      {
+        id: "agent",
+        status: "failed",
+        startedAt: "2026-10-26T12:00:02.000Z",
+        endedAt: "2026-10-26T12:00:04.000Z",
+        percent: null,
+        detail: null,
+        tail: [],
+      },
+    ],
+  });
+  await using screen = await render(rows(failed));
+  const row = screen.getByRole("button", { name: "Worktree setup failed, setup step failed" });
+  await expect.element(row).toBeVisible();
+  await userEvent.click(row);
+  await expect.element(screen.getByText("fatal: repository not found")).toBeVisible();
 });
