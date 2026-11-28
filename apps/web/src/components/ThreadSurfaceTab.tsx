@@ -1169,6 +1169,28 @@ function readTerminalTabTitles(
   );
 }
 
+/** Terminal labels that closing this surface will end, or empty when no shell ends. */
+export function terminalTitlesForThreadSurface(
+  threadRef: ScopedThreadRef,
+  surfaceId: string,
+): string[] {
+  if (!readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) return [];
+  if (surfaceId === THREAD_TERMINAL_SURFACE_ID) {
+    const { terminalIds } = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    );
+    return readTerminalTabTitles(threadRef, terminalIds);
+  }
+  const surface = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  ).surfaces.find((candidate) => candidate.id === surfaceId);
+  if (surface?.kind !== "terminal") return [];
+  const titles = readTerminalTabTitles(threadRef, surface.terminalIds);
+  return titles.length > 0 ? titles : [m(msg("Terminal"))];
+}
+
 /** Closing a surface ends its resources; cmd+J preserves the thread terminal's shells. */
 export async function closeThreadSurface(
   threadRef: ScopedThreadRef,

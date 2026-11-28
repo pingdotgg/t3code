@@ -16,7 +16,11 @@ vi.mock(import("../state/entities"), async (original) => ({
 
 import { useClosedViewStore } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import * as terminalCloseConfirm from "../lib/terminalCloseConfirm";
 import { planNextReopen, reopenClosedView } from "../reopenClosedView";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import * as sessionState from "../state/session";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   closeLayoutTabByUser,
   closeOtherLayoutTabsByUser,
@@ -26,6 +30,7 @@ import {
   createLayoutState,
   findLayoutTab,
   selectFocusedTab,
+  THREAD_TERMINAL_SURFACE_ID,
   type LayoutTabContent,
 } from "./layoutModel";
 import {
@@ -96,6 +101,65 @@ describe("closeLayoutTabByUser", () => {
     using layout = setup([other, subagent]);
     closeOtherLayoutTabsByUser(layout.tabOf(other)!.id);
     expect(layout.chats()).toEqual([other]);
+  });
+
+  it("asks once before closing sibling terminal tabs and keeps them when cancelled", async () => {
+    const scopeSpy = vi.spyOn(sessionState, "readEnvironmentScope").mockReturnValue(true);
+    const confirmSpy = vi
+      .spyOn(terminalCloseConfirm, "confirmTerminalClose")
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const previousTerminalUi = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
+    const previousRightPanel = useRightPanelStore.getState().byThreadKey;
+    try {
+      useTerminalUiStateStore.getState().setTerminalOpen(parentRef, true);
+      useRightPanelStore.getState().openTerminal(parentRef, "term-2");
+      const terminalSurfaceId = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        parentRef,
+      ).surfaces.find((surface) => surface.kind === "terminal")!.id;
+      const threadTerminal: LayoutTabContent = {
+        kind: "surface",
+        threadRef: parentRef,
+        surfaceId: THREAD_TERMINAL_SURFACE_ID,
+      };
+      const panelTerminal: LayoutTabContent = {
+        kind: "surface",
+        threadRef: parentRef,
+        surfaceId: terminalSurfaceId,
+      };
+      using layout = setup([other, threadTerminal, panelTerminal]);
+      const keepId = layout.tabOf(other)!.id;
+
+      closeOtherLayoutTabsByUser(keepId);
+      await Promise.resolve();
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0]?.[0]).toHaveLength(2);
+      expect(layout.tabOf(threadTerminal)).toBeDefined();
+      expect(layout.tabOf(panelTerminal)).toBeDefined();
+
+      closeOtherLayoutTabsByUser(keepId);
+      await vi.waitFor(() => {
+        expect(
+          selectThreadTerminalUiState(
+            useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+            parentRef,
+          ).terminalOpen,
+        ).toBe(false);
+        expect(
+          selectThreadRightPanelState(
+            useRightPanelStore.getState().byThreadKey,
+            parentRef,
+          ).surfaces.find((surface) => surface.id === terminalSurfaceId),
+        ).toBeUndefined();
+      });
+      expect(confirmSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      scopeSpy.mockRestore();
+      confirmSpy.mockRestore();
+      useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: previousTerminalUi });
+      useRightPanelStore.setState({ byThreadKey: previousRightPanel });
+    }
   });
 
   it.each([{ contents: [subagent, other] }, { contents: [parent, subagent, other] }])(

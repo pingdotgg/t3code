@@ -1,7 +1,8 @@
 /**
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
-import { closeThreadSurface } from "../components/ThreadSurfaceTab";
+import { closeThreadSurface, terminalTitlesForThreadSurface } from "../components/ThreadSurfaceTab";
+import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -218,16 +219,36 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
 
 /**
  * Close every other tab of the tab's pane, each as its own close button would,
- * except terminals end without one confirm each (terminalCloseConfirm.ts).
+ * except terminals ask once together instead of once per tab (terminalCloseConfirm.ts).
  */
 export function closeOtherLayoutTabsByUser(tabId: string): void {
   const store = useLayoutStore.getState();
   const location = findLayoutTab(store.layout, (candidate) => candidate.id === tabId);
   if (!location) return;
-  for (const tab of location.pane.tabs) {
-    if (tab.id !== tabId) closeLayoutTabByUser(tab.id, { bulk: true });
+  const siblingIds = location.pane.tabs.filter((tab) => tab.id !== tabId).map((tab) => tab.id);
+  const terminalTitles = location.pane.tabs.flatMap((tab) =>
+    tab.id !== tabId && tab.content.kind === "surface"
+      ? terminalTitlesForThreadSurface(tab.content.threadRef, tab.content.surfaceId)
+      : [],
+  );
+  const closeSiblings = () => {
+    const current = useLayoutStore.getState();
+    const currentLocation = findLayoutTab(current.layout, (candidate) => candidate.id === tabId);
+    if (!currentLocation) return;
+    const siblingSet = new Set(siblingIds);
+    for (const tab of currentLocation.pane.tabs) {
+      if (siblingSet.has(tab.id)) closeLayoutTabByUser(tab.id, { bulk: true });
+    }
+    current.focusTab(tabId);
+  };
+  const [first, ...rest] = terminalTitles;
+  if (first === undefined) {
+    closeSiblings();
+    return;
   }
-  store.focusTab(tabId);
+  void confirmTerminalClose([first, ...rest]).then((confirmed) => {
+    if (confirmed) closeSiblings();
+  });
 }
 
 /** Fill the window with the focused pane, or bring the others back (alt+cmd+F). */
