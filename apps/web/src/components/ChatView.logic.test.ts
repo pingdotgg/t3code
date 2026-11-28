@@ -1571,6 +1571,31 @@ describe("deriveThreadPendingBackgroundTasks", () => {
     },
   );
 
+  it("keeps a live command with a separate native task id out of the background list", () => {
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "completed"), run(2, "running")],
+          thread: { ...base.thread, activeProviderThreadId: "pt" },
+          providerThreads: [
+            {
+              id: "pt",
+              pendingBackgroundTasks: [
+                {
+                  taskId: "session/task-2",
+                  nativeItemId: "call-2",
+                  kind: "command",
+                  awaited: true,
+                },
+              ],
+            },
+          ],
+          turnItems: [item(2, "command_execution", "call-2", "pnpm test")],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("does not list a live run's child from the provider roster as background", () => {
     // The roster is not run-tied; Muse keys it by the child session id its rows carry.
     expect(
