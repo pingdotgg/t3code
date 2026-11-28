@@ -2284,6 +2284,13 @@ describe("PullRequestSyncReactor", () => {
       linked: [42],
     },
     {
+      name: "a create whose multiline quoted heredoc body has a lone quote and mentions a listing command",
+      input:
+        'gh pr create --title "x" --body "$(\ncat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
