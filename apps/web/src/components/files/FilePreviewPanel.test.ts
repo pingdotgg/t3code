@@ -868,6 +868,31 @@ Third}`;
     },
   );
 
+  it("hides ODS rows and columns that Calc hides or filters out", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Staff">' +
+        '<table:table-column/><table:table-column table:visibility="collapse"/><table:table-column table:number-columns-repeated="2"/>' +
+        "<table:table-row><table:table-cell><text:p>Name</text:p></table:table-cell><table:table-cell><text:p>Salary</text:p></table:table-cell><table:table-cell><text:p>Team</text:p></table:table-cell></table:table-row>" +
+        "<table:table-row><table:table-cell><text:p>Ada</text:p></table:table-cell><table:table-cell><text:p>900</text:p></table:table-cell><table:table-cell><text:p>North</text:p></table:table-cell></table:table-row>" +
+        '<table:table-row table:visibility="collapse"><table:table-cell><text:p>Draft</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row table:visibility="filter"><table:table-cell><text:p>Bob</text:p></table:table-cell><table:table-cell><text:p>800</text:p></table:table-cell><table:table-cell><text:p>South</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:table-cell><text:p>Cy</text:p></table:table-cell><table:table-cell><text:p>700</text:p></table:table-cell><table:table-cell><text:p>East</text:p></table:table-cell></table:table-row>" +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    const sheet = result.sheets[0]!;
+    expect(sheet.rows).toEqual([
+      ["Name", "Team"],
+      ["Ada", "North"],
+      ["Cy", "East"],
+    ]);
+    // Labels keep Calc's addresses: Team stays in column C, Cy in row 5.
+    expect(sheet.columnIndexes?.slice(0, 2)).toEqual([0, 2]);
+    expect(sheet.rowIndexes).toEqual([0, 1, 4]);
+  });
+
   it("hides ODS sheets whose table style sets table:display to false", async () => {
     const ns =
       'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
