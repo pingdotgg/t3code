@@ -476,7 +476,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}
-              <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
+              <div className="flex h-104 min-h-0 max-sm:h-auto max-sm:flex-col">
                 {picker}
                 <div
                   data-model-picker-effort
