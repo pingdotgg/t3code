@@ -451,7 +451,9 @@ const config: ExpoConfig = {
           imageWidth: 288,
           dark: {
             image: variant.assets.androidSplashIcon,
-            ...(APP_VARIANT === "production" ? { backgroundColor: "#000000" } : {}),
+            ...(variant.assets.androidAdaptiveBackgroundImage
+              ? {}
+              : { backgroundColor: variant.assets.androidAdaptiveBackgroundColor }),
           },
         },
       },
