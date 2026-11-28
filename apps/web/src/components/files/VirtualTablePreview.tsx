@@ -327,9 +327,13 @@ function ScaledRows(
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [{ top, remainder }, setPosition] = useState({ top: 0, remainder: 0 });
   const setTop = (value: number) =>
-    setPosition((old) =>
-      value === 0 ? { top: 0, remainder: 0 } : { ...old, top: value + old.remainder },
-    );
+    setPosition((old) => {
+      const nextTop = value === 0 ? 0 : value + old.remainder;
+      const nextRemainder = value === 0 ? 0 : old.remainder;
+      return old.top === nextTop && old.remainder === nextRemainder
+        ? old
+        : { top: nextTop, remainder: nextRemainder };
+    });
   const pendingReveal = useRef<PendingReveal | null>(null);
   const pendingEnd = useRef<number | null>(null);
   const positionKey = useContext(PreviewPositionKey);
