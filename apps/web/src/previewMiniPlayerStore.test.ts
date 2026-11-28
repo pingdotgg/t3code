@@ -28,7 +28,6 @@ describe("previewMiniPlayerStore", () => {
       source: tabB,
       position: null,
       width: null,
-      lastInteraction: "drag",
     });
   });
 });

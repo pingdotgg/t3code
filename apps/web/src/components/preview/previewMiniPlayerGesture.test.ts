@@ -60,7 +60,6 @@ describe("settlePreviewMiniPlayerResize", () => {
           width: settled!.width,
           position: settled,
           source,
-          lastInteraction: "resize",
         },
       }).frame,
     ).toEqual(settled);
