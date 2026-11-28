@@ -1855,6 +1855,8 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         runtimePolicy,
       });
       assert.deepStrictEqual(log, []);
+      // No CLI runs until a turn launches one, and turn start publishes this record.
+      assert.equal(runtime.providerSession.startupPhase, "launch");
 
       yield* runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -1869,13 +1871,13 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
       );
 
       assert.deepStrictEqual(log, [`enter ${instanceId}`, "open query", "exit"]);
-      // The step reported while the process opens is cleared before the turn runs.
+      // Once the open's own step ends, the CLI is still launching when the turn runs.
       const startup = yield* runtime.events.pipe(
         Stream.filter(
           (event) =>
             event.type === "provider_session.updated" || event.type === "provider_turn.updated",
         ),
-        Stream.take(3),
+        Stream.take(4),
         Stream.runCollect,
       );
       assert.deepStrictEqual(
@@ -1886,7 +1888,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
               ? event.providerTurn.status
               : null,
         ),
-        ["mcp", null, "running"],
+        ["launch", "mcp", "launch", "running"],
       );
     }).pipe(
       Effect.provide(
@@ -4576,7 +4578,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("reports connecting while a process's first API request is unanswered", () =>
+  it.effect("reports launch and connecting only while a process starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
         freshQueueOnReopen: true,
@@ -4608,11 +4610,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
           providerTurnOrdinal: ordinal,
         });
-      const phases = () =>
+      const trace = () =>
         harness.events.flatMap((event) =>
           event.type === "provider_session.updated"
-            ? [event.providerSession.startupPhase ?? null]
-            : [],
+            ? [`session:${event.providerSession.startupPhase ?? null}`]
+            : event.type === "turn.terminal"
+              ? [`terminal:${event.status}`]
+              : [],
         );
       yield* harness.runtime.startTurn(turn(1));
       // Init lands before the request and must not count as its answer.
@@ -4625,21 +4629,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000903"));
       yield* harness.offerAndWait(turnOneResult);
       yield* Queue.take(harness.terminalReceipts);
-      assert.deepEqual(phases(), ["connecting", null]);
-      // The next turn reuses the running process, so its request is not startup either.
+      const turnOne = [
+        "session:launch",
+        "session:connecting",
+        "session:null",
+        "terminal:completed",
+      ];
+      assert.deepEqual(trace(), turnOne);
+      // The next turn reuses the running process, so neither its start nor its request is startup.
+      assert.isUndefined(harness.runtime.providerSession.startupPhase);
       yield* harness.runtime.startTurn(turn(2));
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000904"));
-      yield* harness.offerAndWait(
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000905", result: "Two." }),
-      );
-      yield* Queue.take(harness.terminalReceipts);
       assert.equal(harness.processQueues.length, 1);
-      assert.deepEqual(phases(), ["connecting", null]);
+      // Stop closes the CLI before any answer; only once the turn ends does the next send launch one.
       yield* harness.runtime.interruptTurn({
         providerThread: latest(),
         providerTurnId: lastProviderTurn(harness.events).id,
-        requestRuntimeRestart: true,
       });
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => trace().length >= 6);
+      assert.deepEqual(trace(), [...turnOne, "terminal:interrupted", "session:launch"]);
       yield* harness.runtime.startTurn(turn(3));
       assert.equal(harness.processQueues.length, 2);
       yield* harness.offerAndWait(
@@ -4656,7 +4665,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000908", result: "Three." }),
       );
       yield* Queue.take(harness.terminalReceipts);
-      assert.deepEqual(phases(), ["connecting", null, "connecting", null]);
+      assert.deepEqual(trace(), [
+        ...turnOne,
+        "terminal:interrupted",
+        "session:launch",
+        "session:connecting",
+        "session:null",
+        "terminal:completed",
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
