@@ -13,8 +13,9 @@ staff does that job without a guarded folder, a settings-owned grant or a lifecy
   ([`BotService.start`](../../apps/server/src/bots/BotService.ts)) launches a new Bot seeded with a
   `full_thread_summary` handoff of the source and groups the source (and any workers it led) under it;
   `BotService.create` starts one from a name and instructions, which seed `preferences.md`. The way
-  out is archiving or settling the Bot: clients then list its workers at the top level again
-  (`groupThreads`), and the server stops waking it. Reopening it takes the workers back.
+  out is archiving the Bot: clients then list its workers at the top level again (`groupThreads`),
+  and the server stops waking it. Unarchiving takes the workers back. Settling does neither, and
+  auto-settle skips Bots, so a quiet Bot is never put away behind the user's back.
 - Every Bot runs in the "No project" scratch project. Its instructions forbid touching files, so its
   folder holds nothing; a project would only tie it to one repo and hide that its workers go anywhere.
 - Workers are `groupedUnderThreadId`, one level deep. Threads a thread launches join its group, so a

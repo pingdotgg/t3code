@@ -136,7 +136,7 @@ it.effect("keeps a Bot's memory in its own folder and refuses writes from other 
 });
 
 it.effect(
-  "wakes a Bot when its workers or a watched run reaches a milestone, and not once it is settled",
+  "wakes a Bot when its workers or a watched run reaches a milestone, and not once it is archived",
   () => {
     const orchestration = makeOrchestration();
     const leader = orchestration.addThread("thread:bot", { botConfig: bot });
@@ -182,9 +182,13 @@ it.effect(
       // The settled run's watch ended; workers stay watched with no watch at all.
       assert.deepStrictEqual(yield* bots.watches(leader.id), []);
 
+      // Settling is not how a Bot is put away; archiving is.
       leader.settledOverride = "settled";
       yield* bots.handleMilestone(milestone("after-settle", { threadId: "thread:worker" }));
-      assert.strictEqual(orchestration.sent.length, 4);
+      assert.strictEqual(orchestration.sent.length, 5);
+      leader.archivedAt = "2026-01-01T00:00:00.000Z";
+      yield* bots.handleMilestone(milestone("after-archive", { threadId: "thread:worker" }));
+      assert.strictEqual(orchestration.sent.length, 5);
     }).pipe(provideBots(orchestration));
   },
 );

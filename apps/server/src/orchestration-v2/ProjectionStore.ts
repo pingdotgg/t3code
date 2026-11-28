@@ -245,6 +245,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
   | "pendingGuestMessageCount"
+  | "botConfig"
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     /** Latest user or MCP agent message; automatic server and provider wakes are excluded. */

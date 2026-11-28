@@ -188,13 +188,6 @@ function buildBotActionMenuItems(
     ...(state.hasCompletedRun && !state.isRunning
       ? [{ id: "mark-unread" as const, label: resolve(msg("Mark unread")), icon: "mail-open" }]
       : []),
-    ...(state.supports.settlement
-      ? [
-          state.isSettled
-            ? { id: "unsettle" as const, label: resolve(msg("Reopen Bot")), icon: "circle-check" }
-            : { id: "settle" as const, label: resolve(msg("Settle Bot")), icon: "circle-check" },
-        ]
-      : []),
     ...(state.grouping?.hasWorkers
       ? [{ id: "ungroup" as const, label: resolve(msg("Release workers")), icon: "layers" }]
       : []),

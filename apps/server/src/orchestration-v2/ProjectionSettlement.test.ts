@@ -225,6 +225,7 @@ it.effect(
         ["unsettled", { settledOverride: "active" }],
         ["pinned", { pinnedAt: old }],
         ["auto-settle-disabled", { autoSettleDisabledAt: old }],
+        ["bot", { botConfig: { enabled: true, muteChildren: false } }],
       ] satisfies ReadonlyArray<readonly [string, Partial<OrchestrationV2AppThread>]>) {
         yield* createRun(yield* createThread(name, overrides));
       }

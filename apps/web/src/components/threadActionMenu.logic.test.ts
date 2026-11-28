@@ -97,7 +97,6 @@ describe("buildThreadActionMenuItems", () => {
       "rename",
       "mute-workers",
       "mark-unread",
-      "settle",
       "ungroup",
       "copy",
       "archive",

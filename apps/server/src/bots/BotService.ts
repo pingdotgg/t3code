@@ -624,13 +624,13 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** A Bot that is settled has let its workers go, so it is not woken. */
+  /** An archived Bot has let its workers go, so it is not woken. */
   const wakeable = Effect.fn("BotService.wakeable")(function* (threadId: ThreadId) {
     if (!(yield* isBot(threadId))) return false;
     const thread = yield* projectionStore
       .findThread(threadId)
       .pipe(Effect.orElseSucceed(() => null));
-    return thread?.settledOverride !== "settled";
+    return thread !== null && thread.archivedAt === null;
   });
 
   // Under the lock, so ending watches cannot race a Bot adding or removing one.

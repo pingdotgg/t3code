@@ -183,6 +183,8 @@ export function isAutoSettlementCandidate(
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+  // A Bot runs in the background for as long as you keep it; only archiving puts it away.
+  if (thread.botConfig != null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
   // A guest is waiting on the owner; settling would hide the Request.

@@ -50,8 +50,8 @@ export function workerStatus(thread: GroupableThread): WorkerStatus {
 
 /**
  * Groups workers under their leader, one level deep. Workers whose leader is missing from `threads`
- * (archived, filtered out) or settled keep their own row: settling or archiving a Bot lets its
- * workers go, and reopening it takes them back.
+ * (archived, filtered out) or settled keep their own row: settling a lead thread or archiving a
+ * Bot lets its workers go, and reopening it takes them back. A Bot is never settled away.
  */
 export function groupThreads<T extends GroupableThread>(
   threads: ReadonlyArray<T>,
@@ -66,7 +66,7 @@ export function groupThreads<T extends GroupableThread>(
     if (
       leader === undefined ||
       leader.groupedUnderThreadId != null ||
-      leader.settledOverride === "settled"
+      (leader.settledOverride === "settled" && leader.botConfig == null)
     ) {
       continue;
     }

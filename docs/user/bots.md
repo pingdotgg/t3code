@@ -25,5 +25,5 @@ workers stay out of the thread list.
 - The panel beside a Bot's conversation holds its avatar, instructions and notes, which you can
   edit, and can mute worker notifications other than requests for input. Its workers are listed
   there too. You can also ask the Bot to pick its own avatar.
-- Settle or archive a Bot when you are done: its workers go back to the thread list and it stops
-  being woken. Reopen it to take them back.
+- Archive a Bot when you are done: its workers go back to the thread list and it stops being
+  woken. Unarchive it to take them back.
