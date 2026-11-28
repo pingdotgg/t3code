@@ -93,6 +93,35 @@ it("switches tools from the keyboard after a toolbar button is clicked", () => {
   ).toBe("select");
 });
 
+it("erases a drawn stroke only when the pointer hits it", () => {
+  const shadowRoot = startAnnotation();
+  const pointer = (target: EventTarget, type: string, clientX: number, clientY: number) =>
+    target.dispatchEvent(
+      new PointerEvent(type, { clientX, clientY, bubbles: true, composed: true }),
+    );
+  const tool = (key: string) =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+  tool("d");
+  pointer(document.body, "pointerdown", 100, 100);
+  pointer(document.body, "pointermove", 200, 200);
+  pointer(document.body, "pointerup", 200, 200);
+  const attach = Array.from(shadowRoot.querySelectorAll("button")).find(
+    (button) => button.textContent === "Attach",
+  )!;
+  expect(attach.disabled).toBe(false);
+
+  tool("e");
+  pointer(document.body, "pointerdown", 120, 180);
+  expect(attach.disabled).toBe(false);
+
+  // jsdom has no layout or hit testing. Dispatch at the target the browser would hit.
+  const hit = shadowRoot.querySelector('path[pointer-events="stroke"]')!;
+  Object.defineProperty(shadowRoot, "elementFromPoint", { value: () => hit });
+  pointer(hit, "pointerdown", 150, 155);
+  expect(attach.disabled).toBe(true);
+});
+
 it("keeps the tool while typing a tool key in the comment", () => {
   const shadowRoot = startAnnotation();
   const comment = shadowRoot.querySelector("textarea");
