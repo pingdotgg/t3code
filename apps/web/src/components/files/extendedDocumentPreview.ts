@@ -466,8 +466,17 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
   const metadata = record(notebook.metadata);
+  const kernelspec = record(metadata.kernelspec);
+  const explicitLanguage = [record(metadata.language_info).name, kernelspec.language].find(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
   const language =
-    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
+    (
+      explicitLanguage ??
+      (typeof kernelspec.name === "string" && kernelspec.name.toLowerCase() === "python3"
+        ? "python"
+        : "")
+    )
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
