@@ -1,4 +1,5 @@
 import {
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
@@ -9,7 +10,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -29,6 +29,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -36,19 +37,13 @@ import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   isUnpublishedRelease,
-  pinnedRuntimeCommand,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
-  PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
 import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
-import { decodeServicePreflightResult } from "./servicePreflight.ts";
+import { runStagedServicePreflight } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import { isExactServiceVersion } from "./serviceProtocol.ts";
-
-// A staged runtime's cold start can take over a minute on a loaded, swapping host.
-const PREFLIGHT_TIMEOUT = Duration.minutes(3);
+import { decodeServiceUnit, isExactServiceVersion } from "./serviceProtocol.ts";
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -97,7 +92,7 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     const unit =
       unitPath === undefined
         ? Option.none<string>()
-        : yield* fs.readFileString(unitPath).pipe(Effect.option);
+        : yield* fs.readFile(unitPath).pipe(Effect.map(decodeServiceUnit), Effect.option);
     const program = Option.flatMapNullishOr(unit, bootServiceProgramOf);
     // The unit may name it through another spelling of a symlinked T3 home.
     const references = Option.isNone(program)
@@ -231,74 +226,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         releaseBaseUrl,
         requirePublishedRelease: mirror !== undefined,
         validate: (runtime) =>
-          runner
-            .run({
-              command: pinnedRuntimeCommand(runtime).command,
-              args: [
-                ...pinnedRuntimeCommand(runtime).args,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(launcherProtocol),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
-                        cause,
-                      }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed, launcherProtocol);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
-                        }),
-                      );
-                },
-              ),
-            ),
+          runStagedServicePreflight({
+            runner,
+            runtime,
+            targetVersion,
+            databasePath: serverConfig.dbPath,
+            launcherProtocol,
+          }),
       }).pipe(
         Effect.mapError((error) => {
           if (error._tag === "PinnedRuntimePreflightBlockedError") {
@@ -323,6 +257,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         }),
       );
 
+      if (input.stageOnly === true) {
+        yield* Ref.set(inFlight, false);
+        return { targetVersion, method: "boot-service" as const };
+      }
       yield* reportProgress("installing");
       const updateId = yield* Effect.uninterruptible(
         launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
@@ -333,6 +271,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 : "Could not ask the service launcher to activate the prepared update.",
               error,
             ),
+          ),
+          // The launcher stops this server next; one from before its serving lock holds nothing
+          // until the new server starts, so this marker is what an SSH launch waits on.
+          Effect.tap(() =>
+            DesktopUpdateMarker.publish(
+              path.join(serverConfig.baseDir, "runtime", DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE),
+            ).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.ignore({ log: true })),
           ),
           Effect.tap(() => onHandoffAccepted()),
         ),

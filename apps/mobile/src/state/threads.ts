@@ -10,6 +10,7 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { createSteadyShellAtoms } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -23,6 +24,7 @@ import {
 } from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
 import { environmentShell } from "./shell";
+import { environmentPresentations } from "./presentation";
 import { threadOutboxManager } from "./thread-outbox";
 
 export const threadFamilies = createThreadFamilyAtoms(
@@ -36,6 +38,7 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
+  environmentShell.statusAtom,
 );
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
@@ -43,9 +46,28 @@ export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
 );
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
+  connectionPhaseAtom: environmentPresentations.connectionPhaseAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
+const steadyShells = createSteadyShellAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  snapshotAtom: threadEnvironment.snapshotAtom,
+  shellStateAtom: environmentShell.stateValueAtom,
+  rowActionsAtom: threadEnvironment.rowActionsAtom,
+  connectionStateAtom: environmentCatalog.stateAtom,
+});
+/**
+ * The threads that lists arrange. Rows wait while their environment synchronizes, so a list
+ * changes once when environments connect, not once per environment.
+ */
+export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
+export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  connectionPhaseAtom: environmentPresentations.connectionPhaseAtom,
+  snapshotAtom: steadyShells.snapshotAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+}).navigationThreadShellsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,

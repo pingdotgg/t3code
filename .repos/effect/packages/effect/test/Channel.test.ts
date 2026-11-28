@@ -359,6 +359,28 @@ describe("Channel", () => {
         ).pipe(Channel.runDrain, Effect.exit)
         assert.deepStrictEqual(result, Exit.die("release failure"))
       }))
+
+    it.effect("acquireUseRelease releases before Done under toPullScoped when ending on its own", () =>
+      Effect.gen(function*() {
+        const log: Array<string> = []
+        const pull = yield* Channel.toPullScoped(
+          Channel.acquireUseRelease(
+            Effect.sync(() => {
+              log.push("acquire")
+              return 1
+            }),
+            (n) => Channel.succeed(n),
+            () =>
+              Effect.sync(() => {
+                log.push("release")
+              })
+          ),
+          yield* Effect.scope
+        )
+        assert.strictEqual(yield* pull, 1)
+        assert.deepStrictEqual(yield* Effect.exit(pull), Exit.fail(Cause.Done()))
+        assert.deepStrictEqual(log, ["acquire", "release"])
+      }))
   })
 
   describe("destructors", () => {

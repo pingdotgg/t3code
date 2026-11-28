@@ -18,8 +18,12 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** The part of `totals.cacheCreationTokens` written with a 1-hour TTL. */
+  readonly cacheCreation1hTokens?: number;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
+  /** Number of underlying model requests summed into a turn summary when > 1. */
+  readonly modelCalls?: number;
   readonly unresolvedServiceTierTurnId?: string;
   readonly dedupeKey: string | null;
 }
@@ -60,8 +64,8 @@ export interface TranscriptUsageFormat<State> {
   readonly usageMarkers: readonly [string, ...string[]];
   parseLine(line: string, state: State): readonly UsageRecord[];
   parseProjected(projected: unknown, state: State): readonly UsageRecord[];
-  /** Cumulative malformed or inconsistent usage records, including skipped records. */
-  readMalformedRecords?(state: State): number;
+  /** Timestamps of malformed or inconsistent usage records, including skipped records. */
+  readMalformedRecords?(state: State): readonly number[];
   /**
    * Present for formats whose records depend on earlier lines. The state at a
    * resume point is persisted in the scan cache through `schema`, so a grown
@@ -103,8 +107,16 @@ export interface ProviderUsageScanInput<Config> {
   readonly awaitRefresh: boolean;
 }
 
+interface ProviderUsageRateModel {
+  /**
+   * The rate-table name for a model ID this provider records with a separate `rateModel`, so
+   * usage mapped onto that ID prices like the provider's own records of it.
+   */
+  readonly rateModel?: (model: string) => string;
+}
+
 export type ProviderUsageReader<Config, R> =
-  | {
+  | (ProviderUsageRateModel & {
       readonly kind: "transcripts";
       readonly provider: UsageProviderKind;
       readonly format: TranscriptUsageFormat<unknown>;
@@ -124,12 +136,12 @@ export type ProviderUsageReader<Config, R> =
         never,
         R
       >;
-    }
-  | {
+    })
+  | (ProviderUsageRateModel & {
       readonly kind: "scan";
       readonly provider: UsageProviderKind;
       /** Fails only when the whole usage read cannot go on; an unreadable source is a status. */
       readonly scan: (
         input: ProviderUsageScanInput<Config>,
       ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError, R>;
-    };
+    });

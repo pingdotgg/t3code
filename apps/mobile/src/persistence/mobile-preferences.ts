@@ -5,17 +5,22 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
 import {
   EnvironmentId,
+  IssueInvolvement,
+  IssueListSort,
+  IssueListState,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
   type ProviderInstanceId,
-  type PullRequestMergeMethod,
+  PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
+import type { MobileFontId, MobileMonoFontId } from "../lib/fontFamilies";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -37,6 +42,29 @@ export const PullRequestListControls = Schema.Struct({
   sort: Schema.Literals(["updated", "created", "oldest"]),
 });
 export type PullRequestListControls = typeof PullRequestListControls.Type;
+
+export const PullRequestSavedView = Schema.Struct({
+  ...SavedViewIdentity.fields,
+  environmentId: Schema.NullOr(Schema.String),
+  controls: PullRequestListControls,
+  query: Schema.String,
+});
+export type PullRequestSavedView = typeof PullRequestSavedView.Type;
+const isPullRequestSavedView = Schema.is(PullRequestSavedView);
+
+export const IssueSavedView = Schema.Struct({
+  ...SavedViewIdentity.fields,
+  query: Schema.String,
+  state: IssueListState,
+  involvement: IssueInvolvement,
+  sort: IssueListSort,
+  labels: Schema.Array(Schema.String),
+  assignee: Schema.NullOr(
+    Schema.Struct({ login: Schema.String, name: Schema.NullOr(Schema.String) }),
+  ),
+});
+export type IssueSavedView = typeof IssueSavedView.Type;
+const isIssueSavedView = Schema.is(IssueSavedView);
 
 const ThreadListFilters = Schema.Struct({
   environmentId: Schema.NullOr(EnvironmentId),
@@ -72,6 +100,17 @@ const WorkspaceSelections = Schema.Struct({
       key: Schema.optional(Schema.String),
     }),
   ),
+  issues: Schema.optional(
+    Schema.Struct({
+      environmentId: Schema.String,
+      projectId: Schema.String,
+      tracker: Schema.String,
+      host: Schema.optional(Schema.String),
+      scope: Schema.String,
+      issueKey: Schema.String,
+      key: Schema.optional(Schema.String),
+    }),
+  ),
   settings: Schema.optional(Schema.String),
   settingsKey: Schema.optional(Schema.String),
   /** A draft the threads tab showed after its last chat; only meaningful in its session. */
@@ -79,7 +118,14 @@ const WorkspaceSelections = Schema.Struct({
 });
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
+const PullRequestActivityVisibility = Schema.Struct({
+  bots: Schema.Boolean,
+  resolved: Schema.Boolean,
+});
+export type PullRequestActivityVisibility = typeof PullRequestActivityVisibility.Type;
+
 const isThreadListFilters = Schema.is(ThreadListFilters);
+const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
@@ -91,7 +137,12 @@ const isThreadProject = Schema.is(ThreadProject);
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
+  /** Whether pull requests or issues last held the tab bar slot they share. */
+  readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestHideTestFiles?: boolean;
+  readonly pullRequestHideViewedFiles?: boolean;
+  /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
+  readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
@@ -100,6 +151,8 @@ export interface Preferences {
   readonly themeMode?: MobileThemeMode;
   readonly androidNavigationStyle?: AndroidNavigationStyle;
   readonly baseFontSize?: number;
+  readonly fontId?: MobileFontId;
+  readonly monoFontId?: MobileMonoFontId;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
   readonly codeFontSize?: number | null;
@@ -107,9 +160,13 @@ export interface Preferences {
   readonly mathRenderingEnabled?: boolean;
   /** Unset means on: crash reports are sent unless the user turns them off. */
   readonly crashReportsEnabled?: boolean;
+  /** Unset means on: connection traces are sent unless the user turns them off. */
+  readonly connectionTracesEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
+  /** Per host, when the newest T3 Connect device this phone has announced first signed in. */
+  readonly connectDevicesSeenThrough?: Readonly<Record<string, number>>;
   /** Hardware-keyboard Return behavior in the composer. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
@@ -120,6 +177,8 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
+  /** The kind of question the Workflows tab's Needs you list was last narrowed to. */
+  readonly workflowQuestionKind?: string;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -132,6 +191,8 @@ export interface Preferences {
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
+  readonly pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
+  readonly issueSavedViews?: ReadonlyArray<IssueSavedView>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -174,12 +235,16 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
+const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
+    sharedSlotTab?: "pullRequests" | "issues";
     pullRequestHideTestFiles?: boolean;
+    pullRequestHideViewedFiles?: boolean;
+    pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
@@ -188,15 +253,19 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     themeMode?: MobileThemeMode;
     androidNavigationStyle?: AndroidNavigationStyle;
     baseFontSize?: number;
+    fontId?: MobileFontId;
+    monoFontId?: MobileMonoFontId;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
     mathRenderingEnabled?: boolean;
     crashReportsEnabled?: boolean;
+    connectionTracesEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
+    connectDevicesSeenThrough?: Readonly<Record<string, number>>;
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     language?: string;
@@ -205,6 +274,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
+    workflowQuestionKind?: string;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -214,6 +284,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
+    pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
+    issueSavedViews?: ReadonlyArray<IssueSavedView>;
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -228,15 +300,23 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     );
   }
 
+  if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {
+    preferences.sharedSlotTab = parsed.sharedSlotTab;
+  }
+
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
   }
 
-  if (
-    parsed.pullRequestMergeMethod === "squash" ||
-    parsed.pullRequestMergeMethod === "merge" ||
-    parsed.pullRequestMergeMethod === "rebase"
-  ) {
+  if (typeof parsed.pullRequestHideViewedFiles === "boolean") {
+    preferences.pullRequestHideViewedFiles = parsed.pullRequestHideViewedFiles;
+  }
+
+  if (isPullRequestActivityVisibility(parsed.pullRequestActivityVisibility)) {
+    preferences.pullRequestActivityVisibility = parsed.pullRequestActivityVisibility;
+  }
+
+  if (isPullRequestMergeMethod(parsed.pullRequestMergeMethod)) {
     preferences.pullRequestMergeMethod = parsed.pullRequestMergeMethod;
   }
 
@@ -272,6 +352,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.androidNavigationStyle = parsed.androidNavigationStyle;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
+  if (parsed.fontId === "system" || parsed.fontId === "dm-sans") preferences.fontId = parsed.fontId;
+  if (parsed.monoFontId === "system" || parsed.monoFontId === "meslo") {
+    preferences.monoFontId = parsed.monoFontId;
+  }
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;
   }
@@ -287,6 +371,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.crashReportsEnabled === "boolean") {
     preferences.crashReportsEnabled = parsed.crashReportsEnabled;
   }
+  if (typeof parsed.connectionTracesEnabled === "boolean") {
+    preferences.connectionTracesEnabled = parsed.connectionTracesEnabled;
+  }
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",
@@ -300,6 +387,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (Array.isArray(parsed.dismissedDatabaseStorageNotices)) {
     preferences.dismissedDatabaseStorageNotices = parsed.dismissedDatabaseStorageNotices.filter(
       (value): value is string => typeof value === "string",
+    );
+  }
+  if (
+    typeof parsed.connectDevicesSeenThrough === "object" &&
+    parsed.connectDevicesSeenThrough !== null
+  ) {
+    preferences.connectDevicesSeenThrough = Object.fromEntries(
+      Object.entries(parsed.connectDevicesSeenThrough).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number",
+      ),
     );
   }
   if (parsed.composerEnterBehavior === "send" || parsed.composerEnterBehavior === "newline") {
@@ -333,6 +430,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (typeof parsed.workflowQuestionKind === "string") {
+    preferences.workflowQuestionKind = parsed.workflowQuestionKind;
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;
@@ -368,6 +468,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isWorkspaceSelections(parsed.workspaceSelections)) {
     preferences.workspaceSelections = parsed.workspaceSelections;
+  }
+  if (Array.isArray(parsed.pullRequestSavedViews)) {
+    preferences.pullRequestSavedViews = parsed.pullRequestSavedViews.filter(isPullRequestSavedView);
+  }
+  if (Array.isArray(parsed.issueSavedViews)) {
+    preferences.issueSavedViews = parsed.issueSavedViews.filter(isIssueSavedView);
   }
   return preferences;
 }

@@ -2,7 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  getProviderReinstallPresentation,
+  getProviderReinstallCommand,
   getProviderSummary,
   getProviderVersionAdvisoryPresentation,
   getProviderStatusKey,
@@ -252,15 +252,27 @@ it("offers a reinstall only for an install that lost its platform package", () =
       message: null,
     },
   };
-  expect(getProviderReinstallPresentation(broken)?.updateCommand).toBe(
-    "npm install -g @openai/codex@latest",
-  );
-  expect(getProviderReinstallPresentation({ ...broken, message: "spawn codex EACCES" })).toBeNull();
-  expect(getProviderReinstallPresentation({ ...broken, version: "0.167.2" })).toBeNull();
+  expect(getProviderReinstallCommand(broken)).toBe("npm install -g @openai/codex@latest");
+  expect(getProviderReinstallCommand({ ...broken, message: "spawn codex EACCES" })).toBeNull();
+  expect(getProviderReinstallCommand({ ...broken, version: "0.167.2" })).toBeNull();
   expect(
-    getProviderReinstallPresentation({
+    getProviderReinstallCommand({
       ...broken,
       versionAdvisory: { ...broken.versionAdvisory!, canUpdate: false },
     }),
   ).toBeNull();
+  for (const latestVersionStatus of ["broken", "unsupported"] as const) {
+    expect(
+      getProviderReinstallCommand({
+        ...broken,
+        compatibilityAdvisory: {
+          status: "unknown",
+          latestVersionStatus,
+          recommendedRange: null,
+          recommendedVersion: null,
+          message: null,
+        },
+      }),
+    ).toBeNull();
+  }
 });

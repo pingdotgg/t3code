@@ -40,9 +40,12 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
+  resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
+  threadListV2RowAccessibilityLabel,
+  threadListV2ShowMoreAccessibilityLabel,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
 } from "./threadListV2";
@@ -150,6 +153,74 @@ describe("layoutThreadListV2RowMenuActions", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
+    "qualifies a cached %s runtime while reconnecting",
+    (status) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          status,
+          activeRunId: RunId.make("run-disconnected"),
+          latestRunId: RunId.make("run-disconnected"),
+        }),
+      );
+      expect(resolveThreadListV2Status({ ...thread, connectionPhase: "reconnecting" })).toBe(
+        "reconnecting",
+      );
+    },
+  );
+
+  it.each(["failed", "completed", "cancelled", "interrupted"] as const)(
+    "preserves a cached %s outcome while disconnected",
+    (status) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          status,
+          latestRunId: RunId.make("run-ended"),
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+          lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        }),
+      );
+      const disconnected = { ...thread, connectionPhase: "reconnecting" as const };
+      expect(resolveThreadListV2Status(disconnected)).toBe(
+        status === "failed" ? "failed" : "ready",
+      );
+      expect(threadHasUnseenCompletion(disconnected)).toBe(threadHasUnseenCompletion(thread));
+    },
+  );
+
+  it.each([
+    ["connecting", "connecting"],
+    ["reconnecting", "reconnecting"],
+    ["offline", "offline"],
+    ["error", "offline"],
+    ["unsupported", "offline"],
+    ["available", "offline"],
+    ["connected", "working"],
+    [undefined, "working"],
+  ] as const)(
+    "presents cached running work with connection phase %s",
+    (connectionPhase, expected) => {
+      const thread = makeThread({
+        id: ThreadId.make("disconnected"),
+        title: "Disconnected",
+        runtime: {
+          status: "running",
+          activeRunId: RunId.make("run-disconnected"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: "Codex",
+          lastError: null,
+          updatedAt: NOW,
+        },
+        connectionPhase,
+      });
+      expect(resolveThreadListV2Status(thread)).toBe(expected);
+      expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+      expect(resolveThreadListV2Status({ ...thread, hasPendingUserInput: true })).toBe("input");
+    },
+  );
+
   it("presents decoded thread waits as Waiting while preserving requests and older servers", () => {
     const raw = makeRawThreadShell({
       status: "running",
@@ -172,6 +243,22 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(present({ ...raw, blockedOnThreadWait: false }))).toBe(
       "working",
     );
+  });
+
+  it("settles a failure the user opened to ready in the row, keeping the raw status", () => {
+    const failed = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        status: "failed",
+        latestRunId: RunId.make("run-failed"),
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        lastVisitedAt: DateTime.makeUnsafe(NOW),
+      }),
+    );
+
+    expect(resolveThreadListV2Status(failed)).toBe("failed");
+    expect(resolveThreadListV2RowStatus(failed)).toBe("ready");
+    expect(resolveThreadListV2RowStatus({ ...failed, lastVisitedAt: null })).toBe("failed");
   });
 
   it("shows a waiting guest message as Request, after the agent's own requests", () => {
@@ -208,6 +295,65 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(true);
     },
   );
+
+  it.each(["interrupted", "cancelled"] as const)(
+    "does not present a %s run as an unseen completion",
+    (status) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          latestRunId: RunId.make("run-stopped"),
+          status,
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+          lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        }),
+      );
+
+      expect(threadHasUnseenCompletion(thread)).toBe(false);
+    },
+  );
+});
+
+describe("threadListV2ShowMoreAccessibilityLabel", () => {
+  it.each([
+    [1, "Show 1 more settled thread"],
+    [2, "Show 2 more settled threads"],
+    [26, "Show 25 more settled threads"],
+  ])("announces the next page for %i hidden settled threads", (hiddenCount, expected) => {
+    expect(threadListV2ShowMoreAccessibilityLabel(hiddenCount)).toBe(expected);
+  });
+});
+
+describe("threadListV2RowAccessibilityLabel", () => {
+  const row = {
+    title: "Fix login",
+    variant: "card",
+    woke: false,
+    statusLabel: undefined,
+    timeLabel: "5m",
+    snoozeWakeLabel: undefined,
+    providerNameLabel: "Codex",
+    hasQueuedMessages: false,
+    regeneratingTitle: false,
+  } as const;
+
+  it("speaks the status or time the row shows beside its title", () => {
+    expect(threadListV2RowAccessibilityLabel({ ...row, statusLabel: "Approval" })).toBe(
+      "Fix login, Approval, Codex",
+    );
+    expect(threadListV2RowAccessibilityLabel(row)).toBe("Fix login, 5m, Codex");
+    expect(threadListV2RowAccessibilityLabel({ ...row, woke: true, statusLabel: "Done" })).toBe(
+      "Fix login, Woke, Codex",
+    );
+    expect(
+      threadListV2RowAccessibilityLabel({
+        ...row,
+        variant: "slim",
+        statusLabel: "Failed",
+        snoozeWakeLabel: "in 2h",
+      }),
+    ).toBe("Fix login, in 2h, Codex");
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
@@ -820,6 +966,9 @@ describe("buildThreadListV2ListItems", () => {
               : "settled-shelf",
       ),
     ).toEqual(["unsent", "queued-1", "queued-2", "active", "settled-shelf", "settled"]);
+    expect(threadJumpTarget(items, "thread.jump.1")).toMatchObject({
+      pendingTask: { draftKey: "new-task:unsent" },
+    });
     expect(
       items.flatMap((item) => (item.type === "v2-pending" ? [item.showPendingDivider] : [])),
     ).toEqual([true, false, false]);
@@ -868,9 +1017,17 @@ describe("buildThreadListV2ListItems", () => {
       "v2-settled-shelf",
       "v2-thread",
     ]);
-    expect(threadJumpTarget(items, "thread.jump.1")?.id).toBe("active");
-    expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
-    expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
+    expect(threadJumpTarget(items, "thread.jump.1")).toMatchObject({
+      type: "v2-pending",
+      pendingTask: { key: "pending-task:queued" },
+    });
+    expect(threadJumpTarget(items, "thread.jump.2")).toMatchObject({
+      item: { thread: { id: "active" } },
+    });
+    expect(threadJumpTarget(items, "thread.jump.3")).toMatchObject({
+      item: { thread: { id: "settled" } },
+    });
+    expect(threadJumpTarget(items, "thread.jump.4")).toBeNull();
   });
 });
 
@@ -1121,11 +1278,12 @@ describe("thread drag destinations", () => {
         assignments,
       });
       expect(pending.orderedIds).toEqual([ids[3], ids[0], ids[1], ids[2]]);
+      const field = section === "pinned" ? "pinOrderKey" : "activeOrderKey";
       const confirmed = ordered.map((row) => ({
         ...row,
-        [section === "pinned" ? "pinOrderKey" : "activeOrderKey"]: assignments.find(
-          (a) => a.id === `${row.environmentId}:${row.id}`,
-        )!.orderKey,
+        [field]:
+          assignments.find((a) => a.id === `${row.environmentId}:${row.id}`)?.orderKey ??
+          row[field],
       }));
       expect(
         getThreadListV2OrderedSection({ threads: confirmed, section, now: NOW }).map(
@@ -1138,7 +1296,7 @@ describe("thread drag destinations", () => {
     },
   );
 
-  it("refuses a drop that would need to rewrite an old server's keyless row", () => {
+  it("moves past an old server's keyless row by writing only the moved row", () => {
     const old = EnvironmentId.make("old-server");
     const ordered = [environmentId, old, environmentId].map((env, index) =>
       makeThread({
@@ -1153,11 +1311,11 @@ describe("thread drag destinations", () => {
         section: "active",
         reorderableEnvironmentIds: new Set([environmentId]),
       })(`${environmentId}:2`, { targetId: `${environmentId}:0`, placement: "before" }),
-    ).toBeNull();
+    ).toEqual([{ id: `${environmentId}:2`, orderKey: expect.any(String) }]);
   });
 });
 
-it("allows a long drop past an old server even when both adjacent moves fail", () => {
+it("moves past an old server one step or in a long drop", () => {
   const old = EnvironmentId.make("old-server");
   const ordered = [
     makeThread({ id: ThreadId.make("a"), title: "a" }),
@@ -1172,7 +1330,7 @@ it("allows a long drop past an old server even when both adjacent moves fail", (
   });
   const movedId = `${environmentId}:a`;
   expect(planner(movedId, "up")).toBeNull();
-  expect(planner(movedId, "down")).toBeNull();
+  expect(planner(movedId, "down")?.map(({ id }) => id)).toEqual([movedId]);
   const assignments = planner(movedId, { targetId: `${environmentId}:d`, placement: "after" });
   expect(assignments).toHaveLength(1);
   expect(assignments![0]!.id).toBe(movedId);
@@ -1689,6 +1847,20 @@ describe("Working section beta", () => {
     const off = build({ workingShelfEnabled: false });
     expect(ids(off)).toContain("working");
     expect(off.workingCount).toBe(0);
+  });
+
+  it("preserves pins and Working membership across connection loss and recovery", () => {
+    const before = build({ workingShelfExpanded: true });
+    for (const connectionPhase of ["reconnecting", "offline", "connected"] as const) {
+      const layout = build({
+        workingShelfExpanded: true,
+        threads: threads.map((thread) => ({ ...thread, connectionPhase })),
+      });
+      expect(ids(layout)).toEqual(ids(before));
+      expect(layout.workingCount).toBe(before.workingCount);
+      expect(layout.items[0]?.thread.id).toBe("pinned-working");
+      expect(layout.items[0]?.thread.runtime?.status).toBe("running");
+    }
   });
 
   it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {

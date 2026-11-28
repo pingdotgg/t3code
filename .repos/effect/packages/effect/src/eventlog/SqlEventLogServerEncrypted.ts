@@ -178,21 +178,21 @@ export const makeStorage = (options?: {
     })
     // Two instances can open the same table at once, and PostgreSQL and SQL
     // Server can fail the loser of a concurrent create, so creation retries.
+    // SQL Server declares its indexes inline, as concurrent CREATE INDEX
+    // statements can deadlock.
     const createTable = (name: string, columns: string, indexes: ReadonlyArray<string> = []) =>
       sql.onDialectOrElse({
         mysql: () => {
           const definitions = [columns, ...indexes.map((index) => `INDEX (${index})`)].join(", ")
           return Effect.asVoid(sql`CREATE TABLE IF NOT EXISTS ${sql(name)} (${sql.literal(definitions)})`)
         },
-        mssql: () =>
-          sql`IF OBJECT_ID(${name}, N'U') IS NULL CREATE TABLE ${sql(name)} (${sql.literal(columns)})`.pipe(
-            Effect.andThen(Effect.forEach(indexes, (index, i) => {
-              const indexName = `${name}_i${i}`
-              return sql`
-                IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = ${indexName} AND object_id = OBJECT_ID(${name}))
-                CREATE INDEX ${sql(indexName)} ON ${sql(name)} (${sql.literal(index)})`
-            }, { discard: true }))
-          ),
+        mssql: () => {
+          const definitions = sql.csv([
+            sql.literal(columns),
+            ...indexes.map((index, i) => sql`INDEX ${sql(`${name}_i${i}`)} NONCLUSTERED (${sql.literal(index)})`)
+          ])
+          return Effect.asVoid(sql`IF OBJECT_ID(${name}, N'U') IS NULL CREATE TABLE ${sql(name)} (${definitions})`)
+        },
         orElse: () =>
           sql`CREATE TABLE IF NOT EXISTS ${sql(name)} (${sql.literal(columns)})`.pipe(
             Effect.andThen(Effect.forEach(

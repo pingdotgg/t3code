@@ -27,6 +27,10 @@ import {
   compareExactServiceVersions,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
+import {
+  legacyOwnerStartedBeforeRecord,
+  legacyOwnerStartTimeCommand,
+} from "./legacyServerOwner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -80,29 +84,20 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   if (!isProcessAlive(state.pid)) return false;
   const recordedAt = Date.parse(state.startedAt);
   if (!Number.isFinite(recordedAt)) return true;
-  const windows = (yield* HostProcess.Platform) === "win32";
+  const platform = yield* HostProcess.Platform;
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      command: windows ? "powershell.exe" : "ps",
-      args: windows
-        ? [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `(Get-Process -Id ${state.pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
-          ]
-        : ["-p", String(state.pid), "-o", "lstart="],
-      env: { LC_ALL: "C", TZ: "UTC" },
+      ...legacyOwnerStartTimeCommand(state.pid, platform, yield* HostProcess.Environment),
       timeout: Duration.seconds(2),
       maxOutputBytes: 16_384,
     })
     .pipe(Effect.option);
-  if (Option.isNone(result) || result.value.code !== 0) return true;
-  const output = result.value.stdout.trim();
-  const startedAt = Date.parse(windows ? output : `${output} UTC`);
-  // ps reports whole seconds. Unknown identity stays conservative.
-  return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
+  return legacyOwnerStartedBeforeRecord(
+    Option.isSome(result) && result.value.code === 0 ? result.value.stdout : undefined,
+    recordedAt,
+    platform,
+  );
 });
 
 // Pre-lock services become invisible when another server replaces their runtime
@@ -193,7 +188,8 @@ const openOwnershipLock = (stateDir: string) =>
       }
       const db = new NodeSqlite.DatabaseSync(lockPath);
       try {
-        db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+        // An idle service launcher probes this lock for a moment; wait out that probe.
+        db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
         const identity = NodeFS.statSync(lockPath, { bigint: true });
         return {
           db,
@@ -210,6 +206,23 @@ const openOwnershipLock = (stateDir: string) =>
         ? new ServerAlreadyRunningError({ stateDir })
         : new ServerOwnershipError({ stateDir, cause }),
   });
+
+/** Whether a running server holds the ownership lock. Read-only, so it never creates the lock file. */
+export const isServerOwnershipHeld = (statePath: string): boolean => {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(ownershipLockPath(NodePath.dirname(statePath)), {
+      readOnly: true,
+      timeout: 0,
+    });
+    db.prepare("SELECT 1 FROM sqlite_schema").get();
+    return false;
+  } catch (cause) {
+    return isSqliteBusy(cause);
+  } finally {
+    db?.close();
+  }
+};
 
 /** Hold only the ownership lock until the scope closes, without claiming the runtime state. */
 export const holdServerOwnershipLock = Effect.fn("holdServerOwnershipLock")(function* (

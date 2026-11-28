@@ -10,10 +10,17 @@ import {
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  PrimaryConnectionTarget,
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import {
+  connectionStatusText,
+  connectionStatusTitle,
+  environmentMcpUrl,
+  localEnvironmentMcpUrl,
+  presentConnectionState,
+} from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -45,6 +52,7 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
     generation: 0,
     lastFailure: null,
     retryAt: null,
+    refusedRouteIds: [],
     ...overrides,
   };
 }
@@ -114,6 +122,33 @@ describe("connection presentation", () => {
     ).toBe("https://tunnel.example.test/mcp");
   });
 
+  it("offers loopback and https, but never a plain-http LAN address", () => {
+    const primary = new PrimaryConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: "This machine",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      wsBaseUrl: "ws://127.0.0.1:3773",
+    });
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: primary,
+      profile: Option.none(),
+    };
+
+    expect(localEnvironmentMcpUrl({ entry })).toBe("http://127.0.0.1:3773/mcp");
+
+    const lan: ConnectionCatalogEntry = {
+      ...entry,
+      target: new PrimaryConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: "This machine",
+        httpBaseUrl: "http://192.168.4.53:3773",
+        wsBaseUrl: "ws://192.168.4.53:3773",
+      }),
+    };
+    expect(localEnvironmentMcpUrl({ entry: lan })).toBeNull();
+  });
+
   it("distinguishes initial connection, reconnect, and retry errors", () => {
     expect(presentConnectionState(supervisorState({ phase: "connecting", attempt: 1 }))).toEqual({
       phase: "connecting",
@@ -155,6 +190,28 @@ describe("connection presentation", () => {
       error: "Disconnected.",
       traceId: "trace-1",
     });
+    const awaitingApproval = presentConnectionState(
+      supervisorState({
+        phase: "backoff",
+        attempt: 1,
+        retryAt: 1,
+        lastFailure: new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          traceId: "trace-2",
+        }),
+      }),
+    );
+    expect(awaitingApproval).toEqual({
+      phase: "reconnecting",
+      error: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      traceId: "trace-2",
+      awaitingApproval: true,
+    });
+    expect(connectionStatusText(awaitingApproval)).toBe(
+      "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+    );
+    expect(connectionStatusTitle(awaitingApproval)).toBe("Waiting for approval");
   });
 
   it("preserves an explicitly available environment while offline", () => {

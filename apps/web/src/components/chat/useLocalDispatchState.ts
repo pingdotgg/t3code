@@ -1,4 +1,9 @@
-import { type MessageId, type RuntimeRequestId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type MessageId,
+  type ProviderInstanceId,
+  type RuntimeRequestId,
+} from "@t3tools/contracts";
 import { useState } from "react";
 import { type ComposerSubmissionIntent } from "../../composer-logic";
 import { type SessionPhase, type Thread } from "../../types";
@@ -9,6 +14,7 @@ import {
 } from "../ChatView.logic";
 
 export function useLocalDispatchState(input: {
+  environmentId: EnvironmentId;
   activeThread: Thread | undefined;
   activeLatestRun: Thread["latestRun"] | null;
   latestUserMessageId: MessageId | null;
@@ -37,19 +43,23 @@ export function useLocalDispatchState(input: {
   const beginLocalDispatch = (options?: {
     preparingWorktree?: boolean;
     submissionIntent?: ComposerSubmissionIntent;
+    providerInstanceId?: ProviderInstanceId;
   }) => {
     const preparingWorktree = Boolean(options?.preparingWorktree);
     setLocalDispatch((current) => {
       const active = serverAcknowledgedLocalDispatch ? null : current;
       if (active) {
         const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
+        const providerInstanceId = options?.providerInstanceId ?? active.providerInstanceId;
         return active.preparingWorktree === preparingWorktree &&
-          active.submissionIntent === submissionIntent
+          active.submissionIntent === submissionIntent &&
+          active.providerInstanceId === providerInstanceId
           ? active
-          : { ...active, preparingWorktree, submissionIntent };
+          : { ...active, preparingWorktree, submissionIntent, providerInstanceId };
       }
       return createLocalDispatchSnapshot(input.activeThread, {
         ...options,
+        environmentId: input.environmentId,
         latestUserMessageId: input.latestUserMessageId,
       });
     });
@@ -61,6 +71,7 @@ export function useLocalDispatchState(input: {
     localDispatchStartedAt: activeLocalDispatch?.startedAt ?? null,
     isPreparingWorktree: activeLocalDispatch?.preparingWorktree ?? false,
     isSendBusy: activeLocalDispatch !== null,
+    localDispatchProviderInstanceId: activeLocalDispatch?.providerInstanceId ?? null,
     backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
   };
 }

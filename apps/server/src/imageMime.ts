@@ -42,7 +42,7 @@ function isBase64Char(code: number): boolean {
 }
 
 function isBase64Whitespace(code: number): boolean {
-  return code === 0x0d || code === 0x0a || code === 0x20;
+  return code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d || code === 0x20;
 }
 
 // V8 regexes use the JS stack; scanning image payloads can overflow a deep fiber stack.
