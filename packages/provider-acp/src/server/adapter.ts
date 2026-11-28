@@ -609,6 +609,11 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
   /**
+   * Subagents run on after the root's reply ends and report their own end: they never hold the
+   * turn open, and their child threads keep receiving updates once it completes.
+   */
+  readonly subagentsOutliveTurn?: boolean;
+  /**
    * Subagents the agent goes on running after its prompt, with no update when one ends. Asked
    * when the prompt ends and whenever a reply ends, including mid-prompt and in a steered prompt
    * that stays open; the native task ids it returns hold the turn open and the rest become idle.
@@ -2440,6 +2445,7 @@ type AcpCarryoverSubagents = {
   /** The root's subscriber keeps ingesting, so late child terminals can still project. */
   readonly projectsLateTerminals: boolean;
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
+  readonly pendingSubagentNotifications: ActiveAcpTurn["pendingSubagentNotifications"];
 };
 
 type PendingRuntimeRequest = {
@@ -2484,6 +2490,8 @@ const emptySnapshotState = (): SnapshotMessageState => ({
 /** How long a Stop waits for the agent to confirm before the user is offered Force stop. */
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const TOOL_UPDATE_PERSIST_EVERY = 10;
+// Bounds a child session's tool calls held until its session is named; its reply text is kept.
+const MAX_PENDING_SUBAGENT_TOOL_NOTIFICATIONS = 1_000;
 
 // Agents can resend whole calls while streaming arguments.
 function shouldPersistToolUpdate(
@@ -4195,7 +4203,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           notification: EffectAcpSchema.SessionNotification,
-          owner: ActiveAcpTurn,
+          owner: ActiveAcpTurn | undefined,
         ) {
           const update = notification.update;
           if (update.sessionUpdate === "agent_message_chunk") {
@@ -4958,7 +4966,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.pendingSubagentNotifications.delete(childSessionId);
             yield* Effect.forEach(
               buffered,
-              (notification) => projectSubagentNotification(subagent, notification, context),
+              (notification) => projectChildSessionUpdate(subagent, notification, context),
               { concurrency: 1, discard: true },
             );
           }
@@ -5440,10 +5448,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
-          // finalizeTurn idles these subagents, so waiting on them would never settle.
+          // finalizeTurn idles these subagents, or they carry over; waiting on them would never settle.
           if (
-            flavor.subagentsIdleOnTurnCompletion === true &&
-            flavor.subagentsOutlivingPrompt === undefined
+            (flavor.subagentsIdleOnTurnCompletion === true &&
+              flavor.subagentsOutlivingPrompt === undefined) ||
+            flavor.subagentsOutliveTurn === true
           )
             return false;
           for (const subagent of context.subagents.values()) {
@@ -7050,13 +7059,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (yield* Ref.get(stoppedRunQuarantine)) {
               return;
             }
-            const bufferOutcome = yield* bufferPostSettleWake(notification);
             // Completed roots retain subscribers and can project terminals now; interrupted roots may lack runId ownership.
             const carryover = yield* Ref.get(carryoverSubagents);
+            const idleRootSessionId = yield* Ref.get(activeSessionId);
             const rootTerminalCanStillProject =
               carryover !== null &&
-              carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
+              carryover.sessionId === idleRootSessionId &&
               carryover.projectsLateTerminals;
+            if (
+              rootTerminalCanStillProject &&
+              flavor.subagentsOutliveTurn === true &&
+              notification.sessionId !== idleRootSessionId
+            ) {
+              const subagent = carryover.subagents.find(
+                (candidate) => candidate.childSessionId === notification.sessionId,
+              );
+              if (subagent !== undefined) {
+                yield* projectChildSessionUpdate(subagent, notification, undefined);
+              } else {
+                bufferUnnamedChildSessionUpdate(
+                  carryover.pendingSubagentNotifications,
+                  notification,
+                );
+              }
+              return;
+            }
+            const bufferOutcome = yield* bufferPostSettleWake(notification);
             const projectCarryover = rootTerminalCanStillProject;
             let carryoverTerminalized = false;
             if (
@@ -7141,61 +7169,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (context.finalized) return;
             if (flavor.extractSubagentUpdate === undefined) return;
             const subagent = context.subagentsBySessionId.get(notification.sessionId);
-            if (
-              update.sessionUpdate === "tool_call" ||
-              update.sessionUpdate === "tool_call_update"
-            ) {
-              if (subagent === undefined) return;
-              const nativeTaskId =
-                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-              for (const event of parseSessionUpdateEvent(notification).events) {
-                if (event._tag !== "ToolCallUpdated") continue;
-                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
-                const subagentUpdate = extractSubagentUpdate(toolCall);
-                if (subagentUpdate !== undefined) {
-                  if (
-                    subagentUpdate.nativeTaskId === nativeTaskId ||
-                    subagentUpdate.childSessionId === notification.sessionId
-                  ) {
-                    yield* emitSubagent(context, subagentUpdate);
-                  }
-                  continue;
-                }
-                yield* projectSubagentTool(
-                  subagent,
-                  notification.sessionId,
-                  toolCall,
-                  undefined,
-                  context,
-                );
-              }
-              return;
-            }
-            if (update.sessionUpdate === "tool_call_content_chunk") {
-              if (subagent !== undefined)
-                yield* projectSubagentTool(
-                  subagent,
-                  notification.sessionId,
-                  update,
-                  undefined,
-                  context,
-                );
-              return;
-            }
-            const isDisplayableAssistantUpdate =
-              (update.sessionUpdate === "agent_message_chunk" &&
-                acpContentBlockDisplayText(update.content) !== undefined) ||
-              (update.sessionUpdate === "agent_message" && update.content !== undefined);
-            if (!isDisplayableAssistantUpdate) {
-              return;
-            }
             if (subagent !== undefined) {
-              yield* projectSubagentNotification(subagent, notification, context);
-              return;
+              yield* projectChildSessionUpdate(subagent, notification, context);
+            } else {
+              bufferUnnamedChildSessionUpdate(context.pendingSubagentNotifications, notification);
             }
-            const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
-            buffered.push(notification);
-            context.pendingSubagentNotifications.set(notification.sessionId, buffered);
             return;
           }
           // The activeSessionId yield may let idle/prompt settlement finalize this context.
@@ -8004,6 +7982,74 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           return true;
         });
+
+        /** `owner` is the running turn; without one the subagent was carried past its root. */
+        const projectChildSessionUpdate = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          notification: EffectAcpSchema.SessionNotification,
+          owner: ActiveAcpTurn | undefined,
+        ): Effect.fn.Return<void> {
+          const update = notification.update;
+          if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+            yield* projectSubagentNotification(subagent, notification, owner);
+            return;
+          }
+          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+          for (const event of parseSessionUpdateEvent(notification).events) {
+            if (event._tag !== "ToolCallUpdated") continue;
+            const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+            const subagentUpdate = extractSubagentUpdate(toolCall);
+            if (subagentUpdate === undefined) {
+              yield* projectSubagentTool(
+                subagent,
+                notification.sessionId,
+                toolCall,
+                undefined,
+                owner,
+              );
+              continue;
+            }
+            if (
+              subagentUpdate.nativeTaskId !== nativeTaskId &&
+              subagentUpdate.childSessionId !== notification.sessionId
+            )
+              continue;
+            if (owner !== undefined) yield* emitSubagent(owner, subagentUpdate);
+            else
+              yield* updateCarryoverSubagentStatus(
+                nativeTaskId,
+                subagentUpdate.status,
+                subagentUpdate.result,
+              );
+          }
+        });
+
+        const bufferUnnamedChildSessionUpdate = (
+          pending: ActiveAcpTurn["pendingSubagentNotifications"],
+          notification: EffectAcpSchema.SessionNotification,
+        ) => {
+          const update = notification.update;
+          const isTool =
+            update.sessionUpdate === "tool_call" ||
+            update.sessionUpdate === "tool_call_update" ||
+            update.sessionUpdate === "tool_call_content_chunk";
+          const isReply =
+            (update.sessionUpdate === "agent_message_chunk" &&
+              acpContentBlockDisplayText(update.content) !== undefined) ||
+            (update.sessionUpdate === "agent_message" && update.content !== undefined);
+          // Grok names a Task's child session only in its result, after the child already ran.
+          if (!isReply && !(isTool && flavor.subagentsOutliveTurn === true)) return;
+          const buffered = pending.get(notification.sessionId) ?? [];
+          const isToolFrame = (frame: EffectAcpSchema.SessionNotification) =>
+            frame.update.sessionUpdate.startsWith("tool_call");
+          if (
+            isTool &&
+            buffered.filter(isToolFrame).length >= MAX_PENDING_SUBAGENT_TOOL_NOTIFICATIONS
+          )
+            buffered.splice(buffered.findIndex(isToolFrame), 1);
+          buffered.push(notification);
+          pending.set(notification.sessionId, buffered);
+        };
 
         const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
           readonly childSessionId: string;
@@ -9993,6 +10039,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 sessionId,
                 projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
                 subagents: subagentsRequiringCarryover,
+                pendingSubagentNotifications: context.pendingSubagentNotifications,
               });
             }
           }
@@ -10913,6 +10960,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
             if (carryover !== null && carryover.sessionId === requestedSessionId) {
               rehydratedCarryoverSubagents = carryover.subagents;
+              for (const [sessionId, buffered] of carryover.pendingSubagentNotifications) {
+                context.pendingSubagentNotifications.set(sessionId, buffered);
+              }
               for (const subagent of carryover.subagents) {
                 const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
                 if (nativeId !== null) {

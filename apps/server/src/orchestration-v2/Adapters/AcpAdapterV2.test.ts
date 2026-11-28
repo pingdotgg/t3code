@@ -10650,6 +10650,174 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Process-group teardown uses the live clock; observations wait on provider events.
+  it.live.each(["idle", "adopted"] as const)(
+    "completes the root and stops child tools while the subagent is %s",
+    (stopWhile) =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const threadId = ThreadId.make(`thread-acp-stop-child-${stopWhile}`);
+        const childSessionId = "mock-child-session-stop-tools";
+        const secondPromptEntered = yield* Deferred.make<void>();
+        let promptCount = 0;
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            subagentsOutliveTurn: true,
+            restartRuntimeAfterInterrupt: true,
+            terminateRuntimeProcessGroupOnInterrupt: true,
+            preserveRuntimeOnSettledInterrupt: true,
+            extractSubagentUpdate: (toolCall) =>
+              toolCall.toolCallId === "tool-call-generic-1"
+                ? {
+                    nativeTaskId: "task-generic-1",
+                    prompt: "background subagent",
+                    title: "background subagent",
+                    model: null,
+                    status: "running",
+                    childSessionId,
+                    result: null,
+                  }
+                : undefined,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              ownDetachedProcessGroup: true,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (payload) =>
+                  ++promptCount === 2
+                    ? Deferred.succeed(secondPromptEntered, undefined).pipe(
+                        Effect.andThen(Effect.never),
+                      )
+                    : runtime.prompt(payload),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-acp-stop-child-${stopWhile}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const startTurn = (ordinal: number) =>
+          DateTime.now.pipe(
+            Effect.flatMap((now) =>
+              runtime.startTurn(
+                makeTurnInput({
+                  threadId,
+                  providerThread,
+                  instanceId,
+                  runtimePolicy,
+                  now,
+                  ordinal,
+                }),
+              ),
+            ),
+          );
+        yield* startTurn(1);
+        const rootEvents = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const terminal = rootEvents.find((event) => event.type === "turn.terminal");
+        assert.isDefined(terminal);
+        assert.equal(terminal.status, "completed");
+        const subagent = rootEvents
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+        assert.isDefined(subagent);
+        assert.equal(subagent.status, "running");
+
+        assert.isDefined(sessionUpdateHandler);
+        yield* sessionUpdateHandler({
+          sessionId: childSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-tool-call-1",
+            title: "Child read",
+            kind: "read",
+            status: "in_progress",
+            rawInput: {},
+          },
+        });
+        const isChildTool = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.includes("child-tool-call-1") === true;
+        const idleEvents = yield* runtime.events.pipe(
+          Stream.takeUntil(isChildTool),
+          Stream.runCollect,
+        );
+        const childTool = idleEvents.find(isChildTool);
+        assert.isDefined(childTool);
+        if (childTool.type !== "turn_item.updated") return yield* Effect.die("Missing child tool");
+        assert.notEqual(childTool.turnItem.threadId, threadId);
+        assert.equal(childTool.turnItem.status, "running");
+
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        let stoppedProviderTurnId = terminal.providerTurnId;
+        if (stopWhile === "adopted") {
+          yield* startTurn(2);
+          yield* Deferred.await(secondPromptEntered);
+          stoppedProviderTurnId = idAllocator.derive.providerTurn({
+            driver: ACP_TEST_DRIVER,
+            nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
+          });
+        }
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: stoppedProviderTurnId,
+          requestRuntimeRestart: true,
+        });
+        const stoppedEvents = yield* runtime.events.pipe(
+          Stream.takeUntil((event) =>
+            stopWhile === "adopted"
+              ? event.type === "turn.terminal" && event.providerTurnId === stoppedProviderTurnId
+              : isChildTool(event) &&
+                event.type === "turn_item.updated" &&
+                event.turnItem.status === "interrupted",
+          ),
+          Stream.runCollect,
+        );
+        const childUpdates = [...rootEvents, ...idleEvents, ...stoppedEvents].flatMap((event) =>
+          isChildTool(event) && event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        assert.deepEqual(
+          childUpdates.map((item) => item.status),
+          ["running", "interrupted"],
+        );
+        assert.isTrue(childUpdates.every((item) => item.threadId === childTool.turnItem.threadId));
+        assert.isTrue(childUpdates.every((item) => item.id === childTool.turnItem.id));
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("projects completed-root carryover eagerly and drain cannot resurrect it", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

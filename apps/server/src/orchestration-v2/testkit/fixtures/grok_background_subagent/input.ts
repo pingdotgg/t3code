@@ -2,18 +2,28 @@ import type { OrchestratorFixtureInput } from "../shared.ts";
 
 export const GROK_BACKGROUND_SUBAGENT_PROMPT =
   "Spawn one background subagent (run it in the background, do not wait for it) whose task is: run the shell command 'sleep 20' and then reply exactly SUBAGENT_DONE. As soon as the subagent is launched, end your turn by replying exactly ROOT_DONE without waiting for it.";
+export const GROK_BACKGROUND_SUBAGENT_QUEUED_PROMPT = "Reply exactly QUEUED_DONE.";
+export const GROK_BACKGROUND_SUBAGENT_STEER_PROMPT = "Reply exactly STEER_DONE.";
 
 const GROK_SUBAGENT_WAKE_LABEL =
   "notification:session/update:agent_message_chunk:subagent-completed-00000000-0000-4000-8000-000000000002";
 
-// Hold run 1 until subagent_finished and the adapter's settlement debounce.
+// The queued and steered exchanges are synthetic, based on the recorded Grok
+// 1.0.41 second-prompt exchange in message_steering.
 export function grokBackgroundSubagentInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: GROK_BACKGROUND_SUBAGENT_PROMPT },
-      { type: "finish_held_run", targetRunIndex: 1, status: "completed" },
+      { type: "queue_message", text: GROK_BACKGROUND_SUBAGENT_QUEUED_PROMPT },
+      { type: "capture_shell_snapshot", key: "while-subagent-runs" },
+      {
+        type: "steer",
+        text: GROK_BACKGROUND_SUBAGENT_STEER_PROMPT,
+        targetRunIndex: 1,
+        targetReplyFinished: true,
+      },
       { type: "release_replay_gate", label: GROK_SUBAGENT_WAKE_LABEL },
-      { type: "finish_held_run", targetRunIndex: 2, status: "completed" },
+      { type: "finish_held_run", targetRunIndex: 4, status: "completed" },
     ],
   };
 }
