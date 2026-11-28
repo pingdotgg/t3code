@@ -739,7 +739,7 @@ interface CodexBackfillState {
   readonly updatedAt: number;
 }
 
-const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (codexHome: string) {
+const findCodexStateDbPath = Effect.fn("findCodexStateDbPath")(function* (codexHome: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const entries = yield* fs.readDirectory(codexHome).pipe(Effect.orElseSucceed(() => []));
@@ -754,6 +754,11 @@ const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (co
       dbPath = path.join(codexHome, entry);
     }
   }
+  return dbPath;
+});
+
+const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (codexHome: string) {
+  const dbPath = yield* findCodexStateDbPath(codexHome);
   if (!dbPath) return undefined;
 
   return yield* Effect.sync((): CodexBackfillState | undefined => {
@@ -775,6 +780,33 @@ const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (co
       } catch {
         // ignore close errors on read-only inspection
       }
+    }
+  });
+});
+
+// A live Codex owner refreshes updated_at after every batch of rollouts. A claim left by a
+// killed process stays "running" for Codex's 15-minute lease, and every Codex started in the
+// meantime gives up after its 30s wait, so hand an unrefreshed claim back for the probe to take.
+const CODEX_STALE_BACKFILL_CLAIM_SEC = 60;
+
+const releaseStaleCodexBackfillClaim = Effect.fn("releaseStaleCodexBackfillClaim")(function* (
+  codexHome: string,
+  nowSec: number,
+) {
+  const dbPath = yield* findCodexStateDbPath(codexHome);
+  if (!dbPath) return;
+  yield* Effect.sync(() => {
+    let db: NodeSqlite.DatabaseSync | undefined;
+    try {
+      db = new NodeSqlite.DatabaseSync(dbPath, { timeout: 250 });
+      db.prepare(
+        `UPDATE backfill_state SET status = 'pending', updated_at = 0
+         WHERE id = 1 AND status = 'running' AND updated_at <= ?`,
+      ).run(nowSec - CODEX_STALE_BACKFILL_CLAIM_SEC);
+    } catch {
+      // Codex then waits on the claim as it would have without this release.
+    } finally {
+      db?.close();
     }
   });
 });
@@ -920,6 +952,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const spawnedAtSec = Math.floor(spawnedAtMs / 1000);
   const sqliteHome = yield* resolveCodexSqliteHomePath(input);
+  if (!activeCodexBackfillHomes.has(sqliteHome)) {
+    yield* releaseStaleCodexBackfillClaim(sqliteHome, spawnedAtSec);
+  }
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

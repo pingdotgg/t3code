@@ -372,6 +372,16 @@ function writeCodexBackfillState(dbPath: string, status: string, updatedAt: numb
   }
 }
 
+function readCodexBackfillStatus(dbPath: string): string | undefined {
+  const db = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT status FROM backfill_state WHERE id = 1").get();
+    return typeof row?.status === "string" ? row.status : undefined;
+  } finally {
+    db.close();
+  }
+}
+
 function makeHangingCodexProbeSpawner(onSpawn?: () => void) {
   let closed = false;
   const started = Deferred.makeUnsafe<void>();
@@ -457,41 +467,46 @@ it.effect(
     ),
 );
 
-it.effect(
-  "closes a waiting probe immediately when backfill_state was already running before spawn",
-  () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-stale-backfill-" });
-      writeCodexBackfillState(
-        path.join(tempHome, "state_5.sqlite"),
-        "running",
-        TEST_EPOCH_SEC - 60,
-      );
+it.effect("releases a stale backfill claim so the probe can take over and finish it", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-stale-backfill-" });
+    const dbPath = path.join(tempHome, "state_5.sqlite");
+    writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC - 60);
 
-      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner();
-      const fiber = yield* checkCodexProviderStatus(
-        decodeCodexSettings({ homePath: tempHome }),
-        undefined,
-        {},
-      ).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.forkChild,
-      );
+    let statusAtSpawn: string | undefined;
+    const { spawner, started, awaitClosed, isClosed } = makeHangingCodexProbeSpawner(() => {
+      statusAtSpawn = readCodexBackfillStatus(dbPath);
+      // Codex only claims a "running" row once its 15-minute lease has expired.
+      if (statusAtSpawn !== "running") {
+        writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC);
+      }
+    });
+    const fiber = yield* checkCodexProviderStatus(
+      decodeCodexSettings({ homePath: tempHome }),
+      undefined,
+      {},
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.forkChild,
+    );
 
-      yield* started;
-      yield* TestClock.adjust("20 seconds");
-      const status = yield* Fiber.join(fiber);
+    yield* started;
+    yield* TestClock.adjust("20 seconds");
+    const status = yield* Fiber.join(fiber);
 
-      assert.strictEqual(status.status, "error");
-      assert.match(status.message ?? "", /backfilling its local state database/);
-      assert.strictEqual(isClosed(), true);
-    }).pipe(
-      Effect.provide(NodeServices.layer),
-      Effect.provideService(HostProcess.Platform, "linux"),
-    ),
+    assert.strictEqual(statusAtSpawn, "pending");
+    assert.strictEqual(status.status, "error");
+    assert.match(status.message ?? "", /backfilling its local state database/);
+    assert.strictEqual(isClosed(), false);
+
+    writeCodexBackfillState(dbPath, "complete", TEST_EPOCH_SEC + 45);
+    yield* TestClock.adjust("1 second");
+    yield* awaitClosed;
+    assert.strictEqual(isClosed(), true);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.provideService(HostProcess.Platform, "linux")),
 );
 
 it.effect(
