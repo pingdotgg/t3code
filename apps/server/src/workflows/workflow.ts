@@ -876,6 +876,11 @@ export interface WorkflowDefinition<P = never, A = unknown> {
   readonly "~types"?: { readonly payload: (payload: P) => void; readonly returns: A };
   readonly name: string;
   readonly version: number;
+  /** What a person reads for it in place of `name`. */
+  readonly title: string | undefined;
+  readonly description: string | undefined;
+  /** A timer or router: listed apart, and folded away on an item's runs. */
+  readonly background: boolean;
   readonly payload: Schema.Codec<unknown, unknown>;
   readonly returns: Schema.Codec<unknown, unknown>;
   /** How long a paused run rests before it is resumed by itself, per pause in a row. */
@@ -993,6 +998,12 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
   name: string,
   options: {
     readonly version: number;
+    /** What lists show for it in place of its name, which stays its key. Needs no new version. */
+    readonly title?: string;
+    /** One line on what it is for. */
+    readonly description?: string;
+    /** A timer or router nobody reads runs of: listed apart and folded away on an item's runs. */
+    readonly background?: boolean;
     readonly payload: Schema.Codec<P, PI>;
     readonly returns?: Schema.Codec<A, AI>;
     readonly resumeAfter?: ReadonlyArray<Duration.Input>;
@@ -1020,6 +1031,9 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
 ): WorkflowDefinition<P, A> => {
   checkOptions(`workflow("${name}")`, options, [
     "version",
+    "title",
+    "description",
+    "background",
     "payload",
     "returns",
     "resumeAfter",
@@ -1036,6 +1050,15 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     durationOf(`workflow("${name}")'s resumeAfter`, rest);
   checkTriggers(name, options.triggers ?? []);
   checkAskKinds(name, options.asks);
+  for (const key of ["title", "description"] as const) {
+    const value = options[key];
+    if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
+      throw new Error(`workflow("${name}")'s ${key} is text, as in ${key}: "Fix an issue".`);
+    }
+  }
+  if (options.background !== undefined && typeof options.background !== "boolean") {
+    throw new Error(`workflow("${name}")'s background is true or false.`);
+  }
   return definitionOf(name, options, body);
 };
 
@@ -1046,6 +1069,9 @@ const definitionOf = <P, PI, A, AI, EndError>(
 ): WorkflowDefinition<P, A> => ({
   name,
   version: options.version,
+  title: options.title?.trim(),
+  description: options.description?.trim(),
+  background: options.background === true,
   // Erased here, once: the registry holds workflows of every payload and result type.
   payload: options.payload as Schema.Codec<unknown, unknown>,
   // Without a schema the result is whatever JSON the body returned: dropping it would be a

@@ -318,6 +318,22 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
   ),
 );
 
+it.effect("tells which runs ran an agent or asked a question", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.stepStarted("router", "route", "step");
+      yield* store.stepStarted("router", "later", "wait");
+      yield* store.stepStarted("fix", "route", "step");
+      yield* store.stepStarted("fix", "write", "agent");
+      yield* store.stepStarted("asks", "approve", "ask");
+      const worked = yield* store.runsThatWorked(["router", "fix", "asks", "none"]);
+      assert.deepStrictEqual(worked.toSorted(), ["asks", "fix"]);
+      assert.deepStrictEqual(yield* store.runsThatWorked([]), []);
+    }),
+  ),
+);
+
 it.effect("a long step result is cut without leaving half an emoji", () =>
   withStore(
     Effect.gen(function* () {

@@ -7,6 +7,7 @@ import {
   workflowPausedBeat,
   workflowResultLines,
   workflowRunState,
+  workflowTitle,
   type WorkflowBeat,
   type WorkflowQuestionChoice,
   type WorkflowRunNode,
@@ -39,7 +40,7 @@ import {
   useWorkflowThreadOpener,
   workflowRunFeedOf,
 } from "./WorkflowStepCard";
-import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
+import { WORKFLOW_TONE_CLASS } from "./WorkflowsScreen";
 import { useWorkflowSubjectOpener, workflowSubjectLine } from "./WorkflowSubject";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 
@@ -171,7 +172,11 @@ function QuestionCard(props: {
   );
 }
 
-function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: WorkflowRunNode }) {
+function RunBody(props: {
+  readonly environmentId: EnvironmentId;
+  readonly node: WorkflowRunNode;
+  readonly workflowTitle: string;
+}) {
   const { environmentId, node } = props;
   const { run } = node;
   const navigation = useNavigation();
@@ -314,10 +319,9 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           </Text>
         </View>
         <View className="flex-row items-center gap-2">
-          <WorkflowChip name={run.workflow} />
           <Text className="text-xs text-foreground-muted">
             <T>
-              <Var>{run.workflow}</Var> · started{" "}
+              <Var>{props.workflowTitle}</Var> · started{" "}
               <Var>
                 <RelativeTime timestamp={run.startedAt} />
               </Var>
@@ -418,7 +422,9 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
     <View className="flex-1 bg-screen">
       <AppBar
         title={
-          node?.run.workflow ?? gt("Run", { $context: "noun, page title for one workflow run" })
+          node === undefined || snapshot === null
+            ? gt("Run", { $context: "noun, page title for one workflow run" })
+            : workflowTitle(snapshot.workflows, node.run.workflow)
         }
         onBack={() => {
           if (navigation.canGoBack()) navigation.goBack();
@@ -437,7 +443,12 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
           detail={gt("It may be older than the runs this server still lists.")}
         />
       ) : (
-        <RunBody key={node.run.runId} environmentId={environmentId} node={node} />
+        <RunBody
+          key={node.run.runId}
+          environmentId={environmentId}
+          node={node}
+          workflowTitle={workflowTitle(snapshot.workflows, node.run.workflow)}
+        />
       )}
     </View>
   );

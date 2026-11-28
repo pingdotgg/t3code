@@ -7,6 +7,7 @@ import {
   applyWorkflowRunsUpdate,
   type WorkflowRunsSnapshot,
   type WorkflowRunsUpdate,
+  type WorkflowSummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -155,6 +156,9 @@ export class Workflows extends Context.Service<
       {
         readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
         readonly questions: ReadonlyArray<WorkflowQuestion>;
+        readonly workflows: ReadonlyArray<WorkflowSummary>;
+        /** Which of those runs ran an agent step or asked a question. */
+        readonly worked: ReadonlyArray<string>;
       },
       WorkflowInputError
     >;
@@ -226,7 +230,7 @@ export const disabled = Workflows.of({
     return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
   }),
   about: Effect.fn("Workflows.about")(function* () {
-    return yield* Effect.succeed({ runs: [], questions: [] });
+    return yield* Effect.succeed({ runs: [], questions: [], workflows: [], worked: [] });
   }),
   waitFor: Effect.fn("Workflows.waitFor")(function* () {
     return yield* Effect.never;

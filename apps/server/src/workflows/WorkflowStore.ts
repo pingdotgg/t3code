@@ -443,6 +443,10 @@ export class WorkflowStore extends Context.Service<
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
+    /** Which of these runs had an agent step or asked a question. */
+    readonly runsThatWorked: (
+      runIds: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<string>>;
     /** Whether the run's step of that name waits for a place in a pool. */
     readonly queuesForPlace: (runId: string, name: string) => Effect.Effect<boolean>;
     /**
@@ -1540,6 +1544,14 @@ export const make = Effect.gen(function* () {
         SELECT 1 FROM workflow_steps WHERE run_id = ${runId} AND name = ${name} AND kind = 'queue'
       `.pipe(Effect.orDie);
       return rows.length > 0;
+    }),
+    runsThatWorked: Effect.fn("WorkflowStore.runsThatWorked")(function* (runIds) {
+      if (runIds.length === 0) return [];
+      const rows = yield* sql<{ readonly run_id: string }>`
+        SELECT DISTINCT run_id FROM workflow_steps
+        WHERE ${sql.in("run_id", runIds)} AND kind IN ('agent', 'ask')
+      `.pipe(Effect.orDie);
+      return rows.map((row) => row.run_id);
     }),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
       // A resumed run waiting to take back a held place is queued at that step again, but the

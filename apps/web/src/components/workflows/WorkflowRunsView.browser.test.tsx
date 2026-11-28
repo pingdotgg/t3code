@@ -703,6 +703,31 @@ describe("WorkflowRunsView", () => {
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
 
+  it("names workflows by their titles, with timers and routers apart under Background", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, title: "Ship a release", triggers: [] },
+        { name: "sweep", version: 1, title: "Sweep stale items", background: true, triggers: [] },
+      ],
+      runs: [run({ runId: "rel", title: "Release 1.3" })],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Ship a release/ })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await expect.element(screen.getByRole("group", { name: "Background" })).toBeVisible();
+    await screen
+      .getByRole("group", { name: "Background" })
+      .getByRole("option", { name: /Sweep stale items/ })
+      .click();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Workflow" }))
+      .toHaveTextContent("Sweep stale items");
+  });
+
   it("counts the skipped runs of the workflow picked, not of every workflow", async () => {
     setup({
       workflows: [

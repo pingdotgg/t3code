@@ -111,6 +111,10 @@ export interface WorkflowRunNode {
 /** One workflow and the runs of it that nobody has to act on. */
 export interface WorkflowSection {
   readonly name: string;
+  /** What a person reads for it: its declared title, else its name. */
+  readonly title: string;
+  /** A timer or router its definition sets apart from the workflows a person follows. */
+  readonly background: boolean;
   /** What starts it, in words. Null for a workflow this server no longer has registered. */
   readonly triggers: ReadonlyArray<string> | null;
   readonly active: ReadonlyArray<WorkflowRunNode>;
@@ -203,6 +207,8 @@ export function groupWorkflowRuns(
     workflows: names
       .map((name) => ({
         name,
+        title: workflowTitle(workflows, name),
+        background: registered.get(name)?.background === true,
         triggers: registered.get(name)?.triggers ?? null,
         active: sections.get(name)?.active ?? [],
         finished: sections.get(name)?.finished ?? [],
@@ -387,18 +393,65 @@ export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListT
   return groups.workflows.some((section) => section.active.length > 0) ? "running" : "all";
 }
 
-const CHIP_TONES = 5;
+/** What a person reads for a workflow: its declared title, else its name, which is its key. */
+export function workflowTitle(workflows: ReadonlyArray<WorkflowSummary>, name: string): string {
+  return workflows.find((workflow) => workflow.name === name)?.title ?? name;
+}
 
-/** A workflow's mark in the list: two letters and one of a few colours, the same every time. */
-export function workflowChip(name: string): { readonly letters: string; readonly tone: number } {
-  const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== "");
-  const letters =
-    parts.length > 1
-      ? `${[...parts[0]!][0]}${[...parts[1]!][0]}`
-      : [...(parts[0] ?? name)].slice(0, 2).join("");
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) % 9973;
-  return { letters: letters.toUpperCase(), tone: hash % CHIP_TONES };
+/** Which mark stands for a run's state, so every client draws the same state the same way. */
+export type WorkflowRunMark =
+  | "input"
+  | "working"
+  | "paused"
+  | "waiting"
+  | "done"
+  | "ended"
+  | "cancelled";
+
+export function workflowRunMark(node: WorkflowRunNode): WorkflowRunMark {
+  const { tone } = workflowRunState(node);
+  if (tone === "input") return "input";
+  if (tone === "working") return "working";
+  if (tone === "failed") return "paused";
+  if (tone === "done") return "done";
+  if (node.run.status === "cancelled") return "cancelled";
+  return node.run.endedAt === null ? "waiting" : "ended";
+}
+
+const OUTCOME_LENGTH = 80;
+
+/** What a finished run returned, when that is one short line of text. */
+export function workflowRunOutcome(run: WorkflowRun): string | null {
+  if (run.status !== "completed" || typeof run.result !== "string") return null;
+  const outcome = run.result.trim();
+  return outcome === "" || outcome.length > OUTCOME_LENGTH || outcome.includes("\n")
+    ? null
+    : outcome;
+}
+
+/**
+ * An item's runs split into those a person reads and those folded away: cancelled runs, runs of
+ * background workflows, and ended runs that ran no agent and asked nothing. `worked` is null from
+ * a server that does not say, which folds only the cancelled and background ones.
+ */
+export function foldWorkflowRunsAbout(
+  nodes: ReadonlyArray<WorkflowRunNode>,
+  workflows: ReadonlyArray<WorkflowSummary>,
+  worked: ReadonlyArray<string> | null,
+): {
+  readonly shown: ReadonlyArray<WorkflowRunNode>;
+  readonly folded: ReadonlyArray<WorkflowRunNode>;
+} {
+  const background = new Set(
+    workflows.filter((workflow) => workflow.background === true).map((workflow) => workflow.name),
+  );
+  const didWork = worked === null ? null : new Set(worked);
+  const folds = (node: WorkflowRunNode) =>
+    node.questions.length === 0 &&
+    (node.run.status === "cancelled" ||
+      background.has(node.run.workflow) ||
+      (didWork !== null && node.run.endedAt !== null && !didWork.has(node.run.runId)));
+  return { shown: nodes.filter((node) => !folds(node)), folded: nodes.filter(folds) };
 }
 
 export type WorkflowRunTone = "input" | "failed" | "working" | "quiet" | "done";

@@ -851,6 +851,9 @@ const about = workflow(
   "about",
   {
     version: 1,
+    title: " Track an item ",
+    description: "Waits on what it is about.",
+    background: true,
     payload: Schema.Struct({ subjects: Schema.Array(Schema.Json) }),
   },
   Effect.fn(function* (payload) {
@@ -2846,6 +2849,13 @@ it.effect("about keeps the waiting run when 500 newer skipped runs are about the
           about.runs.map((run) => run.runId),
           target.runId,
         );
+        // The item's view gets the titles to show, and that no run of these ran an agent.
+        const summary = about.workflows?.find((candidate) => candidate.name === "about");
+        assert.deepStrictEqual(
+          [summary?.title, summary?.description, summary?.background],
+          ["Track an item", "Waits on what it is about.", true],
+        );
+        assert.deepStrictEqual(about.worked, []);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
