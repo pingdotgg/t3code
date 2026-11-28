@@ -1,5 +1,9 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { SOURCE_CONTROL_MEDIA_ASSET, type EnvironmentId } from "@t3tools/contracts";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 
 export interface PullRequestMediaLocation {
@@ -22,6 +26,23 @@ export function pullRequestMediaSource(url: string, location: PullRequestMediaLo
         },
       }
     : { uri: url };
+}
+
+/**
+ * The request for an image the markdown renderer loads itself. Host media needs the environment's
+ * credentials, so it fails rather than load unauthorized; null loads any other image as written.
+ */
+export async function pullRequestImageRequest(
+  url: string,
+  location: PullRequestMediaLocation | null,
+  authorize: (environmentId: EnvironmentId, resource: AssetResource) => Promise<string | null>,
+): Promise<{ readonly uri: string } | null> {
+  const source = pullRequestMediaSource(url, location);
+  const resource = "resource" in source ? source.resource : undefined;
+  if (location === null || resource === undefined) return null;
+  const uri = await authorize(location.environmentId, resource);
+  if (uri === null) throw new Error("Could not authorize pull request image");
+  return { uri };
 }
 
 export function pullRequestImageSource(

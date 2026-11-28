@@ -6,6 +6,7 @@ import { useGT } from "gt-react-native";
 import { createContext, useContext, useState } from "react";
 import {
   pullRequestMediaSource,
+  pullRequestImageRequest,
   pullRequestImageSource,
   type PullRequestMediaLocation,
 } from "./pullRequestMediaSource";
@@ -14,7 +15,11 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { assetEnvironment, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
+import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText.types";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
@@ -46,6 +51,28 @@ export function usePullRequestMediaUrl(url: string) {
     source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
+}
+
+/**
+ * Images the markdown renderer draws itself (in table cells, lists, links) skip `renderImage`,
+ * so private host media must be authorized here too or it loads without credentials.
+ */
+export function usePullRequestImageSource(
+  resolveUrl: (href: string) => string,
+): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(context?.environmentId ?? null);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return (image) =>
+    pullRequestImageRequest(resolveUrl(image.href), context, async (environmentId, resource) => {
+      if (httpBaseUrl === null) return null;
+      const state = assetUrlStateFromResult(
+        await createUrl({ environmentId, input: { resource } }),
+        httpBaseUrl,
+      );
+      return state._tag === "Success" ? state.url : null;
+    });
 }
 
 export function PullRequestMedia(props: {
