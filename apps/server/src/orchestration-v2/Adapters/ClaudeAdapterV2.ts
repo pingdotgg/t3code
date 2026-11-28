@@ -5024,6 +5024,14 @@ function toSessionPermissionUpdates(
   ];
 }
 
+const awaitAbortSignal = (signal: AbortSignal) =>
+  Effect.callback<void>((resume) => {
+    const abort = () => resume(Effect.void);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
+
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
   decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
@@ -6972,6 +6980,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >(),
         );
         const absorbedWakes = yield* Ref.make(new Set<string>());
+        // Completed and replaced when a turn attaches or a wake latch settles; tool requests from a wake wait on it.
+        const wakeTurnChange = yield* Ref.make(yield* Deferred.make<void>());
+        const signalWakeTurnChange = Effect.gen(function* () {
+          const previous = yield* Ref.getAndSet(wakeTurnChange, yield* Deferred.make<void>());
+          yield* Deferred.succeed(previous, undefined);
+        });
+        // The wake a continuation turn drained; its latch is gone once the turn attaches.
+        const wakeTokenByTurn = new WeakMap<ActiveClaudeTurnContext, symbol>();
         const heldProposedPlansByToolUseId = new Map<string, string>();
         // /clear moves a live process to a new native session; persist that one so a reopen resumes it.
         const clearedNativeSessions = new Map<string, string>();
@@ -7695,6 +7711,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(nativeThreadId);
               return updated;
             });
+            yield* signalWakeTurnChange;
             yield* forgetAbsorbedWake(nativeThreadId);
           });
 
@@ -7704,7 +7721,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const updated = new Map(current);
             updated.delete(nativeThreadId);
             return updated;
-          });
+          }).pipe(Effect.andThen(signalWakeTurnChange));
 
         // Claude runs one root turn at a time, so a user turn's result also ends a wake turn it
         // folded in. The continuation replays that wake's buffered frames but gets no result of its own.
@@ -11212,7 +11229,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return latch === undefined || latch.retired === retired
               ? current
               : new Map(current).set(nativeThreadId, { ...latch, retired });
-          });
+          }).pipe(Effect.andThen(signalWakeTurnChange));
 
         // Compare-and-set: a process reset clears the buffer without the SDK message lock, and must not be undone.
         const replaceWakeBuffer = Effect.fnUntraced(function* (
@@ -13472,13 +13489,78 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* handleRoutedSdkMessage(input);
         });
 
+        // Claude can ask for a tool in a turn it started itself before T3 starts the continuation run
+        // offered for it. Wait for that run; a request whose wake has no run coming is still denied.
+        const isToolUseBuffered = (nativeThreadId: string, toolUseId: string) =>
+          Effect.map(Ref.get(wakeBuffers), (buffers) =>
+            (buffers.get(nativeThreadId)?.messages ?? []).some(
+              (message) =>
+                message.type === "assistant" &&
+                message.message.content.some(
+                  (block) => block.type === "tool_use" && block.id === toolUseId,
+                ),
+            ),
+          );
+
+        const awaitWakeContinuationTurn = Effect.fnUntraced(function* (
+          signal: AbortSignal,
+          toolUseId: string,
+        ) {
+          const liveQuery = yield* Ref.get(queryContext);
+          if (liveQuery === null || liveQuery.stopping) return null;
+          const nativeThreadId = liveQuery.nativeThreadId;
+          const token = (yield* Ref.get(requestedContinuations)).get(nativeThreadId)?.token;
+          const ended = Effect.raceFirst(
+            awaitAbortSignal(signal),
+            Deferred.await(liveQuery.closed),
+          );
+          const isOwnQuery = Effect.map(
+            Ref.get(queryContext),
+            (current) => current === liveQuery && !liveQuery.stopping && !signal.aborted,
+          );
+          const isPendingWake = Effect.map(Ref.get(requestedContinuations), (latches) => {
+            const latch = latches.get(nativeThreadId);
+            return latch !== undefined && latch.token === token && latch.retired === null;
+          });
+          while (yield* isOwnQuery) {
+            const changed = yield* Ref.get(wakeTurnChange);
+            if ((yield* Ref.get(activeTurn)) !== null) {
+              // A continuation replays the wake's buffered frames under this lock; answer after them.
+              const context = yield* Effect.raceFirst(
+                sdkMessageLock.withPermits(1)(Ref.get(activeTurn)),
+                Effect.as(ended, null),
+              );
+              // Only the continuation that drained this wake's tool_use owns the tool. A user turn that
+              // attaches first, or a split drain that leaves a later wake buffered, would replay that
+              // tool_use under a second run.
+              return context !== null &&
+                context.nativeThreadId === nativeThreadId &&
+                token !== undefined &&
+                wakeTokenByTurn.get(context) === token &&
+                !(yield* isToolUseBuffered(nativeThreadId, toolUseId)) &&
+                (yield* isOwnQuery)
+                ? context
+                : null;
+            }
+            if (!(yield* isPendingWake)) return null;
+            const woke = yield* Effect.raceFirst(
+              Effect.as(Deferred.await(changed), true),
+              Effect.as(ended, false),
+            );
+            if (!woke) return null;
+          }
+          return null;
+        });
+
         const canUseToolEffect = Effect.fn("ClaudeAdapterV2.canUseTool")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
           options?: { readonly startToolCall?: boolean },
         ) {
-          const context = yield* Ref.get(activeTurn);
+          const context =
+            (yield* Ref.get(activeTurn)) ??
+            (yield* awaitWakeContinuationTurn(callbackOptions.signal, callbackOptions.toolUseID));
           if (context === null) {
             return {
               behavior: "deny",
@@ -14848,6 +14930,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     : { cause: querySession.exitCause }),
                 });
               }
+              yield* signalWakeTurnChange;
               if (
                 !isClaudeProviderContinuationTurn(turnInput) &&
                 permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) ===
@@ -14948,11 +15031,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ownEndIndex !== -1 &&
                   (yield* holdsBufferedWake(nativeThreadId, buffered.slice(ownEndIndex + 1)));
                 const drained = leavesLaterWake ? buffered.slice(0, ownEndIndex + 1) : buffered;
-                yield* Ref.update(requestedContinuations, (current) => {
+                const consumedWake = yield* Ref.modify(requestedContinuations, (current) => {
                   const updated = new Map(current);
                   updated.delete(nativeThreadId);
-                  return updated;
+                  return [current.get(nativeThreadId), updated] as const;
                 });
+                if (consumedWake !== undefined) wakeTokenByTurn.set(context, consumedWake.token);
                 // A root frame clears the absorbed marker, so behind a split it is the later wake's
                 // and stays; the split wake was absorbed when its end is not a result.
                 const wakeAbsorbed = leavesLaterWake
