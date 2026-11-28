@@ -72,8 +72,14 @@ function parseJson(text: string): unknown {
 
 export function isJsonToolText(text: string): boolean {
   if (parseJson(text) !== undefined) return true;
-  const documents = text.trim().split(/\n\s*\n/);
-  return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
+  const trimmed = text.trim();
+  const documents = trimmed.split(/\n\s*\n/);
+  if (documents.length > 1 && documents.every((document) => parseJson(document) !== undefined)) {
+    return true;
+  }
+  return trimmed
+    .split(/\n\s*/)
+    .every((line) => /^[[{]/.test(line) && parseJson(line) !== undefined);
 }
 
 // Strings match whole so numbers inside them are skipped. Scan only parsed JSON: every string closes.

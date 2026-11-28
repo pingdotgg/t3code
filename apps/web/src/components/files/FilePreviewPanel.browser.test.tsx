@@ -174,6 +174,10 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
 }));
 
 import FilePreviewPanel from "./FilePreviewPanel";
+import NotebookPreview from "./NotebookPreview";
+import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+import { PreviewPositionKey } from "./previewPosition";
+import VirtualTablePreview from "./VirtualTablePreview";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
 import { splitMarkdown } from "@t3tools/shared/markdownChunks";
 
@@ -222,6 +226,7 @@ function filePreview(
   relativePath: string,
   workspaceMutationId: string | null = null,
   reveal: { line: number; requestId: number } | null = null,
+  thread = threadRef,
 ) {
   return (
     <FilePreviewPanel
@@ -229,8 +234,8 @@ function filePreview(
       cwd="/workspace"
       projectName="Project"
       relativePath={relativePath}
-      threadRef={threadRef}
-      composerDraftTarget={threadRef}
+      threadRef={thread}
+      composerDraftTarget={thread}
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
@@ -390,6 +395,83 @@ describe("source file scroll", () => {
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 
+  it("returns a file to where it was scrolled in each thread after the panel remounts", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
+    state.file = { relativePath: "a.ts", contents, byteLength: contents.length, truncated: false };
+    const otherThread = { environmentId, threadId: ThreadId.make("other-thread") };
+    const panel = (thread: typeof threadRef) => (
+      <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+        {filePreview("a.ts", null, null, thread)}
+      </div>
+    );
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+    const scrollTo = async (top: number) => {
+      await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      scroller()!.scrollTop = top;
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+    };
+
+    for (const [thread, top] of [
+      [threadRef, 4200],
+      [otherThread, 1000],
+    ] as const) {
+      await using _screen = await render(panel(thread));
+      await scrollTo(top);
+    }
+    for (const [thread, top] of [
+      [threadRef, 4200],
+      [otherThread, 1000],
+    ] as const) {
+      await using _screen = await render(panel(thread));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+    }
+  });
+
+  it.each([
+    ["an editable file", "a.ts"],
+    ["a read-only host file", "/outside/a.ts"],
+  ])(
+    "keeps each thread's offset in %s when the panel stays mounted across threads",
+    async (_, path) => {
+      using _settings = setup();
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+      const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
+      state.file = { relativePath: path, contents, byteLength: contents.length, truncated: false };
+      const first = { environmentId, threadId: ThreadId.make(`mounted-first:${path}`) };
+      const second = { environmentId, threadId: ThreadId.make(`mounted-second:${path}`) };
+      const panel = (thread: typeof threadRef) => (
+        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+          {filePreview(path, null, null, thread)}
+        </div>
+      );
+      const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+      const scrollTo = async (top: number) => {
+        await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+        scroller()!.scrollTop = top;
+        await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+      };
+
+      await using screen = await render(panel(first));
+      await scrollTo(4200);
+      await screen.rerender(panel(second));
+      await scrollTo(1000);
+      await screen.rerender(panel(first));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+      await screen.rerender(panel(second));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(1000));
+    },
+  );
+
   it("centers a linked line in a scrolled read-only file, and again when the viewer is rebuilt", async () => {
     using _settings = setup();
     const style = document.createElement("style");
@@ -469,6 +551,7 @@ describe("source file scroll", () => {
   ])(
     "$label",
     async ({
+      label,
       startLine,
       initialScrollLine,
       direction,
@@ -494,7 +577,8 @@ describe("source file scroll", () => {
 
       await using screen = await render(
         <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
-          {filePreview("notes.md")}
+          {/* Each case gets its own thread so it does not resume the previous case's scroll. */}
+          {filePreview("notes.md", null, null, { environmentId, threadId: ThreadId.make(label) })}
         </div>,
       );
 
@@ -1040,6 +1124,319 @@ describe("rendered Markdown footnotes across chunks", () => {
       expect(topRef).not.toBeNull();
       expect(topRef!.textContent).toBe("1");
       expect(scroller.scrollTop).toBeLessThan(200);
+    });
+  });
+});
+
+function withPreviewAppCss() {
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  return { [Symbol.dispose]: () => style.remove() };
+}
+
+function opened(positionKey: string, children: ReactNode, height = 400) {
+  return (
+    <PreviewPositionKey value={positionKey}>
+      <div style={{ width: 500, height, display: "flex", flexDirection: "column" }}>{children}</div>
+    </PreviewPositionKey>
+  );
+}
+
+describe("large text scroll position", () => {
+  const log = (count: number, indexing = false, revealLine?: number) => (
+    <VirtualTablePreview
+      name="app.log"
+      indexing={indexing}
+      revealLine={revealLine ?? null}
+      revealRequestId={1}
+      count={count}
+      columns={1}
+      source
+      getRows={(page) =>
+        Array.from({ length: PREVIEW_PAGE_ROWS }, (_, row) => [
+          `entry ${page * PREVIEW_PAGE_ROWS + row + 1}`,
+        ])
+      }
+    />
+  );
+  const scroller = () =>
+    document
+      .querySelector<HTMLElement>("[data-preview-row]")
+      ?.closest<HTMLElement>(".overflow-auto") ?? expect.unreachable();
+  const firstVisibleRow = () => {
+    const top = scroller().getBoundingClientRect().top;
+    const row = Array.from(scroller().querySelectorAll<HTMLElement>("[data-preview-row]")).find(
+      (node) => node.getBoundingClientRect().bottom > top + 1,
+    );
+    return Number(row?.dataset.previewRow);
+  };
+
+  it("returns a reopened log to its line, once that line has streamed in", async () => {
+    using _style = withPreviewAppCss();
+    let saved: number;
+    {
+      await using _screen = await render(opened("app.log", log(5000)));
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+      scroller().scrollTop = 1000 * 29;
+      scroller().dispatchEvent(new Event("scroll"));
+      await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(900));
+      saved = firstVisibleRow();
+    }
+    {
+      await using _screen = await render(opened("other.log", log(5000)));
+      await vi.waitFor(() => expect(firstVisibleRow(), "another file opens at the top").toBe(0));
+    }
+    await using screen = await render(opened("app.log", log(100)));
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+    await screen.rerender(opened("app.log", log(5000)));
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
+  });
+
+  it.each([{ indexing: true }, { indexing: false }])(
+    "keeps the reading row past a cited line on return (indexing: $indexing)",
+    async ({ indexing }) => {
+      using _style = withPreviewAppCss();
+      const key = `cited-log-${indexing}`;
+      {
+        await using _screen = await render(opened(key, log(66000, false, 1000), 608));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(999));
+        scroller().scrollTop = 1499 * 29;
+        scroller().dispatchEvent(new Event("scroll"));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+      }
+      // While indexing, the viewer has no line request yet.
+      await using screen = await render(
+        opened(key, indexing ? log(2000, true) : log(66000, false, 1000), 608),
+      );
+      if (indexing) {
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+        await screen.rerender(opened(key, log(66000, false, 1000), 608));
+      }
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+    },
+  );
+
+  const wrappedLog = (
+    count: number,
+    { missingPage = -1, indexing = false, wrap = true, wide = false } = {},
+  ) => (
+    <VirtualTablePreview
+      name="wrapped.log"
+      count={count}
+      indexing={indexing}
+      columns={wide ? 8 : 1}
+      source={!wide}
+      wrap={wrap}
+      getRows={(page) =>
+        page === missingPage
+          ? undefined
+          : Array.from({ length: PREVIEW_PAGE_ROWS }, (_, local) => {
+              const index = page * PREVIEW_PAGE_ROWS + local;
+              return [
+                `entry ${index}: ${index >= 80 ? "wrapped content ".repeat(wide && index >= 96 ? 2 : 60) : ""}`,
+              ];
+            })
+      }
+    />
+  );
+  const row = (index: number) =>
+    scroller().querySelector<HTMLElement>(`[data-preview-row="${index}"]`);
+  const waitForRowLayout = (index: number) =>
+    new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(row(index)!);
+    });
+  const atEnd = (index: number) =>
+    Math.abs(
+      (row(index)?.getBoundingClientRect().bottom ?? 0) - scroller().getBoundingClientRect().bottom,
+    ) < 2;
+  const scrollToEnd = async () => {
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+    await act(() =>
+      scroller().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await act(() => scroller().dispatchEvent(new Event("scroll")));
+  };
+  const scrollToRow = async (index: number) => {
+    const viewport = scroller();
+    await act(() => {
+      viewport.scrollTop +=
+        row(index)!.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 2;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(index));
+  };
+
+  it.each([
+    { name: "an interior row in the wrapped tail", interior: true, count: 100 },
+    { name: "the new bottom after truncation", interior: false, count: 98 },
+  ])("restores $name when reopening a preview", async ({ name, interior, count }) => {
+    using _style = withPreviewAppCss();
+    {
+      await using _screen = await render(opened(name, wrappedLog(100)));
+      await scrollToEnd();
+      if (interior) await scrollToRow(94);
+    }
+    await using screen = await render(
+      opened(name, wrappedLog(interior ? count : 85, { indexing: !interior })),
+    );
+    if (!interior) {
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+      await screen.rerender(opened(name, wrappedLog(count)));
+    }
+    await vi.waitFor(() => {
+      if (interior) expect(firstVisibleRow()).toBe(94);
+      else expect(atEnd(count - 1)).toBe(true);
+    });
+  });
+
+  it("keeps a manual scroll made before the final page arrives", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with delayed final page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { missingPage: 3 })));
+    await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+    await scrollToRow(94);
+    await screen.rerender(opened(key, wrappedLog(100)));
+    await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
+    await waitForRowLayout(99);
+    expect(firstVisibleRow()).toBe(94);
+  });
+
+  it.each([false, true])(
+    "handles a late preceding page with manual scrolling set to %s",
+    async (manualScroll) => {
+      using _style = withPreviewAppCss();
+      const key = `wrapped log with late preceding page ${manualScroll}`;
+      {
+        await using _screen = await render(opened(key, wrappedLog(100)));
+        await scrollToEnd();
+        await scrollToRow(96);
+      }
+      await using screen = await render(opened(key, wrappedLog(100, { missingPage: 2 })));
+      await vi.waitFor(() => expect(row(96)?.textContent).toContain("entry 96"));
+      await waitForRowLayout(96);
+      const viewport = scroller();
+      if (manualScroll) {
+        viewport.style.overflowAnchor = "none";
+        await scrollToRow(97);
+      }
+      const manualTop = viewport.scrollTop;
+      await screen.rerender(opened(key, wrappedLog(100)));
+      await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+      if (manualScroll) {
+        await waitForRowLayout(94);
+        expect(viewport.scrollTop).toBe(manualTop);
+      } else await vi.waitFor(() => expect(firstVisibleRow()).toBe(96));
+    },
+  );
+
+  it("keeps a wide table at the bottom when the preceding tail page arrives last", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wide table with late preceding page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100, { wide: true })));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { wide: true, missingPage: 2 })));
+    // Require the preview to preserve the bottom even when the browser does not anchor it.
+    scroller().style.overflowAnchor = "none";
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await waitForRowLayout(99);
+    await screen.rerender(opened(key, wrappedLog(100, { wide: true })));
+    await vi.waitFor(() => {
+      expect(row(94)?.offsetHeight).toBeGreaterThan(29);
+      expect(atEnd(99)).toBe(true);
+    });
+  });
+
+  it("allows scrolling up after a saved tail row can no longer align with the top", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with wrap turned off";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+      await scrollToRow(94);
+    }
+    await using _screen = await render(opened(key, wrappedLog(100, { wrap: false })));
+    const viewport = scroller();
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+    });
+    await act(() => {
+      viewport.scrollTop -= 3 * 29;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(firstVisibleRow()).toBeLessThan(87));
+  });
+});
+
+describe("notebook scroll position", () => {
+  const notebook = (
+    <NotebookPreview
+      notebook={{
+        type: "notebook",
+        language: "python",
+        cells: Array.from({ length: 40 }, (_, index) => ({
+          kind: "raw" as const,
+          source: Array.from({ length: 8 }, (_, line) => `cell ${index} line ${line}`).join("\n"),
+          outputs: [],
+        })),
+      }}
+    />
+  );
+  const scroller = () =>
+    document.querySelector<HTMLElement>("section")?.closest<HTMLElement>(".overflow-auto") ??
+    expect.unreachable();
+  const readingPosition = () => {
+    const top = scroller().getBoundingClientRect().top;
+    const cells = Array.from(scroller().querySelectorAll("section"));
+    const cell = cells.findIndex((node) => node.getBoundingClientRect().bottom > top);
+    return { cell, offset: Math.round(top - cells[cell]!.getBoundingClientRect().top) };
+  };
+
+  it("keeps cells shown with Show more when the notebook closes without another scroll", async () => {
+    using _style = withPreviewAppCss();
+    {
+      await using screen = await render(opened("expanded.ipynb", notebook));
+      await screen.getByRole("button", { name: /Show more cells/ }).click();
+      await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(40));
+    }
+    await using _screen = await render(opened("expanded.ipynb", notebook));
+    await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(40));
+  });
+
+  it("returns a reopened notebook to its cell, including cells shown with Show more", async () => {
+    using _style = withPreviewAppCss();
+    let saved: ReturnType<typeof readingPosition>;
+    {
+      await using screen = await render(opened("analysis.ipynb", notebook));
+      await screen.getByRole("button", { name: /Show more cells/ }).click();
+      await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(40));
+      scroller().scrollTop = scroller().scrollHeight - scroller().clientHeight - 200;
+      scroller().dispatchEvent(new Event("scroll"));
+      saved = readingPosition();
+      expect(saved.cell, "scrolled into the cells Show more added").toBeGreaterThan(20);
+    }
+    {
+      await using _screen = await render(opened("other.ipynb", notebook));
+      await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(20));
+      expect(scroller().scrollTop, "another notebook opens at the top").toBe(0);
+    }
+    await using _screen = await render(opened("analysis.ipynb", notebook));
+    await vi.waitFor(() => {
+      const position = readingPosition();
+      expect(position.cell).toBe(saved.cell);
+      expect(Math.abs(position.offset - saved.offset)).toBeLessThanOrEqual(2);
     });
   });
 });

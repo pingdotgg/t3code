@@ -12,15 +12,16 @@ import {
 } from "./documentPreviewXml";
 import { officeXmlDecoder } from "./officeArchive";
 import { externalUrl } from "./office/links";
-import type { EpubLocation, EpubPage } from "./officePreviewProtocol";
+import { mediaFragment, mediaTime, ttmlCaptions } from "./epubMedia";
+import type { EpubLocation, EpubNarrationCue, EpubPage } from "./officePreviewProtocol";
 import { isPreviewError, PreviewError } from "./previewFailure";
 
 const htmlTags = new Set(
-  "a abbr address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr u ul var video".split(
+  "a abbr acronym address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr tt u ul var video".split(
     " ",
   ),
 );
-const voidTags = new Set(["br", "hr", "wbr", "img", "col", "input", "source"]);
+const voidTags = new Set(["br", "hr", "wbr", "img", "col", "input", "source", "track"]);
 const formTags = new Set(
   "button datalist fieldset form input label legend meter optgroup option output progress select textarea".split(
     " ",
@@ -30,7 +31,7 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDiffuseLighting feDistantLight fePointLight feSpotLight feComposite feOffset feComponentTransfer feFuncA feFuncR feFuncG feFuncB feFlood feBlend feMerge feMergeNode feDropShadow"
   ).split(" "),
 );
 const mathTags = new Set(
@@ -113,8 +114,9 @@ const svgAttrs = (
   "gradientUnits gradientTransform spreadMethod fx fy fr offset stop-color stop-opacity clip-path " +
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
-  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters " +
-  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
+  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
+  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept tableValues amplitude exponent " +
+  "diffuseConstant z pointsAtX pointsAtY pointsAtZ limitingConeAngle k1 k2 k3 k4"
 ).split(" ");
 const mathAttrs = (
   "display displaystyle mathvariant mathsize mathcolor mathbackground accent accentunder columnalign " +
@@ -162,6 +164,7 @@ const audiovisual: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
   ogv: "video/ogg",
+  wav: "audio/wav",
 };
 const xhtmlTypes = new Set(["application/xhtml+xml", "text/html"]);
 const tagName = (node: XmlNode) => node.name.replace(/^\{[^}]*\}|^(?:svg|math):/, "");
@@ -213,7 +216,8 @@ async function readChapter(archive: JSZip, path: string, mime: string): Promise<
     if (!tree.isElementNode(node)) return [];
     return [
       {
-        name: node.tagName,
+        // parse5 8.0.1 omits feDropShadow from its SVG tag-name adjustment table.
+        name: node.tagName === "fedropshadow" ? "feDropShadow" : node.tagName,
         attrs: Object.fromEntries(
           node.attrs.map(({ name, prefix, value }) => [prefix ? `${prefix}:${name}` : name, value]),
         ),
@@ -306,7 +310,10 @@ export async function openEpub(archive: JSZip) {
 
   const manifest = new Map(find(packageRoot, "item").map((item) => [item.attrs.id, item.attrs]));
   const media = new Map<string, string>();
-  const spineSources = new Map<string, { path: string; mime: string } | null>();
+  const spineSources = new Map<
+    string,
+    { path: string; mime: string; narrationPath: string | null } | null
+  >();
   for (const [id, item] of manifest) {
     const path = localPath(archive, rootfile, item.href ?? "");
     const mime = item["media-type"];
@@ -315,8 +322,14 @@ export async function openEpub(archive: JSZip) {
       if (
         id &&
         (xhtmlTypes.has(mime) || mime === "image/svg+xml" || Object.values(images).includes(mime))
-      )
-        spineSources.set(id, { path, mime });
+      ) {
+        const overlay = item["media-overlay"] ? manifest.get(item["media-overlay"]) : undefined;
+        const narrationPath =
+          overlay?.["media-type"] === "application/smil+xml"
+            ? localPath(archive, rootfile, overlay.href ?? "")
+            : null;
+        spineSources.set(id, { path, mime, narrationPath });
+      }
     }
   }
   function resolveSpineSource(id: string | undefined) {
@@ -449,7 +462,7 @@ export async function openEpub(archive: JSZip) {
   async function page(index: number): Promise<EpubPage & { assets: string[] }> {
     const chapter = chapters[index];
     if (!chapter) throw new PreviewError({ code: "epub-no-chapters" });
-    const { path, mime, fixed } = chapter;
+    const { path, mime, fixed, narrationPath } = chapter;
     let markupSize = 0;
     let resourceSize = 0;
     let resourceCount = 0;
@@ -579,6 +592,60 @@ export async function openEpub(archive: JSZip) {
       return url;
     }
 
+    async function captions(target: string | null) {
+      if (!target) return "";
+      const key = `caption:${target}`;
+      const cached = resources.get(key);
+      if (cached !== undefined) return cached;
+      resources.set(key, "");
+      const entry = archive.file(target);
+      if (!entry || ++resourceCount > 2048) return "";
+      const bytes = await entry.async("uint8array");
+      if (bytes.length > 1024 * 1024) return "";
+      const type = media.get(target);
+      let content;
+      if (type === "application/ttml+xml" || extension(target) === "ttml") {
+        try {
+          content = ttmlCaptions(parseXml(officeXmlDecoder(bytes).decode(bytes)));
+        } catch (cause) {
+          if (!isPreviewError(cause) && !(cause instanceof RangeError)) throw cause;
+          return "";
+        }
+      } else {
+        content = new TextDecoder().decode(bytes);
+      }
+      if (!/^WEBVTT(?:[ \t\r\n]|$)/.test(content)) return "";
+      const url = asset(new TextEncoder().encode(content), "text/vtt");
+      resources.set(key, url);
+      return url;
+    }
+
+    async function narration() {
+      if (!narrationPath) return [];
+      const overlay = await optionalXml(narrationPath);
+      if (!overlay) return [];
+      const cues: EpubNarrationCue[] = [];
+      for (const par of find(overlay, "smil:par").slice(0, 4096)) {
+        const audio = par.children.find((child) => child.name === "smil:audio");
+        const target = par.children.find((child) => child.name === "smil:text")?.attrs.src;
+        const textPath = target?.split("#", 1)[0];
+        if (!textPath || localPath(archive, narrationPath, textPath) !== path || !audio) continue;
+        const begin = mediaTime(audio.attrs.clipBegin) ?? 0;
+        const end = mediaTime(audio.attrs.clipEnd);
+        if (end !== undefined && end <= begin) continue;
+        const src = await resource(localPath(archive, narrationPath, audio.attrs.src ?? ""));
+        if (!src) continue;
+        const anchor = target && resolve(narrationPath, target)?.anchor;
+        cues.push({
+          src,
+          begin,
+          ...(end === undefined ? {} : { end }),
+          ...(anchor ? { anchor } : {}),
+        });
+      }
+      return cues;
+    }
+
     async function cssUrls(css: string, base: string) {
       let result = "";
       let end = 0;
@@ -697,7 +764,10 @@ export async function openEpub(archive: JSZip) {
       if (formTag && staticControls.has(tag) && node.attrs.disabled === undefined)
         props += " disabled";
       if (tag === "svg")
-        props += ' xmlns="http://www.w3.org/2000/svg"' + attr("xml:space", node.attrs["xml:space"]);
+        props +=
+          ' xmlns="http://www.w3.org/2000/svg"' +
+          (svgDepth ? ' xmlns:epub="http://www.idpf.org/2007/ops"' : "") +
+          attr("xml:space", node.attrs["xml:space"]);
       if (tag === "math") props += ' xmlns="http://www.w3.org/1998/Math/MathML"';
       if (tag === "table" && node.children.some((child) => tagName(child) === "tr"))
         props += ' data-epub-direct-rows=""';
@@ -721,14 +791,25 @@ export async function openEpub(archive: JSZip) {
         if (href?.startsWith("#")) props += attr("href", href);
       }
       if (namespace === undefined && (tag === "video" || tag === "audio" || tag === "source")) {
-        const src = await resource(localPath(archive, base, node.attrs.src ?? ""));
+        const href = node.attrs.src ?? "";
+        const src = await resource(localPath(archive, base, href));
         if (tag === "source" && !src) return "";
-        if (src) props += attr("src", src);
+        if (src) props += attr("src", src + mediaFragment(href));
         if (tag !== "source") props += " controls" + attr("preload", node.attrs.preload);
+        if (tag !== "source" && node.attrs.loop !== undefined) props += " loop";
+        if (tag !== "source" && node.attrs.muted !== undefined) props += " muted";
         if (tag === "video") {
+          props += " playsinline";
           const poster = await resource(localPath(archive, base, node.attrs.poster ?? ""));
           if (poster) props += attr("poster", poster);
         }
+      }
+      if (namespace === undefined && tag === "track") {
+        const src = await captions(localPath(archive, base, node.attrs.src ?? ""));
+        if (!src) return "";
+        props += attr("src", src);
+        for (const key of ["kind", "srclang", "label"]) props += attr(key, node.attrs[key]);
+        if (node.attrs.default !== undefined) props += " default";
       }
       if (tag === "a") {
         const href = node.attrs.href ?? node.attrs["xlink:href"];
@@ -831,7 +912,9 @@ export async function openEpub(archive: JSZip) {
       };
     }
     try {
-      return { ...(await renderPage()), assets };
+      const page = await renderPage();
+      const cues = await narration();
+      return { ...page, ...(cues.length ? { narration: cues } : {}), assets };
     } catch (cause) {
       for (const url of assets) URL.revokeObjectURL(url);
       throw cause;
