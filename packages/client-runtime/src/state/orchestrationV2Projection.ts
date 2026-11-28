@@ -335,13 +335,20 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "run.created":
     case "run.updated": {
-      // Lifecycle updates carry the run as it was when the turn started. What the run returned
-      // is written by its own event, and an update without it must not take it away.
+      // Lifecycle updates can omit recorded run fields; preserve them to match ProjectionStore.
       const known = base.runs.find((run) => run.id === event.payload.id);
-      const run =
-        event.payload.output === undefined && known?.output !== undefined
-          ? { ...event.payload, output: known.output }
-          : event.payload;
+      const delegatedCompletion = event.payload.delegatedCompletion ?? known?.delegatedCompletion;
+      const restartCancelledBackgroundWork =
+        event.payload.restartCancelledBackgroundWork ?? known?.restartCancelledBackgroundWork;
+      const explicitQueue = event.payload.explicitQueue ?? known?.explicitQueue;
+      const output = known?.output ?? event.payload.output;
+      const run: OrchestrationV2Run = {
+        ...event.payload,
+        ...(delegatedCompletion !== undefined ? { delegatedCompletion } : {}),
+        ...(restartCancelledBackgroundWork !== undefined ? { restartCancelledBackgroundWork } : {}),
+        ...(explicitQueue !== undefined ? { explicitQueue } : {}),
+        ...(output !== undefined ? { output } : {}),
+      };
       const next = { ...base, runs: upsertEntity(base.runs, run) };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
       const wasQueued = known?.status === "queued";
