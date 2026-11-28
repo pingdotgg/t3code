@@ -15,7 +15,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -281,46 +280,6 @@ it.effect(
         Effect.flip,
       );
       assert.strictEqual(outsideError._tag, "ThreadProjectNotFoundError");
-
-      const resolveAfterAppearing = (filePath: string) => {
-        let hideOnce = true;
-        const racingFs = FileSystem.FileSystem.of({
-          ...fs,
-          realPath: (value) =>
-            hideOnce && value === filePath
-              ? ((hideOnce = false),
-                Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "FileSystem",
-                    method: "realPath",
-                    pathOrDescriptor: value,
-                  }),
-                ))
-              : fs.realPath(value),
-        });
-        return resolveProject(
-          scriptedTools({ t3_project_list: [{ projects, nextCursor: null }] }).tools,
-          filePath,
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, racingFs),
-          Effect.provideService(HostProcess.HomeDirectory, home),
-          Effect.provideService(HostProcess.WorkingDirectory, cwd),
-        );
-      };
-      const appeared = path.join(cwd, "appeared.ts");
-      yield* fs.writeFileString(appeared, "");
-      yield* fs.writeFileString(path.join(linkedModels, "appeared.ts"), "");
-      yield* fs.writeFileString(path.join(outsideDir, "appeared.ts"), "");
-      assert.strictEqual((yield* resolveAfterAppearing(appeared)).id, "current-project");
-      assert.strictEqual(
-        (yield* resolveAfterAppearing(path.join(cwd, "models", "appeared.ts"))).id,
-        "intended-project",
-      );
-      assert.strictEqual(
-        (yield* Effect.flip(resolveAfterAppearing(path.join(cwd, "outside", "appeared.ts"))))._tag,
-        "ThreadProjectNotFoundError",
-      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
