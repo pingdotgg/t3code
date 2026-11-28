@@ -322,6 +322,38 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           assert.isBelow(listenCalls, 10);
         }),
     );
+
+    it.effect.each(["EPERM", "EACCES"])(
+      "skips a port the OS reserves with %s while other ports still bind",
+      (code) =>
+        Effect.gen(function* () {
+          const reservedPort = 13_773;
+          const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+            this: NodeNet.Server,
+            ...args
+          ) {
+            const [options] = args;
+            const port = typeof options === "object" ? options?.port : undefined;
+            process.nextTick(() =>
+              port === reservedPort
+                ? this.emit("error", Object.assign(new Error(code), { code }))
+                : this.emit("listening"),
+            );
+            return this;
+          });
+          try {
+            const offset = yield* findFirstAvailableOffset({
+              startOffset: 0,
+              requireServerPort: true,
+              requireWebPort: true,
+            }).pipe(Effect.provide(NetService.layer));
+
+            assert.equal(offset, 1);
+          } finally {
+            spy.mockRestore();
+          }
+        }),
+    );
   });
 
   describe("checkPortAvailabilityOnHosts", () => {
