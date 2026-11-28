@@ -70,7 +70,11 @@ export function followPreviewSessions(threadRef: ScopedThreadRef, state: ThreadP
     sessions.map((session) => session.tabId),
     new Set(
       sessions
-        .filter((session) => session.runtime === "server" && session.reveal === false)
+        .filter(
+          (session) =>
+            state.closingTabIds.has(session.tabId) ||
+            (session.runtime === "server" && session.reveal === false),
+        )
         .map((session) => session.tabId),
     ),
   );
@@ -112,7 +116,11 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     }
-    if (before.sessions !== next.sessions || before.listLoaded !== next.listLoaded) {
+    if (
+      before.sessions !== next.sessions ||
+      before.listLoaded !== next.listLoaded ||
+      before.closingTabIds !== next.closingTabIds
+    ) {
       followPreviewSessions(threadRef, next);
     }
   });

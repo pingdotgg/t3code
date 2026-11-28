@@ -33,6 +33,8 @@ export interface ThreadPreviewState {
   sessions: Record<string, PreviewSessionSnapshot>;
   /** Tabs intentionally closed by this client. Stale list snapshots must not resurrect them. */
   suppressedTabIds: ReadonlySet<string>;
+  /** Tabs this client is closing that stay mounted until the server unloads their page. */
+  closingTabIds: ReadonlySet<string>;
   activeTabId: string | null;
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
@@ -46,6 +48,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   snapshot: null,
   sessions: {},
   suppressedTabIds: new Set<string>(),
+  closingTabIds: new Set<string>(),
   activeTabId: null,
   desktopOverlay: null,
   desktopByTabId: {},
@@ -447,6 +450,20 @@ export function applyPreviewDesktopState(
   });
 }
 
+const withoutClosingTab = (current: ThreadPreviewState, tabId: string): ReadonlySet<string> => {
+  if (!current.closingTabIds.has(tabId)) return current.closingTabIds;
+  const closingTabIds = new Set(current.closingTabIds);
+  closingTabIds.delete(tabId);
+  return closingTabIds;
+};
+
+export function markPreviewSessionClosing(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => {
+    if (current.closingTabIds.has(tabId)) return current;
+    return { ...current, closingTabIds: new Set(current.closingTabIds).add(tabId) };
+  });
+}
+
 export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {
   updateThreadPreviewState(ref, (current) => {
     const suppressedTabIds = new Set(current.suppressedTabIds);
@@ -454,6 +471,7 @@ export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): v
     return {
       ...removeSession(current, tabId),
       suppressedTabIds,
+      closingTabIds: withoutClosingTab(current, tabId),
     };
   });
 }
@@ -464,7 +482,10 @@ export function cancelPreviewSessionClose(
   tabId: string,
 ): void {
   updateThreadPreviewState(ref, (current) => {
-    if (!current.suppressedTabIds.has(tabId)) return current;
+    const closingTabIds = withoutClosingTab(current, tabId);
+    if (!current.suppressedTabIds.has(tabId)) {
+      return closingTabIds === current.closingTabIds ? current : { ...current, closingTabIds };
+    }
     const suppressedTabIds = new Set(current.suppressedTabIds);
     suppressedTabIds.delete(tabId);
     if (!snapshot) {
