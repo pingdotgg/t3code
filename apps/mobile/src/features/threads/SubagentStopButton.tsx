@@ -17,7 +17,6 @@ import {
 export function SubagentStopButton(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: OrchestrationV2Subagent;
-  readonly className?: string;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -48,7 +47,7 @@ export function SubagentStopButton(props: {
   };
 
   return (
-    <View className={props.className}>
+    <View>
       <IconButton
         icon="stop.fill"
         variant="danger"

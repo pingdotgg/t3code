@@ -91,12 +91,8 @@ export function ThreadWorkflowGroup(props: {
               }
             />
           </RowPressable>
-          <RowActionSlot>
-            <SubagentStopButton
-              environmentId={props.environmentId}
-              subagent={props.subagent}
-              className="android:mr-2"
-            />
+          <RowActionSlot cardEdge>
+            <SubagentStopButton environmentId={props.environmentId} subagent={props.subagent} />
           </RowActionSlot>
         </View>
         {rail.length > 0 ? (
