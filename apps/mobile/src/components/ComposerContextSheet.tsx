@@ -175,6 +175,7 @@ export function ComposerContextSheet(props: {
       if (source) {
         return (
           <OpenedFilePreview
+            key={record.contextId}
             source={{
               kind: record.kind === "image" || previewKind === "image" ? "image" : "pdf",
               name: record.name,
