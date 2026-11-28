@@ -375,6 +375,7 @@ patchedDependencies:
   '@expo/ui@58.0.29': 2346ac02073363a401e85357e541055e9737bcbc1cdcb63e056cda9368fa79f6
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
   '@generaltranslation/format@0.1.9': 5712dc73770a30134376f9ef883e1a2e1814f007f95532725ba5ecc7b7812db3
+  '@generaltranslation/icu@0.1.2': 88fcf88d9660610fbafcbf89b4c7320009b836da05fc658955d50fec899d3d04
   '@legendapp/list@3.9.0': c25646442029896901845e418ade4eaebb33cc101dc3bb4a38201f6923cf5e67
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
@@ -15457,9 +15458,9 @@ snapshots:
 
   '@generaltranslation/format@0.1.9(patch_hash=5712dc73770a30134376f9ef883e1a2e1814f007f95532725ba5ecc7b7812db3)':
     dependencies:
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=88fcf88d9660610fbafcbf89b4c7320009b836da05fc658955d50fec899d3d04)
 
-  '@generaltranslation/icu@0.1.2': {}
+  '@generaltranslation/icu@0.1.2(patch_hash=88fcf88d9660610fbafcbf89b4c7320009b836da05fc658955d50fec899d3d04)': {}
 
   '@generaltranslation/python-extractor@0.2.64':
     dependencies:
@@ -20130,7 +20131,7 @@ snapshots:
     dependencies:
       '@generaltranslation/api': 0.5.6
       '@generaltranslation/format': 0.1.9(patch_hash=5712dc73770a30134376f9ef883e1a2e1814f007f95532725ba5ecc7b7812db3)
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=88fcf88d9660610fbafcbf89b4c7320009b836da05fc658955d50fec899d3d04)
       '@noble/hashes': 2.4.0
 
   gensync@1.0.0-beta.2: {}
@@ -20284,7 +20285,7 @@ snapshots:
       '@babel/types': 7.29.8
       '@clack/prompts': 1.0.0-alpha.6
       '@generaltranslation/format': 0.1.9(patch_hash=5712dc73770a30134376f9ef883e1a2e1814f007f95532725ba5ecc7b7812db3)
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=88fcf88d9660610fbafcbf89b4c7320009b836da05fc658955d50fec899d3d04)
       '@generaltranslation/python-extractor': 0.2.64
       '@generaltranslation/supported-locales': 2.1.45
       '@generaltranslation/vue-extractor': 0.1.23(supports-color@8.1.1)

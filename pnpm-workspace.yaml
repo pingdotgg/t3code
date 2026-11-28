@@ -295,6 +295,9 @@ patchedDependencies:
   effect@4.1.5: patches/effect@4.1.5.patch
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
   gt-i18n@1.0.40: patches/gt-i18n@1.0.40.patch
+  # Every translated string reparsed its message and re-resolved its locale on each render, which
+  # crosses JNI on Android and stalled taps for seconds; cache both per locale.
+  "@generaltranslation/icu@0.1.2": patches/@generaltranslation__icu@0.1.2.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

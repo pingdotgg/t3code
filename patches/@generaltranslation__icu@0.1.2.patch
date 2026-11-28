@@ -1,0 +1,94 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..7e68214329cb18e59fab0580df35d04da0522b7d 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -750,11 +750,40 @@ const TIME_STYLES = {
+ 	long: LONG_TIME_STYLE,
+ 	full: LONG_TIME_STYLE
+ };
++// T3 patch: GT formats every translated string on every render. Parsing the message, resolving
++// its locale (Intl.supportedLocalesOf crosses JNI on Android) and building Intl formatters were
++// redone per call; they depend only on the locale and message, so keep them per locale.
++const MAX_CACHED_MESSAGES = 2e3;
++const localeCaches = /* @__PURE__ */ new Map();
++function localeCacheFor(locales) {
++	const key = typeof locales === "string" ? locales : locales.join("\0");
++	let cache = localeCaches.get(key);
++	if (!cache) localeCaches.set(key, cache = {
++		locale: resolveLocale(locales),
++		messages: /* @__PURE__ */ new Map(),
++		numberFormats: /* @__PURE__ */ new Map(),
++		dateTimeFormats: /* @__PURE__ */ new Map(),
++		pluralRules: /* @__PURE__ */ new Map()
++	});
++	return cache;
++}
++function parseCached(cache, message) {
++	let elements = cache.messages.get(message);
++	if (elements) return elements;
++	elements = parse(message, { locale: cache.locale });
++	if (cache.messages.size >= MAX_CACHED_MESSAGES) cache.messages.clear();
++	cache.messages.set(message, elements);
++	return elements;
++}
+ function formatMessage(message, locales = "en", variables = {}) {
+-	const parts = formatElements(parse(message, { locale: resolveLocale(locales) }), {
++	const cache = localeCacheFor(locales);
++	const parts = formatElements(parseCached(cache, message), {
+ 		message,
+ 		locales,
+-		variables
++		variables,
++		numberFormats: cache.numberFormats,
++		dateTimeFormats: cache.dateTimeFormats,
++		pluralRules: cache.pluralRules
+ 	});
+ 	if (parts.length === 1) return parts[0];
+ 	return parts.length ? parts : "";
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a54f2235227290efe761215b30da542562b2e77f..db5bcf2592340e7e9e96d26f89e3437018cfcd0f 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -749,11 +749,40 @@ const TIME_STYLES = {
+ 	long: LONG_TIME_STYLE,
+ 	full: LONG_TIME_STYLE
+ };
++// T3 patch: GT formats every translated string on every render. Parsing the message, resolving
++// its locale (Intl.supportedLocalesOf crosses JNI on Android) and building Intl formatters were
++// redone per call; they depend only on the locale and message, so keep them per locale.
++const MAX_CACHED_MESSAGES = 2e3;
++const localeCaches = /* @__PURE__ */ new Map();
++function localeCacheFor(locales) {
++	const key = typeof locales === "string" ? locales : locales.join("\0");
++	let cache = localeCaches.get(key);
++	if (!cache) localeCaches.set(key, cache = {
++		locale: resolveLocale(locales),
++		messages: /* @__PURE__ */ new Map(),
++		numberFormats: /* @__PURE__ */ new Map(),
++		dateTimeFormats: /* @__PURE__ */ new Map(),
++		pluralRules: /* @__PURE__ */ new Map()
++	});
++	return cache;
++}
++function parseCached(cache, message) {
++	let elements = cache.messages.get(message);
++	if (elements) return elements;
++	elements = parse(message, { locale: cache.locale });
++	if (cache.messages.size >= MAX_CACHED_MESSAGES) cache.messages.clear();
++	cache.messages.set(message, elements);
++	return elements;
++}
+ function formatMessage(message, locales = "en", variables = {}) {
+-	const parts = formatElements(parse(message, { locale: resolveLocale(locales) }), {
++	const cache = localeCacheFor(locales);
++	const parts = formatElements(parseCached(cache, message), {
+ 		message,
+ 		locales,
+-		variables
++		variables,
++		numberFormats: cache.numberFormats,
++		dateTimeFormats: cache.dateTimeFormats,
++		pluralRules: cache.pluralRules
+ 	});
+ 	if (parts.length === 1) return parts[0];
+ 	return parts.length ? parts : "";
