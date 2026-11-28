@@ -320,6 +320,29 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #43876 the hub only looks for adb at $ANDROID_HOME/platform-tools/adb
+  it.effect("gives a standalone adb on PATH an SDK layout for the hub", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-standalone-adb-" });
+      yield* fs.makeDirectory(`${home}/bin`);
+      yield* fs.writeFileString(`${home}/bin/adb`, "");
+      const adb = yield* fs.realPath(`${home}/bin/adb`);
+      const { hub } = yield* agentFixture(
+        () => Effect.succeed(processOutput(0)),
+        processOutput(0),
+        undefined,
+        {
+          HOME: home,
+          PATH: `${home}/bin`,
+        },
+      );
+      const androidHome = hub.spawnedEnvironments[0]?.ANDROID_HOME;
+      expect(androidHome).toBeDefined();
+      expect(yield* fs.realPath(`${androidHome}/platform-tools/adb`)).toBe(adb);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "drops emulated camera overrides once a running hub's emulator supports image files",
     () =>
@@ -697,6 +720,17 @@ describe("Android SDK availability", () => {
       ]) {
         expect(yield* diagnose(complete, environment)).toBeNull();
       }
+    }),
+  );
+
+  // regression: #43876 distro adb (android-tools, Homebrew) is a standalone binary outside any SDK
+  it.effect("supports connected Android devices with only a system adb on PATH", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnose(["/usr/bin/adb"], {
+        HOME: "/test/home",
+        PATH: "/usr/local/bin:/usr/bin",
+      });
+      expect(reason).toBeNull();
     }),
   );
 

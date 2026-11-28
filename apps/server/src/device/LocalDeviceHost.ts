@@ -118,15 +118,25 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
     return null;
   }
   const sdk = yield* androidSdk;
+  // Connected phones need only adb; emulator tooling gates AVD listing alone.
+  if (sdk.adb) return null;
   if (!sdk.root)
     return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";
-  // Connected phones need only adb; emulator tooling gates AVD listing alone.
-  if (!sdk.adb)
-    return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  return null;
+  return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
 });
 
-const androidSdk = Effect.gen(function* () {
+interface AndroidSdk {
+  readonly root: string | null;
+  readonly adb: boolean;
+  readonly emulator: boolean;
+  readonly standaloneAdb: string | null;
+}
+
+const androidSdk = Effect.gen(function* (): Effect.fn.Return<
+  AndroidSdk,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const environment = yield* HostProcess.Environment;
@@ -143,7 +153,7 @@ const androidSdk = Effect.gen(function* () {
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    return { root, adb, emulator };
+    return { root, adb, emulator, standaloneAdb: null };
   });
   const candidates = [
     ...explicit,
@@ -157,6 +167,7 @@ const androidSdk = Effect.gen(function* () {
   }
   // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
   const searchPath = environment.PATH ?? environment.Path ?? "";
+  let standaloneAdb: string | null = null;
   for (const directory of searchPath.split(windows ? ";" : ":")) {
     if (!directory) continue;
     const adb = path.join(directory, adbBinary);
@@ -164,10 +175,13 @@ const androidSdk = Effect.gen(function* () {
     const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
     const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
     if (sdk.adb || sdk.emulator) return sdk;
+    // Distro and Homebrew adb packages install adb outside any SDK.
+    standaloneAdb ??= resolved;
   }
+  if (standaloneAdb) return { root: null, adb: true, emulator: false, standaloneAdb };
   // No real SDK anywhere: report what the configured root is missing.
   if (explicit[0]) return yield* inspect(explicit[0]);
-  return { root: null, adb: false, emulator: false };
+  return { root: null, adb: false, emulator: false, standaloneAdb: null };
 });
 
 const deviceHostEnvironment = (
@@ -260,13 +274,34 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
+  // The hub and agent-device only run <ANDROID_HOME>/platform-tools/adb, so a standalone adb gets that layout.
+  const standaloneSdkRoot = path.join(config.stateDir, "device", "android-sdk");
+  const linkStandaloneAdb = (adb: string) => {
+    const link = path.join(standaloneSdkRoot, "platform-tools", path.basename(adb));
+    const linked = fs.readLink(link).pipe(
+      Effect.map((target) => target === adb),
+      Effect.orElseSucceed(() => false),
+    );
+    return Effect.gen(function* () {
+      if (yield* linked) return true;
+      yield* fs.makeDirectory(path.dirname(link), { recursive: true }).pipe(Effect.ignore);
+      yield* fs.remove(link).pipe(Effect.ignore);
+      yield* fs.symlink(adb, link).pipe(Effect.ignore);
+      // A concurrent caller may have made the same link first.
+      return yield* linked;
+    });
+  };
   // Resolved per use: the desktop shell snapshot can select another SDK after the host exists.
-  const currentSdk = androidSdk.pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-    Effect.provideService(HostProcess.Environment, environment),
-    Effect.provideService(HostProcess.Platform, hostPlatform),
-  );
+  const currentSdk = Effect.gen(function* () {
+    const sdk = yield* androidSdk.pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcess.Environment, environment),
+      Effect.provideService(HostProcess.Platform, hostPlatform),
+    );
+    if (sdk.standaloneAdb === null || !(yield* linkStandaloneAdb(sdk.standaloneAdb))) return sdk;
+    return { ...sdk, root: standaloneSdkRoot };
+  });
   const currentHostEnvironment = currentSdk.pipe(
     Effect.map((sdk) => deviceHostEnvironment(environment, sdk.root, hostPlatform, path)),
   );
