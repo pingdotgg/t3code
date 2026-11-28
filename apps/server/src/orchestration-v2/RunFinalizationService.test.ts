@@ -37,6 +37,50 @@ const layerNoProject = Layer.mergeAll(
   Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
 );
 
+it.effect("batches turn-end PR refreshes and flushes while more turns keep finishing", () => {
+  const first = ProjectId.make("project-a");
+  const second = ProjectId.make("project-b");
+  const batches: ReadonlyArray<ProjectId>[] = [];
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProject,
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurns: (projectIds) =>
+            Effect.sync(() => {
+              batches.push(projectIds);
+            }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* Effect.forEach([first, first, second, first, second], observer.refreshAfterTurn, {
+      discard: true,
+    });
+    yield* TestClock.adjust("9 seconds");
+    assert.deepEqual(batches, []);
+
+    yield* observer.refreshAfterTurn(first);
+    yield* TestClock.adjust("1 second");
+    assert.deepEqual(batches, [[first, second]]);
+
+    yield* observer.refreshAfterTurn(second);
+    yield* TestClock.adjust("9 seconds");
+    yield* observer.refreshAfterTurn(first);
+    yield* TestClock.adjust("1 second");
+    assert.deepEqual(batches, [
+      [first, second],
+      [second, first],
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
 const finalizationLayer = (
   scopeId: CheckpointScopeId,
   runId: RunId,

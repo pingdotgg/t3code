@@ -237,6 +237,7 @@ export class PullRequestService extends Context.Service<
       projectId: ProjectId,
       options?: { readonly pushed?: boolean },
     ) => Effect.Effect<void>;
+    readonly refreshAfterTurns: (projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<void>;
     /** Project and remote lookups inside `effect` read once per filter, e.g. across one sync sweep. */
     readonly withSharedProjectReads: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
@@ -3948,9 +3949,12 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
-    "PullRequestService.refreshAfterTurn",
-  )(function* (projectId, options) {
+  const refreshAfterTurns = Effect.fn("PullRequestService.refreshAfterTurns")(function* (
+    projectIds: ReadonlyArray<ProjectId>,
+    options?: { readonly pushed?: boolean },
+  ) {
+    const projects = new Set(projectIds);
+    if (projects.size === 0) return;
     // Everything the provider holds, not just the project's repository: a turn can touch a
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
@@ -3958,18 +3962,27 @@ export const make = Effect.gen(function* () {
     const epoch = ++epochCounter;
     // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
     if (options?.pushed === true) listingsEpoch = epoch;
-    projectEpochs.delete(projectId);
-    if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
-      const oldest = projectEpochs.keys().next().value;
-      if (oldest !== undefined) {
-        projectEpochFloor = projectEpochs.get(oldest)!;
-        projectEpochs.delete(oldest);
+    for (const projectId of projects) {
+      projectEpochs.delete(projectId);
+      if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
+        const oldest = projectEpochs.keys().next().value;
+        if (oldest !== undefined) {
+          projectEpochFloor = projectEpochs.get(oldest)!;
+          projectEpochs.delete(oldest);
+        }
       }
+      projectEpochs.set(projectId, epoch);
     }
-    projectEpochs.set(projectId, epoch);
-    yield* readCache.invalidate(`project:${projectId}`);
+    yield* Effect.forEach(projects, (projectId) => readCache.invalidate(`project:${projectId}`), {
+      discard: true,
+    });
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
+
+  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (
+    projectId,
+    options,
+  ) => refreshAfterTurns([projectId], options);
 
   const notifyLinkedThreadsChanged = SubscriptionRef.update(
     linkedThreadRefreshes,
@@ -4298,6 +4311,7 @@ export const make = Effect.gen(function* () {
     ),
     notifyLinkedThreadsChanged,
     refreshAfterTurn,
+    refreshAfterTurns,
     detail: credentialCached(detail),
     checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),
     watchFingerprint: credentialCached((input) =>

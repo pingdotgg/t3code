@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
@@ -14,7 +14,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
-  ProjectId,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
@@ -3095,6 +3094,64 @@ it.effect("a finished turn leaves another project's cached listing in place", ()
     yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
     yield* service.list(everyListing);
     assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
+  }),
+);
+
+it.effect("a turn batch clears provider reads once and refreshes every affected project", () =>
+  Effect.gen(function* () {
+    const web = { projectId: ProjectId.make("p1"), repository: "acme/web", number: 1 };
+    const api = { projectId: ProjectId.make("p2"), repository: "acme/api", number: 2 };
+    let hostTitle = "before shell command";
+    let providerInvalidations = 0;
+    const heldTitles = new Map<string, string>();
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: web.projectId,
+          title: "web",
+          workspaceRoot: "/a",
+          repository: web.repository,
+        }),
+        project({
+          id: api.projectId,
+          title: "api",
+          workspaceRoot: "/b",
+          repository: api.repository,
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: ({ repository }) =>
+            Effect.sync(() => {
+              const title = heldTitles.get(repository) ?? hostTitle;
+              heldTitles.set(repository, title);
+              return { ...hostedChangeRequest("body"), title };
+            }),
+          forgetChangeRequestReads: () =>
+            Effect.sync(() => {
+              providerInvalidations++;
+              heldTitles.clear();
+            }),
+        }),
+      ],
+    });
+    assert.strictEqual((yield* service.detail(web)).title, "before shell command");
+    assert.strictEqual((yield* service.detail(api)).title, "before shell command");
+
+    const refreshed = yield* service.subscribeRefreshes.pipe(
+      Stream.mapEffect(() => Effect.all([service.detail(web), service.detail(api)])),
+      Stream.runHead,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    hostTitle = "after shell command";
+    yield* service.refreshAfterTurns([web.projectId, api.projectId, web.projectId]);
+
+    assert.strictEqual(providerInvalidations, 1);
+    const details = Option.getOrThrow(yield* Fiber.join(refreshed));
+    assert.deepStrictEqual(
+      details.map((detail) => detail.title),
+      ["after shell command", "after shell command"],
+    );
   }),
 );
 

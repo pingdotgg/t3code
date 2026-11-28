@@ -1,10 +1,12 @@
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
@@ -131,6 +133,32 @@ export const layerObserver = Layer.effect(
     const pullRequestLookups = yield* FiberMap.make<string>();
     const repositoryRefreshes = yield* FiberMap.make<ThreadId>();
     const identityRefreshes = yield* FiberMap.make<ProjectId>();
+    // Several turns can finish together. Start the window on the first completion so
+    // continuous activity still flushes PR changes from shell commands and provider hooks.
+    const pendingPullRequestProjects = new Set<ProjectId>();
+    const pullRequestRefreshSignal = yield* Queue.dropping<void>(1);
+    const refreshAfterTurn = (projectId: ProjectId) =>
+      Effect.sync(() => {
+        const first = pendingPullRequestProjects.size === 0;
+        pendingPullRequestProjects.add(projectId);
+        if (first) Queue.offerUnsafe(pullRequestRefreshSignal, undefined);
+      });
+    yield* Effect.gen(function* () {
+      yield* Queue.take(pullRequestRefreshSignal);
+      yield* Effect.sleep("10 seconds");
+      const projectIds = Array.from(pendingPullRequestProjects);
+      pendingPullRequestProjects.clear();
+      yield* pullRequests.refreshAfterTurns(projectIds).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("failed to refresh pull requests after completed turns", {
+              projectIds,
+              cause,
+            }),
+        ),
+      );
+    }).pipe(Effect.forever, Effect.forkScoped);
     // A turn can add the first remote (`git remote add`, `gh repo create --push`), which the
     // enrichment and resolver caches would otherwise keep reporting as missing for a minute.
     const refreshMissingRepositoryIdentity = Effect.fn(
@@ -154,7 +182,7 @@ export const layerObserver = Layer.effect(
         ),
     );
     return {
-      refreshAfterTurn: pullRequests.refreshAfterTurn,
+      refreshAfterTurn,
       // A project can track dozens of repositories, so the next turn must not wait for them all.
       // A newer turn's refresh replaces a running one.
       refreshRepositories: Effect.fn("RunFinalizationService.refreshRepositories")(function* ({
