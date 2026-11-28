@@ -10,6 +10,7 @@ import { Readable } from "node:stream"
 import { vi } from "vitest"
 
 let closeCalls = 0
+let pingCalls = 0
 let connectImmediately = false
 const commandCalls: Array<Record<string, unknown>> = []
 const insertCalls: Array<Record<string, unknown>> = []
@@ -18,7 +19,10 @@ let queryImpl: ((options: Record<string, unknown>) => Promise<unknown>) | undefi
 
 vi.mock("@clickhouse/client", () => ({
   createClient: vi.fn(() => ({
-    ping: () => connectImmediately ? Promise.resolve({ success: true }) : new Promise(() => {}),
+    ping: () => {
+      pingCalls++
+      return connectImmediately ? Promise.resolve({ success: true }) : new Promise(() => {})
+    },
     query: (options: Record<string, unknown>) => queryImpl ? queryImpl(options) : new Promise(() => {}),
     insert: (options: Record<string, unknown>) => {
       insertCalls.push(options)
@@ -107,6 +111,15 @@ describe("ClickhouseClient", { concurrent: false }, () => {
 
       assert.isDefined(result)
       assert.strictEqual(closeCalls, 1)
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect("skips the initial ping when disableInitialPing is true", () =>
+    Effect.gen(function*() {
+      connectImmediately = false
+      pingCalls = 0
+      yield* ClickhouseClient.make({ url: "http://localhost:8123", disableInitialPing: true })
+
+      assert.strictEqual(pingCalls, 0)
     }).pipe(Effect.provide(Reactivity.layer)))
 
   it.effect("parameterizes the query id when cancelling a query", () =>

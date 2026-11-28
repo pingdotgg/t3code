@@ -53,6 +53,10 @@ if (
   const launcherOptions = launcher?.parseServiceLauncherArgs(process.argv.slice(3));
   if (launcher !== undefined && launcherOptions !== undefined) {
     await launcher.runServiceLauncherCli(launcherOptions);
+  } else if (process.argv[2] === "__process-launcher") {
+    // Single executables host the launcher here; other builds run it with `node -e`.
+    const { run } = await import("@effect/platform-node-shared/NodeChildProcessProxy");
+    run();
   } else {
     const { runCliCommand } = await loadCliMain();
     await runCliCommand();

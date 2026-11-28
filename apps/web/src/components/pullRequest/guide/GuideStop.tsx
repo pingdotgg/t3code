@@ -218,7 +218,12 @@ export function GuideStop({
                         </CollapsibleTrigger>
                         <CollapsiblePanel animate={false}>
                           {diff !== undefined ? (
-                            <GuideFileDiff file={diff} loadDiffFiles={loadDiffFiles} />
+                            <GuideFileDiff
+                              path={file.path}
+                              file={diff}
+                              commenting={commenting}
+                              loadDiffFiles={loadDiffFiles}
+                            />
                           ) : (
                             <p className="px-3 py-2 text-xs text-muted-foreground">
                               {diffLoading

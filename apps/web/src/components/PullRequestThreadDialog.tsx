@@ -11,7 +11,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "../i18n/messages";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useRef, useState } from "react";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 
 import {
@@ -77,12 +77,13 @@ export function PullRequestThreadDialog({
   onPrepared,
 }: PullRequestThreadDialogProps) {
   const gt = useGT();
-  const messages = useMessages();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
-  const [prepareErrorMessage, setPrepareErrorMessage] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<{ target: string; message: string } | null>(
+    null,
+  );
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -122,6 +123,7 @@ export function PullRequestThreadDialog({
       ? (pullRequestResolution.data?.pullRequest ?? null)
       : null;
   const resolvedPullRequest = liveResolvedPullRequest ?? cachedPullRequest;
+  const checkoutTarget = JSON.stringify([environmentId, cwd, threadId, parsedReference]);
   const isResolving =
     open &&
     parsedReference !== null &&
@@ -147,7 +149,7 @@ export function PullRequestThreadDialog({
     if (!parsedReference || !resolvedPullRequest || !cwd) {
       return;
     }
-    setPrepareErrorMessage(null);
+    setCheckoutError(null);
     setPreparingMode(mode);
     const result = await preparePullRequestThreadAction.run({
       reference: parsedReference,
@@ -156,17 +158,17 @@ export function PullRequestThreadDialog({
     });
     setPreparingMode(null);
     if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) {
-        preparePullRequestThreadAction.resetError();
-      } else {
+      if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        setPrepareErrorMessage(
-          thrownErrorMessage(error, m) ??
+        setCheckoutError({
+          target: checkoutTarget,
+          message:
+            thrownErrorMessage(error, m) ??
             gt(
               "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
               { term },
             ),
-        );
+        });
       }
       return;
     }
@@ -196,16 +198,8 @@ export function PullRequestThreadDialog({
         : null;
   const errorMessage =
     validationMessage ??
-    prepareErrorMessage ??
-    (resolvedPullRequest === null && pullRequestResolution.error
-      ? pullRequestResolution.error
-      : preparePullRequestThreadAction.error
-        ? (thrownErrorMessage(preparePullRequestThreadAction.error, messages) ??
-          gt(
-            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
-            { term },
-          ))
-        : null);
+    (checkoutError?.target === checkoutTarget ? checkoutError.message : null) ??
+    (resolvedPullRequest === null ? pullRequestResolution.error : null);
 
   return (
     <Dialog

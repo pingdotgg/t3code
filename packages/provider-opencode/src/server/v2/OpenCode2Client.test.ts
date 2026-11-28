@@ -409,9 +409,21 @@ describe("OpenCode2Client usage limits", () => {
       assert.deepStrictEqual(first?.windows[3]?.providerIds, ["opencode", "console-custom"]);
       assert.deepStrictEqual(first?.windows[7]?.modelIds, []);
       assert.include(first?.windows[7]?.label ?? "", "Most used model");
-      assert.strictEqual(first?.credentialFingerprint, undefined);
+      // OpenCode reports no account email, so the workspace is what lets environments share a row.
+      assert.isString(first?.credentialFingerprint);
       workspace = "wrk_switched";
       const next = yield* api.usageLimits("/remote/project");
+      assert.notStrictEqual(next?.credentialFingerprint, first?.credentialFingerprint);
+      workspace = "wrk_remote";
+      const otherEnvironment = yield* opencode.connect({
+        baseUrl: "https://remote.example/prefix",
+        password: "remote-password",
+      });
+      assert.strictEqual(
+        (yield* otherEnvironment.usageLimits("/remote/project"))?.credentialFingerprint,
+        first?.credentialFingerprint,
+      );
+      workspace = "wrk_switched";
       assert.strictEqual(next?.externalUsage?.label, "wrk_switched");
       assert.strictEqual(next?.externalUsage?.url, "https://opencode.ai/console/wrk_switched");
       for (const url of [
@@ -467,6 +479,16 @@ describe("OpenCode2Client usage limits", () => {
           "unsupported",
         ],
         [503, {}, "probeFailed"],
+        [
+          503,
+          {
+            _tag: "ServiceUnavailableError",
+            message:
+              "OpenCode Console budgets are unavailable: StatusCode: non 2xx status code (401 GET https://opencode.ai/console/api/policies/current-budgets)",
+            service: "opencode",
+          },
+          "probeFailed",
+        ],
         [401, {}, "probeFailed"],
         [200, { data: { workspace: {} } }, "probeFailed"],
       ] as const) {
@@ -485,8 +507,9 @@ describe("OpenCode2Client usage limits", () => {
         const result = yield* api.usageLimits("/remote");
         if (reason === undefined) assert.strictEqual(result, undefined);
         else assert.strictEqual(result?.unavailable?.reason, reason);
-        if ("data" in body && body.data === null)
-          assert.include(result?.unavailable?.message ?? "", "signed in");
+        if (reason === "unsupported") assert.strictEqual(result?.unavailable?.message, undefined);
+        if ("message" in body)
+          assert.include(result?.unavailable?.message ?? "", "OpenCode Console budgets");
       }
     }),
   );

@@ -18,12 +18,12 @@
   "dependencies": {
     "@effect/platform-node": "workspace:^",
     "effect": "workspace:^",
-    "semver": "^7.8.5"
+    "semver": "^7.8.6"
   },
   "devDependencies": {
     "@effect/vitest": "workspace:^",
     "@types/node": "^26.6.6",
     "@types/semver": "^7.8.0",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

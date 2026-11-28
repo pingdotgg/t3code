@@ -1,4 +1,8 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueTrackerConnectionList,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
 import { useNavigate } from "@tanstack/react-router";
 import type { MouseEvent } from "react";
@@ -23,11 +27,12 @@ export function useOpenIssueLink(
   >,
   targetUrl: string,
   targetEnvironmentId?: EnvironmentId,
+  trackers?: IssueTrackerConnectionList,
 ) => boolean {
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const navigate = useNavigate();
-  return (event, targetUrl, targetEnvironmentId) => {
+  return (event, targetUrl, targetEnvironmentId, trackers) => {
     if (event.metaKey || event.ctrlKey) return false;
     const resolvedPanelRef = panelRef ?? threadRef;
     // A list page's panel ref is a placeholder, not an environment; the link names its own.
@@ -37,6 +42,7 @@ export function useOpenIssueLink(
     const target = resolveIssueLinkTarget({
       url: targetUrl,
       projects: allProjects.filter((project) => project.environmentId === environmentId),
+      trackers,
     });
     if (target === null) return false;
     event.preventDefault();
@@ -49,10 +55,10 @@ export function useOpenIssueLink(
       key: target.ref.key,
       url: targetUrl,
     };
-    // A list page's panel is the Issues page's: its pull request tabs render this markdown too,
-    // and the pull request list's own panel shows pull requests only. Opening the tab here, not
-    // only through the URL, also brings back one that is already open.
-    if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
+    // A list page's panel is the Issues page's: the pull request list's own panel shows pull
+    // requests only. Opening the tab here, not only through the URL, also brings back one that
+    // is already open.
+    if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF || resolvedPanelRef === ISSUES_PANEL_REF) {
       useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, { ...surface, environmentId });
       const selection = {
         selectedEnvironmentId: environmentId,

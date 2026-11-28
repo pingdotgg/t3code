@@ -181,6 +181,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
+        npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -232,15 +233,29 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
+    const checkUsageLimits = readGrokAccount(processEnv).pipe(
+      Effect.map(({ email, usageLimits }) => ({
+        usageLimits,
+        ...(email ? { auth: { email } } : {}),
+      })),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
       resolveMaintenance,
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      // Each check starts the Grok CLI four times. A ready instance is rechecked on refresh or a
+      // settings change; only an unhealthy one keeps polling until it recovers.
+      refreshOnInterval: (snapshot) => snapshot.status !== "ready",
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      checkUsageLimits,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

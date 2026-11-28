@@ -18,6 +18,9 @@ on:
     # diff, so the label can be cleared without installing Expo dependencies.
     types: [opened, synchronize, reopened, edited]
 
+permissions:
+  contents: read
+
 concurrency:
   # A title or body edit gets its own group, so it cannot cancel the PR's real
   # run and leave a cancelled check on the head commit.
