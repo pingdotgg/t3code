@@ -54,6 +54,9 @@ fragment PullRequestRow on PullRequest {
   reviewRequests(first: 20) {
     nodes {
       requestedReviewer {
+        ... on Bot {
+          login
+        }
         ... on User {
           login
         }

@@ -21,6 +21,25 @@ Install Git and authenticate on the machine running your T3 Code server (for rem
 
 > Note: With several `gt` servers and no `fj` login, `owner/repo` and newly published repositories go to `gt`'s default server (`gt config set default_host https://your-server`). With several `gt` accounts on one server, pick one with `gt auth switch <user> --host https://your-server`. If an SSH remote uses a different host name than the server's web address, run `gt config set ssh_host <ssh-host> --host https://your-server`.
 
+### GitHub App installation tokens
+
+An installation token works through the same GitHub token sources above. Discovery shows the App's bot account. The installation must include the repositories you use and grant these repository permissions:
+
+| Task                                    | Repository permissions                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Browse PRs and their checks             | Pull requests: read; Contents: read; Checks: read; Commit statuses: read |
+| Create, edit, comment on, or review PRs | Pull requests: write                                                     |
+| Push commits or merge                   | Contents: write                                                          |
+| Update pull request branches            | Pull requests: write; Contents: write                                    |
+| Push changes to workflow files          | Contents: write and Workflows: write                                     |
+| Approve workflow runs                   | Actions: write                                                           |
+| Create repositories                     | Repository creation: write, or Administration: write                     |
+
+- **Expiry**: [Installation tokens expire after one hour](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation). Renew them outside T3 Code: replace the saved token, restart the server with a new environment token, or update the token returned by `gh auth token`.
+- **Destinations**: The bot is not a repository owner, so use `owner/repo` for clone and publish destinations. A bare name works only when the installation exposes a single repository owner.
+- **New projects**: Automatic publishing when adding a new project is unavailable for App identities. Publish manually with an explicit destination.
+- **Publishing**: The token must have access to the newly created repository. A token restricted to existing repository IDs can create a repository but cannot finish publishing it.
+
 ## Start, clone, or publish a project
 
 - **New project**: Run **New project** from the command palette (`Cmd/Ctrl+K`) or **Add Project** to initialize a new Git repo in `~/.t3/projects/<slug>` with a README, icon, and first commit (optionally creating a private GitHub repo).
