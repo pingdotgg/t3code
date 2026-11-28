@@ -26,7 +26,7 @@ export function useReviewGuideWriter({
   const query = useEnvironmentQuery(
     pullRequestEnvironment.reviewGuide({ environmentId, input: reference }),
   );
-  const canWrite = useAtomValue(
+  const hasWritePermission = useAtomValue(
     pullRequestEnvironment.generateReviewGuide.permissionAtom(environmentId),
   );
   const generate = useAtomCommand(pullRequestEnvironment.generateReviewGuide, {
@@ -34,11 +34,12 @@ export function useReviewGuideWriter({
   });
   const [starting, setStarting] = useState(false);
   const data = query.data;
-  const running = starting || data?.run?._tag === "Running";
+  const running = starting || (query.error === null && data?.run?._tag === "Running");
+  const canWrite = hasWritePermission && query.isSuccess;
 
   // A run reported by the server is watched where its answer lands (state/pullRequests.ts).
   const write = async () => {
-    if (running) return;
+    if (!canWrite || running) return;
     setStarting(true);
     useGuideRunStore.getState().watch({
       environmentId,

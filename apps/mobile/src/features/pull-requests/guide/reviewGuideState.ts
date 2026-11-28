@@ -26,6 +26,14 @@ export function guideNoticeState(
   },
   resolve: MessageResolver = m,
 ) {
+  if (state.error) {
+    return {
+      kind: "unavailable" as const,
+      title: resolve(msg("Could not refresh guide")),
+      description: state.error,
+      action: resolve(msg("Try again")),
+    };
+  }
   const { guide, stale, failure } = reviewGuideState(state.data);
   if (state.running) {
     return {
@@ -47,14 +55,6 @@ export function guideNoticeState(
       kind: "failed" as const,
       title: resolve(msg("Could not write guide")),
       description: error,
-      action: resolve(msg("Try again")),
-    };
-  }
-  if (state.error) {
-    return {
-      kind: "unavailable" as const,
-      title: resolve(msg("Could not refresh guide")),
-      description: state.error,
       action: resolve(msg("Try again")),
     };
   }
