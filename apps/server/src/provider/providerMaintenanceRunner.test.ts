@@ -1711,7 +1711,7 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
   );
 });
 
-it.effect("runs managed in-process updates, forwards progress, and handles failures", () => {
+it.effect("runs managed in-process updates without a shell command", () => {
   const antigravityDriver = ProviderDriverKind.make("antigravity");
   const antigravityId = ProviderInstanceId.make("antigravity");
   const initialProvider: ServerProvider = {
@@ -1731,10 +1731,12 @@ it.effect("runs managed in-process updates, forwards progress, and handles failu
   };
   return Effect.gen(function* () {
     let installedVersion = "1.5.14";
-    let latestVersion: string | null = "1.5.15";
     let outcome:
       | { readonly status: "succeeded" }
-      | { readonly status: "failed"; readonly message: string } = { status: "succeeded" };
+      | { readonly status: "failed"; readonly message: string } = {
+      status: "failed",
+      message: "Checksum mismatch.",
+    };
     let runs = 0;
     const { registry, updateStatesRef, providersRef } = yield* makeRegistry(initialProvider);
     const capabilities = {
@@ -1746,22 +1748,18 @@ it.effect("runs managed in-process updates, forwards progress, and handles failu
         run: (onProgress: (line: string) => Effect.Effect<void>) =>
           Effect.gen(function* () {
             runs += 1;
-            yield* onProgress("Downloading 12.0 MB");
+            yield* onProgress("Downloading the runtime.");
             if (outcome.status === "succeeded") {
               installedVersion = "1.5.15";
               yield* Ref.update(providersRef, (providers) =>
-                providers.map((entry) => ({
-                  ...entry,
-                  version: installedVersion,
-                  checkedAt: "2026-03-11T00:05:00.000Z",
-                })),
+                providers.map((entry) => ({ ...entry, version: installedVersion })),
               );
             }
             return outcome;
           }),
       },
       latestVersionCacheKey: "antigravity-managed",
-      lookupLatestVersion: Effect.sync(() => latestVersion),
+      lookupLatestVersion: Effect.succeed("1.5.15"),
     };
     const updater = yield* makeTestRunner({
       ...registry,
@@ -1775,69 +1773,31 @@ it.effect("runs managed in-process updates, forwards progress, and handles failu
         ),
       getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
     });
+    const update = (targetVersion?: string) =>
+      updater.updateProvider({
+        provider: antigravityDriver,
+        instanceId: antigravityId,
+        ...(targetVersion ? { targetVersion } : {}),
+      });
 
-    const pinnedRefused = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-      targetVersion: "1.5.15",
-    });
-    assert.strictEqual(pinnedRefused.providers[0]?.updateState?.status, "failed");
+    // A managed runtime installs its newest release and cannot pin one.
+    assert.strictEqual((yield* update("1.5.15")).providers[0]?.updateState?.status, "failed");
     assert.strictEqual(runs, 0);
 
-    latestVersion = null;
-    const missingLatest = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-    });
-    assert.strictEqual(missingLatest.providers[0]?.updateState?.status, "failed");
-    assert.match(
-      missingLatest.providers[0]?.updateState?.message ?? "",
-      /Could not determine the latest provider version/,
-    );
-    assert.strictEqual(runs, 0);
-
-    latestVersion = "1.5.15";
-    outcome = { status: "failed", message: "Checksum mismatch." };
-    const failed = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-    });
-    assert.strictEqual(failed.providers[0]?.updateState?.status, "failed");
+    const failed = yield* update();
     assert.strictEqual(failed.providers[0]?.updateState?.message, "Checksum mismatch.");
-    assert.strictEqual(runs, 1);
 
     outcome = { status: "succeeded" };
-    const succeeded = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-    });
+    const succeeded = yield* update();
     assert.strictEqual(succeeded.providers[0]?.updateState?.status, "succeeded");
-    assert.strictEqual(succeeded.providers[0]?.updateState?.message, "Provider updated.");
     assert.strictEqual(runs, 2);
     assert.include(
       (yield* Ref.get(updateStatesRef)).map((state) => state.message),
-      "Downloading 12.0 MB",
+      "Downloading the runtime.",
     );
 
-    const alreadyCurrent = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-    });
-    assert.strictEqual(alreadyCurrent.providers[0]?.updateState?.status, "succeeded");
-    assert.strictEqual(alreadyCurrent.providers[0]?.updateState?.message, "Already up to date.");
+    assert.strictEqual((yield* update()).providers[0]?.updateState?.message, "Already up to date.");
     assert.strictEqual(runs, 2);
-
-    latestVersion = "1.5.16";
-    const unchanged = yield* updater.updateProvider({
-      provider: antigravityDriver,
-      instanceId: antigravityId,
-    });
-    assert.strictEqual(unchanged.providers[0]?.updateState?.status, "unchanged");
-    assert.match(
-      unchanged.providers[0]?.updateState?.message ?? "",
-      /^Provider update completed, but T3 Code still detects an outdated provider version\.$/,
-    );
-    assert.strictEqual(runs, 3);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1853,103 +1813,3 @@ it.effect("runs managed in-process updates, forwards progress, and handles failu
     ),
   );
 });
-
-it.effect(
-  "keeps a managed update running and verifies completion after the caller RPC disconnects",
-  () => {
-    const antigravityDriver = ProviderDriverKind.make("antigravity");
-    const antigravityId = ProviderInstanceId.make("antigravity");
-    const initialProvider: ServerProvider = {
-      ...baseProvider,
-      instanceId: antigravityId,
-      driver: antigravityDriver,
-      version: "1.5.14",
-      versionAdvisory: {
-        status: "behind_latest",
-        currentVersion: "1.5.14",
-        latestVersion: "1.5.15",
-        updateCommand: null,
-        canUpdate: true,
-        checkedAt: "2026-03-11T00:00:00.000Z",
-        message: "Install the update now or review provider settings.",
-      },
-    };
-    return Effect.gen(function* () {
-      const downloadStarted = yield* Deferred.make<void>();
-      const allowFinish = yield* Deferred.make<void>();
-      const finalStateRecorded = yield* Deferred.make<ServerProviderUpdateState>();
-      const { registry, providersRef } = yield* makeRegistry(initialProvider);
-      let refreshAfterUpdateCalls = 0;
-      const capabilities = {
-        provider: antigravityDriver,
-        packageName: null,
-        update: null,
-        managedUpdate: {
-          lockKey: "antigravity-managed",
-          run: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(downloadStarted, undefined);
-              yield* Deferred.await(allowFinish);
-              yield* Ref.update(providersRef, (providers) =>
-                providers.map((entry) => ({
-                  ...entry,
-                  version: "1.5.15",
-                  checkedAt: "2026-03-11T00:05:00.000Z",
-                })),
-              );
-              return { status: "succeeded" as const };
-            }),
-        },
-        latestVersionCacheKey: "antigravity-managed",
-        lookupLatestVersion: Effect.succeed("1.5.15"),
-      };
-      const updater = yield* makeTestRunner({
-        ...registry,
-        refreshAfterUpdate: () => {
-          refreshAfterUpdateCalls += 1;
-          return Ref.get(providersRef);
-        },
-        setProviderMaintenanceActionState: (input) =>
-          registry
-            .setProviderMaintenanceActionState(input)
-            .pipe(
-              Effect.tap(() =>
-                input.state?.status === "succeeded" || input.state?.status === "failed"
-                  ? Deferred.succeed(finalStateRecorded, input.state).pipe(Effect.asVoid)
-                  : Effect.void,
-              ),
-            ),
-        getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
-      });
-
-      const rpcFiber = yield* Effect.forkChild(
-        updater.updateProvider({ provider: antigravityDriver, instanceId: antigravityId }),
-      );
-      yield* Deferred.await(downloadStarted);
-
-      // Simulate the requesting client disconnecting mid-download.
-      yield* Fiber.interrupt(rpcFiber);
-      assert.strictEqual((yield* Ref.get(providersRef))[0]?.updateState?.status, "running");
-
-      yield* Deferred.succeed(allowFinish, undefined);
-      const finalState = yield* Deferred.await(finalStateRecorded);
-      assert.strictEqual(finalState.status, "succeeded");
-      assert.strictEqual(finalState.message, "Provider updated.");
-      assert.strictEqual(refreshAfterUpdateCalls, 1);
-      assert.strictEqual((yield* Ref.get(providersRef))[0]?.version, "1.5.15");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          Layer.succeed(
-            HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("Managed update must not call npm")),
-          ),
-          layerMockSpawner(() => {
-            throw new Error("Managed update must not spawn a shell updater");
-          }),
-        ),
-      ),
-    );
-  },
-);

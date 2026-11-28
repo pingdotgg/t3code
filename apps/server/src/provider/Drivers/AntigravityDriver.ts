@@ -76,7 +76,11 @@ import {
   AntigravityProbeIncompatibility,
   makeAntigravityProvider,
 } from "../AntigravityProvider.ts";
+import { makeManagedInstallationMaintenance } from "../managedInstallationUpdate.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { enrichProviderSnapshotWithVersionAdvisory } from "@t3tools/provider-core/server/maintenanceResolver";
+import { HttpClient } from "effect/http";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
   defaultProviderContinuationIdentity,
@@ -123,7 +127,9 @@ export type AntigravityDriverEnv =
   | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers;
+  | ProviderEventLoggers.ProviderEventLoggers
+  | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions;
 
 export const AntigravityDriver: ProviderDriver<
   AntigravitySettings,
@@ -650,10 +656,30 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    const httpClient = yield* HttpClient.HttpClient;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const resolveMaintenance = () =>
+      installation.resolve(settings.binaryPath, processEnvironment).pipe(
+        Effect.option,
+        Effect.map((executable) =>
+          makeManagedInstallationMaintenance({ provider: DRIVER, installation, executable }),
+        ),
+      );
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
       probe,
+      resolveMaintenance,
+      enrichVersionAdvisory: (snapshot, enableProviderUpdateChecks) =>
+        resolveMaintenance().pipe(
+          Effect.flatMap((capabilities) =>
+            enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities, {
+              enableProviderUpdateChecks,
+            }),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        ),
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       ...(rememberedRuntimeModes ? { rememberedRuntimeModes } : {}),
       rememberRuntimeModes: (modes) =>

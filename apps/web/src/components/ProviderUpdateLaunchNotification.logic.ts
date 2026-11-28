@@ -69,13 +69,27 @@ function chooseRepresentativeProvider(
   return candidate.checkedAt.localeCompare(current.checkedAt) >= 0 ? candidate : current;
 }
 
-function dedupeProvidersByDriver<T extends ServerProvider>(providers: ReadonlyArray<T>): T[] {
-  const latestProviderByDriver = new Map<ProviderDriverKind, T>();
+// A T3-managed runtime updates without a shell command, apart from a CLI install of its driver.
+function isManagedUpdate(provider: ServerProvider): boolean {
+  return (
+    provider.versionAdvisory?.canUpdate === true && provider.versionAdvisory.updateCommand === null
+  );
+}
+
+function dedupeProvidersByDriver<T extends ServerProvider>(
+  providers: ReadonlyArray<T>,
+  keepManagedApart = false,
+): T[] {
+  const latestProviderByDriver = new Map<string, T>();
 
   for (const provider of providers) {
+    const key =
+      keepManagedApart && isManagedUpdate(provider)
+        ? `${provider.driver}:managed`
+        : provider.driver;
     latestProviderByDriver.set(
-      provider.driver,
-      chooseRepresentativeProvider(latestProviderByDriver.get(provider.driver), provider) as T,
+      key,
+      chooseRepresentativeProvider(latestProviderByDriver.get(key), provider) as T,
     );
   }
 
@@ -148,78 +162,10 @@ export function isProviderUpdateActive(provider: Pick<ServerProvider, "updateSta
   return provider.updateState?.status === "queued" || provider.updateState?.status === "running";
 }
 
-/**
- * Collects one update job per distinct installation of each driver so mixed CLI + managed
- * instances (for example, CLI Codex alongside T3-managed Codex) can each be updated, while
- * accounts sharing one installation stay deduplicated into a single job.
- */
-export function collectOneClickProviderUpdateCandidates(
+export function collectProviderUpdateCandidates(
   providers: ReadonlyArray<ServerProvider>,
 ): ProviderUpdateCandidate[] {
-  const byDriver = new Map<ProviderDriverKind, ProviderUpdateCandidate[]>();
-  for (const provider of providers) {
-    if (!isProviderUpdateCandidate(provider)) {
-      continue;
-    }
-    const existing = byDriver.get(provider.driver);
-    if (existing) {
-      existing.push(provider);
-    } else {
-      byDriver.set(provider.driver, [provider]);
-    }
-  }
-
-  const results: ProviderUpdateCandidate[] = [];
-  for (const driverCandidates of byDriver.values()) {
-    const managed = driverCandidates.filter(
-      (candidate) =>
-        candidate.versionAdvisory.canUpdate === true &&
-        candidate.versionAdvisory.updateCommand === null,
-    );
-    const nonManaged = driverCandidates.filter(
-      (candidate) =>
-        candidate.versionAdvisory.canUpdate !== true ||
-        candidate.versionAdvisory.updateCommand !== null,
-    );
-
-    if (nonManaged.length > 0) {
-      const cliCommands = new Set<string>();
-      let cliEligible = true;
-      for (const candidate of nonManaged) {
-        if (
-          candidate.versionAdvisory.canUpdate !== true ||
-          candidate.versionAdvisory.updateCommand === null
-        ) {
-          cliEligible = false;
-          break;
-        }
-        cliCommands.add(candidate.versionAdvisory.updateCommand);
-      }
-      if (
-        cliEligible &&
-        cliCommands.size === 1 &&
-        !nonManaged.some((candidate) => isProviderUpdateActive(candidate))
-      ) {
-        results.push(
-          nonManaged.reduce(
-            (representative, candidate) =>
-              chooseRepresentativeProvider(representative, candidate) as ProviderUpdateCandidate,
-          ),
-        );
-      }
-    }
-
-    if (managed.length > 0 && !managed.some((candidate) => isProviderUpdateActive(candidate))) {
-      results.push(
-        managed.reduce(
-          (representative, candidate) =>
-            chooseRepresentativeProvider(representative, candidate) as ProviderUpdateCandidate,
-        ),
-      );
-    }
-  }
-
-  return results;
+  return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate), true);
 }
 
 export function isProviderSettingsUpdateCandidate(
@@ -242,13 +188,15 @@ export function hasOneClickUpdateProviderCandidate(
     return false;
   }
 
-  const driverProviders = providers.filter((provider) => provider.driver === candidate.driver);
+  const managed = isManagedUpdate(candidate);
+  const driverProviders = providers.filter(
+    (provider) => provider.driver === candidate.driver && isManagedUpdate(provider) === managed,
+  );
   if (driverProviders.length === 0) {
     return false;
   }
 
-  // `null` stands for a T3-managed in-process updater; mixed shell and managed installs disagree.
-  const updateMethods = new Set<string | null>();
+  const updateCommands = new Set<string | null>();
   for (const provider of driverProviders) {
     if (!isProviderUpdateCandidate(provider)) {
       continue;
@@ -257,10 +205,10 @@ export function hasOneClickUpdateProviderCandidate(
     if (!advisory || advisory.canUpdate !== true) {
       return false;
     }
-    updateMethods.add(advisory.updateCommand);
+    updateCommands.add(advisory.updateCommand);
   }
 
-  return updateMethods.size === 1;
+  return updateCommands.size === 1;
 }
 
 export function canOneClickUpdateProviderCandidate(

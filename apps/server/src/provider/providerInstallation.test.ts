@@ -67,8 +67,8 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const calls: string[] = [];
   const refreshed = yield* Deferred.make<void>();
   const lastRefreshes = yield* Queue.unbounded<void>();
-  const observed = yield* Deferred.make<void>();
   const listening = yield* Deferred.make<void>();
+  const pulled = yield* Queue.unbounded<ProviderInstallState>();
   const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
@@ -134,8 +134,11 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
                 watches++;
               }),
             ),
-            Stream.tap(() => Deferred.succeed(listening, undefined)),
-            Stream.ensuring(Deferred.succeed(observed, undefined)),
+            Stream.tap((pulledState) =>
+              Deferred.succeed(listening, undefined).pipe(
+                Effect.andThen(Queue.offer(pulled, pulledState)),
+              ),
+            ),
           )
         : Stream.succeed(state),
       remove: (paths) =>
@@ -150,6 +153,14 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     Effect.provide(context),
   );
   const router = yield* connect;
+  // The watcher pulls the next state only once it has handled the previous one.
+  const settle = Effect.gen(function* () {
+    yield* SubscriptionRef.set(installationState, { ...state, operationId: "settled" });
+    let next: ProviderInstallState;
+    do {
+      next = yield* Queue.take(pulled);
+    } while (next.operationId !== "settled");
+  });
   return {
     router,
     connect,
@@ -158,7 +169,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     refreshed,
     lastRefreshes,
     watches: () => watches,
-    observed,
+    settle,
     installationState,
     refreshedInstances,
     protectedPaths: () => protectedPaths,
@@ -206,7 +217,6 @@ describe("provider installation routing", () => {
           });
           yield* Deferred.await(harness.listening);
         }).pipe(Effect.scoped);
-        assert.isFalse(yield* Deferred.isDone(harness.observed));
         assert.strictEqual(checks, 0);
         yield* SubscriptionRef.set(harness.installationState, {
           ...state,
@@ -214,8 +224,7 @@ describe("provider installation routing", () => {
           phase,
           installedVersion: phase === "succeeded" ? "1.5.1" : null,
         });
-        yield* Deferred.await(harness.observed);
-        if (expectedChecks > 0) yield* Deferred.await(harness.refreshed);
+        yield* harness.settle;
         assert.strictEqual(checks, expectedChecks);
         assert.deepEqual(
           harness.calls,
@@ -267,7 +276,7 @@ describe("provider installation routing", () => {
           phase: "succeeded",
           installedVersion: "1.5.8",
         });
-        yield* Deferred.await(harness.observed);
+        yield* harness.settle;
         // Instances refresh in list order, so the last one's refresh ends a watch's pass.
         yield* Queue.take(harness.lastRefreshes);
         assert.deepEqual(checked, [work.instanceId, personal.instanceId]);

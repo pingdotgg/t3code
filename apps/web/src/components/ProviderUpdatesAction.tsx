@@ -14,7 +14,8 @@ import { serverEnvironment } from "~/state/server";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
-  collectOneClickProviderUpdateCandidates,
+  canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
   getProviderUpdateRunToastView,
   type ProviderUpdateRun,
 } from "./ProviderUpdateLaunchNotification.logic";
@@ -85,7 +86,9 @@ export function useProviderUpdates() {
     ) {
       return [];
     }
-    const candidates = collectOneClickProviderUpdateCandidates(providers);
+    const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
+      canOneClickUpdateProviderCandidate(candidate, providers),
+    );
     return candidates.length > 0
       ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
       : [];

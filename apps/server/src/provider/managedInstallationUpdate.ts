@@ -1,97 +1,84 @@
-import type { ProviderInstallState } from "@t3tools/contracts";
-import type { ProviderMaintenanceManagedUpdateResult } from "@t3tools/provider-core/server/maintenance";
-import * as Clock from "effect/Clock";
+import type { ProviderDriverKind, ProviderInstallState } from "@t3tools/contracts";
+import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+  type ProviderMaintenanceManagedUpdateResult,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
-const PROGRESS_INTERVAL_MS = 1_000;
-
-export interface ManagedInstallationUpdater {
-  readonly start: Effect.Effect<ProviderInstallState, { readonly message: string }>;
+export interface ManagedInstallation {
+  readonly start: Effect.Effect<ProviderInstallState, { readonly detail: string }>;
   readonly changes: Stream.Stream<ProviderInstallState>;
+  readonly state: Effect.Effect<ProviderInstallState>;
+  readonly checkForUpdate: Effect.Effect<void>;
 }
 
-function isRunningPhase(phase: ProviderInstallState["phase"]): boolean {
-  return phase === "downloading" || phase === "extracting" || phase === "verifying";
-}
+const isRunning = (state: ProviderInstallState) =>
+  state.phase === "downloading" || state.phase === "extracting" || state.phase === "verifying";
 
-function formatManagedInstallProgress(state: ProviderInstallState): string | null {
-  if (state.phase === "downloading" && state.downloadedBytes > 0) {
-    const downloaded = (state.downloadedBytes / 1_000_000).toFixed(1);
-    return state.totalBytes !== null && state.totalBytes > 0
-      ? `Downloading ${downloaded} MB of ${(state.totalBytes / 1_000_000).toFixed(1)} MB`
-      : `Downloading ${downloaded} MB`;
-  }
-  const message = state.message?.trim();
-  return message && message.length > 0 ? message : null;
-}
-
-export const runManagedInstallationUpdate = Effect.fn("runManagedInstallationUpdate")(function* (
-  installation: ManagedInstallationUpdater,
+const runManagedInstallationUpdate = Effect.fn("runManagedInstallationUpdate")(function* (
+  installation: ManagedInstallation,
   onProgress: (line: string) => Effect.Effect<void>,
 ): Effect.fn.Return<ProviderMaintenanceManagedUpdateResult> {
-  const startedResult = yield* installation.start.pipe(Effect.result);
-  if (startedResult._tag === "Failure") {
-    return { status: "failed", message: startedResult.failure.message };
+  const started = yield* installation.start.pipe(Effect.result);
+  if (Result.isFailure(started)) return { status: "failed", message: started.failure.detail };
+  const { operationId } = started.success;
+  if (operationId === null || !isRunning(started.success)) {
+    return started.success.phase === "succeeded"
+      ? { status: "succeeded" }
+      : { status: "failed", message: started.success.message ?? "Provider update failed." };
   }
-  const started = startedResult.success;
-  if (started.phase === "succeeded") {
-    return { status: "succeeded" };
-  }
-  if (!isRunningPhase(started.phase) || started.operationId === null) {
-    return {
-      status: "failed",
-      message: started.message ?? "Provider update failed.",
-    };
-  }
-
-  let lastPhase: ProviderInstallState["phase"] | null = null;
-  let lastMessage: string | null = null;
-  let lastReportedAt = 0;
-
-  const reportProgress = Effect.fn("runManagedInstallationUpdate.reportProgress")(function* (
-    state: ProviderInstallState,
-  ) {
-    if (!isRunningPhase(state.phase)) return;
-    const line = formatManagedInstallProgress(state);
-    if (line === null || line === lastMessage) return;
-    const now = yield* Clock.currentTimeMillis;
-    if (state.phase === lastPhase && now - lastReportedAt < PROGRESS_INTERVAL_MS) return;
-    lastPhase = state.phase;
-    lastMessage = line;
-    lastReportedAt = now;
-    yield* onProgress(line);
-  });
-
-  yield* reportProgress(started);
-
-  const terminal = yield* installation.changes.pipe(
+  // Download progress changes only the byte counts; forward the messages, not every chunk.
+  const finished = yield* installation.changes.pipe(
+    Stream.changesWith(
+      (a, b) => a.operationId === b.operationId && a.phase === b.phase && a.message === b.message,
+    ),
     Stream.tap((state) =>
-      state.operationId === started.operationId ? reportProgress(state) : Effect.void,
+      state.operationId === operationId && isRunning(state) && state.message
+        ? onProgress(state.message)
+        : Effect.void,
     ),
-    Stream.filter(
-      (state) => state.operationId !== started.operationId || !isRunningPhase(state.phase),
-    ),
+    Stream.filter((state) => state.operationId !== operationId || !isRunning(state)),
     Stream.runHead,
   );
-
-  if (Option.isNone(terminal)) {
-    return { status: "failed", message: "Provider update did not finish." };
+  if (Option.isSome(finished) && finished.value.operationId === operationId) {
+    if (finished.value.phase === "succeeded") return { status: "succeeded" };
+    return { status: "failed", message: finished.value.message ?? "Provider update failed." };
   }
-  const finalState = terminal.value;
-  if (finalState.operationId !== started.operationId) {
-    return { status: "failed", message: "Provider installation changed while updating." };
-  }
-  if (finalState.phase === "succeeded") {
-    return { status: "succeeded" };
-  }
-  return {
-    status: "failed",
-    message:
-      finalState.message ??
-      (finalState.phase === "cancelled"
-        ? "Provider update was cancelled."
-        : "Provider update failed."),
-  };
+  return { status: "failed", message: "Provider installation changed while updating." };
 });
+
+/** One-click updates for an instance that runs the T3-managed runtime; anything else stays manual. */
+export function makeManagedInstallationMaintenance(input: {
+  readonly provider: ProviderDriverKind;
+  readonly installation: ManagedInstallation;
+  readonly executable: Option.Option<{ readonly source: string; readonly executablePath: string }>;
+}): ProviderMaintenanceCapabilities {
+  const { provider, installation, executable } = input;
+  if (Option.isNone(executable) || executable.value.source !== "managed") {
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider,
+      packageName: null,
+      ...(Option.isSome(executable) ? { installPath: executable.value.executablePath } : {}),
+    });
+  }
+  const lockKey = `${provider}-managed`;
+  return {
+    provider,
+    packageName: null,
+    update: null,
+    managedUpdate: {
+      lockKey,
+      run: (onProgress) => runManagedInstallationUpdate(installation, onProgress),
+    },
+    latestVersionCacheKey: lockKey,
+    // The installation offers its newest eligible release through `state.version`.
+    lookupLatestVersion: installation.checkForUpdate.pipe(
+      Effect.andThen(installation.state),
+      Effect.map((state) => state.version),
+    ),
+  };
+}

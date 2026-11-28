@@ -3,7 +3,6 @@ import * as NodeCrypto from "node:crypto";
 export type {
   ProviderMaintenanceCapabilities,
   ProviderMaintenanceCommandAction,
-  ProviderMaintenanceManagedAction,
   ProviderMaintenanceManagedUpdateResult,
 } from "@t3tools/provider-core/server/maintenance";
 import type {
@@ -1532,7 +1531,6 @@ function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities
   if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
-  if (capabilities.managedUpdate) return capabilities.managedUpdate.lockKey;
   return capabilities.installPath
     ? ["manual", capabilities.installPath].join("\0")
     : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;

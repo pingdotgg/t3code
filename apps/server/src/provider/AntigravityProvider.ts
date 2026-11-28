@@ -29,15 +29,17 @@ import {
   DeferringFailedCheck,
   makeManagedServerProvider,
 } from "@t3tools/provider-core/server/managedProvider";
-import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilities,
-} from "@t3tools/provider-core/server/maintenanceResolver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   buildServerProvider,
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+} from "@t3tools/provider-core/server/snapshotSettings";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
@@ -204,7 +206,11 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
-  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenance?: ManagedServerProvider["resolveMaintenance"];
+  readonly enrichVersionAdvisory?: (
+    snapshot: ServerProvider,
+    enableProviderUpdateChecks: boolean,
+  ) => Effect.Effect<ServerProvider>;
   readonly auth?: { readonly type: string; readonly label: string };
   /** Modes the last session advertised, saved because initialize alone does not report them. */
   readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
@@ -386,23 +392,31 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     return yield* options.stampIdentity(next.draft);
   });
 
-  const maintenanceCapabilities =
-    options.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("antigravity"),
-      packageName: null,
-    });
+  const manualMaintenance = makeManualOnlyProviderMaintenanceCapabilities({
+    provider: ProviderDriverKind.make("antigravity"),
+    packageName: null,
+  });
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const enrichVersionAdvisory =
+    options.enrichVersionAdvisory ?? ((snapshot: ServerProvider) => Effect.succeed(snapshot));
   const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+    resolveMaintenance: options.resolveMaintenance ?? (() => Effect.succeed(manualMaintenance)),
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
+    // Session callbacks republish the draft, so each publish carries its own advisory.
+    enrichSnapshot: ({ settings: current, publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
-          options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
+          options.stampIdentity(state.draft).pipe(
+            Effect.flatMap((snapshot) =>
+              enrichVersionAdvisory(snapshot, current.enableProviderUpdateChecks),
+            ),
+            Effect.flatMap(publishSnapshot),
+          ),
         ),
       ),
   });
