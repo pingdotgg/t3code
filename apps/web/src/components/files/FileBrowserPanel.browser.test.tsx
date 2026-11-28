@@ -12,6 +12,7 @@ import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDra
 import { RightPanelSheet } from "~/components/RightPanelSheet";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import { isMacPlatform } from "~/lib/utils";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
@@ -57,21 +58,29 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
-// Workspace root and relative path to the server's answer; a file left out never answers.
-const fileSizes = new Map<string, number>();
-const unansweredStat = Atom.make(AsyncResult.initial<ProjectStatFileResult, never>(true));
+// One stat answer per workspace root and relative path, waiting until a test settles it.
+const statAnswers = new Map<
+  string,
+  Atom.Writable<AsyncResult.AsyncResult<ProjectStatFileResult, string>>
+>();
+const statAnswer = (cwd: string, relativePath: string) => {
+  const key = `${cwd}|${relativePath}`;
+  const known = statAnswers.get(key);
+  if (known) return known;
+  const waiting: AsyncResult.AsyncResult<ProjectStatFileResult, string> = AsyncResult.initial(true);
+  const answer = Atom.make(waiting).pipe(Atom.keepAlive);
+  statAnswers.set(key, answer);
+  return answer;
+};
 vi.mock("~/state/projects", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/state/projects")>();
   return {
     ...actual,
     projectEnvironment: {
       ...actual.projectEnvironment,
-      statFile: ({ input }: { input: ProjectStatFileInput }) => {
-        const byteLength = fileSizes.get(`${input.cwd}|${input.relativePath}`);
-        return byteLength === undefined
-          ? unansweredStat
-          : Atom.make(AsyncResult.success({ byteLength }));
-      },
+      // Derived, so the refresh each read asks for keeps the answer a test set.
+      statFile: ({ input }: { input: ProjectStatFileInput }) =>
+        Atom.make((get) => get(statAnswer(input.cwd, input.relativePath))),
     },
   };
 });
@@ -198,6 +207,8 @@ describe("FileBrowserPanel", () => {
       />,
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    using _answers = { [Symbol.dispose]: () => statAnswers.clear() };
+    appAtomRegistry.set(statAnswer("/repo", "README.md"), AsyncResult.success({ byteLength: 18 }));
     await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
 
@@ -217,17 +228,22 @@ describe("FileBrowserPanel", () => {
     expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
   });
 
-  it("leaves Open preview out for markdown known to be past the rendering limit", async () => {
+  it("offers Open preview only for markdown whose size is confirmed renderable", async () => {
     using _listing = withDirectoryListing([
       { path: "huge.md", kind: "file" },
       { path: "small.md", kind: "file" },
-      { path: "unanswered.md", kind: "file" },
+      { path: "slow-huge.md", kind: "file" },
+      { path: "slow-small.md", kind: "file" },
+      { path: "failed.md", kind: "file" },
     ]);
     // A network workspace: the generic metadata endpoint never stats one, the workspace stat does.
     const cwd = "\\\\nas\\share\\project";
-    fileSizes.set(`${cwd}|huge.md`, FULL_TEXT_MAX_BYTES + 1);
-    fileSizes.set(`${cwd}|small.md`, FULL_TEXT_MAX_BYTES);
-    using _sizes = { [Symbol.dispose]: () => fileSizes.clear() };
+    const answer = (path: string, byteLength: number) =>
+      appAtomRegistry.set(statAnswer(cwd, path), AsyncResult.success({ byteLength }));
+    using _answers = { [Symbol.dispose]: () => statAnswers.clear() };
+    answer("huge.md", FULL_TEXT_MAX_BYTES + 1);
+    answer("small.md", FULL_TEXT_MAX_BYTES);
+    appAtomRegistry.set(statAnswer(cwd, "failed.md"), AsyncResult.fail("unknown method"));
     await using _screen = await render(
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
@@ -244,7 +260,7 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow("huge.md")).not.toBeNull());
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
     const copyPath = page.getByRole("menuitem", { name: "Copy path", exact: true });
-    const openRowMenu = (path: string) =>
+    async function expectOffered(path: string, offered: boolean) {
       findTreeRow(path)!.dispatchEvent(
         new MouseEvent("contextmenu", {
           bubbles: true,
@@ -253,17 +269,24 @@ describe("FileBrowserPanel", () => {
           button: 2,
         }),
       );
-
-    openRowMenu("huge.md");
-    await expect.element(copyPath).toBeVisible();
-    await expect.element(action).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-
-    for (const path of ["small.md", "unanswered.md"]) {
-      openRowMenu(path);
-      await expect.element(action).toBeVisible();
+      await expect.element(copyPath).toBeVisible();
+      if (offered) await expect.element(action).toBeVisible();
+      else await expect.element(action).not.toBeInTheDocument();
       await userEvent.keyboard("{Escape}");
+      await expect.element(copyPath).not.toBeInTheDocument();
     }
+
+    await expectOffered("small.md", true);
+    await expectOffered("failed.md", true);
+    await expectOffered("huge.md", false);
+
+    // Before the stat answers, the file may still turn out too large to render.
+    await expectOffered("slow-huge.md", false);
+    await expectOffered("slow-small.md", false);
+    answer("slow-huge.md", FULL_TEXT_MAX_BYTES + 1);
+    answer("slow-small.md", 2048);
+    await expectOffered("slow-huge.md", false);
+    await vi.waitFor(() => expectOffered("slow-small.md", true));
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {

@@ -48,7 +48,7 @@ import { buildFileTreePathUpdates, shouldRebuildFileTree } from "./fileTreePathR
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useFileDownload } from "./useFileDownload";
-import { useOversizedMarkdown } from "./useOversizedMarkdown";
+import { useRenderableMarkdown } from "./useRenderableMarkdown";
 import { useProjectPathSearch } from "~/state/queries";
 import { isMacPlatform } from "~/lib/utils";
 import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
@@ -213,7 +213,7 @@ export default function FileBrowserPanel({
   const { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths } =
     buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
   const entryKindsRef = useRef(entryKinds);
-  const isOversizedMarkdown = useOversizedMarkdown(environmentId, cwd, entries);
+  const isRenderableMarkdown = useRenderableMarkdown(environmentId, cwd, entries);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -257,7 +257,7 @@ export default function FileBrowserPanel({
         entryKindsRef.current.get(relativePath) === "file" &&
         isMarkdownPreviewFile(relativePath) &&
         // The preview panel shows a file past its rendering limit as source only.
-        !isOversizedMarkdown(relativePath);
+        isRenderableMarkdown(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {

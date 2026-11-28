@@ -11,31 +11,30 @@ import { isMarkdownPreviewFile } from "./filePreviewMode";
 import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 
 /**
- * Tells whether a listed Markdown file is known to be too large to render. Sizes are read as
- * files are listed, so a row menu never waits on the server; a size that is not known (no answer
- * yet, a failed read, a server without the method) counts as renderable. The size comes from the
- * workspace stat, which reaches what the preview reads, a network workspace included.
+ * Tells whether a listed Markdown file can be offered a rendered preview. Sizes are read as files
+ * are listed, so a row menu never waits. An unanswered size is not offered (it may be too large);
+ * a failed read (a server without the method) can never confirm one, so it stays offered.
  */
-export function useOversizedMarkdown(
+export function useRenderableMarkdown(
   environmentId: EnvironmentId,
   cwd: string,
   entries: readonly ProjectEntry[],
 ): (relativePath: string) => boolean {
-  const sizes = useRef(new Map<string, number>());
+  // Absent until the first answer; `null` once a read has failed.
+  const sizes = useRef(new Map<string, number | null>());
   const requested = useRef(new Set<string>());
-  // A folder of notes can list hundreds of files; their sizes are read one at a time.
-  const listed = useRef(Promise.resolve());
   const readSize = useStableCallback(async (relativePath: string) => {
-    if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+      sizes.current.set(relativePath, null);
+      return;
+    }
     const query = projectEnvironment.statFile({ environmentId, input: { cwd, relativePath } });
-    requested.current.add(relativePath);
     const result = await executeAtomQuery(appAtomRegistry, query, {
       refresh: true,
       reportFailure: false,
       reportDefect: false,
     });
-    if (result._tag === "Success") sizes.current.set(relativePath, result.value.byteLength);
-    else sizes.current.delete(relativePath);
+    sizes.current.set(relativePath, result._tag === "Success" ? result.value.byteLength : null);
   });
 
   const markdownPaths = entries
@@ -48,14 +47,15 @@ export function useOversizedMarkdown(
     for (const path of markdownPaths.split("\0")) {
       if (requested.current.has(path)) continue;
       requested.current.add(path);
-      listed.current = listed.current.then(() => readSize(path));
+      // Not queued: one read that hangs would leave every file behind it unconfirmed.
+      void readSize(path);
     }
   }, [markdownPaths, readSize]);
 
   return (relativePath) => {
-    const oversized = (sizes.current.get(relativePath) ?? 0) > FULL_TEXT_MAX_BYTES;
+    const size = sizes.current.get(relativePath);
     // A file can change size without its folder being listed again.
     void readSize(relativePath);
-    return oversized;
+    return size === null || (size !== undefined && size <= FULL_TEXT_MAX_BYTES);
   };
 }
