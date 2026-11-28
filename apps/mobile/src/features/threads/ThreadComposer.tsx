@@ -383,7 +383,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
   const draftRunsLocally = composerRunsDraftLocally({
     text: draftMessage,
-    holdsOnlyText: draftAttachments.length === 0,
+    holdsNoAttachedContext: draftAttachments.length === 0,
+    replyPending: false,
     // A redirect's text answers its approval, so `/side` there is that text.
     sideChat: !props.redirectsApproval,
     usageLimits: usageLimitsOffered,
