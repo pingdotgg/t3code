@@ -648,11 +648,13 @@ function ManagedCodexSetup({
                 ? gt("Using your installed Codex · v{version}.", {
                     version: installation.installedVersion,
                   })
-                : gt("Managed by T3 Code · v{version}.", { version: installation.installedVersion })
+                : gt("Managed by Ry3 Code · v{version}.", {
+                    version: installation.installedVersion,
+                  })
               : installation?.source === "local"
                 ? gt("Using your installed Codex.")
-                : gt("Managed by T3 Code.")
-            : (installation?.message ?? gt("T3 Code downloads and manages Codex for you."));
+                : gt("Managed by Ry3 Code.")
+            : (installation?.message ?? gt("Ry3 Code downloads and manages Codex for you."));
   const accountDescription = finishingSignIn ? (
     gt("Finishing sign-in...")
   ) : installActive ? (
@@ -732,7 +734,7 @@ function ManagedCodexSetup({
     !handoff && auth?.phase === "waiting" && url ? (
       <div className="flex w-full flex-col gap-3 text-xs leading-relaxed text-muted-foreground">
         <p>
-          <T>If sign-in doesn't return to T3 Code, paste the URL from the final localhost page.</T>
+          <T>If sign-in doesn't return to Ry3 Code, paste the URL from the final localhost page.</T>
         </p>
         <form
           className="flex flex-col gap-2 sm:flex-row sm:items-center"
@@ -1142,7 +1144,7 @@ export function CodexManagedRuntimeFields({
     <>
       <SettingsRow
         title={gt("Binary path")}
-        description={gt("Selected by T3 Code.")}
+        description={gt("Selected by Ry3 Code.")}
         control={
           <div className="w-full sm:w-80">
             <Input

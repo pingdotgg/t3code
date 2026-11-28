@@ -44,7 +44,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
-  // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
+  // Ry3 Code's own question reads as the app asking: a plain sentence, then what it names.
   const { pushHooks } = props.approval;
   const detail =
     !pushHooks && props.approval.detail ? approvalTextParts(props.approval.detail) : null;

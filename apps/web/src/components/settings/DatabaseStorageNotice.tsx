@@ -161,7 +161,7 @@ function ReclaimRow({
       toastManager.add({
         type: "success",
         title: gt("Reclaiming {amount} on {environment}", { amount, environment: label }),
-        description: gt("T3 Code there restarts and is back in about {minutes} min.", {
+        description: gt("Ry3 Code there restarts and is back in about {minutes} min.", {
           minutes,
         }),
       });
@@ -184,7 +184,7 @@ function ReclaimRow({
       title={gt("{amount} on {environment}", { amount, environment: label })}
       description={
         status.reclaimFailure === undefined
-          ? gt("Restarts T3 Code there. It will be offline for about {minutes} min.", { minutes })
+          ? gt("Restarts Ry3 Code there. It will be offline for about {minutes} min.", { minutes })
           : gt("The last attempt failed: {reason}", { reason: status.reclaimFailure })
       }
       control={
@@ -208,9 +208,9 @@ function ReclaimRow({
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   <T>
-                    T3 Code on <Var>{label}</Var> stops, rebuilds its database, and starts again. It
-                    will be offline for about <Var>{minutes}</Var> min. Running agents stop when it
-                    restarts.
+                    Ry3 Code on <Var>{label}</Var> stops, rebuilds its database, and starts again.
+                    It will be offline for about <Var>{minutes}</Var> min. Running agents stop when
+                    it restarts.
                   </T>
                 </AlertDialogDescription>
               </AlertDialogHeader>

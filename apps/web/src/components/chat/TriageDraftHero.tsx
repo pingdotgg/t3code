@@ -32,7 +32,7 @@ export function TriageDraftHero(props: {
           label={
             <>
               <T>
-                The agent reads T3 Code's logs and source here, and asks before it applies a fix or
+                The agent reads Ry3 Code's logs and source here, and asks before it applies a fix or
                 posts anything.
               </T>
             </>

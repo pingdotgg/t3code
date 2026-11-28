@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ry3 Code">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3b6fe0"/>
+      <stop offset="1" stop-color="#6c9cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <g transform="translate(267.0 267.0) scale(1.07) translate(-252 -262)">
+  <g transform="rotate(-11 256 312)">
+    <path d="M132 304 C98 204 108 126 152 86 C180 132 208 168 246 216 Z" fill="#fff" stroke="#fff" stroke-width="20" stroke-linejoin="round"/>
+    <path d="M380 302 C412 214 404 144 366 100 C336 140 308 174 266 218 Z" fill="#fff" stroke="#fff" stroke-width="20" stroke-linejoin="round"/>
+    <ellipse cx="256" cy="312" rx="152" ry="118" fill="#fff"/>
+    <ellipse cx="208" cy="310" rx="23" ry="34" fill="#000"/>
+    <ellipse cx="308" cy="304" rx="23" ry="34" fill="#000"/>
+  </g>
+  </g>
+
+</svg>

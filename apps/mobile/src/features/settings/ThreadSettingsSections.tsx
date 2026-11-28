@@ -280,7 +280,7 @@ const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   {
     mode: "auto",
     label: msg("Automatic"),
-    description: msg("Agents also report T3 Code problems they hit on their own."),
+    description: msg("Agents also report Ry3 Code problems they hit on their own."),
   },
 ];
 

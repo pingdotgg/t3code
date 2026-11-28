@@ -28,7 +28,7 @@ export function NotificationSettings() {
       description={
         permissionMessage ??
         gt(
-          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while Ry3 Code is open.",
         )
       }
       control={

@@ -77,7 +77,7 @@ export function resolveVersionMismatch(
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
     hint: resolve(
-      msg("Version mismatch. Try syncing the client and server to the same T3 Code version."),
+      msg("Version mismatch. Try syncing the client and server to the same Ry3 Code version."),
     ),
   };
 }

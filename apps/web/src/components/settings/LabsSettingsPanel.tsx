@@ -341,7 +341,7 @@ function SimlockHostsRow() {
           <Link to="/settings/devices" className="underline underline-offset-2">
             Devices
           </Link>
-          . An alpha that may change or break. T3 Code never installs Simlock.
+          . An alpha that may change or break. Ry3 Code never installs Simlock.
         </T>
       }
       control={
@@ -405,10 +405,10 @@ const AGENT_FEEDBACK_MODE_LABELS: Record<AgentFeedbackMode, string> = {
 const AGENT_FEEDBACK_MODE_DESCRIPTIONS: Record<AgentFeedbackMode, string> = {
   off: msg("Agents send no feedback to the T3 team."),
   "on-request": msg(
-    "When you ask, agents show you a short report about T3 Code and send it to the T3 team if you approve.",
+    "When you ask, agents show you a short report about Ry3 Code and send it to the T3 team if you approve.",
   ),
   auto: msg(
-    "Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.",
+    "Agents also report Ry3 Code problems they hit on their own, such as a T3 tool that failed.",
   ),
 };
 

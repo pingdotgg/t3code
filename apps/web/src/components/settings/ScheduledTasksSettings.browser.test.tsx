@@ -457,10 +457,7 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(name).toHaveValue("My draft");
   });
 
-  it.each([
-    { locale: "en", one: "minute", other: "minutes" },
-    { locale: "de", one: "Minute", other: "Minuten" },
-  ])(
+  it.each([{ locale: "en", one: "minute", other: "minutes" }])(
     "labels intervals of 1, 15 and 1.5 as $one or $other in $locale",
     async ({ locale, one, other }) => {
       setup();

@@ -44,7 +44,7 @@ describe("Self invocation", () => {
 describe("Node runtime selection", () => {
   it.effect("keeps the current Node or Electron runtime without requiring Node on PATH", () =>
     Effect.gen(function* () {
-      for (const executable of ["/runtime/node", "/Applications/T3 Code.app/Electron"]) {
+      for (const executable of ["/runtime/node", "/Applications/Ry3 Code.app/Electron"]) {
         expect(
           yield* resolveNodeExecutable("Local device support", { PATH: "" }).pipe(
             Effect.provideService(HostProcess.ExecutablePath, executable),

@@ -60,7 +60,7 @@ export interface ThreadPendingApproval {
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
-  /** Set when T3 Code itself asks to run a repository's push hooks; `detail` is the same in one sentence. */
+  /** Set when Ry3 Code itself asks to run a repository's push hooks; `detail` is the same in one sentence. */
   readonly pushHooks?: ProviderApprovalPushHooks;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
@@ -325,7 +325,7 @@ export function fullAccessOverrideExplanation(
       )
     : resolve(
         msg(
-          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
+          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. Ry3 Code can't turn these off, so check the request and approve it if it's what you expect.",
         ),
       );
 }

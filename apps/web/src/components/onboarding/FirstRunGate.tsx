@@ -199,7 +199,7 @@ function FirstRunRecovery({
         <p className="mt-2 text-sm text-muted-foreground">
           {settingsReadFailed
             ? gt("Your saved settings could not be loaded.")
-            : gt("T3 Code could not confirm this workspace.")}
+            : gt("Ry3 Code could not confirm this workspace.")}
         </p>
         <Button
           className="mt-5"

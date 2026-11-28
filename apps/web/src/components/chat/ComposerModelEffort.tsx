@@ -8,8 +8,8 @@ import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
+import { CheckIcon, ChevronRightIcon, ChevronUpIcon, RocketIcon, ZapIcon } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -26,7 +26,6 @@ import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
 import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
-import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
   type TraitsSelectionInput,
@@ -80,7 +79,7 @@ function columnControls(
 
 /**
  * What the model trigger shows after the model name: the effort word (or bars, per the
- * Appearance setting), a bolt for Fast, a workflow icon for Ultracode, and other traits such as a
+ * Appearance setting), a bolt for Fast, a rocket for Ultracode, and other traits such as a
  * context window.
  */
 export function describeComposerEffort(
@@ -137,7 +136,10 @@ export function describeComposerEffort(
               modelSelection,
               traits.reportedModelSelection,
             ) ?? (reasoning.id === "thinking" ? reasoning.label : null));
-  const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
+  // Claude Code has no speed setting, so a stale Fast value is never shown.
+  const fast =
+    traits.provider !== "claudeAgent" &&
+    (display.speedLabel === "Fast" || display.speedLabel === "Ultrafast");
   // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =
     visibility.contextWindowDescriptor &&
@@ -167,7 +169,7 @@ export function describeComposerEffort(
         ) : null}
         {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
         {display.ultracode ? (
-          <WorkflowIcon aria-hidden="true" data-composer-control-icon className="size-3" />
+          <RocketIcon aria-hidden="true" data-composer-control-icon className="size-3" />
         ) : null}
         {contextWindow ? (
           <span
@@ -263,6 +265,8 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
     event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-effort-row]:not(:disabled)"),
   );
   const index = rows.findIndex((row) => row === document.activeElement);
+  // Up from the first row bubbles, so the popup can move focus back to the model search.
+  if (event.key === "ArrowUp" && index <= 0) return;
   const next = arrow
     ? rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))]
     : [...rows.slice(index + 1), ...rows.slice(0, index + 1)].find((row) =>
@@ -354,10 +358,34 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
     );
   }
   const { locked } = props;
+  const ultracodeToggle = traits.modelIsUnavailable
+    ? null
+    : splitSpeed(traits.selectDescriptors, traits.booleanDescriptors).ultracodeToggle;
   const value = traits.selectValue(control.descriptor);
   const choices = selectableProviderOptionChoices(control.descriptor);
   // An "Ultrathink:" prefix selects a level the column does not offer.
   const shown = choices.some((option) => option.id === value);
+  if (choices.length >= 2) {
+    return (
+      <EffortSlider
+        label={descriptor.label}
+        choices={choices}
+        value={value}
+        locked={locked}
+        ultracode={
+          ultracodeToggle
+            ? {
+                on: ultracodeToggle.currentValue === true,
+                label: ultracodeToggle.label,
+                onToggle: () =>
+                  traits.changeBoolean(ultracodeToggle.id, ultracodeToggle.currentValue !== true),
+              }
+            : null
+        }
+        onPick={(id) => traits.changeSelect(control.descriptor, id)}
+      />
+    );
+  }
   return (
     <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
       {locked ? (
@@ -377,6 +405,248 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
           onPick={() => traits.changeSelect(control.descriptor, option.id)}
         />
       ))}
+    </div>
+  );
+}
+
+type EffortChoice = ReturnType<typeof selectableProviderOptionChoices>[number];
+
+const SLIDER_THUMB_REM = 1;
+const ORANGE = "color-mix(in srgb, var(--warning) 75%, var(--error))";
+const ULTRACODE_HATCH =
+  "repeating-linear-gradient(135deg, rgb(255 255 255 / 0.22) 0 3px, transparent 3px 8px)";
+
+/**
+ * Reasoning levels on one track, drawn like GodotHub's slider. The thumb follows the pointer and
+ * springs to the nearest level on release, the only moment the choice changes. Keys move one level.
+ */
+function EffortSlider(props: {
+  label: string;
+  choices: ReadonlyArray<EffortChoice>;
+  value: string | null;
+  locked: boolean;
+  /** The Ultracode switch, when the model has one; it heats the slider up while on. */
+  ultracode: { on: boolean; label: string; onToggle: () => void } | null;
+  onPick: (id: string) => void;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const { choices } = props;
+  const last = choices.length - 1;
+  const found = choices.findIndex((choice) => choice.id === props.value);
+  // An "Ultrathink:" prefix selects a level the track does not offer; it rests on the first stop.
+  const index = Math.max(0, found);
+  // A fractional stop while a pointer holds the thumb; null once released.
+  const [drag, setDrag] = useState<number | null>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  // How fast the thumb is moving, 0 to 1. It stretches the thumb.
+  const [speed, setSpeed] = useState(0);
+  const lastMoveRef = useRef<{ stop: number; at: number } | null>(null);
+  const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shown = drag ?? index;
+  const nearest = Math.round(shown);
+  const option = choices[nearest]!;
+  const ratio = shown / last;
+  // The top of a longer scale spends usage faster, so it gets a warning.
+  const isTop = choices.length >= 3 && nearest === last && (drag !== null || found >= 0);
+  const fire = props.ultracode?.on === true;
+  // Past a third of the way the fill warms from blue toward orange, and it is fully orange at the top.
+  const heat = Math.min(1, Math.max(0, (ratio - 0.35) / 0.65));
+  // Mixing in OKLCH takes the hue the long way round, through violet and red, not through gray.
+  const levelGradient = `linear-gradient(in oklch to right, color-mix(in oklch, var(--primary), ${ORANGE} ${Math.round(heat * 85)}%), color-mix(in oklch, var(--primary), ${ORANGE} ${Math.round(heat * 100)}%))`;
+  // Ultracode lays a fine static hatch over the fill, like a charged bar.
+  const fillBackground = fire ? `${ULTRACODE_HATCH}, ${levelGradient}` : levelGradient;
+
+  const stopAt = (clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return index;
+    const rect = track.getBoundingClientRect();
+    const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const thumb = SLIDER_THUMB_REM * rootFontSize;
+    const along = (clientX - rect.left - thumb / 2) / Math.max(1, rect.width - thumb);
+    return Math.min(1, Math.max(0, along)) * last;
+  };
+  const pick = (stop: number) => {
+    const next = choices[Math.min(last, Math.max(0, stop))];
+    if (next && next.id !== props.value) props.onPick(next.id);
+  };
+  const release = () => {
+    if (drag === null) return;
+    lastMoveRef.current = null;
+    if (restTimerRef.current) clearTimeout(restTimerRef.current);
+    setDrag(null);
+    setSpeed(0);
+    pick(Math.round(drag));
+  };
+
+  return (
+    <div className="flex flex-col gap-2 px-1">
+      <div className="flex h-5 items-center gap-1.5 text-xs">
+        <span className="shrink-0 font-medium text-muted-foreground">{props.label}:</span>
+        <span
+          key={option.id}
+          className={cn(
+            "min-w-0 animate-step-in truncate font-semibold",
+            isTop ? "text-warning-foreground" : "text-foreground",
+          )}
+        >
+          {option.label}
+        </span>
+        <div className="ms-auto flex shrink-0 items-center gap-1.5">
+          {props.ultracode ? (
+            <button
+              type="button"
+              data-effort-row
+              aria-pressed={props.ultracode.on}
+              className={cn(
+                "flex h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                props.ultracode.on
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-input/50 bg-muted text-muted-foreground hover:text-foreground",
+              )}
+              onClick={props.ultracode.onToggle}
+            >
+              <RocketIcon aria-hidden="true" className="size-3" />
+              {props.ultracode.label}
+            </button>
+          ) : null}
+          <ZapIcon
+            aria-hidden="true"
+            className={cn("size-3.5", isTop ? "text-warning-foreground" : "text-primary")}
+          />
+        </div>
+      </div>
+      <div className="flex items-center">
+        <div
+          ref={trackRef}
+          role="slider"
+          tabIndex={props.locked ? -1 : 0}
+          aria-label={props.label}
+          aria-orientation="horizontal"
+          aria-valuemin={0}
+          aria-valuemax={last}
+          aria-valuenow={nearest}
+          aria-valuetext={option.label}
+          aria-disabled={props.locked || undefined}
+          data-effort-row
+          data-effort-level={option.label}
+          className={cn(
+            "group relative h-8 min-w-0 flex-1 touch-none select-none rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            props.locked ? "cursor-not-allowed opacity-40" : "cursor-pointer",
+          )}
+          onPointerDown={(event) => {
+            if (props.locked || event.button !== 0) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.currentTarget.focus({ preventScroll: true });
+            const stop = stopAt(event.clientX);
+            lastMoveRef.current = { stop, at: event.timeStamp };
+            setDrag(stop);
+          }}
+          onPointerMove={(event) => {
+            if (drag === null) return;
+            const stop = stopAt(event.clientX);
+            const last = lastMoveRef.current;
+            if (last && event.timeStamp > last.at) {
+              // Levels per second, eased so one jittery event does not flash the trail.
+              const perSecond = (Math.abs(stop - last.stop) / (event.timeStamp - last.at)) * 1000;
+              setSpeed((before) => before * 0.6 + Math.min(1, perSecond / 6) * 0.4);
+            }
+            lastMoveRef.current = { stop, at: event.timeStamp };
+            setDrag(stop);
+            // No more moves means the thumb has stopped.
+            if (restTimerRef.current) clearTimeout(restTimerRef.current);
+            restTimerRef.current = setTimeout(() => setSpeed(0), 110);
+          }}
+          onPointerUp={release}
+          onPointerCancel={release}
+          onKeyDown={(event) => {
+            if (props.locked || event.altKey || event.ctrlKey || event.metaKey) return;
+            const target =
+              event.key === "ArrowRight" || event.key === "PageUp"
+                ? index + 1
+                : event.key === "ArrowLeft" || event.key === "PageDown"
+                  ? index - 1
+                  : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? last
+                      : null;
+            if (target === null) return;
+            event.preventDefault();
+            event.stopPropagation();
+            pick(target);
+          }}
+        >
+          <div className="pointer-events-none absolute inset-x-0 top-1 h-6 overflow-hidden rounded-md border border-input/50 bg-muted transition-colors group-hover:border-input">
+            <div
+              className={cn(
+                "h-full",
+                drag === null && "transition-[width] duration-300 ease-spring",
+              )}
+              style={{
+                width: `calc(${SLIDER_THUMB_REM / 2}rem + ${ratio} * (100% - ${SLIDER_THUMB_REM}rem))`,
+                background: fillBackground,
+                opacity: fire ? 1 : 0.7 + 0.3 * ratio,
+              }}
+            />
+          </div>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+            {choices.map((choice, stop) => {
+              // 1 under the thumb, falling to 0 a full level away, so dots swell as it approaches.
+              const near = Math.max(0, 1 - Math.abs(stop - shown));
+              return stop === nearest ? null : (
+                <span
+                  key={choice.id}
+                  className={cn(
+                    "absolute top-1/2 size-1 rounded-full transition-transform duration-100 ease-out",
+                    stop < shown ? "bg-white/70" : "bg-foreground/35",
+                  )}
+                  style={{
+                    left: `calc(${SLIDER_THUMB_REM / 2}rem + (100% - ${SLIDER_THUMB_REM}rem) * ${stop / last})`,
+                    transform: `translate(-50%, -50%) scale(${1 + 1.4 * near})`,
+                    opacity: 0.5 + 0.5 * near,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute top-0 h-8 w-4 rounded-lg border border-border bg-white",
+              drag === null
+                ? "shadow-md transition-[left,transform] duration-300 ease-spring"
+                : "shadow-lg transition-transform duration-100 ease-out",
+            )}
+            style={{
+              left: `calc(${ratio} * (100% - ${SLIDER_THUMB_REM}rem))`,
+              // Held, the thumb presses in; moving fast, it stretches along the track.
+              transform:
+                drag === null
+                  ? undefined
+                  : `scale(${(1.12 + 0.7 * speed).toFixed(3)}, ${(1.04 - 0.1 * speed).toFixed(3)})`,
+            }}
+          />
+        </div>
+      </div>
+      {props.locked ? (
+        <p className="text-muted-foreground/80 text-xs">{messages(ULTRATHINK_IN_BODY_NOTE)}</p>
+      ) : (
+        <p
+          className={cn(
+            "line-clamp-2 text-xs leading-4",
+            // Room for a two-line description only when the levels have one.
+            choices.some((choice) => choice.description) ? "min-h-8" : "min-h-4",
+            isTop ? "text-warning-foreground" : "text-muted-foreground",
+          )}
+        >
+          {isTop
+            ? gt("Uses your usage limits faster")
+            : option.description && (found >= 0 || drag !== null)
+              ? option.description
+              : ""}
+        </p>
+      )}
     </div>
   );
 }
@@ -536,43 +806,27 @@ function NoEffortRow() {
   );
 }
 
-/** The model picker's effort column: the selected model's levels and its other options. */
+/** The model picker's effort section: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
-  const gt = useGT();
   const messages = useMessages();
-  const picker = use(DockedPickerContext);
+  // With a slider, Ultracode sits in its header instead.
   const visibility = props.traits
     ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
     : null;
-  const controls =
-    props.traits && visibility
-      ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
-      : null;
+  const effort = visibility
+    ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
+    : null;
+  const sliderCarriesUltracode =
+    effort?.kind === "select" && selectableProviderOptionChoices(effort.descriptor).length >= 2;
   return (
-    <>
-      {/* Matches the search row's box, so one rule runs across the top of the popup. */}
-      <div className="shrink-0 px-3 pt-2.5">
-        <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ??
-              (controls?.others.length
-                ? gt("Options", { $context: "heading for model options" })
-                : gt("Effort", { $context: "heading for reasoning effort levels" }))}
-          </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
-            {picker.modelLabel}
-          </span>
-        </div>
-      </div>
-      {/* pt-2.5 puts the first level on the same line as the first model. */}
-      <div
-        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pt-2.5 pb-1.5"
-        // Capture, so Up and Down on an option row move rows instead of opening its menu.
-        onKeyDownCapture={moveBetweenRows}
-      >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
-      </div>
-    </>
+    <div
+      className="flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-3 py-2.5"
+      // Capture, so Up and Down on an option row move rows instead of opening its menu.
+      onKeyDownCapture={moveBetweenRows}
+    >
+      {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+      {props.traits && !sliderCarriesUltracode ? <UltracodeControl traits={props.traits} /> : null}
+    </div>
   );
 }
 
@@ -615,6 +869,8 @@ function SpeedSegment(props: {
 function SpeedControl(props: { traits: TraitsSelectionInput }) {
   const gt = useGT();
   const traits = useTraitsSelection(props.traits);
+  // Claude Code has no speed setting, so it never offers one.
+  if (props.traits.provider === "claudeAgent") return null;
   const { speedSelect, fastToggle } = splitSpeed(
     traits.selectDescriptors,
     traits.booleanDescriptors,
@@ -661,15 +917,16 @@ function UltracodeControl(props: { traits: TraitsSelectionInput }) {
   if (traits.modelIsUnavailable || !ultracodeToggle) return null;
   const on = ultracodeToggle.currentValue === true;
   return (
-    <div className="flex rounded-lg bg-input/40 p-0.5">
+    <div className="flex self-start rounded-lg bg-input/40 p-0.5">
       <button
         type="button"
+        data-effort-row
         aria-pressed={on}
         data-checked={on || undefined}
         className={FOOTER_SEGMENT}
         onClick={() => traits.changeBoolean(ultracodeToggle.id, !on)}
       >
-        <WorkflowIcon aria-hidden="true" className="size-3" />
+        <RocketIcon aria-hidden="true" className="size-3" />
         {ultracodeToggle.label}
       </button>
     </div>
@@ -727,9 +984,8 @@ export function ComposerPickerFooter(props: {
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
+    <div className="flex flex-wrap items-center gap-2 px-3 pt-0.5 pb-2.5">
       {props.traits ? <SpeedControl traits={props.traits} /> : null}
-      {props.traits ? <UltracodeControl traits={props.traits} /> : null}
       <PermissionsMenu
         runtimeMode={props.runtimeMode}
         options={props.runtimeModeOptions}

@@ -104,7 +104,32 @@ function ComboboxInput({
   );
 }
 
-function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) {
+function ComboboxSearchInput({
+  variant = "line",
+  ...props
+}: React.ComponentProps<typeof ComboboxInput> & {
+  /** `field` is a raised, rounded input; `line` is the underlined search. */
+  variant?: "line" | "field";
+}) {
+  if (variant === "field") {
+    return (
+      <label className="block min-w-0 shrink-0 cursor-text">
+        <div className="flex h-10 items-center rounded-xl border border-input/50 bg-muted px-3 transition-colors focus-within:border-input focus-within:bg-background">
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none size-4 shrink-0 text-muted-foreground/70"
+          />
+          <ComboboxInput
+            {...props}
+            className="flex min-w-0 flex-1 [&_input]:h-9 [&_input]:ps-2 [&_input]:font-sans [&_input]:text-sm"
+            showTrigger={false}
+            size="sm"
+            unstyled
+          />
+        </div>
+      </label>
+    );
+  }
   return (
     <label className="block min-w-0 shrink-0 cursor-text px-3 pt-2.5">
       <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
@@ -190,8 +215,11 @@ function ComboboxItem({
   children,
   hideIndicator: _hideIndicator = false,
   selectedFill = true,
+  variant = "default",
   ...props
 }: ComboboxPrimitive.Item.Props & {
+  /** `card` is a roomier, rounder row whose selection is an accent tint and inset ring. */
+  variant?: "default" | "card";
   hideIndicator?: boolean;
   /** Off for rows that mark selection themselves, so a fill only means hover or highlight. */
   selectedFill?: boolean;
@@ -201,6 +229,8 @@ function ComboboxItem({
       className={cn(
         "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none not-data-disabled:hover:bg-foreground/[0.09] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-selected:text-foreground data-highlighted:bg-foreground/[0.09] data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         selectedFill && "data-selected:bg-foreground/[0.06]",
+        variant === "card" &&
+          "min-h-10 rounded-xl px-2 py-1 transition-[color,background-color,scale] duration-150 ease-spring active:scale-[0.98] data-highlighted:bg-foreground/[0.07] data-selected:bg-primary/15 [&[data-highlighted][data-selected]]:bg-primary/20 sm:min-h-10",
         className,
       )}
       data-slot="combobox-item"

@@ -86,7 +86,7 @@ export function UseInAnotherAppDialogHost() {
 function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentId | null }) {
   const { environment, label } = useAccessEnvironment(requested);
   const gt = useGT();
-  const title = `${gt("Use T3 Code in another app (MCP)")} · ${label ?? "T3 Code"}`;
+  const title = `${gt("Use Ry3 Code in another app (MCP)")} · ${label ?? "Ry3 Code"}`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
       <WizardPopup>
@@ -446,7 +446,7 @@ function GateScreen({
         </GateMessage>
       );
     case "update":
-      return <GateMessage title={gt("Update T3 Code on {environment}", { environment: name })} />;
+      return <GateMessage title={gt("Update Ry3 Code on {environment}", { environment: name })} />;
     case "no-relay-read":
       return (
         <GateMessage
@@ -513,7 +513,7 @@ function GateScreen({
               <CommandBlock command="t3 connect link" />
               <p>
                 <T>
-                  Restart T3 Code on <Var>{name}</Var>.
+                  Restart Ry3 Code on <Var>{name}</Var>.
                 </T>
               </p>
               {checkAgain}

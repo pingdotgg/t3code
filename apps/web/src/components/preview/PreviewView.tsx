@@ -1170,7 +1170,7 @@ export function PreviewView({
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
-                <T>This tab is open in the T3 Code desktop app.</T>
+                <T>This tab is open in the Ry3 Code desktop app.</T>
               </p>
             </div>
           )

@@ -960,7 +960,7 @@ export function useThreadComposerState(input: {
     if (serverConfig.environment.capabilities.sideChats !== true) {
       return resolve(
         msg("Update this environment's {product} server to use side chats.", {
-          product: "T3 Code",
+          product: "Ry3 Code",
         }),
       );
     }

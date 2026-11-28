@@ -358,7 +358,7 @@ export function SettingsVoiceRouteScreen() {
               {permission === "ask"
                 ? gt("Allow microphone access to record and to see your microphones.")
                 : gt("Turn on microphone access for {product} in Settings to use voice input.", {
-                    product: "T3 Code",
+                    product: "Ry3 Code",
                   })}
             </Text>
           </>

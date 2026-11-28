@@ -125,7 +125,7 @@ export function LinkedEnvironmentsSettings({
         <SettingsRow
           title={gt("No linked environments")}
           description={gt(
-            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+            "Link another machine running Ry3 Code, such as a VPS, so agents here can launch and drive threads there.",
           )}
         />
       ) : (
@@ -686,7 +686,7 @@ export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSu
           type: "warning",
           title: gt("{label} did not answer", { label: link.label }),
           description: gt(
-            "Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+            "Revoke \"Ry3 Code · …\" in {label}''s Sharing & access to end the session there too.",
             { label: link.label },
           ),
         });

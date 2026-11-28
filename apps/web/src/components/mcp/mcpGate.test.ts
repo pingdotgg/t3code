@@ -143,7 +143,7 @@ describe("resolveMcpGate", () => {
           cause: "no_connector",
           reason: "Cloudflare has no live connection from this machine for the tunnel.",
           hint: null,
-          fix: "Restart T3 Code.",
+          fix: "Restart Ry3 Code.",
         },
       },
       "offline",

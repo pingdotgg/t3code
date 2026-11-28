@@ -142,7 +142,7 @@ function UpdateEverythingDialogContent({
         <AlertDialogDescription>
           {version !== null ? (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              Ry3 Code <span className="font-mono text-xs">{version}</span>
             </>
           ) : null}
           {version !== null && providerCount > 0 ? " · " : null}
@@ -176,7 +176,7 @@ function UpdateEverythingDialogContent({
               <span role="columnheader">
                 <T>Machine</T>
               </span>
-              <span role="columnheader">T3 Code</span>
+              <span role="columnheader">Ry3 Code</span>
               <span role="columnheader">
                 <T>Providers</T>
               </span>

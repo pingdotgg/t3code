@@ -89,7 +89,7 @@ const repositoryIdentity = {
   provider: SourceControlProviderKind.make("github"),
   owner: "t3tools",
   name: "t3code",
-  displayName: "T3 Code",
+  displayName: "Ry3 Code",
 };
 
 function makeProject(
@@ -348,7 +348,7 @@ describe("buildProjectGroups", () => {
 
     const label = (projects: ReadonlyArray<EnvironmentProject>) =>
       buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
-    expect(label(folderTitles)).toBe("T3 Code");
+    expect(label(folderTitles)).toBe("Ry3 Code");
     expect(label(renamed)).toBe("t3code");
   });
 
@@ -372,7 +372,7 @@ describe("buildProjectGroups", () => {
     const label = (projects: ReadonlyArray<EnvironmentProject>) =>
       buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
     expect(label([renamed, joined])).toBe("T3");
-    expect(label([joined, renamedSubfolder])).toBe("T3 Code");
+    expect(label([joined, renamedSubfolder])).toBe("Ry3 Code");
     // An older server may not send the repository root; like grouping, read that as the root.
     expect(label([{ ...renamed, repositoryIdentity }, joined])).toBe("T3");
 
@@ -403,7 +403,7 @@ describe("buildProjectGroups", () => {
       preferredEnvironmentId: environmentId,
     });
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("T3 Code");
+    expect(groups[0]?.label).toBe("Ry3 Code");
 
     // A subfolder group in repository_path mode keeps its own title.
     const localIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };

@@ -1930,7 +1930,7 @@ describe("external usage settings", () => {
     expect(collectLimitNotices(presentations)).toEqual(["Host · codex: Could not read limits."]);
   });
 
-  it("names the providers a hub lists when it has no account T3 Code reads", () => {
+  it("names the providers a hub lists when it has no account Ry3 Code reads", () => {
     const hub = (unreadProviders?: readonly string[]) =>
       new Map([
         [

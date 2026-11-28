@@ -76,7 +76,7 @@ export interface SkippedMachine {
 
 // Desktop servers without the desktop control fd (older apps, WSL backends: wsl.exe cannot pass
 // fds) cannot be updated from here, and their desktop app is not necessarily the stale part.
-const UPDATE_ON_THAT_MACHINE = msg("update T3 Code on that machine");
+const UPDATE_ON_THAT_MACHINE = msg("update Ry3 Code on that machine");
 
 /** Skip current and app-hosted servers; the latter update with the app and would relaunch mid-run.
  * Desktop-managed servers use their own feed. Each server's updater checks that it can install the

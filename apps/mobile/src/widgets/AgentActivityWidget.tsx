@@ -95,7 +95,7 @@ export function AgentActivityWidget(
   const summaryTint = rows[0] ? phaseTint(rows[0].phase) : secondaryForeground;
   const emptyMessage = loaded
     ? (props.subtitle ?? text?.noActiveAgents ?? "No active agents")
-    : "Open T3 Code to load agent activity";
+    : "Open Ry3 Code to load agent activity";
 
   // Widget taps open the containing app, and every build accepts the prod
   // scheme as a link prefix, so dev and preview builds route this too.
@@ -181,7 +181,7 @@ export function AgentActivityWidget(
             lineLimit(1),
           ]}
         >
-          {summary || (accessory ? "T3 Code" : "")}
+          {summary || (accessory ? "Ry3 Code" : "")}
         </Text>
         <Spacer minLength={0} />
       </HStack>

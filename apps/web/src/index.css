@@ -100,7 +100,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    * Compact UI geometry. Keep these values semantic so sidebar, palette,
    * tooltip, and toolbar controls cannot quietly drift apart.
    */
-  --control-radius: 0.5rem;
+  --control-radius: 0.625rem;
   --sidebar-content-inset: 0.5rem;
   --sidebar-control-gap: 0.5rem;
   --sidebar-icon-color: color-mix(
@@ -171,7 +171,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    default stacks are mirrored in `appearanceFonts.ts`. */
 @theme {
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+    "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -195,6 +195,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
   --inset-shadow-control-pressed: 0 1px rgb(0 0 0 / 8%);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* A slight overshoot, for a thumb that snaps into place like a magnet. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* The composer's elevation: a soft drop pulled in under the surface, shared
      by the composer, its context strip and attached banners. */
   --shadow-composer: 0 1px 2px rgb(0 0 0 / 5%);
@@ -234,6 +236,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-stash-pulse-count: stash-pulse-count 1400ms step-start;
   /* One-off arrivals in a workflow run's timeline; nothing here loops. */
   --animate-step-in: step-in 180ms ease-out;
+  /* One-shot moments when a model is picked: a springy pop, and dots that fly out and fade. */
+  --animate-pick-pop: pick-pop 420ms var(--ease-spring) both;
+  --animate-pick-burst: pick-burst 520ms ease-out both;
   --animate-step-ping: step-ping 520ms ease-out;
   --animate-check-draw: check-draw 200ms ease-out;
   --color-warning-foreground: var(--warning-foreground);
@@ -348,6 +353,31 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes pick-pop {
+    from {
+      opacity: 0;
+      scale: 0.3;
+    }
+    55% {
+      opacity: 1;
+      scale: 1.3;
+    }
+    to {
+      scale: 1;
+    }
+  }
+  @keyframes pick-burst {
+    from {
+      opacity: 1;
+      translate: 0 0;
+      scale: 1;
+    }
+    to {
+      opacity: 0;
+      translate: var(--burst-x) var(--burst-y);
+      scale: 0.2;
     }
   }
   @keyframes step-in {
@@ -1145,8 +1175,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
-  --background: var(--color-zinc-25);
+  --radius: 0.625rem;
+  --background: #f0f1f4;
   --app-chrome-background: var(--background);
   --toolbar-background: var(--app-chrome-background);
   --toolbar-foreground: var(--foreground);
@@ -1170,7 +1200,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --secondary-label: var(--muted-foreground);
   --icon-muted: var(--muted-foreground);
   /* One step past the accent, so a user turn stands off the near-white canvas. */
-  --message-surface: color-mix(in srgb, var(--color-zinc-200) 55%, var(--color-zinc-100));
+  --message-surface: #eceef2;
   --message-foreground: var(--foreground);
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
@@ -1222,14 +1252,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     /* The canvas is true black, matching the sidebar. Raised surfaces keep the tone they had
        over neutral-950, so cards, popovers, and the composer still lift. Borders and hover
        states provide separation without milky gray fills. */
-    --background: #000;
-    --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
+    --background: #15171c;
+    --surface-raised: #1d1f24;
+    --foreground: #f2f3f5;
+    --card: #1e2025;
+    --card-foreground: #f2f3f5;
+    --popover: #222329;
+    --popover-foreground: #f2f3f5;
+    --primary: #3b6fe0;
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);
@@ -1237,13 +1267,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     /* A user turn sits above the composer tone, level with the selected sidebar row. */
-    --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
+    --message-surface: #1d1f24;
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
     --tool-error-icon: #fca5a5;
     --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
-    --border: --alpha(var(--color-white) / 8%);
-    --input: --alpha(var(--color-white) / 11%);
+    --border: #313338;
+    --input: #3a3d46;
     --info-foreground: var(--color-blue-400);
     --guest-foreground: var(--color-fuchsia-300);
     --success-foreground: var(--color-emerald-400);
@@ -1286,16 +1316,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-stage-fade: var(--sidebar);
 
   @variant dark {
-    --background: #000;
-    --foreground: #f1f3f7;
-    --card: #000;
+    --background: #15171c;
+    --foreground: #f2f3f5;
+    --card: #1e2025;
     --card-foreground: var(--foreground);
-    --accent: #191a1d;
-    --accent-foreground: #f7f9ff;
-    --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
-    --border: rgb(255 255 255 / 8%);
-    --input: rgb(255 255 255 / 18%);
+    --accent: #26282e;
+    --accent-foreground: #f2f3f5;
+    --muted: #1d1f24;
+    --muted-foreground: #949ba4;
+    --border: #313338;
+    --input: #3a3d46;
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
@@ -2732,4 +2762,20 @@ code {
 
 .messages-timeline-scroll:focus-visible {
   outline: none;
+}
+
+/* The chips under the composer on the new-thread screen read as pills. */
+[data-draft-hero] [data-slot="composer-context-strip"] button {
+  border: 1px solid color-mix(in srgb, var(--input) 50%, transparent);
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  padding-inline: 0.75rem;
+  transition:
+    border-color 150ms,
+    background-color 150ms;
+}
+
+[data-draft-hero] [data-slot="composer-context-strip"] button:hover {
+  border-color: var(--input);
+  background: var(--muted);
 }

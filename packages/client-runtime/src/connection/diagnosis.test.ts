@@ -54,9 +54,9 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
-  it("tells a working tunnel apart from T3 Code not answering", () => {
+  it("tells a working tunnel apart from Ry3 Code not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
-      "Tunnel works, but T3 Code on Mac mini did not answer",
+      "Tunnel works, but Ry3 Code on Mac mini did not answer",
     );
     expect(results(backoff(unavailable("origin_unreachable")), "direct")).toEqual([
       "device:ok",
@@ -164,7 +164,7 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
   });
 
-  it("tells a host that refused this device's login to sign in again, not to start T3 Code", () => {
+  it("tells a host that refused this device's login to sign in again, not to start Ry3 Code", () => {
     const failure = mapRemoteEnvironmentError(
       new EnvironmentAuthInvalidError({
         code: "auth_invalid",
@@ -173,7 +173,7 @@ describe("presentConnectionDiagnosis", () => {
       }),
     );
     const steps = diagnose(backoff(failure), "direct")?.steps.join(" ");
-    expect(steps).not.toContain("Make sure T3 Code is running");
+    expect(steps).not.toContain("Make sure Ry3 Code is running");
     expect(steps).toMatch(/pair|sign in/i);
   });
 

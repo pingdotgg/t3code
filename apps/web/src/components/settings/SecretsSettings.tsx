@@ -47,7 +47,7 @@ export function SecretsSettingsPanel() {
         <SettingsSection {...setting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
             <T>
-              Update T3 Code on <Var>{environment.label}</Var> to manage its secret providers.
+              Update Ry3 Code on <Var>{environment.label}</Var> to manage its secret providers.
             </T>
           </p>
         </SettingsSection>

@@ -569,7 +569,7 @@ it("stays busy while setup saves after an import with nothing to open", async ()
   expect(state.createProject).toHaveBeenCalledOnce();
 });
 
-it("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
+it("leaves projects already in Ry3 Code out of the default import, unless the box is checked", async () => {
   using _now = setup();
   const existing = ProjectId.make("existing");
   const justAdded = ProjectId.make("just-added");
@@ -588,7 +588,7 @@ it("leaves projects already in T3 Code out of the default import, unless the box
     await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
   }
 
-  // With every project already in T3 Code, checking the box still picks them.
+  // With every project already in Ry3 Code, checking the box still picks them.
   appAtomRegistry.set(candidatesAtom(), appAtomRegistry.get(candidatesAtom()).slice(0, 2));
   await using _screen = await mountWelcome();
   const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
@@ -608,7 +608,7 @@ it("keeps the started projects checked when the page opens again after a quit", 
     await click("Import 2 projects and start");
     await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledOnce());
   }
-  // The app quit during the first project's history; it now exists in T3 Code.
+  // The app quit during the first project's history; it now exists in Ry3 Code.
   const [first] = appAtomRegistry.get(projectsAtom());
   appAtomRegistry.set(candidatesAtom(), [
     candidate("/projects/first", { alreadyImported: true, projectId: first!.id }),

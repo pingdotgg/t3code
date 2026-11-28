@@ -70,7 +70,7 @@ export function buildShowcaseAgentActivity(
     });
   }
   return {
-    title: "T3 Code",
+    title: "Ry3 Code",
     subtitle: m(msg("Agent work in progress")),
     activeCount: rows.filter((row) => ACTIVE_PHASES.has(row.phase)).length,
     updatedAt: new Date(now).toISOString(),

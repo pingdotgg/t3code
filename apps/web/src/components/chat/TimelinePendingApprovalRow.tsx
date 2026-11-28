@@ -52,7 +52,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   const { respondingRequestIds, canOperateThread, onRespondToApproval } = use(TimelineRowCtx);
   const m = useMessages();
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
-  // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
+  // Ry3 Code's own question reads as the app asking: a plain sentence, then what it names.
   const { pushHooks } = approval;
   const label = pushHooks ? PUSH_HOOKS_APPROVAL_LABEL : presentation.label;
   const canRespond = approval.responseCapability === "live";

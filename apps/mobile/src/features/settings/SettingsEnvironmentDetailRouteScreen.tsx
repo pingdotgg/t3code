@@ -137,11 +137,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       capabilities.serverSelfUpdate === "desktop-managed"
         ? gt(
             "Install {product} {version}. The desktop app will close and relaunch. Running threads may be interrupted.",
-            { product: "T3 Code", version: targetVersion },
+            { product: "Ry3 Code", version: targetVersion },
           )
         : gt(
             "Install {product} {version}. The server will restart and reconnect. Running threads may be interrupted.",
-            { product: "T3 Code", version: targetVersion },
+            { product: "Ry3 Code", version: targetVersion },
           ),
       [
         { text: gt("Cancel"), style: "cancel" },
@@ -254,7 +254,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config && !outdated ? (
               <>
-                <SettingsSection title="T3 Code">
+                <SettingsSection title="Ry3 Code">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">
                       <T>
@@ -298,7 +298,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         {capabilities?.serverSelfUpdate === "desktop-managed"
                           ? gt("Update the desktop app on this machine.")
                           : gt("Update and restart {product} on this machine.", {
-                              product: "T3 Code",
+                              product: "Ry3 Code",
                             })}
                       </Text>
                     ) : null}

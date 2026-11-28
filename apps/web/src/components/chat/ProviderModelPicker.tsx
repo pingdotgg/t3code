@@ -8,7 +8,6 @@ import {
 import { RegistryContext } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
 import {
-  createContext,
   memo,
   type ReactNode,
   useContext,
@@ -84,9 +83,6 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
     body.style.paddingRight = previousBodyPaddingRight;
   };
 }
-
-/** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -283,7 +279,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const triggerTextProps = {
     className: cn(
-      "min-w-0 flex-1 overflow-hidden truncate",
+      "min-w-0 flex-1 animate-step-in overflow-hidden truncate motion-reduce:animate-none",
       // Long names such as "Fusion (Claude Opus 5.5 Medium + SWE-2 High)" would push the composer.
       props.isComposerOwned && "max-w-56",
     ),
@@ -433,9 +429,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </span>
           ) : null}
           {props.isComposerOwned ? (
-            <span {...triggerTextProps}>{triggerText}</span>
+            <span key={triggerText} {...triggerTextProps}>
+              {triggerText}
+            </span>
           ) : (
             <SharedTooltipTrigger
+              key={triggerText}
               render={<span {...triggerTextProps} />}
               label={triggerTooltipContent}
             >
@@ -472,29 +471,29 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-            <div className="flex max-h-(--available-height) flex-col">
-              {/* One fixed height, so a model with more options never resizes the popup. Short
-                  windows shrink it and keep the footer. */}
-              <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
-                {picker}
-                <div
-                  data-model-picker-effort
-                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
-                  onKeyDown={(event) => {
-                    if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
-                      return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    searchInputRef.current?.focus();
-                  }}
-                >
-                  {props.effortColumn}
-                </div>
-              </div>
-              {props.footer}
+          <div className="flex max-h-(--available-height) w-88 max-w-[calc(100vw-1rem)] flex-col">
+            {/* One fixed height, so a model with more options never resizes the popup. Short
+                windows shrink it and keep the effort section and footer. */}
+            <div className="flex h-96 min-h-0 flex-col">{picker}</div>
+            <div
+              data-model-picker-effort
+              className="mx-2 mb-2 flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl border border-input/50 bg-muted/60"
+              onKeyDown={(event) => {
+                if (event.altKey || event.ctrlKey || event.metaKey) return;
+                const onSlider =
+                  event.target instanceof Element &&
+                  event.target.closest('[role="slider"]') !== null;
+                // Left and Right move a slider's thumb, so only Up leaves it for the search.
+                if (event.key !== "ArrowUp" && (event.key !== "ArrowLeft" || onSlider)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                searchInputRef.current?.focus();
+              }}
+            >
+              {props.effortColumn}
             </div>
-          </DockedPickerContext>
+            {props.footer}
+          </div>
         ) : (
           picker
         )}

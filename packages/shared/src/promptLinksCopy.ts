@@ -15,22 +15,22 @@ function promptLinkErrorMessage(error: PromptLinkError, resolve: MFunctionType):
   switch (error) {
     case "prompt-too-long":
       return resolve(
-        msg("This prompt is longer than {maxLength} characters, so T3 Code did not open it.", {
+        msg("This prompt is longer than {maxLength} characters, so Ry3 Code did not open it.", {
           maxLength: PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US"),
         }),
       );
     case "prompt-only-hidden":
       return resolve(
         msg(
-          "This prompt had only hidden characters, so it may be malicious. T3 Code did not open it.",
+          "This prompt had only hidden characters, so it may be malicious. Ry3 Code did not open it.",
         ),
       );
     case "unreadable-pull-request":
-      return resolve(msg("This link names a pull request T3 Code cannot read."));
+      return resolve(msg("This link names a pull request Ry3 Code cannot read."));
     case "missing-prompt":
       return resolve(msg("This link has no prompt."));
     case "unreadable-repository":
-      return resolve(msg("This link names a repository T3 Code cannot read."));
+      return resolve(msg("This link names a repository Ry3 Code cannot read."));
   }
 }
 

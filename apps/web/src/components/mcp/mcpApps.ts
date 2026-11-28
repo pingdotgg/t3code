@@ -11,9 +11,9 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
-/** How the Connect step hands T3 Code's MCP URL to an app. Every `link` is https. */
+/** How the Connect step hands Ry3 Code's MCP URL to an app. Every `link` is https. */
 export type McpAppHandoff =
-  /** Opens the app's add form with T3 Code filled in. */
+  /** Opens the app's add form with Ry3 Code filled in. */
   | { readonly kind: "open"; readonly link: (mcpUrl: string) => string }
   /** Copies the URL, then opens the page it goes on. */
   | { readonly kind: "copy-url"; readonly link: string }
@@ -112,7 +112,7 @@ export const MCP_APPS: readonly McpApp[] = [
       msg("Choose Custom apps, then Add, and paste the URL."),
     ],
     docs: "https://support.google.com/gemini/answer/17209137",
-    // Gemini's sign-in and its tool schema checks do not work with T3 Code yet.
+    // Gemini's sign-in and its tool schema checks do not work with Ry3 Code yet.
     hidden: true,
   },
   {

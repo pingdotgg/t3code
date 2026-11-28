@@ -36,7 +36,7 @@ export class PullRequestDiffCredentialRejectedError extends Schema.TaggedError<P
   get i18nMessage(): MarkedText {
     return [
       msg(
-        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen T3 Code.",
+        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen Ry3 Code.",
       ),
     ];
   }

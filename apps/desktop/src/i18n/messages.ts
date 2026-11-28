@@ -9,18 +9,8 @@ type Catalog = Readonly<Record<string, string>>;
 
 const DEFAULT_LOCALE = "en";
 
-// English is the source text and loads nothing. Keep the keys in step with gt.config.json.
-const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalog }>>> = {
-  de: () => import("./translations/de.json", { with: { type: "json" } }),
-  es: () => import("./translations/es.json", { with: { type: "json" } }),
-  fr: () => import("./translations/fr.json", { with: { type: "json" } }),
-  ja: () => import("./translations/ja.json", { with: { type: "json" } }),
-  ko: () => import("./translations/ko.json", { with: { type: "json" } }),
-  "pt-BR": () => import("./translations/pt-BR.json", { with: { type: "json" } }),
-  ru: () => import("./translations/ru.json", { with: { type: "json" } }),
-  sv: () => import("./translations/sv.json", { with: { type: "json" } }),
-  zh: () => import("./translations/zh.json", { with: { type: "json" } }),
-};
+// English is the only language and the source text, so there are no catalogs to load.
+const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalog }>>> = {};
 const SUPPORTED_LOCALES = [DEFAULT_LOCALE, ...Object.keys(CATALOGS)];
 
 const loadedCatalogs = new Map<string, Catalog>([[DEFAULT_LOCALE, {}]]);

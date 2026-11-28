@@ -15,26 +15,11 @@ export function useFormattingLocale(): string {
   return use(FormattingLocaleContext);
 }
 
-// Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
-// Required on demand: Metro runs every statically imported module at startup, and only one
-// locale's catalog is ever used.
-const CATALOGS: Readonly<Record<string, () => unknown>> = {
-  es: () => require("./translations/es.json"),
-  zh: () => require("./translations/zh.json"),
-  "pt-BR": () => require("./translations/pt-BR.json"),
-  fr: () => require("./translations/fr.json"),
-  de: () => require("./translations/de.json"),
-  ja: () => require("./translations/ja.json"),
-  ko: () => require("./translations/ko.json"),
-  ru: () => require("./translations/ru.json"),
-  sv: () => require("./translations/sv.json"),
-};
-
 initializeGT({
   defaultLocale: DEFAULT_LOCALE,
   locales: [...SUPPORTED_LOCALES],
-  loadTranslations: async (locale: string) => CATALOGS[locale]?.() ?? {},
-  // Loaded catalogs never go stale; GT's default 60 s expiry would only reload the same file.
+  // English is the only language and the source text, so there are no catalogs to load.
+  loadTranslations: async () => ({}),
   cacheExpiryTime: null,
 });
 

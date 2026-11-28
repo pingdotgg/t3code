@@ -434,18 +434,15 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors({
-      ...T3_CODE_DARK_THEME_COLORS,
-      canvas: "#000000",
-    }));
+    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
   }
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
+// Where index.css paints a standard color differently from the shared palette, list it here.
 const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
+  light: {},
+  dark: {},
 };
 
 /** The standard theme as index.css paints it, for solves that measure the page. */
@@ -745,7 +742,13 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
   };
   const isDark = (color: ThemeRgbColor) => themeRelativeLuminance(color) < 0.179;
   const messageMatchesCanvas = isDark(onCanvas(colors.messageSurface)) === isDark(canvas);
-  const surfaces = [canvas, onCanvas(colors.surface), onCanvas(colors.surfaceRaised)];
+  const surfaces = [
+    canvas,
+    onCanvas(colors.surface),
+    onCanvas(colors.surfaceRaised),
+    onCanvas(colors.surfaceOverlay),
+    onCanvas(colors.accentSurface),
+  ];
   if (messageMatchesCanvas) surfaces.push(onCanvas(colors.messageSurface));
   const contrastOnSurfaces = (color: ThemeRgbColor) =>
     Math.min(...surfaces.map((surface) => themeContrastRatio(color, surface)));

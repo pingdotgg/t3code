@@ -842,7 +842,7 @@ function TaskForm({
         gt("Once is not available here"),
         gt(
           "This environment runs an older {product}. Update it to schedule a one-time task, or pick another schedule.",
-          { product: "T3 Code" },
+          { product: "Ry3 Code" },
         ),
       );
       return;

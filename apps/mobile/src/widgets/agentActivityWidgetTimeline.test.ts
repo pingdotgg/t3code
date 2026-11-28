@@ -28,7 +28,7 @@ function row(phase: Row["phase"], status: string): Row {
 
 function aggregate(activities: ReadonlyArray<Row>): RelayAgentActivityAggregateState {
   return {
-    title: "T3 Code",
+    title: "Ry3 Code",
     subtitle: "Agent work in progress",
     activeCount: activities.length,
     updatedAt: "2026-10-18T09:59:00.000Z",

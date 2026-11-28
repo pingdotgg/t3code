@@ -48,7 +48,7 @@ function makeProject(
 function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScope {
   return {
     key: "github.com/t3tools/t3code",
-    title: "T3 Code",
+    title: "Ry3 Code",
     representative: projects[0]!,
     projects,
     projectRefs: projects.map((project) => ({
@@ -186,7 +186,7 @@ describe("resolveEnvironmentProjectMatch", () => {
 
   it("matches workspace folder names across Windows and POSIX hosts", () => {
     const windows = makeProject("win", "windows", {
-      title: "T3 Code",
+      title: "Ry3 Code",
       workspaceRoot: "C:\\Users\\me\\t3code",
     });
     const mac = makeProject("mac", "mac", {

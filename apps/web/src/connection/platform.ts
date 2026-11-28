@@ -53,7 +53,6 @@ import {
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
-import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
@@ -276,7 +275,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
         reason: "configuration",
         detail: m(
           msg(
-            "{label} runs T3 Code {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
+            "{label} runs Ry3 Code {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
             {
               label: descriptor.label,
               serverVersion: descriptor.serverVersion,
@@ -349,20 +348,8 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
   },
 );
 
-const ANALYTICS_DEVICE_ID_KEY = "t3code:analytics-device-id";
-
-// Lives as long as this browser profile's site data. Storage can be blocked, which only drops the id.
-const analyticsDevice = {
-  id: Effect.sync(
-    Option.liftThrowable(() => {
-      const existing = window.localStorage.getItem(ANALYTICS_DEVICE_ID_KEY);
-      if (existing) return existing;
-      const created = randomUUID();
-      window.localStorage.setItem(ANALYTICS_DEVICE_ID_KEY, created);
-      return created;
-    }),
-  ),
-};
+// This fork keeps no analytics device id, so nothing identifies this browser to the server.
+const analyticsDevice = { id: Effect.succeed(Option.none<string>()) };
 
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {

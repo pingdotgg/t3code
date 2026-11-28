@@ -69,7 +69,7 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
         message: m(
-          msg("T3 Code cannot install the relay client automatically on {platform}-{arch}.", {
+          msg("Ry3 Code cannot install the relay client automatically on {platform}-{arch}.", {
             platform: status.platform,
             arch: status.arch,
           }),
@@ -110,10 +110,13 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
         message:
           installedStatus.status === "unsupported"
             ? m(
-                msg("T3 Code cannot install the relay client automatically on {platform}-{arch}.", {
-                  platform: installedStatus.platform,
-                  arch: installedStatus.arch,
-                }),
+                msg(
+                  "Ry3 Code cannot install the relay client automatically on {platform}-{arch}.",
+                  {
+                    platform: installedStatus.platform,
+                    arch: installedStatus.arch,
+                  },
+                ),
               )
             : m(msg("The relay client is still unavailable after installation.")),
       });

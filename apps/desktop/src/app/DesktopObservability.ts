@@ -1,19 +1,6 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import {
-  makeLocalFileTracer,
-  makeTraceSink,
-  nodeProcessRuntimeAttributes,
-  processServiceInstanceId,
-  type SignalExport,
-} from "@t3tools/shared/observability";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as SharedObservability from "@t3tools/shared/observability";
+import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
-import {
-  parsePersistedServerObservabilitySettings,
-  type PersistedServerObservabilitySettings,
-} from "@t3tools/shared/serverSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,9 +17,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
-import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
-
-import desktopPackageJson from "../../package.json" with { type: "json" };
+import { OtlpExporter } from "effect/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -330,66 +315,10 @@ export const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(
   } satisfies RotatingLogFileWriter;
 });
 
-const noPersistedObservabilitySettings: PersistedServerObservabilitySettings = {
-  otlpTracesUrl: undefined,
-  otlpMetricsUrl: undefined,
-  otlpLogsUrl: undefined,
-};
-
-const readPersistedObservabilitySettings: Effect.Effect<
-  PersistedServerObservabilitySettings,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
-  return Option.isNone(raw)
-    ? noPersistedObservabilitySettings
-    : parsePersistedServerObservabilitySettings(raw.value);
-});
-
+// This fork never exports traces, metrics, or logs over the network; they stay in local files.
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
-  if (otel.disabled) {
-    return {
-      traces: undefined,
-      metrics: undefined,
-      logs: undefined,
-      warnings: otel.warnings,
-      resourceAttributes: otel.resourceAttributes,
-    };
-  }
-
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const persisted = yield* readPersistedObservabilitySettings;
-  const signalExport: SignalExport = {
-    protocol: environment.otlpProtocol,
-    headers: Option.getOrUndefined(environment.otlpHeaders),
-    exportIntervalMs: environment.otlpExportIntervalMs,
-  };
-  return {
-    traces: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "traces",
-      { url: Option.getOrUndefined(environment.otlpTracesUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpTracesUrl },
-    ),
-    metrics: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "metrics",
-      { url: Option.getOrUndefined(environment.otlpMetricsUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpMetricsUrl },
-    ),
-    logs: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "logs",
-      { url: Option.getOrUndefined(environment.otlpLogsUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpLogsUrl },
-    ),
-    warnings: otel.warnings,
-    resourceAttributes: otel.resourceAttributes,
-  };
+  return { warnings: otel.warnings, resourceAttributes: otel.resourceAttributes };
 });
 
 const writeDevelopmentConsoleOutput = (
@@ -603,49 +532,10 @@ const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
-    // Unpackaged runs launch a script, so Electron reports its own version.
-    const serviceVersion = environment.isPackaged
-      ? environment.appVersion
-      : desktopPackageJson.version;
-    const resource = {
-      serviceName: "t3code-desktop",
-      serviceVersion,
-      attributes: {
-        "service.namespace": "t3code",
-        "service.runtime": "desktop",
-        "t3code.desktop.mode": environment.isDevelopment ? "development" : "packaged",
-        "service.instance.id": processServiceInstanceId(endpoints.resourceAttributes),
-        ...releaseResourceAttributes(
-          environment.isDevelopment ? "dev" : releaseChannelOf(serviceVersion),
-          endpoints.resourceAttributes,
-        ),
-        "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),
-        ...nodeProcessRuntimeAttributes(),
-      },
-    };
-
     // Logger.layer replaces the logger set. tracerLogger would duplicate OTLP in-span messages.
-    const layerLogger = Logger.layer(
-      endpoints.logs === undefined
-        ? [Logger.consolePretty(), Logger.tracerLogger]
-        : [
-            Logger.consolePretty(),
-            OtlpLogger.make({
-              url: endpoints.logs.url,
-              exportInterval: `${endpoints.logs.export.exportIntervalMs} millis`,
-              headers: endpoints.logs.export.headers,
-              resource,
-            }),
-          ],
-      { mergeWithExisting: false },
-    ).pipe(
-      Layer.provide(OtlpExporter.layerFlusher),
-      Layer.provide(
-        SharedObservability.layerOtlpSerialization(
-          endpoints.logs?.export.protocol ?? environment.otlpProtocol,
-        ),
-      ),
-    );
+    const layerLogger = Logger.layer([Logger.consolePretty(), Logger.tracerLogger], {
+      mergeWithExisting: false,
+    });
 
     const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
@@ -658,26 +548,13 @@ const layerTelemetry = Layer.unwrap(
         });
         // Unscoped: Electron can exit without closing the app scope, e.g. when the display drops.
         process.once("exit", sink.flushSync);
-        const delegate =
-          endpoints.traces === undefined
-            ? undefined
-            : yield* OtlpTracer.make({
-                url: endpoints.traces.url,
-                exportInterval: `${endpoints.traces.export.exportIntervalMs} millis`,
-                headers: endpoints.traces.export.headers,
-                resource,
-              }).pipe(
-                Effect.provide(
-                  SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
-                ),
-              );
+        // Traces stay in the local file; this fork never exports them.
         const tracer = yield* makeLocalFileTracer({
           filePath: tracePath,
           maxBytes: DESKTOP_LOG_FILE_MAX_BYTES,
           maxFiles: DESKTOP_LOG_FILE_MAX_FILES,
           batchWindowMs: DESKTOP_TRACE_BATCH_WINDOW_MS,
           sink,
-          ...(delegate ? { delegate } : {}),
         });
 
         return Layer.succeed(Tracer.Tracer, tracer);

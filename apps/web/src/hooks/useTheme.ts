@@ -279,9 +279,9 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
+  const themeChromeColor = normalizeThemeColor(
+    rootStyles.getPropertyValue("--app-chrome-background"),
+  );
   const surfaceColor = normalizeThemeColor(
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );

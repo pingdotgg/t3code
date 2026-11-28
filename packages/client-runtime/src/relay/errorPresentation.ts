@@ -175,7 +175,7 @@ export function relayOfflineReasonMessage(
     case "tunnel_released":
       return resolve(
         msg(
-          "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.",
+          "Offline for a while, so its T3 Connect tunnel was removed. Start Ry3 Code on that computer and update it to the latest version to reconnect.",
         ),
       );
     case undefined:

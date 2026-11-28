@@ -110,7 +110,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
             </View>
             <Text className="px-2 text-sm leading-normal text-foreground-muted">
               {gt(
-                "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+                "Helps the Ry3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About Ry3 Code > Diagnostics.",
               )}
             </Text>
           </View>

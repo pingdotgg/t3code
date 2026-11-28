@@ -55,7 +55,7 @@ export function environmentMismatchError(input: {
     reason: "configuration",
     ...translatableDetail(
       msg(
-        "This address now runs a different T3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
+        "This address now runs a different Ry3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
         { actual: input.actual, expected: input.expected },
       ),
     ),
@@ -145,7 +145,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         detail,
         i18nMessage,
         traceId,
-        // The tunnel carried the request when T3 Code is what failed to answer.
+        // The tunnel carried the request when Ry3 Code is what failed to answer.
         hop:
           endpointFailure === "origin_unreachable" || endpointFailure === "invalid_response"
             ? "server"

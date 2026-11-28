@@ -1,6 +1,4 @@
-// The production icon, as GitHub shows the T3 Code app, whatever this build's channel.
-import appIconUrl from "../../../../assets/prod/t3-black-web-apple-touch-180.png";
-
+// The Ry3 Code mascot, whatever this build's channel.
 export function T3AppIcon(props: { readonly className?: string }) {
-  return <img src={appIconUrl} alt="" className={props.className} />;
+  return <img src="/logo.svg" alt="" className={props.className} />;
 }

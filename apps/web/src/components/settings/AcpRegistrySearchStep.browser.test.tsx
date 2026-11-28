@@ -135,7 +135,7 @@ it("bounds pasted registry searches before debounce and submission", async () =>
   await expect.element(searchbox).toHaveValue("agent".repeat(24));
 });
 
-it("leaves out Registry agents that T3 Code supports as their own providers", async () => {
+it("leaves out Registry agents that Ry3 Code supports as their own providers", async () => {
   setup();
   state.result = { agents: [gemini, { ...gemini, id: "codex-acp", name: "Codex" }] };
   await using _screen = await render(<Step />);

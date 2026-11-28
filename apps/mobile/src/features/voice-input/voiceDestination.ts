@@ -178,7 +178,7 @@ function environmentTranscriber(
       if (!native?.decodeRecording)
         throw new VoiceTranscriptionError({
           code: "unavailable",
-          message: m(msg("Update T3 Code to transcribe on an environment.")),
+          message: m(msg("Update Ry3 Code to transcribe on an environment.")),
         });
       return native.decodeRecording(uri);
     },

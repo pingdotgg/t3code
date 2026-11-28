@@ -306,6 +306,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { DraftHeroGreeting, DraftHeroSuggestions } from "./chat/DraftHeroAssistant";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -3057,7 +3058,7 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? gt("Side chats are not ready yet. Try again in a moment.")
           : serverConfig.environment.capabilities.sideChats !== true
-            ? gt("Update this environment's T3 Code server to use side chats.")
+            ? gt("Update this environment's Ry3 Code server to use side chats.")
             : sideChatsOffered && !isServerThread
               ? gt("Side chats start after the first message.")
               : sideChat.available &&
@@ -3796,6 +3797,7 @@ export default function ChatView(props: ChatViewProps) {
               }}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
+              data-draft-hero={isDraftHeroState || undefined}
               className={
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex flex-col before:basis-[max(0px,calc(50%-5rem))] *:shrink-0 [@media(max-height:34rem)]:before:basis-[max(0px,calc(100%-12rem))]"
@@ -3817,6 +3819,7 @@ export default function ChatView(props: ChatViewProps) {
                             : undefined
                         }
                       >
+                        <DraftHeroGreeting />
                         <DraftHeroHeadline
                           draftId={draftId}
                           activeProjectRef={activeProjectRef}
@@ -4105,6 +4108,16 @@ export default function ChatView(props: ChatViewProps) {
                           </div>
                         </div>
                       </ComposerSurface.Shell>
+                      {isDraftHeroState ? (
+                        <DraftHeroSuggestions
+                          onPick={(prompt) => {
+                            composerRef.current?.insertTextAtEnd(prompt, {
+                              ensureLeadingBoundary: true,
+                            });
+                            composerRef.current?.focusAtEnd();
+                          }}
+                        />
+                      ) : null}
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
                         // Short windows keep the notice in flow so it can use the space above.

@@ -477,6 +477,7 @@ export function AppSidebarLayout({
             <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
             <Sidebar
               side="left"
+              variant="floating"
               collapsible="offcanvas"
               data-app-sidebar=""
               {...sidebarArea}

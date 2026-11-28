@@ -99,13 +99,13 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
-      ["wsl-backend", "update T3 Code on that machine"],
+      ["wsl-backend", "update Ry3 Code on that machine"],
     ]);
   });
 
   it("says why a disconnected server was skipped when its connection says", () => {
     const replaced =
-      "This address now runs a different T3 Code install (b7a4, not 0359). Remove this connection and add it again.";
+      "This address now runs a different Ry3 Code install (b7a4, not 0359). Remove this connection and add it again.";
     const { skipped } = collectServerUpdateTargets(
       [
         machine("replaced", "0.0.40", "boot-service", {
@@ -169,7 +169,7 @@ describe("collectServerUpdateTargets", () => {
         entry.label,
         entry.reason,
       ]),
-    ).toEqual([["off", "Example Corp manages T3 Code updates."]]);
+    ).toEqual([["off", "Example Corp manages Ry3 Code updates."]]);
     expect(
       collectServerUpdateTargets(
         machines.map((entry) => ({
@@ -294,10 +294,10 @@ describe("collectChannelSwitchTargets", () => {
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
       ["old-desktop", "change the update track on that machine"],
-      ["behind-desktop", "update T3 Code on that machine"],
+      ["behind-desktop", "update Ry3 Code on that machine"],
       [
         "no-nightly",
-        "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+        "Example Corp manages Ry3 Code updates. Only stable releases can be installed.",
       ],
     ]);
   });
@@ -447,7 +447,7 @@ describe("runUpdateEverything", () => {
 });
 
 describe("describeUpdateEverything", () => {
-  it("gives each machine one row with its T3 Code and provider updates", () => {
+  it("gives each machine one row with its Ry3 Code and provider updates", () => {
     const id = EnvironmentId.make;
     const { rows } = describeUpdateEverything({
       localVersion: "1.1.0",

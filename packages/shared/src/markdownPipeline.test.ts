@@ -1088,7 +1088,7 @@ it.each([
       "/Users/me/app.ts:42",
     ]);
     expect(
-      links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
+      links("Config lives in /Users/me/Library/Application Support/Ry3 Code/settings.json now."),
     ).toEqual([]);
     expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
       `https://example.com${path}`,

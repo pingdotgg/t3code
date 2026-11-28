@@ -107,7 +107,7 @@ function EmptyMobileClients() {
         </EmptyTitle>
         <EmptyDescription>
           <T>
-            Install T3 Code on your phone and sign in to T3 Connect to get push notifications and
+            Install Ry3 Code on your phone and sign in to T3 Connect to get push notifications and
             Live Activities.
           </T>
         </EmptyDescription>

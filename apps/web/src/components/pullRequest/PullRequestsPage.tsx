@@ -1262,7 +1262,7 @@ export function PullRequestsPage() {
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
           title={gt("Pull requests unavailable")}
-          error={gt("Update your T3 Code servers to browse pull requests.")}
+          error={gt("Update your Ry3 Code servers to browse pull requests.")}
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />

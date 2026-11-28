@@ -512,7 +512,7 @@ export function IssuesScreen(
                     : capable.length > 0
                       ? gt("Reconnect to load issues.")
                       : environments.length > 0
-                        ? gt("Update the environment's T3 Code server to browse issues.")
+                        ? gt("Update the environment's Ry3 Code server to browse issues.")
                         : gt("Add an environment in Settings to browse its issues."))
                 }
                 variant="plain"

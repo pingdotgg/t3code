@@ -76,7 +76,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
         stackedThreadToast({
           type: "error",
           title: gt('Could not add "{name}"', { name: folder.name }),
-          description: response?.message ?? gt("T3 Code could not read the folder's path."),
+          description: response?.message ?? gt("Ry3 Code could not read the folder's path."),
         }),
       );
     }

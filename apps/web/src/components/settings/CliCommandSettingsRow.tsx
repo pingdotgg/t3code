@@ -62,12 +62,12 @@ export function CliCommandSettingsRow() {
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
     ? resolve(
-        msg("Another t3 at {path} runs first in a new terminal. Remove it to use T3 Code's.", {
+        msg("Another t3 at {path} runs first in a new terminal. Remove it to use Ry3 Code's.", {
           path: state.shadowedBy,
         }),
       )
     : !installed
-      ? resolve(msg("Run T3 Code's CLI as `t3` from any terminal."))
+      ? resolve(msg("Run Ry3 Code's CLI as `t3` from any terminal."))
       : state.onPath
         ? resolve(
             msg("Installed at {path}. Open a new terminal to use it.", {

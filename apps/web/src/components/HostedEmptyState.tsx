@@ -46,7 +46,7 @@ export function HostedEmptyState() {
               ) : cloudEnabled ? (
                 <T>Your agents run on your computer.</T>
               ) : (
-                <T>Your agents run on your computer. Start T3 Code there first.</T>
+                <T>Your agents run on your computer. Start Ry3 Code there first.</T>
               )}
             </EmptyDescription>
           </EmptyHeader>

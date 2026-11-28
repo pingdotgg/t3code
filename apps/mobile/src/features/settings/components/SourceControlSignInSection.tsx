@@ -26,7 +26,7 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
 
 const openUrl = (url: string) => void tryOpenExternalUrl(url, "provider-auth");
 
-/** Signs an environment in through a forge's own app, such as T3 Code for GitHub. */
+/** Signs an environment in through a forge's own app, such as Ry3 Code for GitHub. */
 export function AppSignInRow(props: {
   readonly environment: SettingsTarget;
   readonly label: string;

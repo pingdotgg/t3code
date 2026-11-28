@@ -59,7 +59,7 @@ export function ListSearchToolbar(props: {
   }, [searching, closeSearch, navigation, isTabActive, section]);
   return (
     <AppBar
-      title="T3 Code"
+      title="Ry3 Code"
       titleContent={
         <WorkspaceConnectionTitle
           grow

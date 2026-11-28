@@ -309,7 +309,7 @@ it("lists the t3.json actions on disk when the actions menu opens again after th
   await chooser.click();
   await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
 
-  // A setup hook rewrites this checkout's t3.json outside T3 Code.
+  // A setup hook rewrites this checkout's t3.json outside Ry3 Code.
   t3File.disk = t3Json("Dev 4200");
 
   await chooser.click();

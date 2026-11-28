@@ -1136,50 +1136,52 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="display" title={gt("Display")}>
-        <SettingsRow
-          {...setting("language")}
-          description={<T>System default follows your browser or OS language.</T>}
-          resetAction={
-            settings.language !== DEFAULT_UNIFIED_SETTINGS.language ? (
-              <SettingResetButton
-                ariaLabel={gt("Reset language to default")}
-                onClick={() =>
-                  updateSettings({
-                    language: DEFAULT_UNIFIED_SETTINGS.language,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={languageValue}
-              onValueChange={(value) => {
-                if (value) {
-                  updateSettings({ language: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Language")}>
-                <SelectValue>
-                  {languageValue === SYSTEM_LANGUAGE
-                    ? m(TIMESTAMP_FORMAT_LABELS.locale)
-                    : nativeLanguageName(languageValue)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={SYSTEM_LANGUAGE}>
-                  {m(TIMESTAMP_FORMAT_LABELS.locale)}
-                </SelectItem>
-                {SUPPORTED_LOCALES.map((locale) => (
-                  <SelectItem hideIndicator key={locale} value={locale}>
-                    {nativeLanguageName(locale)}
+        {SUPPORTED_LOCALES.length > 1 ? (
+          <SettingsRow
+            {...setting("language")}
+            description={<T>System default follows your browser or OS language.</T>}
+            resetAction={
+              settings.language !== DEFAULT_UNIFIED_SETTINGS.language ? (
+                <SettingResetButton
+                  ariaLabel={gt("Reset language to default")}
+                  onClick={() =>
+                    updateSettings({
+                      language: DEFAULT_UNIFIED_SETTINGS.language,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={languageValue}
+                onValueChange={(value) => {
+                  if (value) {
+                    updateSettings({ language: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Language")}>
+                  <SelectValue>
+                    {languageValue === SYSTEM_LANGUAGE
+                      ? m(TIMESTAMP_FORMAT_LABELS.locale)
+                      : nativeLanguageName(languageValue)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value={SYSTEM_LANGUAGE}>
+                    {m(TIMESTAMP_FORMAT_LABELS.locale)}
                   </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+                  {SUPPORTED_LOCALES.map((locale) => (
+                    <SelectItem hideIndicator key={locale} value={locale}>
+                      {nativeLanguageName(locale)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
         <SettingsRow
           {...setting("time-format")}
           description={<T>System default follows your browser or OS clock preference.</T>}
@@ -2586,7 +2588,7 @@ export function AboutSettingsPanel() {
           {...setting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? gt("How we handle your data, including the anonymous usage data T3 Code collects.")
+              ? gt("How we handle your data, including the anonymous usage data Ry3 Code collects.")
               : gt("How we handle your data. {telemetryOff}", { telemetryOff })
           }
           control={
@@ -2601,7 +2603,7 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...setting("open-source-licenses")}
-          description={gt("Notices for dependencies, assets, and optional tools used by T3 Code.")}
+          description={gt("Notices for dependencies, assets, and optional tools used by Ry3 Code.")}
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}
