@@ -1,4 +1,5 @@
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -1394,6 +1395,51 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal(defect.message, "ACP protocol terminated.");
       assert.instanceOf(defect.cause, AcpError.AcpProcessExitedError);
       assert.equal((defect.cause as AcpError.AcpProcessExitedError).code, 7);
+    }),
+  );
+
+  const exited = new AcpError.AcpProcessExitedError({ signal: "SIGABRT" });
+  it.effect.each([
+    {
+      name: "a write fails",
+      stdout: Sink.forEach(() => Effect.die("EPIPE")),
+      expected: "AcpProcessExitedError",
+    },
+    {
+      name: "the writer ends early",
+      stdout: Sink.succeed(undefined),
+      expected: "AcpProcessExitedError",
+    },
+    {
+      name: "a read fails",
+      stdin: Stream.fail(
+        PlatformError.systemError({ _tag: "UnexpectedEof", module: "Stream", method: "read" }),
+      ),
+      expected: "AcpProcessExitedError",
+    },
+    {
+      name: "stdout's transform fails with its own diagnosis",
+      stdin: Stream.fail(new AcpError.AcpTransportError({ detail: "Sign in", cause: undefined })),
+      expected: "AcpTransportError",
+    },
+    { name: "the reader dies", stdin: Stream.die("boom"), expected: "AcpTransportError" },
+  ])("reports the right termination when $name after the child died", (testCase) =>
+    Effect.gen(function* () {
+      const { stdio } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: {
+          ...stdio,
+          stdin: "stdin" in testCase ? testCase.stdin : stdio.stdin,
+          stdout: () => ("stdout" in testCase ? testCase.stdout : Sink.drain),
+        },
+        terminationError: Effect.succeed(exited),
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* transport.notify("x/initialize", {}).pipe(Effect.exit);
+      assert.equal((yield* Deferred.await(termination))._tag, testCase.expected);
     }),
   );
 
