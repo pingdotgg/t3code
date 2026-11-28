@@ -814,6 +814,146 @@ describe("Antigravity tool results", () => {
       }),
     ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
+
+  it("normalizes Antigravity's bare Searched web search calls without reclassifying file searches", () => {
+    const queryOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "web-1",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: '"poteto" verification CLI headless browser agent' },
+        },
+      }).toolCall,
+    );
+    expect(queryOnly.title).toBe("Web search");
+    expect(queryOnly.data.title).toBe("Web search");
+
+    const withDomain = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "web-2",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { domain: "x.com", query: "poteto status 2094457600259842065" },
+        },
+      }).toolCall,
+    );
+    expect(withDomain.title).toBe("Web search");
+    expect(withDomain.data.title).toBe("Web search");
+
+    const started = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "web-3",
+          title: "Running search_web",
+          kind: "search",
+          status: "in_progress",
+          rawInput: { query: "top story on Hacker News" },
+        },
+      }).toolCall,
+    );
+    const completed = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        started,
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "web-3",
+            title: "Searched",
+            status: "completed",
+          },
+        }).toolCall,
+      ),
+    );
+    expect(completed.title).toBe("Web search");
+    expect(completed.data.title).toBe("Web search");
+
+    const withPath = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-1",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "TODO", path: "apps/web" },
+        },
+      }).toolCall,
+    );
+    expect(withPath.data.title).toBe("Searched");
+
+    const withLocation = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-2",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "README.md" },
+          locations: [{ path: "README.md" }],
+        },
+      }).toolCall,
+    );
+    expect(withLocation.data.title).toBe("Searched");
+
+    const grepQueryOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-3",
+          title: "Grep",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "TODO" },
+        },
+      }).toolCall,
+    );
+    expect(grepQueryOnly.data.title).toBe("Grep");
+
+    const invalidDomain = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-4",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "news", domain: 42 },
+        },
+      }).toolCall,
+    );
+    expect(invalidDomain.data.title).toBe("Searched");
+
+    const blankQuery = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-5",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "   " },
+        },
+      }).toolCall,
+    );
+    expect(blankQuery.data.title).toBe("Searched");
+  });
 });
 
 describe("Antigravity served reads", () => {

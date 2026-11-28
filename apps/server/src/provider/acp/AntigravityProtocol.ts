@@ -1,7 +1,8 @@
-import type {
-  ProviderApprovalOption,
-  ProviderUserInputAnswers,
-  UserInputQuestion,
+import {
+  TrimmedNonEmptyString,
+  type ProviderApprovalOption,
+  type ProviderUserInputAnswers,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -701,6 +702,35 @@ function withAntigravityEditPatches(
   });
 }
 
+const ANTIGRAVITY_WEB_SEARCH_BARE_TITLE = /^\s*(?:searched|searching)\s*$/iu;
+
+const AntigravityWebSearchInput = Schema.Struct({
+  query: TrimmedNonEmptyString,
+  domain: Schema.optional(Schema.String),
+});
+const decodeAntigravityWebSearchInput = Schema.decodeUnknownOption(AntigravityWebSearchInput, {
+  onExcessProperty: "error",
+});
+
+/**
+ * Antigravity titles `search_web` steps "Searched" (its `search: web` render hint is not sent
+ * over ACP). Distinguish them from local search tools by the `search_web` schema (`query`,
+ * optional `domain`, and no filesystem locations).
+ */
+function isAntigravityWebSearchToolCall(
+  kind: string | undefined,
+  rawTitle: string | undefined,
+  data: Record<string, unknown>,
+): boolean {
+  if (kind !== "search" || !ANTIGRAVITY_WEB_SEARCH_BARE_TITLE.test(rawTitle ?? "")) {
+    return false;
+  }
+  if (Array.isArray(data.locations) && data.locations.length > 0) {
+    return false;
+  }
+  return Option.isSome(decodeAntigravityWebSearchInput(data.rawInput));
+}
+
 export function normalizeAntigravityToolCall(
   toolCall: AcpToolCallState,
   readPreEditFile = readAntigravityPreEditFile,
@@ -732,7 +762,10 @@ export function normalizeAntigravityToolCall(
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
+  const rawTitle = typeof data.title === "string" ? data.title : toolCall.title;
+  const webSearch = isAntigravityWebSearchToolCall(kind, rawTitle, data);
   if (kind !== undefined) data.kind = kind;
+  if (webSearch) data.title = "Web search";
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
   if (imagePath !== undefined) data.imagePath = imagePath;
@@ -756,11 +789,16 @@ export function normalizeAntigravityToolCall(
       ...(exitCode !== undefined ? { exitCode } : {}),
     };
   }
+  const normalizedTitle = webSearch
+    ? "Web search"
+    : toolCall.title !== undefined
+      ? boundText(toolCall.title)
+      : undefined;
   const normalized: AcpToolCallState = {
     ...toolCall,
     ...(kind !== undefined ? { kind } : {}),
     ...(command !== undefined ? { command } : {}),
-    ...(toolCall.title !== undefined ? { title: boundText(toolCall.title) } : {}),
+    ...(normalizedTitle !== undefined ? { title: normalizedTitle } : {}),
     ...(command !== undefined
       ? { detail: command }
       : toolCall.detail !== undefined
