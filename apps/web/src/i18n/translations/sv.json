@@ -1876,6 +1876,9 @@
   "8956e2bf9ebef228": "Kopiera promptlänk med repo och modell",
   "9e9201570bcc2be8": "Kopiera PR-länk",
   "a1fcc064a5cece14": "Kopiera tråd",
+  "c02f2abc01600502": "Tråd som Markdown",
+  "8b6e37f51ac2cf7b": "Tråden kopierades som Markdown",
+  "292759bc63d72b78": "Det gick inte att kopiera tråden som Markdown",
   "2eb493c9e7a5fe9a": "Länka pull request till tråd",
   "abbbacfec60327d7": "Visa länkade objekt",
   "67f5b13c3c7bcd40": "Dela med gäst",
@@ -13169,8 +13172,5 @@
   "236911500e5aff7c": "Agenterna väntar hela tiden medan systemet frigör minne.",
   "81aafe06d7fede9a": "Där T3 Code sparar sina data och worktrees",
   "9429f8ff8866edac": "Processor",
-  "79a21371b8db96da": "Arbetet väntar på en ledig processor eller på disken, så agenterna går långsamt.",
-  "c02f2abc01600502": "Tråd som Markdown",
-  "8b6e37f51ac2cf7b": "Tråden kopierades som Markdown",
-  "292759bc63d72b78": "Det gick inte att kopiera tråden som Markdown"
+  "79a21371b8db96da": "Arbetet väntar på en ledig processor eller på disken, så agenterna går långsamt."
 }

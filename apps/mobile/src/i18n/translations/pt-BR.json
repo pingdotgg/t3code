@@ -4948,6 +4948,8 @@
   "dffd2e20f7ff5aa1": "Marcar como não lida",
   "1385e2d8bd696370": "Transformar em projeto",
   "a1fcc064a5cece14": "Copiar thread",
+  "787f759cce79d5cc": "Copiar conversa como Markdown",
+  "292759bc63d72b78": "Não foi possível copiar a conversa como Markdown",
   "7b24be8e29a2efc5": "Copiar ID da thread",
   "4205928193aec525": "Adiar",
   "618aa0a6bf093a70": "Tente copiar esta thread novamente.",
@@ -5766,7 +5768,5 @@
   "5d9bc70d1cb3b596": "{count} máquinas estão quase sem espaço em disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas estão sobrecarregadas",
   "b48a4b390016a4f0": "Usando {usage} enquanto a memória deixa os agentes lentos. Pará-lo ajuda os demais.",
-  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais.",
-  "787f759cce79d5cc": "Copiar conversa como Markdown",
-  "292759bc63d72b78": "Não foi possível copiar a conversa como Markdown"
+  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais."
 }

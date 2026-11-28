@@ -4954,6 +4954,8 @@
   "dffd2e20f7ff5aa1": "Als ungelesen markieren",
   "1385e2d8bd696370": "In Projekt umwandeln",
   "a1fcc064a5cece14": "Thread kopieren",
+  "787f759cce79d5cc": "Thread als Markdown kopieren",
+  "292759bc63d72b78": "Thread konnte nicht als Markdown kopiert werden",
   "7b24be8e29a2efc5": "Thread-ID kopieren",
   "4205928193aec525": "Zurückstellen",
   "618aa0a6bf093a70": "Versuch erneut, diesen Thread zu kopieren.",
@@ -5772,7 +5774,5 @@
   "5d9bc70d1cb3b596": "{count} Rechnern geht der Speicherplatz aus",
   "7bb6d3c4fe5cea0f": "{count} Rechner sind überlastet",
   "b48a4b390016a4f0": "Belegt {usage}, während Arbeitsspeicher Agents ausbremst. Ihn zu stoppen hilft den übrigen.",
-  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen.",
-  "787f759cce79d5cc": "Thread als Markdown kopieren",
-  "292759bc63d72b78": "Thread konnte nicht als Markdown kopiert werden"
+  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen."
 }

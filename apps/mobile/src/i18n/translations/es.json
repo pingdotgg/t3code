@@ -4947,6 +4947,8 @@
   "dffd2e20f7ff5aa1": "Marcar como no leído",
   "1385e2d8bd696370": "Convertir en proyecto",
   "a1fcc064a5cece14": "Copiar hilo",
+  "787f759cce79d5cc": "Copiar conversación como Markdown",
+  "292759bc63d72b78": "No se pudo copiar la conversación como Markdown",
   "7b24be8e29a2efc5": "Copiar ID del hilo",
   "4205928193aec525": "Posponer",
   "618aa0a6bf093a70": "Prueba a copiar este hilo de nuevo.",
@@ -5766,7 +5768,5 @@
   "5d9bc70d1cb3b596": "{count} máquinas casi no tienen espacio en disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas están sobrecargadas",
   "b48a4b390016a4f0": "Usa {usage} mientras la memoria ralentiza los agentes. Detenerlo ayuda al resto.",
-  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto.",
-  "787f759cce79d5cc": "Copiar conversación como Markdown",
-  "292759bc63d72b78": "No se pudo copiar la conversación como Markdown"
+  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto."
 }

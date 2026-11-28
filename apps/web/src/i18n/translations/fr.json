@@ -1876,6 +1876,9 @@
   "8956e2bf9ebef228": "Copier le lien du prompt avec le dépôt et le modèle",
   "9e9201570bcc2be8": "Copier le lien de la PR",
   "a1fcc064a5cece14": "Copier le fil",
+  "c02f2abc01600502": "Fil en Markdown",
+  "8b6e37f51ac2cf7b": "Fil copié en Markdown",
+  "292759bc63d72b78": "Impossible de copier le fil en Markdown",
   "2eb493c9e7a5fe9a": "Associer une pull request au fil",
   "abbbacfec60327d7": "Afficher les éléments associés",
   "67f5b13c3c7bcd40": "Partager avec un invité",
@@ -13162,8 +13165,5 @@
   "236911500e5aff7c": "Les agents attendent sans cesse que le système libère de la mémoire.",
   "81aafe06d7fede9a": "Là où T3 Code conserve ses données et ses worktrees",
   "9429f8ff8866edac": "Processeur",
-  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents.",
-  "c02f2abc01600502": "Fil en Markdown",
-  "8b6e37f51ac2cf7b": "Fil copié en Markdown",
-  "292759bc63d72b78": "Impossible de copier le fil en Markdown"
+  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents."
 }

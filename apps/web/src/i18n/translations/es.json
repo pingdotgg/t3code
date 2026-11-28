@@ -1876,6 +1876,9 @@
   "8956e2bf9ebef228": "Copiar enlace del prompt con repositorio y modelo",
   "9e9201570bcc2be8": "Copiar enlace de la PR",
   "a1fcc064a5cece14": "Copiar hilo",
+  "c02f2abc01600502": "Conversación como Markdown",
+  "8b6e37f51ac2cf7b": "Conversación copiada como Markdown",
+  "292759bc63d72b78": "No se pudo copiar la conversación como Markdown",
   "2eb493c9e7a5fe9a": "Vincular una pull request al hilo",
   "abbbacfec60327d7": "Mostrar elementos vinculados",
   "67f5b13c3c7bcd40": "Compartir con un invitado",
@@ -13157,8 +13160,5 @@
   "236911500e5aff7c": "Los agentes esperan una y otra vez mientras el sistema libera memoria.",
   "81aafe06d7fede9a": "Donde T3 Code guarda sus datos y worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos.",
-  "c02f2abc01600502": "Conversación como Markdown",
-  "8b6e37f51ac2cf7b": "Conversación copiada como Markdown",
-  "292759bc63d72b78": "No se pudo copiar la conversación como Markdown"
+  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos."
 }
