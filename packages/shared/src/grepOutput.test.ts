@@ -101,6 +101,23 @@ describe("parseGrepOutput", () => {
     ]);
   });
 
+  it("keeps grouped matches when another row rules out inline output", () => {
+    const output = [
+      "/repo/docs/a:12:b.txt",
+      "7:start:8:needle",
+      "8:needle again",
+      "",
+      "/repo/docs/other.txt",
+      "1:other needle",
+      "",
+    ].join("\n");
+    expect(parseGrepOutput(output, "/repo") ?? []).toEqual([
+      { fileName: "/repo/docs/a:12:b.txt", line: 7, preview: "start:8:needle" },
+      { fileName: "/repo/docs/a:12:b.txt", line: 8, preview: "needle again" },
+      { fileName: "/repo/docs/other.txt", line: 1, preview: "other needle" },
+    ]);
+  });
+
   it.each([
     ["a directory listing", "Contents of /repo:\n  [DIR] .git\n  [FILE] README.md"],
     ["an error", "ripgrep failed: invalid regex"],
