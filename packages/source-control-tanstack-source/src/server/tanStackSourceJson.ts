@@ -497,15 +497,3 @@ export function toReviewComment(draft: PullRequestReviewCommentDraft, commitId: 
     body: draft.body,
   };
 }
-
-/** The sections of a unified patch, by the path each one changes. */
-export function patchSections(patch: string): ReadonlyMap<string, string> {
-  const sections = new Map<string, string>();
-  const starts = [...patch.matchAll(/^diff --git a\/(.*) b\/(.*)$/gmu)];
-  for (const [index, match] of starts.entries()) {
-    const end = starts[index + 1]?.index ?? patch.length;
-    const section = patch.slice(match.index, end);
-    sections.set(match[2]!, section.endsWith("\n") ? section : `${section}\n`);
-  }
-  return sections;
-}

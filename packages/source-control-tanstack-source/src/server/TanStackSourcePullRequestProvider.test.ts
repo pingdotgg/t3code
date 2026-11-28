@@ -46,9 +46,35 @@ const FILES = {
   ],
 };
 
+const README_DIFF =
+  "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-hi\n+hello\n";
+const CAFE_DIFF =
+  'diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n' +
+  '--- "a/docs/caf\\303\\251.md"\n+++ "b/docs/caf\\303\\251.md"\n@@ -1 +1 @@\n-old\n+new\n';
+const TAB_RENAME_DIFF =
+  'diff --git a/old.ts "b/new\\tname.ts"\nsimilarity index 100%\nrename from old.ts\nrename to "new\\tname.ts"\n';
+const SEPARATOR_PATH_DIFF = "diff --git a/one b/two.ts b/one b/two.ts\n@@ -1 +1 @@\n-a\n+b\n";
+
 const RESPONSES: Record<string, unknown> = {
   "/repos/acme/web/pulls/42": PRIVATE_PULL,
   "/repos/acme/web/pulls/42/files": FILES,
+  "/repos/acme/web/pulls/43/diff": {
+    baseSha: "b".repeat(40),
+    headSha: "c".repeat(40),
+    mergeBaseSha: "b".repeat(40),
+    available: true,
+    truncated: false,
+    patch: `${README_DIFF}${CAFE_DIFF}${TAB_RENAME_DIFF}${SEPARATOR_PATH_DIFF}`,
+  },
+  "/repos/acme/web/pulls/43/files": {
+    ...FILES,
+    files: [
+      { path: "README.md", status: "modified", additions: 1, deletions: 1 },
+      { path: "docs/café.md", status: "modified", additions: 1, deletions: 1 },
+      { path: "new\tname.ts", status: "renamed", additions: 0, deletions: 0 },
+      { path: "one b/two.ts", status: "modified", additions: 1, deletions: 1 },
+    ],
+  },
   "/repos/acme/web/pulls/42/checks": { checks: [], upToDate: null, mayMerge: true },
   "/repos/acme/web/pulls/42/stack": { members: [] },
   [`/repos/acme/web/check-runs?sha=${"c".repeat(40)}`]: [],
@@ -134,5 +160,30 @@ describe("TanStackSourcePullRequestProvider.getChangeRequestActivity", () => {
         ["Looks good"],
       );
     }),
+  );
+});
+
+describe("TanStackSourcePullRequestProvider.getDiff", () => {
+  it.effect(
+    "reads C-quoted and separator-containing paths without omitting or merging sections",
+    () =>
+      Effect.gen(function* () {
+        const pr = yield* provider;
+        const base = { host: HOST, repository: "acme/web", number: 43, cwd: "/repo" };
+        const full = yield* pr.getDiff(base);
+        assert.strictEqual(full.truncated, false);
+        assert.strictEqual(full.omittedFileStats, undefined);
+
+        assert.strictEqual((yield* pr.getDiff({ ...base, path: "README.md" })).patch, README_DIFF);
+        assert.strictEqual((yield* pr.getDiff({ ...base, path: "docs/café.md" })).patch, CAFE_DIFF);
+        assert.strictEqual(
+          (yield* pr.getDiff({ ...base, path: "new\tname.ts" })).patch,
+          TAB_RENAME_DIFF,
+        );
+        assert.strictEqual(
+          (yield* pr.getDiff({ ...base, path: "one b/two.ts" })).patch,
+          SEPARATOR_PATH_DIFF,
+        );
+      }),
   );
 });
