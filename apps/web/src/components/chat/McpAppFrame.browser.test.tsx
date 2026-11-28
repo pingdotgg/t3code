@@ -1,10 +1,11 @@
 import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { injectMcpAppDocumentBootstrap } from "@t3tools/shared/mcpApp";
 
 import "~/index.css";
+import { readConfirmDialogState, subscribeConfirmDialogHost } from "~/confirmDialog";
 import { act, fakeTimers, render } from "../../../test/render";
 
 // Asks to close twice when told to, and answers only the first teardown, so
@@ -49,10 +50,11 @@ ${sizeChanged(777)}`;
 const REQUESTING_URL = `data:text/html,${encodeURIComponent(`<script>${HOST_REQUESTS}</script><iframe srcdoc="x"></iframe>`)}`;
 
 const asset = vi.hoisted(() => ({ html: "" }));
-const commands = vi.hoisted(() => ({ labels: [] as Array<string> }));
-const setup = (html: string) => {
+const commands = vi.hoisted(() => ({ labels: [] as Array<string>, readOnly: true }));
+const setup = (html: string, readOnly = true) => {
   asset.html = html;
   commands.labels = [];
+  commands.readOnly = readOnly;
 };
 
 vi.mock(import("~/state/use-atom-command"), () => ({
@@ -60,7 +62,7 @@ vi.mock(import("~/state/use-atom-command"), () => ({
     commands.labels.push(command.label);
     return {
       _tag: "Success",
-      value: { callable: true, readOnly: true, content: [], contents: [] },
+      value: { callable: true, readOnly: commands.readOnly, content: [], contents: [] },
     };
   }) as never,
 }));
@@ -187,33 +189,78 @@ describe("McpAppFrame", () => {
     expect(commands.labels).toEqual([]);
   });
 
-  it("answers an app whose document carries the bootstrap", async () => {
-    setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`));
-    await using screen = await render(
-      <McpAppFrame
-        environmentId={EnvironmentId.make("environment")}
-        threadId={ThreadId.make("thread")}
-        conversationThreadId={ThreadId.make("thread")}
-        itemId={TurnItemId.make("item")}
-        revision="1"
-        app={{
-          attachmentId: "attachment",
-          server: "Demo",
-          tool: "show",
-          resourceUri: "ui://demo/app",
-        }}
-        onSendMessage={undefined}
-      />,
-    );
-    const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
-    await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
-    await vi.waitFor(() =>
-      expect(commands.labels.toSorted()).toEqual([
-        "environment-command:mcp-apps:call-tool",
-        "environment-command:mcp-apps:read-resource",
-        "environment-command:mcp-apps:tool-info",
-        "environment-command:mcp-apps:update-model-context",
-      ]),
-    );
-  });
+  it.each(["read-only", "once", "conversation"] as const)(
+    "answers an app with a bootstrapped document (%s)",
+    async (mode) => {
+      const readOnly = mode === "read-only";
+      setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`), readOnly);
+      const unsubscribe = subscribeConfirmDialogHost(() => undefined);
+      using _confirmationHost = { [Symbol.dispose]: unsubscribe };
+      const preview = (conversation = "thread") => (
+        <McpAppFrame
+          environmentId={EnvironmentId.make("environment")}
+          threadId={ThreadId.make("thread")}
+          conversationThreadId={ThreadId.make(conversation)}
+          itemId={TurnItemId.make("item")}
+          revision="1"
+          app={{
+            attachmentId: "attachment",
+            server: "Demo",
+            tool: "show",
+            resourceUri: "ui://demo/app",
+          }}
+          onSendMessage={undefined}
+        />
+      );
+      await using screen = await render(preview());
+      const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
+      await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
+      if (!readOnly) {
+        expect(readConfirmDialogState().status).toBe("idle");
+        expect(page.getByRole("alertdialog").query()).toBeNull();
+        const review = screen.getByRole("button", { name: "Review tool request" });
+        await expect.element(review).toBeInTheDocument();
+        expect(commands.labels).not.toContain("environment-command:mcp-apps:call-tool");
+        await userEvent.click(review);
+        const dialog = page.getByRole("alertdialog", { name: "Allow Demo to run list?" });
+        await userEvent.click(
+          dialog.getByRole("button", {
+            name: mode === "once" ? "Allow once" : "Allow in this conversation",
+          }),
+        );
+      }
+      await vi.waitFor(() =>
+        expect(commands.labels.toSorted()).toEqual([
+          "environment-command:mcp-apps:call-tool",
+          "environment-command:mcp-apps:read-resource",
+          "environment-command:mcp-apps:tool-info",
+          "environment-command:mcp-apps:update-model-context",
+        ]),
+      );
+      if (mode === "conversation") {
+        await screen.rerender(null);
+        commands.labels = [];
+        await screen.rerender(preview("another-thread"));
+        await expect
+          .element(screen.getByRole("button", { name: "Review tool request" }))
+          .toBeInTheDocument();
+        expect(commands.labels).not.toContain("environment-command:mcp-apps:call-tool");
+
+        await screen.rerender(null);
+        commands.labels = [];
+        await screen.rerender(preview());
+        await vi.waitFor(() =>
+          expect(commands.labels).toContain("environment-command:mcp-apps:call-tool"),
+        );
+        await userEvent.click(screen.getByRole("button", { name: "Revoke tool access" }));
+        await screen.rerender(null);
+        commands.labels = [];
+        await screen.rerender(preview());
+        await expect
+          .element(screen.getByRole("button", { name: "Review tool request" }))
+          .toBeInTheDocument();
+        expect(commands.labels).not.toContain("environment-command:mcp-apps:call-tool");
+      }
+    },
+  );
 });

@@ -14,6 +14,6 @@ Ask an agent for a visual (e.g. "show this as a chart" or "make a collage of the
 
 MCP servers supporting the [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) standard render interactive UIs directly below their tool calls (supported on Codex and Claude Code 2.1.301+ on up-to-date T3 servers).
 
-- **Safety**: T3 Code asks before an MCP app runs non-read-only server tools, posts messages to the thread, opens links (mobile), or saves files. Navigating away from its own page stops the app.
+- **Safety**: Select **Review tool request** above the app to approve or decline a server tool call that can make changes. **Allow in this conversation** also approves future calls from the same preview to that tool until you close or reload T3 Code. Use **Revoke tool access** above the preview to ask for approval again. T3 Code also asks before the app posts messages, opens links (mobile), or saves files. Navigating away from its own page stops the app.
 - **Session requirement**: Apps remain viewable after a turn ends, but interacting with them requires the thread's agent session to be running.
 - **Full screen**: Expand an app full screen and press `Esc` (or the corner button) to return to the thread.

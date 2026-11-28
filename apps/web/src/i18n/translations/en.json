@@ -3815,6 +3815,7 @@
   "ced684880c2e1961": "Allow {server} to run {tool}?",
   "b66fa23b5647b62d": "Send this message from {server}?",
   "bae7f74153fa8a05": "Save {names} from {server}?",
+  "00571e895792f578": "Allowed in this conversation: {tools}",
   "7e072f3b5535dc99": "Exit full screen",
   "efd6c11387619a64": "{server} app",
   "cda76d56e346d417": [
@@ -3827,6 +3828,8 @@
     " app was closed"
   ],
   "dff97202cbdaec5b": "Show app",
+  "26492f348b3f378b": "Review tool request",
+  "cb4e1300af07b4be": "Revoke tool access",
   "705cf2b2ee4e0e42": [
     "The ",
     {
@@ -3860,6 +3863,9 @@
     },
     " app"
   ],
+  "64acf77e3e824f0b": "Allowing in this conversation also approves future requests from this preview for this tool, including changes it can make, until you close or reload T3 Code.",
+  "51217f7f2c7c9d5d": "Allow in this conversation",
+  "65947ad9a6cae20d": "Allow once",
   "0fd6b38d7839f885": "Signed in to {server}",
   "54789628a737f557": "Sign in to {server}",
   "8aecbd38f1facf71": "Approve access in your browser. It then opens a page that may not load: copy that page's address and paste it here.",

@@ -1,3 +1,4 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
@@ -8,8 +9,10 @@ import {
   type McpAppDisplayMode,
   type McpAppHost,
   type McpAppHostContext,
+  type McpAppToolApproval,
 } from "@t3tools/client-runtime/mcp-apps";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { mcpAppToolGrants } from "@t3tools/client-runtime/state/mcp-apps";
 import {
   clampMcpAppHeight,
   MCP_APP_COLOR_SCHEME_PARAM,
@@ -21,7 +24,7 @@ import {
 } from "@t3tools/shared/mcpApp";
 import { msg, T, useGT, Var } from "gt-react";
 import { Minimize2Icon } from "lucide-react";
-import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
+import { use, useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
 import { flushSync } from "react-dom";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -30,6 +33,15 @@ import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
 import { isElectron } from "~/env";
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -94,6 +106,9 @@ export function McpAppFrame(props: {
 }) {
   const { app } = props;
   const gt = useGT();
+  const registry = use(RegistryContext);
+  const toolGrants = mcpAppToolGrants(props);
+  const grantedTools = useAtomValue(toolGrants.atom);
   const theme = useHtmlRenderTheme();
   const nativeTitlebarHeight = useNativeTitlebarHeight();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -102,6 +117,8 @@ export function McpAppFrame(props: {
   const [height, setHeight] = useState(MCP_APP_DEFAULT_HEIGHT);
   const [navigatedAway, setNavigatedAway] = useState(false);
   const [bridgeMissing, setBridgeMissing] = useState(false);
+  const [toolApproval, setToolApproval] = useState<McpAppToolApproval | null>(null);
+  const [reviewedApproval, setReviewedApproval] = useState<McpAppToolApproval | null>(null);
   const [displayMode, setDisplayMode] = useState<McpAppDisplayMode>("inline");
   const [closed, setClosed] = useState(false);
   const [documentGeneration, setDocumentGeneration] = useState(0);
@@ -182,6 +199,7 @@ export function McpAppFrame(props: {
     updateModelContext,
     displayMode,
     toolDefinition,
+    reviewingTool: reviewedApproval !== null && reviewedApproval === toolApproval,
   }));
   const hostRef = useRef<McpAppHost | null>(null);
 
@@ -285,15 +303,29 @@ export function McpAppFrame(props: {
       hostVersion: APP_VERSION,
       post: documentLink.post,
       hostContext,
-      callTool: async ({ name, arguments: args }) => {
+      onToolApprovalChanged: (approval) => {
+        setToolApproval(approval);
+        setReviewedApproval(null);
+      },
+      toolGrants: {
+        has: (name) => registry.get(toolGrants.atom).includes(name),
+        allow: (name) => toolGrants.allow(registry, name),
+      },
+      callTool: async ({ name, arguments: args, requestApproval }) => {
         const { environmentId, input } = scope();
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (!info.value.readOnly) {
-          const approved = await ask(
-            `${m(msg("Allow {server} to run {tool}?", { server: app.server, tool: info.value.title ?? name }))}\n${JSON.stringify(args, null, 2)}`,
+          const approved = await requestApproval(
+            m(
+              msg("Allow {server} to run {tool}?", {
+                server: app.server,
+                tool: info.value.title ?? name,
+              }),
+            ),
+            JSON.stringify(args, null, 2),
           );
           if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
@@ -350,6 +382,7 @@ export function McpAppFrame(props: {
             !navigator.userActivation?.isActive ||
             performance.now() - lastPageInputAt < PAGE_ACTIVATION_MS ||
             readLive().props.awaitingUser === true ||
+            readLive().reviewingTool ||
             isConfirmDialogActive() ||
             (otherFullscreen !== null && otherFullscreen !== boxRef.current))
         ) {
@@ -427,8 +460,20 @@ export function McpAppFrame(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
   }, [toolCall, src, documentGeneration]);
 
+  const grantBanner =
+    grantedTools.length > 0 ? (
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-border border-b bg-background px-3 py-2 text-sm">
+        <span className="min-w-0 wrap-anywhere">
+          {gt("Allowed in this conversation: {tools}", { tools: grantedTools.join(", ") })}
+        </span>
+        <Button size="xs" variant="outline" onClick={() => toolGrants.revoke(registry)}>
+          <T>Revoke tool access</T>
+        </Button>
+      </div>
+    ) : null;
+
   if (closed) {
-    return (
+    const closedPreview = (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
         <span>
           <T>
@@ -448,6 +493,12 @@ export function McpAppFrame(props: {
         </Button>
       </div>
     );
+    return (
+      <>
+        {grantBanner}
+        {closedPreview}
+      </>
+    );
   }
 
   // Only a server that binds the app to its document gets a bridge; without one the app cannot run.
@@ -463,7 +514,28 @@ export function McpAppFrame(props: {
   }
 
   const fullscreen = displayMode === "fullscreen";
-  return (
+  const approvalBanner =
+    toolApproval !== null ? (
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-border border-b bg-background px-3 py-2 text-sm">
+        <span className="min-w-0 wrap-anywhere" role="status">
+          {toolApproval.title}
+        </span>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => {
+            flushSync(() => setDisplayMode("inline"));
+            setReviewedApproval(toolApproval);
+          }}
+        >
+          <T>Review tool request</T>
+        </Button>
+      </div>
+    ) : null;
+  const finishReview = (decision: Parameters<McpAppToolApproval["respond"]>[0]) => {
+    reviewedApproval?.respond(decision);
+  };
+  const preview = (
     // Preserve inline row height during fullscreen to prevent timeline jumps.
     <div style={{ height }}>
       <div
@@ -499,6 +571,8 @@ export function McpAppFrame(props: {
             </Button>
           </div>
         ) : null}
+        {fullscreen ? approvalBanner : null}
+        {fullscreen ? grantBanner : null}
         {navigatedAway ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
             <T>
@@ -526,5 +600,46 @@ export function McpAppFrame(props: {
         ) : null}
       </div>
     </div>
+  );
+  return (
+    <>
+      {!fullscreen ? approvalBanner : null}
+      {!fullscreen ? grantBanner : null}
+      {preview}
+      {reviewedApproval !== null && reviewedApproval === toolApproval ? (
+        <AlertDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) finishReview("deny");
+          }}
+        >
+          <AlertDialogPopup>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{reviewedApproval.title}</AlertDialogTitle>
+              <AlertDialogDescription>
+                <T>
+                  Allowing in this conversation also approves future requests from this preview for
+                  this tool, including changes it can make, until you close or reload T3 Code.
+                </T>
+              </AlertDialogDescription>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap wrap-anywhere text-xs">
+                {reviewedApproval.details}
+              </pre>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogClose render={<Button variant="outline" />}>
+                <T>Cancel</T>
+              </AlertDialogClose>
+              <Button variant="outline" onClick={() => finishReview("conversation")}>
+                <T>Allow in this conversation</T>
+              </Button>
+              <Button onClick={() => finishReview("once")}>
+                <T>Allow once</T>
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogPopup>
+        </AlertDialog>
+      ) : null}
+    </>
   );
 }

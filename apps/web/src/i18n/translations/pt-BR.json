@@ -3815,6 +3815,7 @@
   "ced684880c2e1961": "Permitir que {server} execute {tool}?",
   "b66fa23b5647b62d": "Enviar esta mensagem de {server}?",
   "bae7f74153fa8a05": "Salvar {names} de {server}?",
+  "00571e895792f578": "Permitido nesta conversa: {tools}",
   "7e072f3b5535dc99": "Sair da tela cheia",
   "efd6c11387619a64": "App {server}",
   "cda76d56e346d417": [
@@ -3827,6 +3828,8 @@
     " foi fechado"
   ],
   "dff97202cbdaec5b": "Mostrar app",
+  "26492f348b3f378b": "Revisar solicitação da ferramenta",
+  "cb4e1300af07b4be": "Revogar acesso às ferramentas",
   "705cf2b2ee4e0e42": [
     "O app ",
     {
@@ -3859,6 +3862,9 @@
       "v": "v"
     }
   ],
+  "64acf77e3e824f0b": "Ao permitir nesta conversa, esta prévia poderá usar a ferramenta novamente, inclusive para fazer alterações, até você fechar ou recarregar o T3 Code.",
+  "51217f7f2c7c9d5d": "Permitir nesta conversa",
+  "65947ad9a6cae20d": "Permitir uma vez",
   "0fd6b38d7839f885": "Você entrou em {server}",
   "54789628a737f557": "Entrar em {server}",
   "8aecbd38f1facf71": "Aprove o acesso no navegador. Depois ele abre uma página que pode não carregar: copie o endereço dessa página e cole aqui.",

@@ -3815,6 +3815,7 @@
   "ced684880c2e1961": "Autoriser {server} à exécuter {tool} ?",
   "b66fa23b5647b62d": "Envoyer ce message depuis {server} ?",
   "bae7f74153fa8a05": "Enregistrer {names} depuis {server} ?",
+  "00571e895792f578": "Autorisé dans cette conversation : {tools}",
   "7e072f3b5535dc99": "Quitter le plein écran",
   "efd6c11387619a64": "App {server}",
   "cda76d56e346d417": [
@@ -3827,6 +3828,8 @@
     " a été fermée"
   ],
   "dff97202cbdaec5b": "Afficher l’app",
+  "26492f348b3f378b": "Examiner la demande de l’outil",
+  "cb4e1300af07b4be": "Révoquer l’accès aux outils",
   "705cf2b2ee4e0e42": [
     "L’app ",
     {
@@ -3859,6 +3862,9 @@
       "v": "v"
     }
   ],
+  "64acf77e3e824f0b": "En choisissant « Autoriser dans cette conversation », vous permettez à cet aperçu de réutiliser cet outil, y compris pour apporter des modifications, jusqu’à la fermeture ou au rechargement de T3 Code.",
+  "51217f7f2c7c9d5d": "Autoriser dans cette conversation",
+  "65947ad9a6cae20d": "Autoriser une seule fois",
   "0fd6b38d7839f885": "Connecté à {server}",
   "54789628a737f557": "Se connecter à {server}",
   "8aecbd38f1facf71": "Autorisez l’accès dans votre navigateur. Il ouvre ensuite une page qui peut ne pas se charger : copiez l’adresse de cette page et collez-la ici.",

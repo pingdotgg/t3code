@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
+import {
+  makeMcpAppHost,
+  McpAppHostRefusal,
+  type McpAppHostContext,
+  type McpAppToolApproval,
+} from "./host.ts";
 
 const app = {
   attachmentId: "thread-1-app",
@@ -47,6 +52,8 @@ function setup(overrides: Partial<Parameters<typeof makeMcpAppHost>[0]> = {}) {
     post: (message) => sent.push(message as Record<string, unknown>),
     hostContext: () => context(theme, mode),
     callTool: async (input) => ({ content: [{ type: "text", text: `called ${input.name}` }] }),
+    onToolApprovalChanged: () => undefined,
+    toolGrants: { has: () => false, allow: () => undefined },
     readResource: async () => ({ contents: [] }),
     openLink: async () => undefined,
     sendMessage: async () => undefined,
@@ -70,6 +77,54 @@ function setup(overrides: Partial<Parameters<typeof makeMcpAppHost>[0]> = {}) {
 }
 
 describe("makeMcpAppHost", () => {
+  it("clears pending tool approvals when the app is disposed", async () => {
+    const approvals: Array<McpAppToolApproval | null> = [];
+    const executed: Array<string> = [];
+    const { host } = setup({
+      onToolApprovalChanged: (approval) => approvals.push(approval),
+      callTool: async ({ name, requestApproval }) => {
+        if (await requestApproval(name, "{}")) executed.push(name);
+        return { content: [] };
+      },
+    });
+    for (const name of ["first", "second"]) {
+      host.receive({ jsonrpc: "2.0", id: name, method: "tools/call", params: { name } });
+    }
+    expect(approvals.map((approval) => approval?.title)).toEqual(["first"]);
+    host.dispose();
+    approvals[0]!.respond("conversation");
+    await flush();
+
+    expect(approvals).toEqual([expect.objectContaining({ title: "first" }), null]);
+    expect(executed).toEqual([]);
+  });
+
+  it("allows queued and future calls to the granted tool while other tools still need approval", async () => {
+    const approvals: Array<McpAppToolApproval | null> = [];
+    const executed: Array<string> = [];
+    const granted = new Set<string>();
+    const { host } = setup({
+      onToolApprovalChanged: (approval) => approvals.push(approval),
+      toolGrants: { has: (name) => granted.has(name), allow: (name) => granted.add(name) },
+      callTool: async ({ name, requestApproval }) => {
+        if (await requestApproval(name, "{}")) executed.push(name);
+        return { content: [] };
+      },
+    });
+    const call = (id: number, name: string) =>
+      host.receive({ jsonrpc: "2.0", id, method: "tools/call", params: { name } });
+    call(1, "list");
+    call(2, "edit");
+    call(3, "list");
+    approvals[0]!.respond("conversation");
+    call(4, "list");
+    await flush();
+
+    expect(executed).toEqual(["list", "list", "list"]);
+    expect(approvals.map((approval) => approval?.title)).toEqual(["list", "edit"]);
+    expect([...granted]).toEqual(["list"]);
+  });
+
   it("initializes, then replays the tool input and result after initialized", () => {
     const { host, sent } = setup();
     host.setToolCall({

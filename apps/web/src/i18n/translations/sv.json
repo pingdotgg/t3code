@@ -3815,6 +3815,7 @@
   "ced684880c2e1961": "Tillåta {server} att köra {tool}?",
   "b66fa23b5647b62d": "Skicka det här meddelandet från {server}?",
   "bae7f74153fa8a05": "Spara {names} från {server}?",
+  "00571e895792f578": "Tillåtet i den här konversationen: {tools}",
   "7e072f3b5535dc99": "Avsluta helskärm",
   "efd6c11387619a64": "Appen {server}",
   "cda76d56e346d417": [
@@ -3827,6 +3828,8 @@
     " stängdes"
   ],
   "dff97202cbdaec5b": "Visa app",
+  "26492f348b3f378b": "Granska verktygsbegäran",
+  "cb4e1300af07b4be": "Återkalla verktygsåtkomst",
   "705cf2b2ee4e0e42": [
     "Appen ",
     {
@@ -3859,6 +3862,9 @@
       "v": "v"
     }
   ],
+  "64acf77e3e824f0b": "Om du tillåter detta i konversationen kan förhandsvisningen använda verktyget igen, även för att göra ändringar, tills du stänger eller läser in T3 Code på nytt.",
+  "51217f7f2c7c9d5d": "Tillåt i den här konversationen",
+  "65947ad9a6cae20d": "Tillåt en gång",
   "0fd6b38d7839f885": "Inloggad på {server}",
   "54789628a737f557": "Logga in på {server}",
   "8aecbd38f1facf71": "Godkänn åtkomsten i webbläsaren. Den öppnar sedan en sida som kanske inte laddas: kopiera sidans adress och klistra in den här.",

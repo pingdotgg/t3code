@@ -3816,6 +3816,7 @@
   "ced684880c2e1961": "{server} erlauben, {tool} auszuführen?",
   "b66fa23b5647b62d": "Diese Nachricht von {server} senden?",
   "bae7f74153fa8a05": "{names} von {server} speichern?",
+  "00571e895792f578": "In dieser Unterhaltung erlaubt: {tools}",
   "7e072f3b5535dc99": "Vollbild beenden",
   "efd6c11387619a64": "{server}-App",
   "cda76d56e346d417": [
@@ -3828,6 +3829,8 @@
     " wurde geschlossen"
   ],
   "dff97202cbdaec5b": "App anzeigen",
+  "26492f348b3f378b": "Tool-Anfrage prüfen",
+  "cb4e1300af07b4be": "Toolzugriff widerrufen",
   "705cf2b2ee4e0e42": [
     "Die App ",
     {
@@ -3861,6 +3864,9 @@
     },
     " kann nicht geladen werden"
   ],
+  "64acf77e3e824f0b": "Wenn du die Anfrage in dieser Unterhaltung zulässt, darf diese Vorschau das Tool erneut verwenden und damit auch Änderungen vornehmen, bis du T3 Code schließt oder neu lädst.",
+  "51217f7f2c7c9d5d": "In dieser Unterhaltung zulassen",
+  "65947ad9a6cae20d": "Einmal zulassen",
   "0fd6b38d7839f885": "Bei {server} angemeldet",
   "54789628a737f557": "Bei {server} anmelden",
   "8aecbd38f1facf71": "Erlaube den Zugriff in deinem Browser. Danach öffnet er eine Seite, die vielleicht nicht lädt: Kopiere die Adresse dieser Seite und füge sie hier ein.",
