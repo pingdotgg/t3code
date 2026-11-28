@@ -2223,7 +2223,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ],
                 displayText: turnInput.message.text || "Image attachment",
                 // Resumed sessions retain old roots; pin edits to the current checkouts.
-                workspaceRoots: [workspaceRoot, ...extraWorkspaceRoots],
+                // Extra roots list a junction and its target; both resolve to one root.
+                workspaceRoots: [...new Set([workspaceRoot, ...extraWorkspaceRoots])],
                 ifBusy: "queue",
                 ...(effort ? { reasoningEffort: effort } : {}),
               },
