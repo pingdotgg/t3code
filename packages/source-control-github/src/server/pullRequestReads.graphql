@@ -63,6 +63,7 @@ query PullRequestCore(
   $required: Boolean!
   $requestedReviewers: Int!
   $mergeQueue: Boolean!
+  $teamDetails: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
@@ -157,7 +158,9 @@ query PullRequestCore(
             }
             # A team's name and avatar are nullable differently from a person's, so they travel
             # under their own aliases. `combinedSlug` is the `org/slug` a reviewer row shows.
-            ... on Team {
+            # Every Team field needs `read:org` or `read:discussion`, even when no team is
+            # requested, so a credential without them reads with `teamDetails` off.
+            ... on Team @include(if: $teamDetails) {
               slug
               combinedSlug
               teamName: name

@@ -118,14 +118,6 @@ export const Bot = Schema.Struct({
 })
 export interface Bot extends Schema.Struct.Type<typeof Bot.fields> {}
 
-/** An account on GitHub, with one or more owners, that has repositories, members and teams. */
-export const Organization = Schema.Struct({
-  __typename: Schema.Literal("Organization"),
-  /** The organization's login name. */
-  login: Schema.String
-})
-export interface Organization extends Schema.Struct.Type<typeof Organization.fields> {}
-
 /** A placeholder user for attribution of imported data on GitHub. */
 export const Mannequin = Schema.Struct({
   __typename: Schema.Literal("Mannequin"),
@@ -136,7 +128,7 @@ export interface Mannequin extends Schema.Struct.Type<typeof Mannequin.fields> {
 
 /** Types that can be assigned to reactions. */
 export const ReactorOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Reactor>()(["User", "Bot", "Organization", "Mannequin"])
+  __typename: GraphQL.otherTypename<Shared.Typename.Reactor>()(["User", "Bot", "Mannequin"])
 })
 export interface ReactorOther extends Schema.Struct.Type<typeof ReactorOther.fields> {}
 
@@ -148,7 +140,6 @@ export const ReactorConnection = Schema.Struct({
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     ReactorsNodesUser,
     Bot,
-    Organization,
     Mannequin,
     ReactorOther
   ]))))
@@ -628,7 +619,7 @@ export const IssueDetail = GraphQL.query("IssueDetail", {
     fragments: [
       { name: "IssueDetailFields", body: ["on Issue{...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number url repository{nameWithOwner}}}}}}}"] },
       { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
-      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
+      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Mannequin{login}}}}}"] }
     ]
   },
   variables: {
@@ -685,7 +676,7 @@ export const IssueComments = GraphQL.query("IssueComments", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){comments(last:100 before:$", "cursor", "){pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}}}"] }
     ],
     fragments: [
-      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
+      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Mannequin{login}}}}}"] }
     ]
   },
   variables: {
