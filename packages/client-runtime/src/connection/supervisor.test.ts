@@ -477,12 +477,13 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect(
-    "keeps a primary attempt through an offline report and restarts it when the network returns",
-    () =>
+  it.effect.each(["online", "unknown"] as const)(
+    "keeps a primary attempt through an offline report and restarts it when the network returns (from %s)",
+    (initialNetwork) =>
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
         const harness = yield* makeHarness({
+          networkStatus: initialNetwork,
           prepare: (attempt) =>
             attempt === 1
               ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
@@ -493,6 +494,7 @@ describe("EnvironmentSupervisor", () => {
         }).pipe(Effect.provide(harness.dependencies));
 
         yield* Deferred.await(started);
+        yield* TestClock.adjust("1 millis");
         yield* harness.setNetworkStatus("offline");
         yield* TestClock.adjust("1 second");
         expect(yield* Ref.get(harness.prepareCount)).toBe(1);
@@ -1303,6 +1305,36 @@ describe("EnvironmentSupervisor", () => {
         generation: 1,
       });
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "probes a live primary session when connectivity transitions from unknown to offline",
+    () =>
+      Effect.gen(function* () {
+        const probeCount = yield* Ref.make(0);
+        const probeCalled = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          networkStatus: "unknown",
+          probe: () =>
+            Ref.update(probeCount, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.succeed(probeCalled, undefined)),
+            ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.setNetworkStatus("offline");
+        yield* Deferred.await(probeCalled);
+
+        expect(yield* Ref.get(probeCount)).toBe(1);
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connected",
+          network: "unknown",
+          generation: 1,
+        });
+      }),
   );
 
   const makeSilentSocketHarness = (options?: {

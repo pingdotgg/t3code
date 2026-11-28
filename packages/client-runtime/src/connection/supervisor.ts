@@ -86,6 +86,7 @@ const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 interface SupervisorIntent {
   readonly desired: boolean;
   readonly network: NetworkStatus;
+  readonly rawNetwork: NetworkStatus;
 }
 
 type SupervisorSignal =
@@ -312,9 +313,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // still probes its live session, like any other network change.
   const targetNetwork = (network: NetworkStatus): NetworkStatus =>
     network === "offline" && target._tag === "PrimaryConnectionTarget" ? "unknown" : network;
+  const initialNetwork = yield* connectivity.status;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
-    network: targetNetwork(yield* connectivity.status),
+    network: targetNetwork(initialNetwork),
+    rawNetwork: initialNetwork,
   };
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
@@ -1378,12 +1381,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   );
 
   const applyNetwork = (network: NetworkStatus) =>
-    Ref.modify(intent, (current) => {
-      const next = targetNetwork(network);
-      return current.network === next
-        ? [false, current]
-        : ([true, { ...current, network: next }] as const);
-    }).pipe(
+    Ref.modify(intent, (current) =>
+      current.rawNetwork === network
+        ? ([false, current] as const)
+        : ([true, { ...current, network: targetNetwork(network), rawNetwork: network }] as const),
+    ).pipe(
       Effect.flatMap((changed) =>
         changed
           ? (network === "offline" ? Effect.void : forgetSilentRoutes).pipe(
