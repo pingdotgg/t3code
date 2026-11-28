@@ -1517,7 +1517,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Sections above the composer read as one list: a section after another starts where the rows
    above it end, so every row keeps the same 28px pitch wherever its section begins. */
 :is([data-composer-stack-section], [data-chat-composer-request-host]:not(:empty))
-  ~ :is([data-composer-stack-section], * [data-composer-stack-section]) {
+  ~ [data-composer-stack-section],
+:is([data-composer-stack-section], [data-chat-composer-request-host]:not(:empty))
+  ~ *
+  [data-composer-stack-section] {
   margin-top: calc(var(--spacing) * -1);
   padding-top: 0;
 }

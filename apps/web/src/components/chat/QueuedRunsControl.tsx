@@ -560,7 +560,7 @@ export function QueuedRunsControl({
         })}
       </ol>
       {collapsible ? (
-        <div className="self-end pe-2.25 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+        <div className="flex min-h-7 items-center self-end pe-2.25 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
           <InlineButton
             tone="muted"
             aria-expanded={showAll}

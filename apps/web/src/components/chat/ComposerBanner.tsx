@@ -20,7 +20,7 @@ const variantColors: Record<ComposerBannerVariant, string> = {
 /** A row's title: the row's tint tells it apart from the detail, never size or weight. */
 export const composerBannerTitleClassName = "min-w-0 truncate text-(--surface-tint)";
 export const composerBannerDetailClassName =
-  "w-0 min-w-0 grow truncate text-dim-foreground [&_[data-slot=inline-button]:not(:hover)]:text-inherit";
+  "w-0 min-w-0 grow truncate text-dim-foreground [&_[data-slot=inline-button]]:inline-block [&_[data-slot=inline-button]]:max-w-full [&_[data-slot=inline-button]]:truncate [&_[data-slot=inline-button]]:align-bottom [&_[data-slot=inline-button]:not(:hover)]:text-inherit";
 
 /** One section of the tray's status region. */
 function Attachment({ className, ...props }: ComponentProps<"div">) {
@@ -87,7 +87,6 @@ function Row({ className, render, ...props }: useRender.ComponentProps<"div">) {
           "flex min-h-7 w-full min-w-0 flex-wrap items-center gap-x-1.5 text-start",
           className,
         ),
-        "data-composer-banner-row": "true",
       },
       props,
     ),

@@ -55,6 +55,7 @@ import {
 import { CommandPaletteResults } from "../CommandPaletteResults";
 import type { CommandPaletteActionItem, CommandPaletteGroup } from "../CommandPalette.logic";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
+import { ComposerTaskStatus } from "../chat/ComposerTaskStatus";
 import {
   ComposerBanner,
   composerBannerDetailClassName,
@@ -2145,6 +2146,12 @@ function WorkLogSection() {
 
 /* Composer parts */
 
+const TASK_STEPS = [
+  { id: "read", text: "Read the composer banner callers", status: "completed", durationMs: 4000 },
+  { id: "rows", text: "Move every row onto one anatomy", status: "running" },
+  { id: "check", text: "Capture the stack before and after", status: "pending" },
+] as const;
+
 function ComposerSection() {
   return (
     <Section
@@ -2181,6 +2188,13 @@ function ComposerSection() {
                 </ComposerBanner.Root>
               ))}
             </ComposerBanner.Dock>
+          </div>
+        </Stage>
+      </Specimen>
+      <Specimen label="Task list" source="<ComposerTaskStatus>">
+        <Stage width="lg">
+          <div className="flex flex-col overflow-hidden rounded-card surface-tray">
+            <ComposerTaskStatus steps={TASK_STEPS} />
           </div>
         </Stage>
       </Specimen>
