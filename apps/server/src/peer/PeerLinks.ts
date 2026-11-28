@@ -35,7 +35,13 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import {
+  isLocalLoopbackHost,
+  isSharedAddressSpaceHost,
+  isTailnetHost,
+} from "@t3tools/shared/hostClassification";
+import { readTailscaleRoutedAddresses } from "@t3tools/tailscale";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -174,31 +180,31 @@ const failStorage = (cause: unknown) =>
  * code and then the link's token travel to it, so plain http is accepted only
  * where the network already encrypts: this machine, or a Tailscale address.
  */
-const peerOrigin = (url: string) => {
+const peerOrigin = Effect.fnUntraced(function* (
+  url: string,
+  isRoutedTailnetAddress: (host: string) => Effect.Effect<boolean>,
+) {
   const parsed = URL.parse(url);
   if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        // Never the address as given: it may hold a username, password or query.
-        message: "That address is not an http or https address.",
-      }),
-    );
+    return yield* new PeerLinkError({
+      reason: "unreachable",
+      // Never the address as given: it may hold a username, password or query.
+      message: "That address is not an http or https address.",
+    });
   }
   if (
     parsed.protocol === "http:" &&
     !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
+    !isTailnetHost(parsed.hostname) &&
+    !(yield* isRoutedTailnetAddress(parsed.hostname))
   ) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
-      }),
-    );
+    return yield* new PeerLinkError({
+      reason: "unreachable",
+      message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+    });
   }
-  return Effect.succeed(parsed.origin);
-};
+  return parsed.origin;
+});
 
 /** The system error under a failed connection, such as ECONNREFUSED or ENOTFOUND. */
 const connectionCode = (cause: unknown) =>
@@ -251,10 +257,22 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const isOwnLoopback = yield* LoopbackHost;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+
+  // WARP and carrier-grade NAT share 100.64.0.0/10, so such an address is a
+  // Tailscale one only while Tailscale routes it to this machine or a peer.
+  const isRoutedTailnetAddress = (host: string) =>
+    isSharedAddressSpaceHost(host)
+      ? readTailscaleRoutedAddresses.pipe(
+          Effect.map((addresses) => addresses.has(host)),
+          Effect.orElseSucceed(() => false),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        )
+      : Effect.succeed(false);
 
   /** A fresh name for one link's token; the row records it. */
   const newSecretName = random.randomBytes(16).pipe(
@@ -460,7 +478,7 @@ const make = Effect.gen(function* () {
       urls,
       (url) =>
         Effect.gen(function* () {
-          const origin = yield* peerOrigin(url);
+          const origin = yield* peerOrigin(url, isRoutedTailnetAddress);
           // Loopback is this machine, where anything may answer as the one picked.
           if (isOwnLoopback(new URL(origin).hostname)) {
             return yield* new PeerLinkError({
@@ -502,7 +520,7 @@ const make = Effect.gen(function* () {
 
   /** The peer at `url`, with every address checked for credentials first. */
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
-    const origins = yield* Effect.forEach(urls, peerOrigin);
+    const origins = yield* Effect.forEach(urls, (url) => peerOrigin(url, isRoutedTailnetAddress));
     const primary = origins[0]!;
     return { primary, peer: yield* probe(primary), origins };
   });

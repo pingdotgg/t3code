@@ -39,6 +39,7 @@ import {
   layerLinkingEnvironment,
   servePeer,
   type ServedPeer,
+  TAILNET_PEER_ADDRESS,
 } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
@@ -851,6 +852,33 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
+      expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("linking a machine at its numeric Tailscale address is not refused as plain http", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({
+          url: `http://${TAILNET_PEER_ADDRESS}:${new URL(b.url).port}`,
+          pairingCode: "unused",
+          access: "auto",
+          expectedEnvironmentId: box.environmentId,
+          expectedLabel: "Box",
+        })
+        .pipe(Effect.flip);
+      expect(failed.message).not.toContain("plain http");
+      // It reached the peer, which refused the code.
+      expect(failed.reason).toBe("pairing_rejected");
+
+      // WARP and carrier-grade NAT share the range: an address Tailscale does not list.
+      const refused = yield* a.links
+        .link({ url: "http://100.105.9.9:3773", pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
       expect(refused.message).toContain("plain http");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

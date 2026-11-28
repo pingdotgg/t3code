@@ -12,12 +12,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
@@ -194,6 +197,47 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
 
 export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 
+/** The Tailscale address another machine on this machine's tailnet has in tests. */
+export const TAILNET_PEER_ADDRESS = "100.105.1.20";
+
+/** This machine's `tailscale`, running with one peer, so no test runs the real CLI. */
+const layerTailscale = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(
+          new TextEncoder().encode(
+            JSON.stringify({
+              BackendState: "Running",
+              TUN: true,
+              Peer: { "nodekey:box": { TailscaleIPs: [TAILNET_PEER_ADDRESS] } },
+            }),
+          ),
+        ),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    ),
+  ),
+);
+
+/** Requests to the tailnet peer reach 127.0.0.1 instead, where tests serve it. */
+const routeTailnetPeerToLoopback: typeof globalThis.fetch = (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (url.hostname === TAILNET_PEER_ADDRESS) url.hostname = "127.0.0.1";
+  // @effect-diagnostics-next-line globalFetch:off - This is the transport FetchHttpClient wraps.
+  return globalThis.fetch(input instanceof Request ? new Request(url, input) : url, init);
+};
+
 /**
  * The environment that links: its own database and secret store, reaching
  * peers over plain HTTP. Provide it to anything built on its links.
@@ -207,10 +251,17 @@ export const layerLinkingEnvironment = <E = never>(
   > = Sqlite.layerMemory,
 ) =>
   PeerMcpClient.layer.pipe(
-    Layer.provideMerge(PeerLinks.layer),
+    Layer.provideMerge(PeerLinks.layer.pipe(Layer.provide(layerTailscale))),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(database),
-    Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        secrets,
+        FetchHttpClient.layer.pipe(
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, routeTailnetPeerToLoopback)),
+        ),
+      ),
+    ),
     // Peers here are served on 127.0.0.1, so only `localhost` stands for this machine.
     Layer.provide(Layer.succeed(PeerLinks.LoopbackHost, (host) => host === "localhost")),
     // Services that act for this environment, such as delegation, name it too.

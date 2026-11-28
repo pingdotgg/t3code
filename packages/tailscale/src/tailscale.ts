@@ -359,6 +359,46 @@ export const readTailscaleExitNode = readTailscaleOutput("status", ["status", "-
   Effect.flatMap(parseTailscaleExitNode),
 );
 
+const TailscaleNodeIps = Schema.Struct({
+  TailscaleIPs: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+});
+
+const TailscaleTailnetJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
+  TUN: Schema.optional(Schema.Unknown),
+  Self: Schema.optional(Schema.NullOr(TailscaleNodeIps)),
+  // Null while the node has no peers.
+  Peer: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, TailscaleNodeIps))),
+});
+
+const decodeTailscaleTailnetJson = Schema.decodeEffect(Schema.fromJsonString(TailscaleTailnetJson));
+
+/**
+ * The tailnet addresses of this node and its peers, while the OS sends traffic
+ * for them through Tailscale's tunnel. Stopped or in userspace networking (no
+ * TUN), Tailscale still lists them, but traffic to them leaves without it.
+ */
+export const parseTailscaleRoutedAddresses = (
+  rawStatusJson: string,
+): Effect.Effect<ReadonlySet<string>, TailscaleStatusParseError> =>
+  decodeTailscaleTailnetJson(rawStatusJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) =>
+      parsed.BackendState === "Running" && parsed.TUN === true
+        ? new Set(
+            [parsed.Self, ...Object.values(parsed.Peer ?? {})].flatMap((node) =>
+              (node?.TailscaleIPs ?? []).filter((ip) => typeof ip === "string"),
+            ),
+          )
+        : new Set<string>(),
+    ),
+  );
+
+export const readTailscaleRoutedAddresses = readTailscaleOutput("status", [
+  "status",
+  "--json",
+]).pipe(Effect.flatMap(parseTailscaleRoutedAddresses));
+
 const TailscalePrefsJson = Schema.Struct({
   RunSSH: Schema.optional(Schema.Unknown),
   WantRunning: Schema.optional(Schema.Unknown),
