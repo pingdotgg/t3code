@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPoint, PreviewAnnotationRect } from "@t3tools/contracts";
+import type { PreviewAnnotationPoint } from "@t3tools/contracts";
 
 // Same geometry as apps/desktop/src/preview/AnnotationStroke.ts: the preview preload bundle
 // must stay self-contained, so the browser Draw tool keeps its own copy.
@@ -9,10 +9,6 @@ const STROKE_SEGMENTS_PER_PATH = 100;
 
 export interface StrokeGeometry {
   readonly points: PreviewAnnotationPoint[];
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
   // The curve through the newest point is still open: where it ends depends on
   // the point after it. This holds only the settled segments of the last path.
   openPath: string;
@@ -22,10 +18,6 @@ export interface StrokeGeometry {
 export function startStroke(point: PreviewAnnotationPoint): StrokeGeometry {
   return {
     points: [point],
-    minX: point.x,
-    minY: point.y,
-    maxX: point.x,
-    maxY: point.y,
     openPath: `M ${point.x} ${point.y}`,
     openSegments: 0,
   };
@@ -50,23 +42,10 @@ export function addStrokePoint(
     }
   }
   geometry.points.push(point);
-  geometry.minX = Math.min(geometry.minX, point.x);
-  geometry.minY = Math.min(geometry.minY, point.y);
-  geometry.maxX = Math.max(geometry.maxX, point.x);
-  geometry.maxY = Math.max(geometry.maxY, point.y);
   return closedPath;
 }
 
 export function openStrokePath(geometry: StrokeGeometry): string {
   const last = geometry.points[geometry.points.length - 1]!;
   return `${geometry.openPath} L ${last.x} ${last.y}`;
-}
-
-export function strokeBounds(geometry: StrokeGeometry, width: number): PreviewAnnotationRect {
-  const padding = width + 3;
-  const left = geometry.minX - padding;
-  const top = geometry.minY - padding;
-  const right = geometry.maxX + padding;
-  const bottom = geometry.maxY + padding;
-  return { x: left, y: top, width: right - left, height: bottom - top };
 }
