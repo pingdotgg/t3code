@@ -23,6 +23,15 @@ describe("resolveSpellCheckerLanguages", () => {
     ]);
   });
 
+  it("does not add another regional dictionary for a generic base-language fallback", () => {
+    expect(resolveSpellCheckerLanguages(["en-US"], ["en_GB", "en"], AVAILABLE)).toEqual(["en-GB"]);
+    expect(resolveSpellCheckerLanguages(["en-US"], ["en", "en-GB"], AVAILABLE)).toEqual(["en-GB"]);
+    expect(resolveSpellCheckerLanguages(["en-US"], ["en-GB", "en-US"], AVAILABLE)).toEqual([
+      "en-GB",
+      "en-US",
+    ]);
+  });
+
   it("keeps a list the user already changed", () => {
     expect(resolveSpellCheckerLanguages(["en-AU"], ["en-GB"], AVAILABLE)).toBeUndefined();
     expect(resolveSpellCheckerLanguages(["en-US", "fr"], ["en-GB"], AVAILABLE)).toBeUndefined();
