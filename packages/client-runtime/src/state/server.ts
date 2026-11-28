@@ -1663,6 +1663,15 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    /** The same snapshot, refreshed while a thread's details card shows machine load. */
+    liveHostResources: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:live-host-resources",
+      idleTtlMs: 0,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
+        request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

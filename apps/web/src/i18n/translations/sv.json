@@ -13158,5 +13158,16 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "aa178bd3094f0e60": "{free} ledigt",
+  "4c5abe08ddf306a2": "Disk",
+  "09d64bd5fdc06a60": "{count, plural, one {{count} processor} other {{count} processorer}}",
+  "c51c980459a069c6": "Minne",
+  "f2794ede6bf61adb": "{available} tillgängligt",
+  "7bf57d0b2a7d6fa1": "Datorns belastning",
+  "393308c663f983cb": "Datorns belastning",
+  "236911500e5aff7c": "Agenterna väntar hela tiden medan systemet frigör minne.",
+  "81aafe06d7fede9a": "Där T3 Code sparar sina data och worktrees",
+  "9429f8ff8866edac": "Processor",
+  "79a21371b8db96da": "Arbetet väntar på en ledig processor eller på disken, så agenterna går långsamt."
 }
