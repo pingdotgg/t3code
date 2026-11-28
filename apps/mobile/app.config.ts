@@ -130,6 +130,11 @@ const dmSansFonts = {
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
 
+const mesloFonts = {
+  regular: "./assets/fonts/MesloLGS-NF-Regular.ttf",
+  bold: "./assets/fonts/MesloLGS-NF-Bold.ttf",
+} as const;
+
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
   {
@@ -334,7 +339,13 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            mesloFonts.regular,
+            mesloFonts.bold,
+          ],
         },
         android: {
           fonts: [
@@ -353,6 +364,14 @@ const config: ExpoConfig = {
               fontDefinitions: [
                 { path: dmSansFonts.bold, weight: 400 },
                 { path: dmSansFonts.bold, weight: 700 },
+              ],
+            },
+            {
+              // One family for both weights, as on iOS, so fontWeight picks the bold file.
+              fontFamily: "MesloLGS-NF-Regular",
+              fontDefinitions: [
+                { path: mesloFonts.regular, weight: 400 },
+                { path: mesloFonts.bold, weight: 700 },
               ],
             },
           ],

@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { Atom } from "effect/reactivity";
 import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -18,6 +20,7 @@ export type PullRequestBodySegment =
       readonly kind: "attachment";
       readonly url: string;
       readonly media: "video" | "image" | "unknown";
+      readonly label?: string;
     }
   | {
       readonly id: string;
@@ -41,13 +44,27 @@ const VIDEO_TAG_MAX_LINES = 8;
 
 // A tab after up to three spaces still reaches the fourth column.
 const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
+const HTML_COMMENT_START_PATTERN = /^ {0,3}<!--/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
-const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$|[?#])/iu;
-const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
-const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
+const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
+const MARKDOWN_LINK_PATTERN = /^\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)$/u;
+const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
 // Stops at the next `<`, so matching stays linear in the length of the line.
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+const HTML_AMPERSAND_REFERENCE_PATTERN = /&(?:amp|AMP|#0*38|#[xX]0*26);/gu;
+
+function videoTagSource(html: string): string | undefined {
+  for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
+    for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+      if (attribute[1]!.toLowerCase() !== "src") continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value) return value.replace(HTML_AMPERSAND_REFERENCE_PATTERN, "&");
+    }
+  }
+  return undefined;
+}
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
@@ -68,26 +85,59 @@ const TABLE_STRUCTURE_TAG_PATTERN =
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
-function isWebUrl(url: string): boolean {
+function webUrl(url: string): URL | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 function attachmentFromLine(
   line: string,
-): { url: string; media: "video" | "image" | "unknown" } | null {
-  const url =
-    BARE_URL_PATTERN.exec(line.trim())?.[1] ?? MARKDOWN_LINK_PATTERN.exec(line.trim())?.[1];
-  if (url === undefined || !isWebUrl(url)) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(url) || sourceControlClients.mediaUrl(url)?.kind === "video") {
-    return { url, media: "video" };
-  }
-  if (IMAGE_EXTENSION_PATTERN.test(url)) return { url, media: "image" };
-  return null;
+): Omit<Extract<PullRequestBodySegment, { kind: "attachment" }>, "id" | "kind"> | null {
+  const trimmed = line.trim();
+  const link = MARKDOWN_LINK_PATTERN.exec(trimmed);
+  const url = link?.[2] ?? BARE_URL_PATTERN.exec(trimmed)?.[1];
+  if (url === undefined) return null;
+  // Only the path names the file: `report?file=demo.mp4` is a page, not a video.
+  const path = webUrl(url)?.pathname;
+  if (path === undefined) return null;
+  const media = VIDEO_EXTENSION_PATTERN.test(path)
+    ? "video"
+    : IMAGE_EXTENSION_PATTERN.test(path)
+      ? "image"
+      : sourceControlClients.mediaUrl(url)?.kind;
+  if (media === undefined) return null;
+  const label = link?.[1]?.trim();
+  return label ? { url, media, label } : { url, media };
+}
+
+export function makePullRequestMediaKindAtom(
+  fetchMedia: (
+    url: string,
+    options: { headers: Record<string, string>; signal: AbortSignal },
+  ) => Promise<Pick<Response, "ok" | "headers" | "body">>,
+) {
+  return Atom.family((url: string | null) =>
+    Atom.make(
+      Effect.promise(async (signal) => {
+        if (url === null) return null;
+        try {
+          const response = await fetchMedia(url, { headers: { Range: "bytes=0-0" }, signal });
+          void response.body?.cancel().catch(() => undefined);
+          if (!response.ok) return null;
+          const type = response.headers.get("content-type")?.trim().toLowerCase();
+          if (type?.startsWith("image/")) return "image" as const;
+          if (type?.startsWith("video/")) return "video" as const;
+          return null;
+        } catch {
+          return null;
+        }
+      }),
+    ),
+  );
 }
 
 type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
@@ -190,10 +240,11 @@ function withDefinitions(
     };
   }
   if (!segment.text.includes("[")) return segment;
+  const bomLength = segment.sourceOffset === 0 && segment.text.startsWith("\uFEFF") ? 1 : 0;
   return {
     ...segment,
-    text: definitions + segment.text,
-    sourceOffset: segment.sourceOffset - definitions.length,
+    text: definitions + segment.text.slice(bomLength),
+    sourceOffset: segment.sourceOffset + bomLength - definitions.length,
   };
 }
 
@@ -250,6 +301,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const markdown: string[] = [];
   let markdownStart = 0;
   let openFence: { readonly marker: string; readonly flushLeft: boolean } | null = null;
+  let openComment = false;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
@@ -274,6 +326,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
+    if (openComment) {
+      if (line.includes("-->")) {
+        openComment = false;
+      }
+      markdown.push(line);
+      continue;
+    }
     const fenceMatch = FENCE_PATTERN.exec(line);
     // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
     // A span that runs past this line is left an opener, so its lines stay out of media.
@@ -302,6 +361,11 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       continue;
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
+      markdown.push(line);
+      continue;
+    }
+    if (HTML_COMMENT_START_PATTERN.test(line)) {
+      openComment = !line.includes("-->");
       markdown.push(line);
       continue;
     }
@@ -334,9 +398,9 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
+      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
       : undefined;
-    if (source !== undefined && isWebUrl(source)) {
+    if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();
       segments.push({
         id: `attachment:${segments.length}`,
