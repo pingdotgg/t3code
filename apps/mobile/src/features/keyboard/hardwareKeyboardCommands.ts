@@ -90,6 +90,10 @@ export function parseActiveThreadPath(pathname: string): {
   }
 }
 
+export function activeThreadSubroute(pathname: string): string | undefined {
+  return pathname.split(/[?#]/u, 1)[0]?.split("/")[4];
+}
+
 export function nextEnvironmentId<T extends { readonly environmentId: string }>(
   environments: ReadonlyArray<T>,
   currentId: string | null,
