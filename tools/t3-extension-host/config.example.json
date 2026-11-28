@@ -1,0 +1,50 @@
+{
+  // Copy to %APPDATA%\t3-extension-host\config.json and keep only what you change.
+  "extensions": "*",
+  // Replaces the default list of excluded AI agent extensions.
+  "exclude": ["anthropic.claude-code", "openai.chatgpt", "openai.codex-audio", "github.copilot", "github.copilot-chat"],
+  "respectVSCodeDisabled": true,
+  "shareVSCodeStorage": true,
+  "activationTimeoutSeconds": 15,
+  "appName": "T3 Code",
+  "pollMs": 1500,
+  "agentPulseSeconds": 30,
+  "editorLingerSeconds": 300,
+  "ignoreOutsideWorkspace": true,
+  "ignoreProjects": ["No project"],
+  "reconnectDiscordSeconds": 30,
+  // Application ID from https://discord.com/developers/applications; Discord shows that app's name.
+  "discordClientId": null,
+  // Modes: idle, working, waiting (the agent needs your answer), editing. Only list what you change.
+  // "language" uses the file-type icon; image names like "ts" use Discord Presence's images.
+  "discordLargeImages": {
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-idle.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-working.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-waiting.png",
+    "editing": "language"
+  },
+  // One image or text for every mode, or one per mode.
+  // The defaults use the black round T3 logo, matching the black large images.
+  "discordSmallImage": {
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+    "editing": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png"
+  },
+  "discordSmallText": { "idle": "T3 Code", "working": "T3 Code · {model}", "waiting": "T3 Code · {model}", "editing": "T3 Code · {model}" },
+  // Your own file-type images, by file extension or language ID.
+  "discordLanguageImages": { ".ts": "https://example.com/my-typescript.png", "python": "py" },
+  // Discord Presence's 205 file-type images, recolored onto black. "" uses the original colors.
+  "discordPresenceImages": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/presence",
+  // false removes the "View Repository" button and every other link, so your git remote stays private.
+  "discordShowButtons": false,
+  "discordSwapImages": false,
+  // Placeholders: {project}, {thread}, {file}, {language}, {model}, {agent}.
+  "discordStatus": {
+    "idle": { "details": "Idling in T3 Code", "state": "{project}", "largeText": "Idling" },
+    "working": { "details": "Agent working in {project}", "state": "{thread}", "largeText": "{agent} is working" },
+    "waiting": { "details": "Waiting for input in {project}", "state": "{thread}", "largeText": "{agent} needs an answer" },
+    "editing": { "details": "Agent editing {file}", "state": "{thread}", "largeText": "Editing a {language} file" }
+  },
+  "logLevel": "info"
+}

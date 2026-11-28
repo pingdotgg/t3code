@@ -1,0 +1,21 @@
+{
+  "name": "t3-extension-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runs your installed VS Code Discord Presence and WakaTime extensions against T3 Code activity.",
+  "license": "MIT",
+  "main": "src/main.js",
+  "bin": {
+    "t3-extension-host": "src/main.js"
+  },
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "start": "node --no-warnings src/main.js",
+    "check": "node --no-warnings src/main.js --check",
+    "scan": "node --no-warnings src/scan.js",
+    "install-startup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-startup.ps1",
+    "uninstall-startup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-startup.ps1"
+  }
+}
