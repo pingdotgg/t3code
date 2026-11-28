@@ -71,6 +71,41 @@ private final class ComposerContextAccessibilityElement: UIAccessibilityElement 
   }
 }
 
+/// While the editor has focus, a drag that starts in it selects text, so the stack's back gestures
+/// (iOS 26's full-screen one included) wait for this recognizer to fail instead of moving the page.
+private final class ComposerBackGestureBlocker: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
+  private weak var textView: UITextView?
+
+  init(textView: UITextView) {
+    self.textView = textView
+    super.init(target: nil, action: nil)
+    cancelsTouchesInView = false
+    delaysTouchesEnded = false
+    delegate = self
+  }
+
+  override func shouldBeRequiredToFail(by otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    var responder = textView?.next
+    while let current = responder {
+      if let navigation = current as? UINavigationController {
+        if otherGestureRecognizer === navigation.interactivePopGestureRecognizer { return true }
+        if #available(iOS 26.0, *),
+           otherGestureRecognizer === navigation.interactiveContentPopGestureRecognizer { return true }
+      }
+      responder = current.next
+    }
+    return false
+  }
+
+  func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    textView?.isFirstResponder == true
+  }
+
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    true
+  }
+}
+
 private final class ComposerTextView: UITextView {
   private static let pastedImageDirectoryName = "t3-composer-paste"
   private static let stalePastedImageAge: TimeInterval = 60 * 60
@@ -599,6 +634,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     contextTap.cancelsTouchesInView = false
     contextTap.delegate = self
     textView.addGestureRecognizer(contextTap)
+    textView.addGestureRecognizer(ComposerBackGestureBlocker(textView: textView))
     addSubview(textView)
 
     placeholderLabel.numberOfLines = 0
