@@ -1917,13 +1917,24 @@ const make = Effect.gen(function* () {
     acknowledgementOperation = "task-status-acknowledge",
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     yield* requireCapability(scope);
-    const task = (yield* loadTasks(scope.thread.threadId, [taskId])).find(
-      (candidate) =>
-        candidate.id === taskId &&
-        candidate.origin === "app_owned" &&
-        candidate.threadId === scope.thread.threadId,
-    );
-    if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
+    const isCallerTask = (candidate: OrchestrationV2Subagent) =>
+      candidate.origin === "app_owned" &&
+      candidate.threadId === scope.thread.threadId &&
+      (candidate.childThreadId !== null || candidate.remoteChild !== undefined);
+    // A compacted parent may keep only the child thread link, so a child thread id names its latest task.
+    const childThreadId = ThreadId.make(taskId);
+    const task =
+      (yield* loadTasks(scope.thread.threadId, [taskId])).find(
+        (candidate) => candidate.id === taskId && isCallerTask(candidate),
+      ) ??
+      (yield* threadManagement
+        .getThreadRecords(scope.thread.threadId, ["subagents"], {
+          subagentChildThreadIds: [childThreadId],
+        })
+        .pipe(Effect.mapError(threadManagementFailure))).subagents.findLast(
+        (candidate) => candidate.childThreadId === childThreadId && isCallerTask(candidate),
+      );
+    if (task === undefined) {
       return yield* taskNotFound(scope, taskId);
     }
     if (task.childThreadId === null) {
@@ -2129,14 +2140,14 @@ const make = Effect.gen(function* () {
             operation: acknowledgementOperation,
           }),
           parentThreadId: scope.thread.threadId,
-          taskId,
+          taskId: task.id,
           observedByRunId: observingRun?.id ?? null,
         })
         .pipe(
           Effect.mapError((error) =>
             failure(
               "orchestration_error",
-              `Unable to acknowledge delegated task ${taskId}: ${errorMessage(error)}`,
+              `Unable to acknowledge delegated task ${task.id}: ${errorMessage(error)}`,
             ),
           ),
         );
@@ -3153,9 +3164,10 @@ const make = Effect.gen(function* () {
       const scope = yield* requireThreadScope(callerScope, "task_status");
       return yield* readTask(scope, taskId, false, true);
     }),
-    cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, input) {
+    cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, request) {
       const scope = yield* requireThreadScope(callerScope, "task_cancel");
-      const current = yield* readTask(scope, input.taskId);
+      const current = yield* readTask(scope, request.taskId);
+      const input = { ...request, taskId: current.taskId };
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {
         // The task runs in a linked environment: its thread there is stopped through the link.
