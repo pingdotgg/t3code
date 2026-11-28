@@ -15,6 +15,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
+import { nextExpandedRuns, resolveRunInView } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -959,6 +960,58 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  // regression: #42590 a turn ending under a released reader keeps the note being read
+  it("keeps the note a released reader is reading through the run's end and the next run", () => {
+    const middle = {
+      ...assistantMessage("2026-06-20T00:00:02.500Z"),
+      id: TurnItemId.make("item-middle"),
+      messageId: MessageId.make("message-middle"),
+      text: "The configuration is valid; checking the build next.",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(middle, 2),
+      projected(assistantMessage(), 3),
+    ]);
+    const running = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const completed = {
+      ...running,
+      status: "completed" as const,
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+    const rows = deriveThreadFeedPresentation(feed, running, new Set());
+    const middleIndex = rows.findIndex((entry) => entry.id === "message-middle");
+    const readerRunId = resolveRunInView(
+      rows,
+      { scroll: middleIndex * 100, scrollLength: 100, positionAtIndex: (index) => index * 100 },
+      runId,
+      (entry) => (entry.type === "message" ? entry.message.runId : undefined),
+    );
+    expect(readerRunId).toBe(runId);
+
+    const ended = nextExpandedRuns(new Set<RunId>(), running, completed, readerRunId);
+    const nextRun = { ...running, runId: RunId.make("run-2") };
+    const afterNextRun = nextExpandedRuns(ended, completed, nextRun, readerRunId);
+    for (const expanded of [ended, afterNextRun]) {
+      expect(
+        deriveThreadFeedPresentation(feed, completed, expanded).map((entry) => entry.id),
+      ).toContain("message-middle");
+    }
+    expect(
+      deriveThreadFeedPresentation(
+        feed,
+        completed,
+        nextExpandedRuns(new Set<RunId>(), running, completed, null),
+      ).map((entry) => entry.id),
+    ).not.toContain("message-middle");
+  });
+
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([
@@ -981,6 +1034,50 @@ describe("buildThreadFeed", () => {
       "run-fold:run-1",
       "message-assistant",
     ]);
+  });
+
+  // regression: #42590 work after a steer folds under its own key
+  it("keeps the post-steer note a released reader is reading when the run ends", () => {
+    const steer = {
+      ...userMessage("2026-06-20T00:00:04.000Z"),
+      id: TurnItemId.make("item-steer"),
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer" as const,
+    };
+    const progress = {
+      ...assistantMessage("2026-06-20T00:00:07.000Z"),
+      id: TurnItemId.make("item-progress"),
+      messageId: MessageId.make("message-progress"),
+    };
+    const feed = buildThreadFeed(
+      [
+        userMessage(),
+        command(),
+        steer,
+        { ...command("2026-06-20T00:00:06.000Z"), id: TurnItemId.make("item-after") },
+        progress,
+        assistantMessage("2026-06-20T00:00:09.000Z"),
+      ].map((item, position) => projected(item, position)),
+    );
+    const running = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const completed = {
+      ...running,
+      status: "completed" as const,
+      completedAt: "2026-06-20T00:00:09.000Z",
+    };
+    const foldKeys = () =>
+      deriveThreadFeedPresentation(feed, completed, new Set()).flatMap((entry) =>
+        entry.type === "run-fold" ? [entry.runId] : [],
+      );
+    const expanded = nextExpandedRuns(new Set<RunId>(), running, completed, runId, foldKeys);
+    expect(
+      deriveThreadFeedPresentation(feed, completed, expanded).map((entry) => entry.id),
+    ).toContain("message-progress");
   });
 
   it("splits a settled turn's work fold at a steer", () => {

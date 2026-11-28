@@ -59,6 +59,7 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import { useTimelineFollow } from "./useTimelineFollow";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
@@ -1453,6 +1454,175 @@ function usageLimitEntries(resetAt: string) {
     optimisticMessages: [],
   });
 }
+
+describe("MessagesTimeline follow", () => {
+  it("stays released when the turn's end folds the rows being read", async () => {
+    const listRef = createRef<LegendListRef | null>();
+    const routeThreadKey = `environment-local:thread-${Math.random().toString(36).slice(2)}`;
+    const runId = RunId.make("live-run");
+    const follow = { current: null as ReturnType<typeof useTimelineFollow> | null };
+    function Harness(props: {
+      entries: ReadonlyArray<Entry>;
+      latestRun: TimelineProps["latestRun"];
+      isWorking: boolean;
+    }) {
+      const [anchor, setAnchor] = useState<{
+        threadKey: string | null;
+        messageId: MessageId | null;
+      }>({ threadKey: null, messageId: null });
+      const state = useTimelineFollow({
+        legendListRef: listRef,
+        composerTimelineInset: 0,
+        routeThreadKey,
+        activeThreadKey: routeThreadKey,
+        isServerThread: false,
+        serverProjection: null,
+        threadStatus: "live",
+        activeActivityRun: null,
+        activeRunningTurnId: null,
+        timelineEntries: props.entries as Entry[],
+        timelineAnchorMessageId: anchor.messageId,
+        setTimelineAnchor: setAnchor,
+      });
+      follow.current = state;
+      return (
+        <MessagesTimeline
+          {...baseProps()}
+          listRef={listRef}
+          routeThreadKey={routeThreadKey}
+          isWorking={props.isWorking}
+          latestRun={props.latestRun}
+          timelineEntries={props.entries as Entry[]}
+          liveFollowEnabled={state.timelineLiveFollowEnabled}
+          onIsAtEndChange={state.onIsAtEndChangeStable}
+          onViewportAttach={state.attachTimelineViewport}
+        />
+      );
+    }
+    const history = Array.from({ length: 10 }, (_, index) => [
+      message(`Question ${index}`, {}, `q-${index}`),
+      message(
+        `Answer ${index}. ${"Earlier reply text. ".repeat(30)}`,
+        { role: "assistant" },
+        `a-${index}`,
+      ),
+    ]).flat();
+    const notes = Array.from({ length: 14 }, (_, index) => [
+      message(
+        `Note ${index}. ${"Mid-turn note text. ".repeat(60)}`,
+        { role: "assistant", runId },
+        `note-${index}`,
+      ),
+      work(`tool-${index}`, { label: `Read file${index}.ts`, tone: "tool", itemType: "file_read" }),
+    ]).flat();
+    // Work after a steer folds under its own key, apart from the run.
+    notes.splice(12, 0, message("Also check the tests", { runId, inputIntent: "steer" }, "steer"));
+    const running = [...history, message("Run the long turn", { runId }, "prompt"), ...notes];
+    const latestRunning = {
+      runId,
+      status: "running" as const,
+      startedAt: CREATED_AT,
+      completedAt: null,
+    };
+    const container = document.createElement("div");
+    container.style.cssText = "height: 700px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(
+      <Harness entries={running} latestRun={latestRunning} isWorking />,
+      { container },
+    );
+    const viewport = () => listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport().scrollHeight - viewport().clientHeight - viewport().scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    expect(follow.current?.timelineLiveFollowEnabled).toBe(true);
+
+    // Trusted wheel input over plain chat text, as a reader scrolling up.
+    const session = cdp();
+    const box = viewport().getBoundingClientRect();
+    await vi.waitFor(async () => {
+      if (distanceFromEnd() < 1500) {
+        await session.send("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: box.left + 200,
+          y: box.top + box.height / 2,
+          deltaX: 0,
+          deltaY: -200,
+        });
+      }
+      expect(distanceFromEnd()).toBeGreaterThanOrEqual(1500);
+    }, 10_000);
+    // Wheel scrolling animates; read the note once the view has come to rest.
+    let restingScrollTop: number | undefined;
+    await vi.waitFor(() => {
+      const scrollTop = viewport().scrollTop;
+      const resting = scrollTop === restingScrollTop;
+      restingScrollTop = scrollTop;
+      expect(resting).toBe(true);
+    });
+    await vi.waitFor(() => expect(follow.current?.showScrollToBottom).toBe(true));
+    expect(follow.current?.timelineLiveFollowEnabled).toBe(false);
+    const box2 = viewport().getBoundingClientRect();
+    const readNote = () =>
+      [...viewport().querySelectorAll("p")].find((element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          element.textContent?.startsWith("Note ") &&
+          rect.top <= box2.top + box2.height / 2 &&
+          rect.bottom >= box2.top + box2.height / 2
+        );
+      });
+    const noteBeforeEnd = readNote()!;
+    expect(noteBeforeEnd).toBeDefined();
+    const noteText = noteBeforeEnd.textContent;
+    const noteTopBeforeEnd = noteBeforeEnd.getBoundingClientRect().top;
+    const expectNoteInPlace = (label: string) =>
+      vi.waitFor(() => {
+        const note = [...viewport().querySelectorAll("p")].find(
+          (element) => element.textContent === noteText,
+        );
+        expect(note, label).toBeDefined();
+        expect(Math.abs(note!.getBoundingClientRect().top - noteTopBeforeEnd), label).toBeLessThan(
+          2,
+        );
+      });
+
+    await screen.rerender(
+      <Harness
+        entries={[...running, message("Final answer.", { role: "assistant", runId }, "final")]}
+        latestRun={{
+          ...latestRunning,
+          status: "completed",
+          completedAt: CREATED_AT,
+          turnEnded: true,
+        }}
+        isWorking={false}
+      />,
+    );
+    await vi.waitFor(() => {
+      const state = listRef.current!.getState();
+      expect(Math.abs(state.contentLength - viewport().scrollHeight)).toBeLessThan(1);
+      expect(Math.abs(state.scroll - viewport().scrollTop)).toBeLessThan(2);
+    });
+    await expectNoteInPlace("the note being read after the turn ends");
+    expect(follow.current?.timelineLiveFollowEnabled, "follow after the turn ends").toBe(false);
+    expect(follow.current?.showScrollToBottom, "Scroll to end after the turn ends").toBe(true);
+
+    const nextRunId = RunId.make("next-run");
+    await screen.rerender(
+      <Harness
+        entries={[
+          ...running,
+          message("Final answer.", { role: "assistant", runId }, "final"),
+          message("Next question", { runId: nextRunId }, "next-prompt"),
+        ]}
+        latestRun={{ ...latestRunning, runId: nextRunId }}
+        isWorking
+      />,
+    );
+    await expectNoteInPlace("the note being read once the next run starts");
+    expect(follow.current?.timelineLiveFollowEnabled).toBe(false);
+  });
+});
 
 describe("MessagesTimeline usage limit notice", () => {
   it("labels the retry time with the viewer's timezone", async () => {

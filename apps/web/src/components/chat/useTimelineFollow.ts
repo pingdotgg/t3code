@@ -74,6 +74,7 @@ function createVisitScrollState(
       readonly offset: number;
     } | null,
     anchorScrollRestoreFrame: null as number | null,
+    lastEndReportScroll: null as number | null,
   };
 }
 type VisitScrollState = ReturnType<typeof createVisitScrollState>;
@@ -469,14 +470,21 @@ export function useTimelineFollow(input: TimelineFollowInput) {
 
   const onIsAtEndChange = (isAtEnd: boolean) => {
     const scroll = visitScroll();
+    const offset = legendListRef.current?.getState().scroll;
+    const scrolledDown =
+      offset === undefined ||
+      scroll.lastEndReportScroll === null ||
+      offset > scroll.lastEndReportScroll;
+    scroll.lastEndReportScroll = offset ?? null;
     if (!isAtEnd && readFollow().mode === "following") {
       scroll.showScrollDebouncer.cancel();
       setShowScrollToBottom(false);
       return;
     }
-    const { before, after } = followStore.dispatch(visit, {
-      type: isAtEnd ? "reachedEnd" : "leftEnd",
-    });
+    const { before, after } = followStore.dispatch(
+      visit,
+      isAtEnd ? { type: "reachedEnd", scrolledDown } : { type: "leftEnd" },
+    );
     if (after === before) return;
     if (after.mode === "following") {
       setTimelineAnchor(releaseChatTimelineAnchor);
