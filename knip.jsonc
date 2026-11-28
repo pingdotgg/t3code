@@ -40,6 +40,8 @@
         "e2e.config.ts",
         "prove-scenario.ts",
         "scenarios/*.ts",
+        // Fake provider CLIs a scenario points the app at by path.
+        "scenarios/fixtures/*.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
