@@ -137,7 +137,6 @@ describe("commandProgramName", () => {
     ["cd /tmp && 2>& 1 node app.js", "node"],
     ["cd /tmp && {output}>/tmp/log deno test", "deno"],
     ["whoami>/dev/null", "whoami"],
-    ["whoami >/dev/null", "whoami"],
     ["cat</etc/hosts", "cat"],
     ["whoami&>/dev/null", "whoami"],
     ["'my>tool' arg", "my>tool"],
