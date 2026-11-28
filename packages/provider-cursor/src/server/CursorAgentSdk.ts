@@ -66,6 +66,28 @@ export function isCursorUsageLimitError(cause: unknown): boolean {
   );
 }
 
+/**
+ * Names of the inline MCP servers a Cursor team policy rejected. The SDK refuses the whole run
+ * with an InlineMcpServersBlockedError, which it wraps in an UnknownAgentError.
+ */
+export function blockedInlineMcpServers(cause: unknown): ReadonlyArray<string> {
+  const seen = new Set<unknown>();
+  let current = isCursorAgentSdkRunnerError(cause) ? cause.cause : cause;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const servers = Reflect.get(current, "servers");
+    if (Reflect.get(current, "name") === "InlineMcpServersBlockedError" && Array.isArray(servers)) {
+      return servers.flatMap((server: unknown) => {
+        const name =
+          typeof server === "object" && server !== null ? Reflect.get(server, "name") : undefined;
+        return typeof name === "string" ? [name] : [];
+      });
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return [];
+}
+
 const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
 
 function sdkErrorReason(cause: unknown): string | undefined {
