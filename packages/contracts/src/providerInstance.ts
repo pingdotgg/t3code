@@ -71,6 +71,10 @@ export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
   Omit<ProviderInstanceEnvironmentVariable, "value"> & { readonly value: string }
 >;
 
+/** Whether T3 may read this provider's local usage files and sign-in. Unset means not asked yet. */
+export const ProviderUsageAccess = Schema.Literals(["allowed", "denied"]);
+export type ProviderUsageAccess = typeof ProviderUsageAccess.Type;
+
 /** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
@@ -78,9 +82,17 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  usageAccess: Schema.optionalKey(ProviderUsageAccess),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
+
+/** The user's answer recorded on an instance; a default instance with no entry gets one. */
+export const withProviderUsageAccess = (
+  instance: ProviderInstanceConfig | undefined,
+  driver: ProviderDriverKind,
+  usageAccess: ProviderUsageAccess,
+): ProviderInstanceConfig => ({ ...(instance ?? { driver }), usageAccess });
 
 export const ProviderInstanceMutation = Schema.Union([
   Schema.Struct({

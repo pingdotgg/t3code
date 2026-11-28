@@ -83,10 +83,17 @@ function advanceScan(previous: AssistantTextScan, text: string): AssistantTextSc
   const resumed = text.startsWith(previous.text);
   let { openFence, boundary, lineStart, titleAwaitingContent } = resumed ? previous : EMPTY_SCAN;
   let searchFrom = resumed ? previous.text.length : 0;
+  if (resumed && text.charCodeAt(searchFrom - 1) === 13 && text.charCodeAt(searchFrom) === 10) {
+    if (boundary === lineStart) boundary++;
+    lineStart = ++searchFrom;
+  }
+  let nextLf = text.indexOf("\n", searchFrom);
+  let nextCr = text.indexOf("\r", searchFrom);
   for (;;) {
-    const newline = text.indexOf("\n", searchFrom);
+    let newline = nextLf === -1 ? nextCr : nextCr === -1 || nextLf < nextCr ? nextLf : nextCr;
     if (newline === -1) break;
     const line = trimLineEnd(text, lineStart, newline);
+    if (text.charCodeAt(newline) === 13 && text.charCodeAt(newline + 1) === 10) newline++;
     if (
       openFence !== null &&
       openFence.minIndent > 0 &&
@@ -141,6 +148,8 @@ function advanceScan(previous: AssistantTextScan, text: string): AssistantTextSc
     }
     lineStart = newline + 1;
     searchFrom = lineStart;
+    if (nextLf !== -1 && nextLf < searchFrom) nextLf = text.indexOf("\n", searchFrom);
+    if (nextCr !== -1 && nextCr < searchFrom) nextCr = text.indexOf("\r", searchFrom);
   }
   return { text, lineStart, openFence, boundary, titleAwaitingContent };
 }
