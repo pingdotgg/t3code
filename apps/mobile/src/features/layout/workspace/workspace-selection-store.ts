@@ -39,15 +39,16 @@ let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
 
-function save() {
+/** Writes the selections if they changed; an update restart awaits it and stops if it fails. */
+export function saveWorkspaceSelections(): Promise<void> {
   const writing = selections;
-  if (saved === writing) return;
+  if (saved === writing) return Promise.resolve();
   // Marked saved only once written, so a failed write is retried on the next background.
-  void savePreferencesPatch({ workspaceSelections: writing })
-    .then(() => {
-      saved = writing;
-    })
-    .catch(() => undefined);
+  return savePreferencesPatch({ workspaceSelections: writing }).then(() => {
+    saved = writing;
+    // Pages opened while it wrote, such as after a quick return, are written before resolving.
+    if (selections !== writing) return saveWorkspaceSelections();
+  });
 }
 
 // Route keys only name routes of the session that wrote them; a saved one would make a tab rebuild
@@ -76,10 +77,12 @@ export function hydrateWorkspaceSelections() {
   if (!REMEMBERS) return Promise.resolve();
   hydration ??= loadPreferences()
     .then((preferences) => {
+      // Pages visited while loading aren't stored yet, so they stay due for the next save.
+      const unchanged = selections === saved;
       selections = { ...withoutRouteKeys(preferences.workspaceSelections), ...selections };
-      saved = selections;
+      if (unchanged) saved = selections;
       AppState.addEventListener("change", (status) => {
-        if (status !== "active") save();
+        if (status !== "active") saveWorkspaceSelections().catch(() => undefined);
       });
     })
     .catch(() => undefined);
@@ -144,8 +147,8 @@ export function settingsLinkPage() {
 }
 
 /**
- * Where a cold start without a link opens. A window that starts with columns reopens the last
- * chat beside the list instead of an empty detail column; a compact window opens on the list.
+ * Where a cold start without a link opens: the last chat when the window starts with columns,
+ * or when it was on screen as the app left (iOS ends backgrounded apps); otherwise the list.
  * It waits for the first layout metrics as long as the workspace itself does.
  */
 export async function launchWorkspaceURL(): Promise<string | null> {
@@ -161,7 +164,8 @@ export async function launchWorkspaceURL(): Promise<string | null> {
     );
   }
   await metrics;
-  if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
+  const reopens = selections.threadsShown === true || workspaceHasColumns();
+  if (!thread || !reopens || !workspaceSelectionCheck.thread(thread)) return null;
   // createURL runs encodeURI over its path, which would encode each segment a second time.
   return `${Linking.createURL("/")}threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }
