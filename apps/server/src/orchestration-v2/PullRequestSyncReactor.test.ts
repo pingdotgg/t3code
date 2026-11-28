@@ -2284,7 +2284,7 @@ describe("PullRequestSyncReactor", () => {
       linked: [42],
     },
     {
-      name: "a create whose quoted body substitution starts its heredoc on a later line",
+      name: "a create whose multiline quoted heredoc body has a lone quote and mentions a listing command",
       input:
         'gh pr create --title "x" --body "$(\ncat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
       output: "https://github.com/owner/repository/pull/42",
