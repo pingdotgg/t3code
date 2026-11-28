@@ -471,6 +471,7 @@ function OpenCommandPaletteDialog(props: {
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
+  const viewGeneration = useRef(0);
   const setQuery = (query: string) => dispatchSearch({ type: "query", query });
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -1021,6 +1022,7 @@ function OpenCommandPaletteDialog(props: {
     .slice(0, RECENT_THREAD_LIMIT);
 
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
+    viewGeneration.current += 1;
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
@@ -1028,6 +1030,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   const popView = useStableCallback((): void => {
+    viewGeneration.current += 1;
     browseNavigation.invalidate();
     cloneLookupGeneration.current += 1;
     setIsRemoteProjectLookingUp(false);
@@ -1994,12 +1997,25 @@ function OpenCommandPaletteDialog(props: {
     return { ...group, items: group.items.map((item) => jumpItems.get(item.value) ?? item) };
   });
 
-  const handleAddProjectForEnvironment = async (input: {
-    readonly environmentId: EnvironmentId;
-    readonly rawCwd: string;
-    readonly platform: string;
-    readonly currentProjectCwd: string | null;
-  }) => {
+  function captureProjectViewClose(): () => void {
+    const palette = useCommandPaletteStore.getState();
+    const view = viewGeneration.current;
+    return () => {
+      if (useCommandPaletteStore.getState() === palette && viewGeneration.current === view) {
+        setOpen(false);
+      }
+    };
+  }
+
+  const handleAddProjectForEnvironment = async (
+    input: {
+      readonly environmentId: EnvironmentId;
+      readonly rawCwd: string;
+      readonly platform: string;
+      readonly currentProjectCwd: string | null;
+    },
+    closeProjectView = captureProjectViewClose(),
+  ) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
     );
@@ -2055,7 +2071,7 @@ function OpenCommandPaletteDialog(props: {
         }).then((result) => reportProjectFailure(gt("Failed to unarchive project"), result));
       }
       if (await moveDraftToAddedProject(existing)) {
-        setOpen(false);
+        closeProjectView();
         return;
       }
       const latestThread = getLatestThreadForProject(
@@ -2086,7 +2102,7 @@ function OpenCommandPaletteDialog(props: {
           return;
         }
       }
-      setOpen(false);
+      closeProjectView();
       return;
     }
 
@@ -2139,17 +2155,20 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    setOpen(false);
+    closeProjectView();
   };
 
-  const handleAddProject = async (rawCwd: string) => {
+  const handleAddProject = async (rawCwd: string, closeProjectView?: () => void) => {
     if (!browseEnvironmentId) return;
-    await handleAddProjectForEnvironment({
-      environmentId: browseEnvironmentId,
-      rawCwd,
-      platform: browseEnvironmentPlatform,
-      currentProjectCwd: currentProjectCwdForBrowse,
-    });
+    await handleAddProjectForEnvironment(
+      {
+        environmentId: browseEnvironmentId,
+        rawCwd,
+        platform: browseEnvironmentPlatform,
+        currentProjectCwd: currentProjectCwdForBrowse,
+      },
+      closeProjectView,
+    );
   };
 
   const newProjectPublishTargets =
@@ -2174,6 +2193,7 @@ function OpenCommandPaletteDialog(props: {
     if (newProjectFlow === null || !canSubmitNewProject || newProjectSubmittingRef.current) {
       return;
     }
+    const closeProjectView = captureProjectViewClose();
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
     const created = await settlePromise(() =>
@@ -2186,7 +2206,7 @@ function OpenCommandPaletteDialog(props: {
     newProjectSubmittingRef.current = false;
     setIsCreatingNewProject(false);
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
-    if (created.value) setOpen(false);
+    if (created.value) closeProjectView();
   }
 
   function getDefaultCloneDestination(
@@ -2933,6 +2953,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const closeProjectView = captureProjectViewClose();
     const paletteAtPick = useCommandPaletteStore.getState();
     const flowGeneration = cloneLookupGeneration.current;
     const cloneSelectionIsStale = () =>
@@ -3036,12 +3057,15 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
-      await handleAddProjectForEnvironment({
-        environmentId: selection.environmentId,
-        rawCwd: selection.linuxPath,
-        platform: "Linux",
-        currentProjectCwd: null,
-      });
+      await handleAddProjectForEnvironment(
+        {
+          environmentId: selection.environmentId,
+          rawCwd: selection.linuxPath,
+          platform: "Linux",
+          currentProjectCwd: null,
+        },
+        closeProjectView,
+      );
       return;
     }
     if (addProjectCloneFlow?.step === "confirm") {
@@ -3054,7 +3078,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    await handleAddProject(pickedPath);
+    await handleAddProject(pickedPath, closeProjectView);
   };
 
   const submitButtonId = useId();

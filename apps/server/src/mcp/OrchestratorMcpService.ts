@@ -3243,16 +3243,23 @@ const make = Effect.gen(function* () {
             ),
           );
         const stopped = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
+          .getThreadRecords(childThreadId, ["runs", "messages"], { messageRoles: ["user"] })
           .pipe(Effect.mapError(threadManagementFailure));
+        const parentMessageIds = new Set(
+          stopped.messages
+            .filter((message) => message.senderThreadId === scope.thread.threadId)
+            .map((message) => message.id),
+        );
         for (const run of stopped.runs) {
           if (
             run.status !== "queued" ||
-            (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
+            (run.delegatedTaskId !== input.taskId &&
+              run.id !== current.childRunId &&
+              !parentMessageIds.has(run.userMessageId))
           )
             continue;
           // Stop preserves the queue for Resume. Cancelling a task must also
-          // remove that task's queued turn, including a previously held one.
+          // remove its queued turns, including the parent's follow-ups and held ones.
           yield* threadManagement
             .dispatch({
               type: "queued-run.cancel",
