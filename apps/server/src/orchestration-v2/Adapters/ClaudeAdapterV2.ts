@@ -115,7 +115,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
-  type OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
@@ -3052,6 +3052,12 @@ function isClaudeGoalAcknowledgement(message: SDKMessage): boolean {
 }
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
+const providerThreadsEqual = Schema.toEquivalence(OrchestrationV2ProviderThread);
+
+type ProviderThreadUpdate = Extract<
+  ProviderAdapter.ProviderAdapterV2Event,
+  { type: "provider_thread.updated" }
+>;
 
 function normalizeClaudeResultText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -7022,28 +7028,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           };
         };
 
-        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+        const lastProviderThreadUpdates = new Map<string, ProviderThreadUpdate>();
+        const emitProviderEvent = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          options?: { readonly ifChanged?: boolean },
+        ) => {
           if (event.type === "provider_thread.updated") {
-            const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
-            event = {
-              ...event,
-              providerThread: withAdapterNativeMetadata(event.providerThread, nativeThreadId),
-            };
-            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
-            if (nativeSessionId !== undefined) {
-              event = {
+            return Effect.sync(() => {
+              const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
+              let outgoing = {
                 ...event,
-                providerThread: {
-                  ...event.providerThread,
-                  nativeThreadRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: nativeSessionId,
-                    strength: "strong",
-                  },
-                  nativeConversationHeadRef: null,
-                },
+                providerThread: withAdapterNativeMetadata(event.providerThread, nativeThreadId),
               };
-            }
+              const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
+              if (nativeSessionId !== undefined) {
+                outgoing = {
+                  ...outgoing,
+                  providerThread: {
+                    ...outgoing.providerThread,
+                    nativeThreadRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeSessionId,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                  },
+                };
+              }
+              const { providerThread } = outgoing;
+              if (options?.ifChanged) {
+                const last = lastProviderThreadUpdates.get(providerThread.id);
+                if (
+                  last !== undefined &&
+                  (last.pendingBackgroundWork === true) ===
+                    (outgoing.pendingBackgroundWork === true) &&
+                  providerThreadsEqual(last.providerThread, {
+                    ...providerThread,
+                    updatedAt: last.providerThread.updatedAt,
+                  })
+                ) {
+                  return;
+                }
+              }
+              if (Queue.offerUnsafe(events, outgoing)) {
+                lastProviderThreadUpdates.set(providerThread.id, outgoing);
+              }
+            });
           }
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
@@ -7486,6 +7516,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.nativeThreadId,
           );
           const owedWakeTasks = yield* owedWakeTasksForNativeThread(input.nativeThreadId);
+          const pendingBackgroundWork = owedWakeTasks.length > 0;
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
@@ -7501,12 +7532,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             updatedAt: now,
           };
           yield* rememberProviderThread(providerThread);
-          yield* emitProviderEvent({
-            type: "provider_thread.updated",
-            driver: CLAUDE_PROVIDER,
-            providerThread,
-            pendingBackgroundWork: owedWakeTasks.length > 0,
-          });
+          yield* emitProviderEvent(
+            {
+              type: "provider_thread.updated",
+              driver: CLAUDE_PROVIDER,
+              providerThread,
+              pendingBackgroundWork,
+            },
+            { ifChanged: true },
+          );
         });
 
         const trackClaudeGoal = Effect.fnUntraced(function* (input: {
@@ -14657,6 +14691,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               return updated;
             });
+            // Events reach the server only while a run listens, so a turn compares from scratch.
+            lastProviderThreadUpdates.delete(turnInput.providerThread.id);
             // A queued turn's snapshot can predate another task's exit.
             const owedWakeTasks = yield* owedWakeTasksForNativeThread(nativeThreadId);
             yield* rememberProviderThread(
@@ -16061,6 +16097,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               // The rewound history may no longer hold the turns that carried app notes.
               deliveredAppContext.set(nativeThreadId, new Map());
+              lastProviderThreadUpdates.delete(rollbackInput.providerThread.id);
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
 
