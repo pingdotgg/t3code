@@ -411,8 +411,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       instanceId,
       provider,
     );
-    const update = capabilities.update;
-    if (!update) {
+    const lockKey = capabilities.update?.lockKey ?? capabilities.managedUpdate?.lockKey;
+    if (!lockKey) {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
@@ -468,7 +468,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+            if ((fresh.update?.lockKey ?? fresh.managedUpdate?.lockKey) !== lockKey) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -500,13 +500,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
                 : resolveLatestProviderUpdateAction(fresh, candidateVersion);
+            // A managed runtime installs its newest eligible release; it cannot pin a version.
+            const managedUpdate =
+              fresh.update === null && targetVersion === undefined
+                ? fresh.managedUpdate
+                : undefined;
             const rejected =
               targetVersion !== undefined
                 ? !command ||
                   advisory?.recommendedVersion !== targetVersion ||
                   advisory.status !== "supported"
                 : advisory?.status === "broken" || advisory?.status === "unsupported";
-            if (rejected || !command) {
+            if (rejected || (!command && !managedUpdate)) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -556,36 +561,58 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
-            const sharingInstances = yield* instancesSharingInstallation(
-              instanceId,
-              provider,
-              update.lockKey,
-            );
-            yield* setRunningMessage("Waiting for running provider work to finish.");
-            const result = yield* installationGate.update(
-              sharingInstances,
-              setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
-              ),
-            );
-            const finishedAt = yield* nowIso;
-            if (result.exitCode !== 0) {
-              yield* Effect.logWarning("Provider update command failed", {
+            let output: string | null = null;
+            if (command) {
+              const sharingInstances = yield* instancesSharingInstallation(
+                instanceId,
                 provider,
-                command: describeCommand(command),
-                exitCode: result.exitCode,
-                output: commandOutput(result),
-              });
-              return yield* finish(
-                makeUpdateState({
-                  status: "failed",
-                  startedAt,
-                  finishedAt,
-                  message: failureMessage(result),
-                  output: commandOutput(result),
-                }),
+                lockKey,
               );
+              yield* setRunningMessage("Waiting for running provider work to finish.");
+              const result = yield* installationGate.update(
+                sharingInstances,
+                setRunningMessage(`Running ${describeCommand(command)}`).pipe(
+                  Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+                ),
+              );
+              output = commandOutput(result);
+              if (result.exitCode !== 0) {
+                yield* Effect.logWarning("Provider update command failed", {
+                  provider,
+                  command: describeCommand(command),
+                  exitCode: result.exitCode,
+                  output,
+                });
+                return yield* finish(
+                  makeUpdateState({
+                    status: "failed",
+                    startedAt,
+                    finishedAt: yield* nowIso,
+                    message: failureMessage(result),
+                    output,
+                  }),
+                );
+              }
+            } else if (managedUpdate) {
+              // A managed install lands in a new versioned directory and running sessions keep
+              // their leased binary, so it does not wait for the installation gate.
+              const result = yield* managedUpdate.run(setRunningMessage);
+              if (result.status === "failed") {
+                yield* Effect.logWarning("Managed provider update failed", {
+                  provider,
+                  message: result.message,
+                });
+                return yield* finish(
+                  makeUpdateState({
+                    status: "failed",
+                    startedAt,
+                    finishedAt: yield* nowIso,
+                    message: result.message,
+                  }),
+                );
+              }
             }
+            const finishedAt = yield* nowIso;
 
             yield* setRunningMessage("Verifying the installed version");
             const verified = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
@@ -623,19 +650,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const completionSubject = command !== null ? "Update command" : "Provider update";
             return yield* finish(
               makeUpdateState({
                 status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
-                  ? "Update command completed, but T3 Code could not verify the provider version."
+                  ? `${completionSubject} completed, but T3 Code could not verify the provider version.`
                   : stillOutdated
-                    ? "Update command completed, but T3 Code still detects an outdated provider version."
+                    ? `${completionSubject} completed, but T3 Code still detects an outdated provider version.`
                     : needsOpenCodeServerRestart(verifiedProviders)
                       ? OPENCODE_SERVER_RESTART_MESSAGE
                       : "Provider updated.",
-                output: commandOutput(result),
+                output,
               }),
             );
           },
@@ -665,7 +693,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     const updateFiber = yield* commandCoordinator
       .withCommandLock({
         targetKey,
-        lockKey: update.lockKey,
+        lockKey,
         onQueued: setQueuedState,
         run: runProviderUpdate(),
       })

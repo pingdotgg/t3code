@@ -22,6 +22,9 @@ import {
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import { enrichProviderSnapshotWithVersionAdvisory } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { makeManagedInstallationMaintenance } from "../managedInstallationUpdate.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   type ProviderDriverCreateInput,
@@ -41,6 +44,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const runtime = yield* makeCodexManagedRuntime({
     instanceId,
     enabled,
@@ -215,13 +219,37 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
   );
+  const resolveMaintenance = () =>
+    runtime.installation.resolve().pipe(
+      Effect.option,
+      Effect.map((executable) =>
+        makeManagedInstallationMaintenance({
+          provider: DRIVER,
+          installation: runtime.installation,
+          executable,
+        }),
+      ),
+    );
   const snapshot = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
+    resolveMaintenance,
     getSettings: host.settings.get,
     streamSettings: host.settings.changes,
-    haveSettingsChanged: () => false,
+    haveSettingsChanged: (previous, next) =>
+      previous.enableProviderUpdateChecks !== next.enableProviderUpdateChecks,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => pending,
     checkProvider: check,
+    enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+      resolveMaintenance().pipe(
+        Effect.flatMap((capabilities) =>
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities, {
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        Effect.flatMap(publishSnapshot),
+      ),
   }).pipe(
     Effect.mapError(
       (cause) =>

@@ -1710,3 +1710,106 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
     ),
   );
 });
+
+it.effect("runs managed in-process updates without a shell command", () => {
+  const antigravityDriver = ProviderDriverKind.make("antigravity");
+  const antigravityId = ProviderInstanceId.make("antigravity");
+  const initialProvider: ServerProvider = {
+    ...baseProvider,
+    instanceId: antigravityId,
+    driver: antigravityDriver,
+    version: "1.5.14",
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.5.14",
+      latestVersion: "1.5.15",
+      updateCommand: null,
+      canUpdate: true,
+      checkedAt: "2026-03-11T00:00:00.000Z",
+      message: "Install the update now or review provider settings.",
+    },
+  };
+  return Effect.gen(function* () {
+    let installedVersion = "1.5.14";
+    let outcome:
+      | { readonly status: "succeeded" }
+      | { readonly status: "failed"; readonly message: string } = {
+      status: "failed",
+      message: "Checksum mismatch.",
+    };
+    let runs = 0;
+    const { registry, updateStatesRef, providersRef } = yield* makeRegistry(initialProvider);
+    const capabilities = {
+      provider: antigravityDriver,
+      packageName: null,
+      update: null,
+      managedUpdate: {
+        lockKey: "antigravity-managed",
+        run: (onProgress: (line: string) => Effect.Effect<void>) =>
+          Effect.gen(function* () {
+            runs += 1;
+            yield* onProgress("Downloading the runtime.");
+            if (outcome.status === "succeeded") {
+              installedVersion = "1.5.15";
+              yield* Ref.update(providersRef, (providers) =>
+                providers.map((entry) => ({ ...entry, version: installedVersion })),
+              );
+            }
+            return outcome;
+          }),
+      },
+      latestVersionCacheKey: "antigravity-managed",
+      lookupLatestVersion: Effect.succeed("1.5.15"),
+    };
+    const updater = yield* makeTestRunner({
+      ...registry,
+      refreshInstance: () =>
+        Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((entry) => ({
+            ...entry,
+            version: installedVersion,
+            checkedAt: `2026-03-11T00:01:0${runs}.000Z`,
+          })),
+        ),
+      getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
+    });
+    const update = (targetVersion?: string) =>
+      updater.updateProvider({
+        provider: antigravityDriver,
+        instanceId: antigravityId,
+        ...(targetVersion ? { targetVersion } : {}),
+      });
+
+    // A managed runtime installs its newest release and cannot pin one.
+    assert.strictEqual((yield* update("1.5.15")).providers[0]?.updateState?.status, "failed");
+    assert.strictEqual(runs, 0);
+
+    const failed = yield* update();
+    assert.strictEqual(failed.providers[0]?.updateState?.message, "Checksum mismatch.");
+
+    outcome = { status: "succeeded" };
+    const succeeded = yield* update();
+    assert.strictEqual(succeeded.providers[0]?.updateState?.status, "succeeded");
+    assert.strictEqual(runs, 2);
+    assert.include(
+      (yield* Ref.get(updateStatesRef)).map((state) => state.message),
+      "Downloading the runtime.",
+    );
+
+    assert.strictEqual((yield* update()).providers[0]?.updateState?.message, "Already up to date.");
+    assert.strictEqual(runs, 2);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Managed update must not call npm")),
+        ),
+        layerMockSpawner(() => {
+          throw new Error("Managed update must not spawn a shell updater");
+        }),
+      ),
+    ),
+  );
+});

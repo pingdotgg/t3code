@@ -156,9 +156,13 @@ export function ProviderUpdatesAction() {
       label={machines.map((machine) => (
         <div key={machine.environmentId}>
           {machine.label}:{" "}
-          {machine.candidates
-            .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
-            .join(", ")}
+          {[
+            ...new Set(
+              machine.candidates.map(
+                (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+              ),
+            ),
+          ].join(", ")}
         </div>
       ))}
     />

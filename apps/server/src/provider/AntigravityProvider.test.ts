@@ -140,6 +140,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+    readonly enrichVersionAdvisory?: (snapshot: ServerProvider) => Effect.Effect<ServerProvider>;
   } = {},
 ) {
   const savedRuntimeModes = yield* Ref.make<ReadonlyArray<ReadonlyArray<RuntimeMode>>>([]);
@@ -155,6 +156,9 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
+      ...(options.enrichVersionAdvisory
+        ? { enrichVersionAdvisory: options.enrichVersionAdvisory }
+        : {}),
       ...(options.rememberedRuntimeModes
         ? { rememberedRuntimeModes: options.rememberedRuntimeModes }
         : {}),
@@ -787,6 +791,42 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         }),
       );
       expect((yield* harness.provider.snapshot.refresh).version).toBe("1.5.13");
+    }),
+  );
+
+  it.effect("keeps the version advisory when a session start republishes the snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        enrichVersionAdvisory: (snapshot) =>
+          Effect.succeed({
+            ...snapshot,
+            versionAdvisory: {
+              status: "behind_latest",
+              currentVersion: snapshot.version,
+              latestVersion: "9.0.0",
+              updateCommand: null,
+              canUpdate: true,
+              canInstallVersion: false,
+              checkedAt: null,
+              message: null,
+            },
+          }),
+      });
+      yield* harness.initialize;
+      const published = yield* harness.nextPublish(
+        (snapshot) => snapshot.versionAdvisory?.currentVersion === "1.5.13",
+      );
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        initializeResult: {
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.13" },
+        },
+      });
+      expect((yield* published)?.versionAdvisory).toMatchObject({
+        latestVersion: "9.0.0",
+        canUpdate: true,
+      });
     }),
   );
 

@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import {
   canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
   getProviderUpdateRunToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
@@ -71,6 +72,29 @@ function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateC
 }
 
 describe("provider update launch notification logic", () => {
+  it("updates a managed runtime alongside a CLI install of the same driver", () => {
+    const oneClick = (providers: ReadonlyArray<ServerProvider>) =>
+      collectProviderUpdateCandidates(providers)
+        .filter((candidate) => canOneClickUpdateProviderCandidate(candidate, providers))
+        .map((candidate) => candidate.instanceId);
+    const managed = provider({
+      driver: driver("codex"),
+      instanceId: instanceId("codex_managed"),
+      updateCommand: null,
+    });
+    const cli = provider({ driver: driver("codex"), instanceId: instanceId("codex") });
+    const bunCli = provider({
+      driver: driver("codex"),
+      instanceId: instanceId("codex_bun"),
+      updateCommand: "bun add -g provider",
+    });
+
+    expect(isProviderSettingsUpdateCandidate(managed)).toBe(true);
+    expect(oneClick([cli, managed])).toEqual([cli.instanceId, managed.instanceId]);
+    // Disagreeing CLI commands still hold back the CLI install, not the managed one.
+    expect(oneClick([cli, bunCli, managed])).toEqual([managed.instanceId]);
+  });
+
   it("disables one-click updates when provider instances disagree on the update command", () => {
     const candidate = updateCandidate({
       driver: driver("claudeAgent"),
