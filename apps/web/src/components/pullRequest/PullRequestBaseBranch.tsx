@@ -3,7 +3,6 @@ import { useRender } from "@base-ui/react/use-render";
 import { type PullRequestUpdateMethod } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
-import { type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -37,14 +36,14 @@ function PullRequestFreshnessTrigger({
   });
 }
 
-function PullRequestBaseFreshnessWarning({
+/** The amber mark beside the head branch when it has fallen behind its base. */
+export function PullRequestBaseFreshnessWarning({
   baseBranch,
   freshness,
   pending,
   onUpdate,
   iconClassName,
   className,
-  children,
 }: {
   readonly baseBranch: string;
   readonly freshness: BaseFreshness;
@@ -52,7 +51,6 @@ function PullRequestBaseFreshnessWarning({
   readonly onUpdate: (method: PullRequestUpdateMethod) => void;
   readonly iconClassName?: string | undefined;
   readonly className?: string;
-  readonly children?: ReactNode;
 }) {
   const gt = useGT();
   const summary =
@@ -74,7 +72,6 @@ function PullRequestBaseFreshnessWarning({
         closeDelay={120}
         render={<PullRequestFreshnessTrigger aria-label={summary} className={className} />}
       >
-        {children}
         <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
       </PopoverTrigger>
       <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
@@ -103,27 +100,29 @@ function PullRequestBaseFreshnessWarning({
   );
 }
 
-/** The base branch, warning when the pull request has fallen behind it. */
+/** The base branch, in the warning tone when the pull request has fallen behind it. */
 export function PullRequestBaseBranch({
   baseBranch,
-  freshness,
   stacked,
-  pending,
-  onUpdate,
-  iconClassName,
-  compact = false,
+  behind,
 }: {
   readonly baseBranch: string;
-  readonly freshness: BaseFreshness | null;
   readonly stacked: boolean;
-  readonly pending: boolean;
-  readonly onUpdate: (method: PullRequestUpdateMethod) => void;
-  readonly iconClassName?: string;
-  readonly compact?: boolean;
+  readonly behind: boolean;
 }) {
   const gt = useGT();
-  const label = (
-    <>
+  return (
+    <SharedTooltipTrigger
+      render={
+        <span
+          className={cn(
+            "inline-flex min-w-0 shrink-0 items-center gap-1",
+            behind && "text-warning-foreground",
+          )}
+        />
+      }
+      label={stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
+    >
       {stacked ? (
         <PullRequestGlyph.stack
           aria-label={gt("Stacked pull request")}
@@ -133,39 +132,6 @@ export function PullRequestBaseBranch({
       <code className="flex min-w-0">
         <MiddleTruncate value={baseBranch} showTitle={false} />
       </code>
-    </>
-  );
-  if (freshness) {
-    return (
-      <PullRequestBaseFreshnessWarning
-        baseBranch={baseBranch}
-        freshness={freshness}
-        pending={pending}
-        onUpdate={onUpdate}
-        iconClassName={iconClassName}
-        className="max-w-[40%]"
-      >
-        <span
-          className={cn("flex min-w-0 items-center gap-1", compact && "@max-sm/pr-header:hidden")}
-        >
-          {label}
-        </span>
-      </PullRequestBaseFreshnessWarning>
-    );
-  }
-  return (
-    <SharedTooltipTrigger
-      render={
-        <span
-          className={cn(
-            "inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1",
-            compact && "@max-sm/pr-header:hidden",
-          )}
-        >
-          {label}
-        </span>
-      }
-      label={stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
-    />
+    </SharedTooltipTrigger>
   );
 }
