@@ -1,7 +1,10 @@
 import { useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 
+import * as Dialog from "../../components/ui/Dialog";
 import { serverEnvironment } from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -42,7 +45,7 @@ export function ThreadHeader(props: {
   const environmentId = EnvironmentId.make(String(props.gitControls.environmentId));
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor);
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -63,10 +66,19 @@ export function ThreadHeader(props: {
       subtitle: serverConfig.environment.label,
       overflowOnly: true,
       disabled: !canOperate,
-      onPress: () => {
+      onPress: async () => {
         if (!props.cwd || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
           return;
-        void openInEditor({ environmentId, input: { cwd: props.cwd, editor: "devin" } });
+        const result = await openInEditor({
+          environmentId,
+          input: { cwd: props.cwd, editor: "devin" },
+        });
+        if (AsyncResult.isFailure(result)) {
+          Dialog.alert(
+            gt("Open in {editor}", { editor: "Devin" }),
+            String(Cause.squash(result.cause)),
+          );
+        }
       },
     });
   }
