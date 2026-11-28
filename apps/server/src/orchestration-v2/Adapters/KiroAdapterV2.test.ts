@@ -60,6 +60,9 @@ import { KiroSettings } from "@t3tools/provider-kiro/settings";
 import {
   KIRO_PROVIDER,
   kiroApprovalOptions,
+  kiroContextUsageFromSession,
+  kiroContextUsageFromSessionUpdate,
+  kiroModelContextWindow,
   kiroAutopilotValue,
   kiroPermissionDisposition,
   makeKiroAdapterV2,
@@ -77,6 +80,107 @@ const testLayer = Layer.mergeAll(
 
 const SESSION_ID = "sess_abb5e0cf-d4a2-4360-9f03-2f8f0889a707";
 const ENABLED_KIRO_SETTINGS = Schema.decodeSync(KiroSettings)({ enabled: true });
+
+it("reports context windows only for explicit known Kiro models", () => {
+  const selection = (model: string): ModelSelection => ({
+    instanceId: ProviderInstanceId.make("kiro"),
+    model,
+  });
+  assert.equal(kiroModelContextWindow(selection("claude-opus-5.5")), 1_000_000);
+  assert.equal(kiroModelContextWindow(selection("claude-haiku-4.5")), 200_000);
+  assert.equal(kiroModelContextWindow(selection("gpt-5.6-sol")), 986_000);
+  assert.isUndefined(kiroModelContextWindow(selection("auto")));
+  assert.isUndefined(kiroModelContextWindow(selection("default")));
+  assert.isUndefined(kiroModelContextWindow(selection("custom-model")));
+});
+
+it("maps only valid context telemetry for the model that Kiro loaded", () => {
+  const selection = (model: string): ModelSelection => ({
+    instanceId: ProviderInstanceId.make("kiro"),
+    model,
+  });
+  const session = (input: {
+    readonly model?: string;
+    readonly contextUsage: unknown;
+  }): AcpSessionRuntime.AcpSessionRuntimeStartResult =>
+    ({
+      sessionId: SESSION_ID,
+      sessionSetupResult: {
+        _meta: { contextUsage: input.contextUsage },
+        configOptions:
+          input.model === undefined
+            ? []
+            : [
+                {
+                  type: "select",
+                  id: "model",
+                  name: "Model",
+                  currentValue: input.model,
+                  options: [],
+                },
+              ],
+      },
+    }) as unknown as AcpSessionRuntime.AcpSessionRuntimeStartResult;
+
+  const loaded = session({
+    model: " claude-opus-5.5 ",
+    contextUsage: {
+      usagePercentage: 29.5217,
+      summarizationThreshold: 80,
+      truncationThreshold: 95,
+    },
+  });
+  assert.deepEqual(
+    kiroContextUsageFromSession({ selection: selection("claude-opus-5.5"), session: loaded }),
+    {
+      usedTokens: 295_217,
+      maxTokens: 1_000_000,
+      compactsAutomatically: true,
+      autoCompactThreshold: 800_000,
+    },
+  );
+  assert.isNull(
+    kiroContextUsageFromSession({ selection: selection("claude-sonnet-4.5"), session: loaded }),
+  );
+  assert.isNull(kiroContextUsageFromSession({ selection: selection("auto"), session: loaded }));
+  assert.isUndefined(
+    kiroContextUsageFromSession({
+      selection: selection("claude-opus-5.5"),
+      session: session({ contextUsage: { usagePercentage: 10 } }),
+    }),
+  );
+  assert.isNull(
+    kiroContextUsageFromSession({
+      selection: selection("claude-opus-5.5"),
+      session: session({ model: "claude-opus-5.5", contextUsage: { usagePercentage: 101 } }),
+    }),
+  );
+
+  const withoutThreshold = session({
+    model: "claude-opus-5.5",
+    contextUsage: { usagePercentage: 10, summarizationThreshold: 0 },
+  });
+  assert.deepEqual(
+    kiroContextUsageFromSession({
+      selection: selection("claude-opus-5.5"),
+      session: withoutThreshold,
+    }),
+    { usedTokens: 100_000, maxTokens: 1_000_000 },
+  );
+  assert.isUndefined(
+    kiroContextUsageFromSessionUpdate({
+      selection: selection("claude-opus-5.5"),
+      session: loaded,
+      notification: {
+        sessionId: SESSION_ID,
+        update: {
+          sessionUpdate: "session_info_update",
+          _meta: { kiro: { contextUsage: { usagePercentage: -1 } } },
+        },
+      } as EffectAcpSchema.SessionNotification,
+    }),
+  );
+});
 
 type Frame = Record<string, unknown>;
 const outbound = (method: string, params: unknown = "<any>", label = method): Frame => ({
