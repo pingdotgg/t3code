@@ -92,6 +92,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
       completedAt: live?.completedAt ?? item.completedAt,
     };
   });
+  const visibleAvatarCount = agents.length <= 4 ? agents.length : 3;
   const summary = subagentGroupSummary(agents, m);
   const label = gt("{count, plural, one {{count} subagent} other {{count} subagents}}", {
     count: members.length,
@@ -121,7 +122,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
           )}
         >
           <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
-            {agents.slice(0, 3).map(({ item, status }) => (
+            {agents.slice(0, visibleAvatarCount).map(({ item, status }) => (
               <EnvironmentSubagentAvatar
                 key={item.id}
                 environmentId={ctx.activeThreadEnvironmentId}
@@ -131,9 +132,9 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
                 status={agents.length === 1 ? status : undefined}
               />
             ))}
-            {agents.length > 3 ? (
+            {agents.length > visibleAvatarCount ? (
               <span className="relative inline-flex size-6 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground ring-2 ring-background">
-                +{agents.length - 3}
+                +{agents.length - visibleAvatarCount}
               </span>
             ) : null}
           </span>
