@@ -185,6 +185,19 @@ export const CASES: ReadonlyArray<MobileBehaviorCase> = [
     ],
   },
   {
+    id: "send-after-scroll-to-end",
+    area: "composer",
+    kind: "bad",
+    source: "#44938",
+    experience: "After tapping Scroll to end, the next tap on Send does nothing.",
+    scenario: "scrollToEndThenSend",
+    key: "serverMessages",
+    checks: [
+      { metric: "scrolledToEnd", equals: true },
+      { metric: "serverMessages", equals: 1 },
+    ],
+  },
+  {
     id: "composer-tap-focuses-text",
     area: "composer",
     kind: "guard",
