@@ -33,90 +33,73 @@ export interface HeldIssuePage {
   readonly nextCursors: IssueListCursors;
   /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
   readonly moreFailure: string | null;
+  /** How many pages "Load more" laid over the first page, per cursor. */
+  readonly depth: Readonly<Record<string, number>>;
+  /** A newer first page these rows are being read again under. */
+  readonly rereading: IssueListResult | null;
 }
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
   return `${tracker.tracker} ${tracker.host.toLowerCase()}`;
 }
 
+function freshIssuePage(answer: IssueListResult, list: string): HeldIssuePage {
+  return {
+    list,
+    answer,
+    entries: answer.entries,
+    errors: answer.errors,
+    moreErrors: [],
+    nextCursors: answer.nextCursors,
+    moreFailure: null,
+    depth: {},
+    rereading: null,
+  };
+}
+
 /**
- * Continuations are laid over the first page they continue. A refresh of the same list keeps
- * them: for each scope already carried on, the new first page replaces the rows it covers and
- * the older rows and cursor stay. A different list (`list` changed) forgets them.
+ * Continuations are laid over the first page they continue. A new first page of the same list
+ * (`list` names its filters) keeps showing the pages held, marked `rereading`, until
+ * `rereadIssuePage` has read as deep again under it; another list starts over.
  */
 export function holdIssuePages(
   answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>,
   pages: ReadonlyMap<EnvironmentId, HeldIssuePage>,
-  { list = "", sort = "updated" }: { readonly list?: string; readonly sort?: IssueListSort } = {},
+  list = "",
 ): ReadonlyMap<EnvironmentId, HeldIssuePage> {
   const next = new Map<EnvironmentId, HeldIssuePage>();
   for (const [environmentId, answer] of answers) {
     const previous = pages.get(environmentId);
-    if (previous?.answer === answer && previous.list === list) {
-      next.set(environmentId, previous);
-      continue;
-    }
-    const fresh: HeldIssuePage = {
-      list,
-      answer,
-      entries: answer.entries,
-      errors: answer.errors,
-      moreErrors: [],
-      nextCursors: answer.nextCursors,
-      moreFailure: null,
-    };
     next.set(
       environmentId,
-      previous?.list === list ? refreshIssuePage(previous, fresh, sort) : fresh,
+      previous?.list !== list
+        ? freshIssuePage(answer, list)
+        : previous.answer === answer
+          ? previous
+          : Object.keys(previous.depth).length > 0
+            ? { ...previous, rereading: answer }
+            : freshIssuePage(answer, list),
     );
   }
   return next;
 }
 
-function cursorCoversEntry(key: string, entry: IssueListEntry): boolean {
-  if (!key.startsWith(`${entry.host} `)) return false;
-  const scope = key.slice(entry.host.length + 1);
-  const wanted = entry.scope.toLowerCase();
-  // An account-bound scope's cursor is `host account/scope`.
-  return scope === wanted || scope.endsWith(`/${wanted}`);
-}
-
-function refreshIssuePage(
-  previous: HeldIssuePage,
-  fresh: HeldIssuePage,
-  sort: IssueListSort,
-): HeldIssuePage {
-  const date = (issue: IssueListEntry) =>
-    Date.parse(sort === "created" ? issue.createdAt : issue.updatedAt);
-  const was = previous.answer.nextCursors;
-  // A scope the refresh still pages, and that "Load more" already carried past its first page.
-  const continued = Object.keys(fresh.answer.nextCursors).filter(
-    (key) => was[key] !== undefined && previous.nextCursors[key] !== was[key],
-  );
-  if (continued.length === 0) return fresh;
-  const kept = previous.entries.filter((entry) => {
-    const key = continued.find((cursor) => cursorCoversEntry(cursor, entry));
-    if (key === undefined) return false;
-    const covered = fresh.entries.filter((row) => cursorCoversEntry(key, row));
-    // What the new first page reaches it answers for; older rows are the continuations'.
-    return covered.length > 0 && covered.every((row) => date(row) >= date(entry));
-  });
-  const nextCursors: Record<string, string> = { ...fresh.answer.nextCursors };
-  for (const key of continued) {
-    const cursor = previous.nextCursors[key];
-    if (cursor === undefined) delete nextCursors[key];
-    else nextCursors[key] = cursor;
+/** Reads the pages "Load more" had reached again under the newer first page, so they show what changed. */
+export async function rereadIssuePage(
+  page: HeldIssuePage & { readonly rereading: IssueListResult },
+  load: (cursors: IssueListCursors) => Promise<IssueListResult | { readonly failure: string }>,
+): Promise<HeldIssuePage> {
+  let next = freshIssuePage(page.rereading, page.list);
+  for (;;) {
+    const asked = Object.fromEntries(
+      Object.entries(next.nextCursors).filter(
+        ([key]) => (next.depth[key] ?? 0) < (page.depth[key] ?? 0),
+      ),
+    );
+    if (Object.keys(asked).length === 0) return next;
+    next = continueIssuePage(next, await load(asked), asked);
+    if (next.moreFailure !== null) return next;
   }
-  const moreErrors = previous.moreErrors.filter((more) =>
-    more.asked.some((key) => continued.includes(key)),
-  );
-  return {
-    ...fresh,
-    entries: mergeIssueListPage(kept, fresh.entries),
-    errors: [...fresh.answer.errors, ...moreErrors.flatMap((more) => more.errors)],
-    moreErrors,
-    nextCursors,
-  };
 }
 
 /** The cursors of one tracker host, so its "Load more" leaves the other trackers where they are. */
@@ -148,6 +131,11 @@ export function continueIssuePage(
       ...next.nextCursors,
     },
     moreFailure: null,
+    depth: {
+      ...page.depth,
+      ...Object.fromEntries(Object.keys(asked).map((key) => [key, (page.depth[key] ?? 0) + 1])),
+    },
+    rereading: page.rereading,
   };
 }
 

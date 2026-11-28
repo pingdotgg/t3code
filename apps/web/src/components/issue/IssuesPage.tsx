@@ -6,6 +6,7 @@ import {
   issueCursorsForHost,
   issueFilterScopes,
   issueTrackerKey,
+  rereadIssuePage,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
 import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
@@ -13,7 +14,9 @@ import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
   IssueInvolvement,
+  IssueListCursors,
   IssueListInput,
+  IssueListResult,
   IssueListSort,
   IssueListState,
   IssueTrackerKind,
@@ -243,40 +246,43 @@ export function IssuesPage() {
   );
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
-  const held = holdIssuePages(list.answers, pages, {
-    list: JSON.stringify(targets),
-    ...(search.order ? { sort: search.order } : {}),
-  });
+  const held = holdIssuePages(list.answers, pages, JSON.stringify(targets));
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
+  const readPage = async (environmentId: EnvironmentId, cursors: IssueListCursors) => {
+    const input = targets.find((target) => target.environmentId === environmentId)?.input;
+    if (!input) return { failure: m(msg("The next page failed.")) };
+    const result = await loadPage({ environmentId, input: { ...input, cursors } });
+    if (result._tag !== "Failure") return result.value;
+    const failure = squashAtomCommandFailure(result);
+    return {
+      failure: failure instanceof Error ? failure.message : m(msg("The next page failed.")),
+    };
+  };
+  const rereads = useRef(new WeakSet<IssueListResult>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A refreshed first page reads the pages "Load more" had reached again from the server, so they show what changed.
+  useEffect(() => {
+    for (const [environmentId, page] of held) {
+      const rereading = page.rereading;
+      if (rereading === null || rereads.current.has(rereading)) continue;
+      rereads.current.add(rereading);
+      void rereadIssuePage({ ...page, rereading }, (cursors) =>
+        readPage(environmentId, cursors),
+      ).then((next) => setPages((current) => new Map(current).set(environmentId, next)));
+    }
+  });
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   // One tracker group's button carries on that tracker's scopes only.
   const loadMore = async (environmentId: EnvironmentId, host: string) => {
     const page = held.get(environmentId);
     const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
-    if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
+    if (!page || page.rereading || Object.keys(cursors).length === 0 || loadingMore !== null)
+      return;
     setLoadingMore(`${environmentId} ${host}`);
-    const input = targets.find((target) => target.environmentId === environmentId)?.input;
-    if (!input) return;
-    const result = await loadPage({ environmentId, input: { ...input, cursors } });
+    const result = await readPage(environmentId, cursors);
     setLoadingMore(null);
-    const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-    setPages((current) => {
-      const next = new Map(current);
-      next.set(
-        environmentId,
-        continueIssuePage(
-          page,
-          result._tag === "Failure"
-            ? {
-                failure:
-                  failure instanceof Error ? failure.message : m(msg("The next page failed.")),
-              }
-            : result.value,
-          cursors,
-        ),
-      );
-      return next;
-    });
+    setPages((current) =>
+      new Map(current).set(environmentId, continueIssuePage(page, result, cursors)),
+    );
   };
 
   // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows

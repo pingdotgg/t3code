@@ -6,6 +6,7 @@ import {
   holdIssuePages,
   issueFilterScopes,
   issueOrder,
+  rereadIssuePage,
   type EnvironmentIssueEntry,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
@@ -14,13 +15,15 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type {
   EnvironmentId,
   IssueInvolvement,
+  IssueListCursors,
   IssueListInput,
+  IssueListResult,
   IssueListSort,
   IssueListState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
-import { use, useRef, useState, type ReactNode } from "react";
+import { use, useEffect, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -158,11 +161,33 @@ export function IssuesScreen(
   const list = useIssueList(targets);
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
-  const held = holdIssuePages(list.answers, pages, { list: JSON.stringify(targets), sort });
+  const held = holdIssuePages(list.answers, pages, JSON.stringify(targets));
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
+  const readPage = async (environmentId: EnvironmentId, cursors: IssueListCursors) => {
+    const result = await loadPage({ environmentId, input: { ...listInput, cursors } });
+    if (!AsyncResult.isFailure(result)) return result.value;
+    const failure = squashAtomCommandFailure(result);
+    return {
+      failure: failure instanceof Error ? failure.message : m(msg("The next page failed.")),
+    };
+  };
+  const rereads = useRef(new WeakSet<IssueListResult>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A refreshed first page reads the pages "Load more" had reached again from the server, so they show what changed.
+  useEffect(() => {
+    for (const [environmentId, page] of held) {
+      const rereading = page.rereading;
+      if (rereading === null || rereads.current.has(rereading)) continue;
+      rereads.current.add(rereading);
+      void rereadIssuePage({ ...page, rereading }, (cursors) =>
+        readPage(environmentId, cursors),
+      ).then((next) => setPages((current) => new Map(current).set(environmentId, next)));
+    }
+  });
   const [loadingMore, setLoadingMore] = useState(false);
   const loading = useRef(false);
-  const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
+  const continuable = [...held].filter(
+    ([, page]) => page.rereading === null && Object.keys(page.nextCursors).length > 0,
+  );
   const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
   const loadMore = async (retry = false) => {
     // With nothing to continue, the spinner and new pages would only re-fire onEndReached forever.
@@ -170,25 +195,13 @@ export function IssuesScreen(
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(
-      continuable.map(async ([environmentId, page]) => {
-        const result = await loadPage({
-          environmentId,
-          input: { ...listInput, cursors: page.nextCursors },
-        });
-        const failure = AsyncResult.isFailure(result) ? squashAtomCommandFailure(result) : null;
-        return [
-          environmentId,
-          continueIssuePage(
-            page,
-            AsyncResult.isFailure(result)
-              ? {
-                  failure:
-                    failure instanceof Error ? failure.message : m(msg("The next page failed.")),
-                }
-              : result.value,
-          ),
-        ] as const;
-      }),
+      continuable.map(
+        async ([environmentId, page]) =>
+          [
+            environmentId,
+            continueIssuePage(page, await readPage(environmentId, page.nextCursors)),
+          ] as const,
+      ),
     );
     loading.current = false;
     setLoadingMore(false);

@@ -14,6 +14,7 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  rereadIssuePage,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -119,15 +120,47 @@ describe("holdIssuePages", () => {
     const first = holdIssuePages(
       [[environmentId, answer({ entries: [entry({ key: "3" })], nextCursors: cursors })]],
       new Map(),
-      { list: "open" },
+      "open",
     ).get(environmentId)!;
     const continued = continueIssuePage(first, answer({ entries: [entry({ key: "2" })] }), cursors);
     const closed = answer({ entries: [entry({ key: "1" })], nextCursors: cursors });
-    const held = holdIssuePages([[environmentId, closed]], new Map([[environmentId, continued]]), {
-      list: "closed",
-    }).get(environmentId)!;
+    const held = holdIssuePages(
+      [[environmentId, closed]],
+      new Map([[environmentId, continued]]),
+      "closed",
+    ).get(environmentId)!;
     expect(held.entries.map((issue) => issue.key)).toEqual(["1"]);
     expect(held.nextCursors).toEqual(cursors);
+  });
+
+  it("reads the loaded pages again, dropping a continuation ticket closed out of an open list", async () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const firstPage = [entry({ key: "4" }), entry({ key: "3" })];
+    const continued = continueIssuePage(
+      hold(answer({ entries: firstPage, nextCursors: cursors })),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #2 leaves the open first page as it was.
+    const refreshed = answer({ entries: firstPage, nextCursors: cursors });
+    const held = holdIssuePages(
+      [[environmentId, refreshed]],
+      new Map([[environmentId, continued]]),
+    ).get(environmentId)!;
+    expect(held.rereading).toBe(refreshed);
+    const asked: unknown[] = [];
+    const reread = await rereadIssuePage({ ...held, rereading: refreshed }, async (next) => {
+      asked.push(next);
+      return answer({ entries: [entry({ key: "1" })] });
+    });
+    expect(asked).toEqual([cursors]);
+    expect(reread.entries.map((issue) => issue.key)).toEqual(["4", "3", "1"]);
+    expect(reread.nextCursors).toEqual({});
+    expect(
+      holdIssuePages([[environmentId, refreshed]], new Map([[environmentId, reread]])).get(
+        environmentId,
+      ),
+    ).toBe(reread);
   });
 });
 
