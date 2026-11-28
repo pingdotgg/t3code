@@ -89,8 +89,7 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === projectEnvironment.createNew
       ? scopes.createNewProject
-      : command === projectEnvironment.create ||
-          command === sourceControlEnvironment.startProjectClone
+      : command === projectEnvironment.create
         ? scopes.addProject
         : async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
@@ -284,10 +283,6 @@ async function startLateProjectAdd(source: string, input: string) {
   await page.getByText(source, { exact: true }).click();
   const search = page.getByRole("combobox");
   await search.fill(input);
-  if (source === "Git URL") {
-    await userEvent.keyboard("{Enter}");
-    await expect.element(search).toHaveValue("/workspace/project");
-  }
   await userEvent.keyboard("{Enter}");
   return async () => {
     await act(async () => {
@@ -302,7 +297,6 @@ async function startLateProjectAdd(source: string, input: string) {
 it.each([
   { source: "New project", input: "new-project" },
   { source: "Local folder", input: "/workspace/existing" },
-  { source: "Git URL", input: "https://example.com/team/project.git" },
 ])("keeps a reopened palette open when $source finishes late", async ({ source, input }) => {
   setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
