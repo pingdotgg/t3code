@@ -187,11 +187,14 @@ export function ProjectSettingsPanel({
   environmentId = null,
   checkoutKey = null,
   unavailable,
+  header,
 }: {
   projectKey: string;
   environmentId?: EnvironmentId | null;
   checkoutKey?: string | null;
   unavailable?: ReactNode;
+  /** A page-level card above the project's sections. */
+  header?: ReactNode;
 }) {
   const gt = useGT();
   const groups = useSettingsProjectGroups();
@@ -269,6 +272,7 @@ export function ProjectSettingsPanel({
       group={scopedGroup}
       allMembers={selected.memberProjects}
       hasOtherMembers={members.length < selected.memberProjects.length}
+      header={header}
     />
   );
 }
@@ -277,11 +281,13 @@ function ProjectDetail({
   group,
   allMembers,
   hasOtherMembers,
+  header,
 }: {
   group: SidebarProjectSnapshot;
   /** Pin and archive belong to the whole project, even when one machine is picked. */
   allMembers: ReadonlyArray<SidebarProjectGroupMember>;
   hasOtherMembers: boolean;
+  header?: ReactNode;
 }) {
   const gt = useGT();
   const navigate = useNavigate({ from: "/settings" });
@@ -613,6 +619,7 @@ function ProjectDetail({
   return (
     <>
       <SettingsPageContainer className="max-w-[688px]">
+        {header}
         <SettingsSection id="project-overview" title={gt("Project")}>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
