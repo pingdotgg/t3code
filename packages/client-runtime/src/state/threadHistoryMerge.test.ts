@@ -175,6 +175,54 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems[1]?.item).toBe(preview.item);
     expect(merged.turnItems).toEqual([local.item]);
     expect(mergeOlderHistoryIntoProjection(merged, [inherited(0), inherited(1)])).toBe(merged);
+
+    // Expanding the local deferred work resolves the anchor that carries it.
+    const anchor = {
+      ...local,
+      item: { ...local.item, deferredWork: { cursor: "work", itemCount: 2, lastOrdinal: 3 } },
+    };
+    const expanded = mergeOlderHistoryIntoProjection(
+      { ...projection, turnItems: [anchor.item], visibleTurnItems: [preview, anchor] },
+      [local, row(2)],
+      { anchorId: local.sourceItemId, nextCursor: null },
+    );
+    expect(
+      expanded.visibleTurnItems.map((entry) => [entry.sourceThreadId, entry.sourceItemId]),
+    ).toEqual([
+      ["fork-source", "item-1"],
+      [v2ThreadId, "item-1"],
+      [v2ThreadId, "item-2"],
+    ]);
+    expect(expanded.visibleTurnItems[0]?.item).toBe(preview.item);
+    expect(expanded.visibleTurnItems[1]?.item.deferredWork).toBeUndefined();
+
+    // Equal-ordinal rows split between held rows and the page sort by item id.
+    const tied = (id: string, ordinal: number) => ({
+      ...local,
+      sourceItemId: id as never,
+      item: { ...local.item, id: id as never, ordinal },
+    });
+    const tiedAnchor = {
+      ...tied("item-a", 10),
+      item: {
+        ...tied("item-a", 10).item,
+        deferredWork: { cursor: "work", itemCount: 3, lastOrdinal: 11 },
+      },
+    };
+    const tiedExpanded = mergeOlderHistoryIntoProjection(
+      {
+        ...projection,
+        turnItems: [tiedAnchor.item, tied("item-b", 11).item],
+        visibleTurnItems: [tiedAnchor, tied("item-b", 11)],
+      },
+      [tied("item-c", 11)],
+      { anchorId: "item-a", nextCursor: null },
+    );
+    expect(tiedExpanded.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-a",
+      "item-b",
+      "item-c",
+    ]);
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {

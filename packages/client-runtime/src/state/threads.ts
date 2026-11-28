@@ -53,6 +53,7 @@ import {
   applyHistoryPageMeta,
   clearActiveHistoryLoading,
   EMPTY_THREAD_HISTORY_META,
+  findDeferredWorkAnchorIndex,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
   mergeOlderSubagentsIntoProjection,
@@ -785,10 +786,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     throughEntryId?: string,
     workAnchorId?: string,
   ): Effect.fn.Return<ThreadHistoryController.ThreadHistoryLoadEarlierResult> {
-    const workCursor = (latest: EnvironmentThreadState) =>
-      Option.getOrNull(latest.data)?.visibleTurnItems.find(
-        (row) => row.sourceItemId === workAnchorId,
-      )?.item.deferredWork?.cursor ?? null;
+    const workCursor = (latest: EnvironmentThreadState) => {
+      const rows = Option.getOrNull(latest.data)?.visibleTurnItems;
+      if (rows === undefined || workAnchorId === undefined) return null;
+      return (
+        rows[findDeferredWorkAnchorIndex(rows, workAnchorId)]?.item.deferredWork?.cursor ?? null
+      );
+    };
     const current = yield* SubscriptionRef.get(state);
     const initialCursor =
       workAnchorId === undefined ? current.history.historyCursor : workCursor(current);
