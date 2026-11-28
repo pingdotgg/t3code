@@ -904,6 +904,21 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("matches Space by its key code when the key is unidentified", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut(" ", { modKey: false, ctrlKey: true }), command: "diff.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Unidentified", code: "Space", ctrlKey: true }),
+        keybindings,
+        { platform: "Linux" },
+      ),
+      "diff.toggle",
+    );
+  });
+
   it("matches non-Latin layout letters using the physical key code", () => {
     const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
 
