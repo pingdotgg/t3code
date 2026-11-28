@@ -443,6 +443,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
 }: MessagesTimelineProps) {
   const gt = useGT();
+  const messages = useMessages();
   const canvas = useChatCanvas();
   const contentInsetEndAdjustment = resolveTimelineEndInset(composerInsetEnd, canvas);
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
@@ -797,7 +798,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
-  const minimapItems = deriveTimelineMinimapItems(rows);
+  const minimapItems = deriveTimelineMinimapItems(rows, messages);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false

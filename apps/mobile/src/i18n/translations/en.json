@@ -398,6 +398,7 @@
   "071ab90b0e0f5e76": "Compacting…",
   "2fb1845862c9a087": "Auto-compacted before cache expiry",
   "552d31d19f1df851": "Context compacted before sending",
+  "86fabb28659cbc69": "Continue where you left off.",
   "476ca970255eaea4": "Link this environment to T3 Connect for a public URL.",
   "6b80f5b38a8f9950": "Only this computer can call this address. Link T3 Connect for a public URL.",
   "c5a7b1d3891dd0b8": "Works wherever this environment's address is reachable, for example over Tailscale or your own proxy. Link T3 Connect for a public URL.",

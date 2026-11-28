@@ -400,6 +400,7 @@
   "071ab90b0e0f5e76": "Komprimerar…",
   "2fb1845862c9a087": "Komprimerades automatiskt innan cachen gick ut",
   "552d31d19f1df851": "Kontexten komprimerades före sändning",
+  "86fabb28659cbc69": "Fortsätt där du slutade.",
   "476ca970255eaea4": "Länka den här miljön till T3 Connect för en publik URL.",
   "6b80f5b38a8f9950": "Bara den här datorn kan anropa den här adressen. Länka T3 Connect för en publik URL.",
   "c5a7b1d3891dd0b8": "Fungerar där den här miljöns adress kan nås, till exempel via Tailscale eller din egen proxy. Länka T3 Connect för en publik URL.",

@@ -2309,7 +2309,7 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const presentation = resolveUserMessagePresentation(message);
+    const presentation = resolveUserMessagePresentation(message, m);
     const renderedText = presentation.text;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = props.formatMessageTime(isUser ? message.createdAt : message.updatedAt);

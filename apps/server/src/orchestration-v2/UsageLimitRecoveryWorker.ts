@@ -1,4 +1,9 @@
-import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2Command,
+  USAGE_LIMIT_RESUME_TEXT,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,7 +76,7 @@ export function limitRecoveryCommand(
     ...(recovery.requestId === undefined
       ? {}
       : { usageLimitRecoveryRequestId: recovery.requestId }),
-    text: "Continue where you left off.",
+    text: USAGE_LIMIT_RESUME_TEXT,
     attachments: [],
     dispatchMode: { type: "start_immediately" },
     createdBy: "agent",

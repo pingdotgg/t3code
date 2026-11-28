@@ -8,6 +8,7 @@ import {
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
   ScheduledTaskId,
+  USAGE_LIMIT_RESUME_TEXT,
 } from "@t3tools/contracts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -16,7 +17,8 @@ import {
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { msg } from "gt-i18n";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
@@ -29,6 +31,8 @@ export const IDLE_COMPACTION_TITLES = {
   beforeCacheExpires: msg("Auto-compacted before cache expiry"),
   onReturn: msg("Context compacted before sending"),
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
+
+const USAGE_LIMIT_RESUME_LABEL = msg("Continue where you left off.");
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
 const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;
@@ -59,15 +63,18 @@ export function resolveUserMessageFileCards(message: {
   return remaining.trim() === "" ? files : null;
 }
 
-export function resolveUserMessagePresentation(message: {
-  readonly id?: string;
-  readonly role: string;
-  readonly text: string;
-  readonly createdBy?: OrchestrationV2Actor;
-  readonly creationSource?: OrchestrationV2CreationSource;
-  readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
-}): {
+export function resolveUserMessagePresentation(
+  message: {
+    readonly id?: string;
+    readonly role: string;
+    readonly text: string;
+    readonly createdBy?: OrchestrationV2Actor;
+    readonly creationSource?: OrchestrationV2CreationSource;
+    readonly scheduledTaskId?: ScheduledTaskId | undefined;
+    readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
@@ -92,6 +99,18 @@ export function resolveUserMessagePresentation(message: {
       text: message.text,
       attribution: "automation",
       scheduledTaskId: message.scheduledTaskId,
+    };
+  }
+  // The agent reads T3 Code's English resume prompt; people see it in their language.
+  if (
+    message.createdBy === "agent" &&
+    message.creationSource === "server" &&
+    message.text === USAGE_LIMIT_RESUME_TEXT
+  ) {
+    return {
+      text: resolve(USAGE_LIMIT_RESUME_LABEL),
+      attribution: "t3code",
+      scheduledTaskId: undefined,
     };
   }
   const legacyPrefix = LEGACY_AUTOMATION_PREFIX.exec(message.text);

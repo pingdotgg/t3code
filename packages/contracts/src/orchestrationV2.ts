@@ -622,6 +622,7 @@ export function isProviderNativeSubagentThread(
 }
 
 export const IDLE_COMPACTION_TEXT = "/compact";
+export const USAGE_LIMIT_RESUME_TEXT = "Continue where you left off.";
 
 interface CompactionMessageFields {
   readonly role: string;

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  GuestMessageId,
+  ScheduledTaskId,
+  USAGE_LIMIT_RESUME_TEXT,
+} from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import {
   resolveUserMessageFileCards,
@@ -198,6 +205,52 @@ describe("resolveUserMessagePresentation", () => {
         },
       }),
     ).toEqual({ text: "Why?", attribution: "guest", scheduledTaskId: undefined, guestName: "Sam" });
+  });
+
+  it("shows T3 Code's usage-limit resume prompt in the reader's language, not the agent's English", () => {
+    const resume = {
+      role: "user",
+      createdBy: "agent" as const,
+      creationSource: "server" as const,
+      text: USAGE_LIMIT_RESUME_TEXT,
+    };
+    expect(resolveUserMessagePresentation(resume)).toEqual({
+      text: USAGE_LIMIT_RESUME_TEXT,
+      attribution: "t3code",
+      scheduledTaskId: undefined,
+    });
+    const german: MFunctionType = (encodedMsg, options) => {
+      const english = mFallback(encodedMsg, options);
+      return (
+        english === USAGE_LIMIT_RESUME_TEXT ? "Mach da weiter, wo du aufgehört hast." : english
+      ) as typeof english;
+    };
+    expect(resolveUserMessagePresentation(resume, german)).toMatchObject({
+      text: "Mach da weiter, wo du aufgehört hast.",
+      attribution: "t3code",
+    });
+    for (const sender of [
+      { createdBy: "user" as const },
+      { createdBy: "user" as const, creationSource: "server" as const },
+      { createdBy: "agent" as const, creationSource: "mcp" as const },
+    ]) {
+      expect(
+        resolveUserMessagePresentation(
+          { role: "user", ...sender, text: USAGE_LIMIT_RESUME_TEXT },
+          german,
+        ).text,
+      ).toBe(USAGE_LIMIT_RESUME_TEXT);
+    }
+    expect(
+      resolveUserMessagePresentation(
+        { ...resume, scheduledTaskId: ScheduledTaskId.make("task:resume") },
+        german,
+      ),
+    ).toEqual({
+      text: USAGE_LIMIT_RESUME_TEXT,
+      attribution: "automation",
+      scheduledTaskId: "task:resume",
+    });
   });
 
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {
