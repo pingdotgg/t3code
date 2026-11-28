@@ -2137,6 +2137,73 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+// Claude retries an MCP request after 5 seconds and gives up on the server after 30.
+it.live("admits an MCP request while the thread's forge lookup has not answered", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: "hungForgeToken",
+        thread: {
+          threadId: ThreadId.make("thread-hungForge"),
+          providerSessionId: "hungForgeToken",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          subagent: false,
+        },
+        client: undefined,
+        capabilities: new Set(["pull-requests"]),
+        issuedAt: 1,
+      };
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.layerPullRequestsToolkit,
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(token === "hungForgeToken" ? scope : undefined),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            McpToolAccessTestkit.liveThreadsLayer,
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+            // A `gh auth token` stuck on the secret service never hands back an answer in time.
+            Layer.mock(PullRequestService.PullRequestService)({
+              servesProject: () => Effect.never,
+            }),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(Orchestrator.OrchestratorV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () =>
+                Effect.succeed({ projectId: ProjectId.make("project-1") } as never),
+            }),
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const initialize = yield* httpClient
+        .post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization: "Bearer hungForgeToken",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        })
+        .pipe(Effect.timeoutOption("4 seconds"));
+      expect(initialize._tag).toBe("Some");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect(
   "narrows an OAuth client's modes to the T3-Mode-Limit it sends, and never widens them",
   () =>
