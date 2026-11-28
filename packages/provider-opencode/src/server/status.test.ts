@@ -943,7 +943,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "auto",
         "full-access",
       ]);
-      NodeAssert.equal(snapshot.showInteractionModeToggle, true);
+      NodeAssert.equal(snapshot.showInteractionModeToggle, false);
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
         ["compact"],

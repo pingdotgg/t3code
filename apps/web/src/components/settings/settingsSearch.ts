@@ -527,6 +527,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
 
   {
+    id: "plan-mode",
+    title: msg("Plan mode"),
+    to: "/settings/labs",
+    searchTerms: [msg("beta build plan composer toggle")],
+  },
+  {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),
     to: "/settings/chat",

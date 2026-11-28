@@ -799,6 +799,77 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   expect(editor.element().textContent).toContain("Next draft");
 });
 
+async function renderModeThread(
+  interactionMode: "default" | "plan",
+  planModeEnabled: boolean,
+  name = `mode-${interactionMode}`,
+) {
+  const thread = { ...threadWithHistory(name, 1), interactionMode };
+  const environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    planModeEnabled,
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  // AppRoot brings its own router.
+  const app = await render(<AppRoot router={router} />, { router: false });
+  return { thread, environment, app };
+}
+
+async function sendAndExpectMode(threadId: string, interactionMode: "default" | "plan") {
+  await page.getByTestId("composer-editor").click();
+  await insertText("Work through the next step");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => {
+    expect(dispatchedCommands()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "thread.interaction-mode.set", threadId, interactionMode }),
+        expect.objectContaining({ type: "message.dispatch", threadId }),
+      ]),
+    );
+  });
+}
+
+it.each([
+  { from: "default", to: "plan" },
+  { from: "plan", to: "default" },
+] as const)("with plan mode on, the composer switches from $from to $to", async ({ from, to }) => {
+  const { thread, environment, app } = await renderModeThread(from, true);
+  using _environment = environment;
+  await using _app = app;
+  const toggle = page.getByRole("button", { name: "Plan mode" });
+  await expect.element(toggle).toHaveAttribute("aria-pressed", String(from === "plan"));
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", String(to === "plan"));
+  await sendAndExpectMode(thread.id, to);
+});
+
+it("the plan mode toggle is locked while a turn runs", async () => {
+  const { thread, environment, app } = await renderModeThread("default", true, "mode-running");
+  using _environment = environment;
+  await using _app = app;
+  const toggle = page.getByRole("button", { name: "Plan mode" });
+  await expect.element(toggle).toBeEnabled();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  await expect.element(toggle).toBeDisabled();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
+it("with plan mode off, the toggle is hidden and a plan thread sends in build mode", async () => {
+  const { thread, environment, app } = await renderModeThread("plan", false);
+  using _environment = environment;
+  await using _app = app;
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Plan mode" })).not.toBeInTheDocument();
+  await sendAndExpectMode(thread.id, "default");
+});
+
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
   const history = threadWithHistory("interrupted", 1);
   const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
