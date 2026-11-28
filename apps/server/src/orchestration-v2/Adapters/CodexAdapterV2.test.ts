@@ -5834,6 +5834,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "steer",
     "start-fails",
     "keep-changed-tier",
+    "keep-changed-model",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.gen(function* () {
       const scenario = `capacity-${outcome}`;
@@ -5878,6 +5879,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       });
       // A speed picked while the first attempt runs; the retry must not send the old one.
       const changedTier = outcome === "keep-changed-tier" ? "fast" : undefined;
+      // A model picked during the backoff; the retry must start on it.
+      const retryModel = outcome === "keep-changed-model" ? "gpt-5.5" : "gpt-5.4";
       if (changedTier !== undefined) {
         entries.push(
           {
@@ -5939,12 +5942,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   threadId: nativeThreadId,
                   input: [],
                   cwd: "/workspace",
-                  model: "gpt-5.4",
+                  model: retryModel,
                   approvalPolicy: "never",
                   approvalsReviewer: "user",
                   sandboxPolicy: { type: "dangerFullAccess" },
                   summary: "auto",
-                  collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
+                  collaborationMode: { mode: "default", settings: { model: retryModel } },
                   ...(changedTier === undefined ? {} : { serviceTier: changedTier }),
                 },
               },
@@ -6009,6 +6012,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (
           outcome === "recover" ||
           outcome === "keep-changed-tier" ||
+          outcome === "keep-changed-model" ||
           outcome === "completion-only" ||
           outcome === "started-first" ||
           outcome === "stop-starting"
@@ -6139,6 +6143,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 })
                 .pipe(Effect.forkScoped)
             : undefined;
+        if (outcome === "keep-changed-model") {
+          yield* (
+            harness.runtime.applyModelSelection?.({
+              providerThread: harness.providerThread,
+              modelSelection: { ...CODEX_TEST_MODEL_SELECTION, model: retryModel },
+            }) ?? Effect.void
+          );
+        }
         if (renamedBeforeRetry) {
           yield* harness.runtime.applyThreadTitle!({
             providerThread: harness.providerThread,
@@ -6183,11 +6195,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(nextRetry.turnItem.retry?.attempt, 1);
         return;
       }
+      if (outcome === "keep-changed-model")
+        assert.deepInclude(starts[1], {
+          model: retryModel,
+          collaborationMode: { mode: "default", settings: { model: retryModel } },
+        });
       const terminal = harness.terminalEvents()[0];
       assert.equal(
         terminal?.status,
         outcome === "recover" ||
           outcome === "keep-changed-tier" ||
+          outcome === "keep-changed-model" ||
           outcome === "completion-only" ||
           outcome === "steer" ||
           outcome === "started-first" ||
