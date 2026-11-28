@@ -35,6 +35,12 @@ describe("providerInstanceInitials", () => {
     expect(providerInstanceInitials("E\u0301clair")).toBe("ÉC");
     expect(providerInstanceInitials("E\u0301clair Pro")).toBe("ÉP");
   });
+
+  it("keeps combining marks that have no precomposed form on their letter", () => {
+    expect(providerInstanceInitials("हिन्दी Codex")).toBe("हिC");
+    expect(providerInstanceInitials("Work ที่บ้าน")).toBe("Wที่");
+    expect(providerInstanceInitials("ที่บ้าน")).toBe("ที่บ้");
+  });
 });
 
 describe("normalizeProviderAccentColor", () => {
