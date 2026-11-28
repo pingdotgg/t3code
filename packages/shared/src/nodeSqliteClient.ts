@@ -695,10 +695,11 @@ const check = (force) => {
     passive.get();
     state = frames.get();
   }
-  // The WAL restarts only once every frame is checkpointed, so catch up when writes pause.
+  // The WAL restarts only once every frame is checkpointed, so after a checkpoint leaves frames
+  // behind, catch up when writes pause. Before any checkpoint, wait for the frame threshold.
   // A reader pinning the WAL stops progress; the next write retries instead of a timer loop.
   const progressed = !force || state.checkpointed > before.checkpointed;
-  if (state.log > state.checkpointed && progressed) {
+  if (state.checkpointed > 0 && state.log > state.checkpointed && progressed) {
     idle = setTimeout(() => run(true), workerData.idleMs);
   }
   parentPort.postMessage({ type: "checked", log: state.log, checkpointed: state.checkpointed });
