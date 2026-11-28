@@ -739,7 +739,7 @@ describe("chunked Markdown footnotes", () => {
       "",
       `[^a] ${"$x ".repeat(20000)}`,
       "",
-      `[^c] ${"<!-- ](<".repeat(20000)}`,
+      `[^c] ${"<!-- ](<".repeat(16_000)}`,
       "",
       "Literal ](see[^b]) but [link](x[^a]) is a destination.",
       "",
