@@ -2688,11 +2688,11 @@ importers:
   scripts:
     dependencies:
       '@e2e-dev/mobile':
-        specifier: 0.12.6
-        version: 0.12.6(e2e@0.24.0)
+        specifier: 0.12.8
+        version: 0.12.8(@e2e-dev/core@0.24.0)(e2e@0.24.0)
       '@e2e-dev/web':
-        specifier: 0.15.5
-        version: 0.15.5(e2e@0.24.0)
+        specifier: 0.16.1
+        version: 0.16.1(@e2e-dev/core@0.24.0)(e2e@0.24.0)
       '@effect/platform-node':
         specifier: 4.1.6
         version: 4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -3964,22 +3964,29 @@ packages:
       ai:
         optional: true
 
-  '@e2e-dev/mobile@0.12.6':
-    resolution: {integrity: sha512-V56hOt5cJsoC9M8kMIjsCKOY2pEPHb4awYMLP699yMO4aNUUnpALYK/R2ik6C64CLEq4N1aibLmD7ErPZVc97w==}
+  '@e2e-dev/mobile@0.12.8':
+    resolution: {integrity: sha512-N9BuoUC0a+7pG1NbhTfL0janxqNf7blm+6TW/EQZ4IlURbYIZQFmSRK+2HEnH+FzrobqXBBI/egHYW9LIRfGsg==}
     engines: {node: ^22.22.3 || >=24.8.0}
     peerDependencies:
+      '@e2e-dev/core': '>=0.23.2 <1'
       ai: ^7.0.0
-      e2e: '>=0.22.1 <1'
+      e2e: '>=0.23.2 <1'
     peerDependenciesMeta:
       ai:
         optional: true
+      e2e:
+        optional: true
 
-  '@e2e-dev/web@0.15.5':
-    resolution: {integrity: sha512-fUXrSgfii6w/q7OyX9/kEIDLpIMHpEkTH81hrR8WLnqk8li3bRyXJQBGWqtq9NoWpS2UANnhMI45n6Fv1ErCnw==}
+  '@e2e-dev/web@0.16.1':
+    resolution: {integrity: sha512-mWSzyWSNcoqOiy6BEaXOTe8rufCz6T+NyYkJej5JOz6yy3vcnG13wEwHgl7Kdw5rv8yUbSLqbuDBRVBBtkvqIA==}
     engines: {node: ^22.22.3 || >=24.8.0}
     hasBin: true
     peerDependencies:
-      e2e: '>=0.22.1 <1'
+      '@e2e-dev/core': '>=0.23.2 <1'
+      e2e: '>=0.23.2 <1'
+    peerDependenciesMeta:
+      e2e:
+        optional: true
 
   '@effect/atom-react@4.1.6':
     resolution: {integrity: sha512-Df4DXCrI6T7im/iObhLtZAvVCvXmXApjh/Xj+iVeRlIshUdzDrAgPpJgpa0m8Ti7sf5vO2cj2LDcxdQCx/wl9A==}
@@ -8130,8 +8137,8 @@ packages:
     engines: {node: '>=18.18'}
     hasBin: true
 
-  agent-device@0.21.36:
-    resolution: {integrity: sha512-aG88WlEHjFc/OEBQC7AJg+2LfNoVT/ogxnnzIUYUEgafdiTvBaA+X6uQ2wNmpp2ZrHLy8QIXoEOyc3NEZgJCpQ==}
+  agent-device@0.21.39:
+    resolution: {integrity: sha512-flgrilleoUU9WNd9BlU8h5KMt8zv0nKWBkqJbzk/bb2NBRA+7H1FGja+RIAuapb7HXdsjK4EPnYFP37N9S8nMA==}
     engines: {node: '>=22.12'}
     hasBin: true
     peerDependencies:
@@ -11621,6 +11628,11 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   playwright@1.64.1:
     resolution: {integrity: sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==}
     engines: {node: '>=20'}
@@ -14628,17 +14640,21 @@ snapshots:
       pixelmatch: 8.0.0
       zod: 4.6.7
 
-  '@e2e-dev/mobile@0.12.6(e2e@0.24.0)':
+  '@e2e-dev/mobile@0.12.8(@e2e-dev/core@0.24.0)(e2e@0.24.0)':
     dependencies:
-      agent-device: 0.21.36
-      e2e: 0.24.0
-      pngjs: 7.0.0
+      '@e2e-dev/core': 0.24.0
+      '@napi-rs/image': 1.16.0
+      agent-device: 0.21.39
       zod: 4.6.7
-
-  '@e2e-dev/web@0.15.5(e2e@0.24.0)':
-    dependencies:
+    optionalDependencies:
       e2e: 0.24.0
-      playwright-core: 1.64.1
+
+  '@e2e-dev/web@0.16.1(@e2e-dev/core@0.24.0)(e2e@0.24.0)':
+    dependencies:
+      '@e2e-dev/core': 0.24.0
+      playwright-core: 1.65.1
+    optionalDependencies:
+      e2e: 0.24.0
 
   '@effect/atom-react@4.1.6(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(react@19.3.0)(scheduler@0.28.0)':
     dependencies:
@@ -18291,7 +18307,7 @@ snapshots:
 
   agent-cli-detector@0.1.7: {}
 
-  agent-device@0.21.36: {}
+  agent-device@0.21.39: {}
 
   agent-device@0.21.41: {}
 
@@ -22633,6 +22649,8 @@ snapshots:
       tslib: 2.8.1
 
   playwright-core@1.64.1: {}
+
+  playwright-core@1.65.1: {}
 
   playwright@1.64.1:
     dependencies:

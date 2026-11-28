@@ -8,7 +8,8 @@ description: Test T3 Code's web and desktop UI through its built-in Browser pane
 Use T3's built-in Browser panel for verification. Follow the recovery steps
 below before declaring it unavailable. Do not install or switch to another
 automation system. For native mobile testing, use
-[test-t3-mobile](../test-t3-mobile/SKILL.md).
+[test-t3-mobile](../test-t3-mobile/SKILL.md). To prove a bug fix before and
+after, use [prove-t3-fix](../prove-t3-fix/SKILL.md) instead.
 
 ## Start the app
 

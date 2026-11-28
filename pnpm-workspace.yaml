@@ -326,11 +326,15 @@ peerDependencyRules:
 
 # pnpm 12 links agent skills that dependencies ship into .claude/skills once
 # approved. We curate our own skills, so deny these to keep installs quiet.
+# e2e is the exception: agents write scenarios against it, and its skill
+# follows the installed version.
 permissions:
   "@tanstack/router-plugin":
     skills: false
   drizzle-kit:
     skills: false
+  e2e:
+    skills: true
   expo-sqlite:
     skills: false
 

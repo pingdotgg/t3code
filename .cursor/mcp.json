@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "e2e": {
+      "command": "pnpm",
+      "args": [
+        "--filter",
+        "@t3tools/scripts",
+        "--config.verify-deps-before-run=false",
+        "exec",
+        "e2e",
+        "mcp"
+      ],
+      "env": { "E2E_TELEMETRY_DISABLED": "1" }
+    }
+  }
+}

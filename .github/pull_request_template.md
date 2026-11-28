@@ -27,7 +27,10 @@ this PR, link the request. -->
 for the changed behavior. State anything you could not check. "Tests pass" alone
 is insufficient; broad repo-wide checks are not required.
 
-For UI changes, include clear before/after screenshots. Include a short recording
+For a bug you can reproduce in the web or iOS app, paste the proof.md that
+`vp run scenarios:prove` writes (docs/internals/15_testing.md#scenarios).
+
+For other UI changes, include clear before/after screenshots. Include a short recording
 when motion, timing, transitions, or interaction details are needed to demonstrate
 the change. Upload evidence to GitHub and embed or link it here. Never commit PR-only assets. -->
 
