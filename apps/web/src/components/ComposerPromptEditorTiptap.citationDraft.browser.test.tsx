@@ -6,7 +6,7 @@ import {
 import { createRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { act, render } from "../../test/render";
@@ -42,6 +42,7 @@ function Composer({
   initialPrompt?: string;
 }) {
   const [prompt, setPrompt] = useState(initialPrompt);
+  const [promptCursor, setPromptCursor] = useState(0);
   const [answer, setAnswer] = useState("");
   return (
     <>
@@ -58,12 +59,19 @@ function Composer({
       <ComposerPromptEditor
         editorRef={editorRef}
         value={question ? answer : prompt}
-        cursor={0}
+        cursor={question ? 0 : promptCursor}
         contextRecords={new Map()}
         skills={[]}
         disabled={disabled}
         placeholder=""
-        onChange={(next) => (question ? setAnswer(next) : setPrompt(next))}
+        onChange={(next, cursor) => {
+          if (question) {
+            setAnswer(next);
+          } else {
+            setPrompt(next);
+            setPromptCursor(cursor);
+          }
+        }}
         onCitationDraftSave={(replacedValue, savedValue) => {
           if (replacedValue === prompt) setPrompt(savedValue);
         }}
@@ -164,36 +172,108 @@ it.each(["blocked", "refusedLater"] as const)(
   },
 );
 
-it("keeps the following word whole when typing after a citation saved mid-text", async () => {
+it.each([
+  { input: "typing", text: "x", expected: " x world", blocked: false },
+  { input: "pasting", text: "hello", expected: " hello world", blocked: false },
+  {
+    input: "pasting paragraphs",
+    text: "hello\n\nthere",
+    expected: "\nhello\n\nthere\n world",
+    blocked: false,
+  },
+  { input: "typing", text: "x", expected: " x world", blocked: false, trailing: "  world" },
+  { input: "composing", text: "あ", expected: " あ world", blocked: false },
+  { input: "leaving the composer", text: "", expected: " world", blocked: false },
+  { input: "typing punctuation", text: ",", expected: ", world", blocked: false },
+  { input: "moving the caret and returning", text: "x", expected: "x world", blocked: false },
+  { input: "typing", text: "x", expected: " x world", blocked: true },
+] as const)(
+  "keeps citation spacing when $input after saving (send blocked: $blocked)",
+  async ({ input, text, expected, blocked, ...row }) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const promptMidText = `See ${serializeAssistantCitation(citation)}${"trailing" in row ? row.trailing : " world"}`;
+    await using screen = await render(
+      <Composer
+        question={false}
+        editorRef={editorRef}
+        initialPrompt={promptMidText}
+        send={blocked ? "blocked" : "clears"}
+      />,
+    );
+
+    const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+    if (!sourceAnchor) throw new Error("Citation source did not resolve");
+    await act(async () =>
+      editorRef.current?.requestCitationComment({
+        previousValue: "See world",
+        value: promptMidText,
+        citationStart: "See ".length,
+        sourceAnchor,
+        insertedSpaces: { before: false, after: true },
+      }),
+    );
+    const comment = page.getByLabelText("Comment on selected text");
+    await expect.element(comment).toHaveFocus();
+    await userEvent.keyboard(blocked ? "note{Control>}{Enter}{/Control}" : "note{Enter}");
+    await expect.element(comment).not.toBeInTheDocument();
+    const composer = page.getByTestId("composer-editor");
+    await expect.element(composer).toHaveFocus();
+    switch (input) {
+      case "typing":
+      case "typing punctuation":
+        await userEvent.keyboard(text);
+        break;
+      case "leaving the composer":
+        await page.getByText("hello world", { exact: true }).click();
+        await expect.element(composer).not.toHaveFocus();
+        break;
+      case "moving the caret and returning":
+        await act(async () => editorRef.current?.focusAtEnd());
+        await userEvent.keyboard("{ArrowLeft>6/}");
+        await userEvent.keyboard(text);
+        break;
+      case "pasting":
+      case "pasting paragraphs": {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", text);
+        composer
+          .element()
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+        break;
+      }
+      case "composing": {
+        const session = cdp();
+        await session.send("Input.imeSetComposition", {
+          text: "a",
+          selectionStart: 1,
+          selectionEnd: 1,
+        });
+        await session.send("Input.insertText", { text });
+        break;
+      }
+    }
+
+    await expect
+      .element(screen.getByRole("status"))
+      .toHaveAttribute(
+        "data-prompt",
+        `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "note"))}${expected}`,
+      );
+  },
+);
+
+it("lets punctuation touch a citation at a manually placed caret", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
-  const promptMidText = `See ${serializeAssistantCitation(citation)} world`;
   await using screen = await render(
-    <Composer question={false} editorRef={editorRef} initialPrompt={promptMidText} />,
+    <Composer question={false} editorRef={editorRef} initialPrompt={`${promptBefore}world`} />,
   );
 
-  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
-  if (!sourceAnchor) throw new Error("Citation source did not resolve");
-  await act(async () =>
-    editorRef.current?.requestCitationComment({
-      previousValue: "See world",
-      value: promptMidText,
-      citationStart: "See ".length,
-      sourceAnchor,
-      insertedSpaces: { before: false, after: true },
-    }),
-  );
-  const comment = page.getByLabelText("Comment on selected text");
-  await expect.element(comment).toHaveFocus();
-  await userEvent.keyboard("note{Enter}");
-  await expect.element(comment).not.toBeInTheDocument();
-  await userEvent.keyboard("x");
-
+  await act(async () => editorRef.current?.focusAtEnd());
+  await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft>6/},");
   await expect
     .element(screen.getByRole("status"))
-    .toHaveAttribute(
-      "data-prompt",
-      `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "note"))}x world`,
-    );
+    .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}, world`);
 });
 
 it("keeps the citation when typing after its link opens the cited text", async () => {

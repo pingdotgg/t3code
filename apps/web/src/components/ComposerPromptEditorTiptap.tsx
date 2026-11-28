@@ -456,6 +456,81 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   );
 }
 
+const citationResumeKey = new PluginKey<{ from: number; to: number } | null>(
+  "composer-citation-resume",
+);
+
+function citationResumePlugin() {
+  let editorView: EditorView | undefined;
+  return new Plugin({
+    key: citationResumeKey,
+    state: {
+      init: (): { from: number; to: number } | null => null,
+      apply(tr, pending) {
+        const resume = tr.getMeta(citationResumeKey) as number | null | undefined;
+        if (resume !== undefined) return resume === null ? null : { from: resume, to: resume };
+        if (!pending) return null;
+        let { from, to } = pending;
+        for (const map of tr.mapping.maps) {
+          let editsOutsideRange = false;
+          map.forEach((start, end) => {
+            if (start < from || end > to) editsOutsideRange = true;
+          });
+          if (editsOutsideRange) return null;
+          from = map.map(from, -1);
+          to = map.map(to, 1);
+        }
+        return tr.selection.empty && tr.selection.from === to ? { from, to } : null;
+      },
+    },
+    view(view) {
+      editorView = view;
+      return {
+        destroy: () => {
+          editorView = undefined;
+        },
+      };
+    },
+    appendTransaction(_transactions, _oldState, state) {
+      const pending = citationResumeKey.getState(state);
+      if (!pending || pending.from === pending.to || editorView?.composing) return null;
+      const { from, to } = pending;
+      const tr = state.tr.setMeta(citationResumeKey, null);
+      if (
+        state.doc.resolve(from).sameParent(state.doc.resolve(to)) &&
+        /^[^\s.,;:!?)\]}]/.test(state.doc.textBetween(from, to, undefined, "\uFFFC"))
+      ) {
+        tr.insertText(" ", from);
+      }
+      return tr;
+    },
+    props: {
+      handleDOMEvents: {
+        blur: clearCitationResume,
+        mousedown: clearCitationResume,
+        compositionend(view) {
+          // Let ProseMirror flush the final composition before touching its text.
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              if (!view.isDestroyed && citationResumeKey.getState(view.state)) {
+                view.dispatch(view.state.tr);
+              }
+            }),
+          );
+          return false;
+        },
+      },
+    },
+  });
+}
+
+function clearCitationResume(view: EditorView): false {
+  if (citationResumeKey.getState(view.state)) {
+    view.dispatch(view.state.tr.setMeta(citationResumeKey, null));
+  }
+  return false;
+}
+
 const ComposerCitationExtension = Node.create({
   name: "composer-citation",
   group: "inline",
@@ -491,6 +566,7 @@ const ComposerCitationExtension = Node.create({
           },
         },
       }),
+      citationResumePlugin(),
     ];
   },
 });
@@ -540,10 +616,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
   };
 
-  const sentRef = useRef(false);
-  const onRestoreFocus = () => {
-    const sent = sentRef.current;
-    sentRef.current = false;
+  const commentActionRef = useRef<"saved" | "sent" | null>(null);
+  const onRestoreFocus = (afterComment = false) => {
+    const action = afterComment ? commentActionRef.current : null;
+    commentActionRef.current = null;
+    const sent = action === "sent";
     if (!editor.isEditable) return;
     const pos = nodePos();
     const current = pos === null ? null : editor.state.doc.nodeAt(pos);
@@ -551,15 +628,22 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (sent) editor.view.focus();
       return;
     }
-    // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
-    // Mid-text, skipping the space would glue them to the next word instead.
     const end = pos + current.nodeSize;
     const { doc } = editor.state;
-    const trailingSpace =
-      doc.textBetween(end, end + 1) === " " && doc.resolve(end).end() === end + 1;
-    const caret = trailingSpace ? end + 1 : end;
+    const hasSpace = doc.textBetween(end, end + 1) === " ";
+    const blockEnd = doc.resolve(end).end();
+    const hasSecondSpace = /\s/.test(doc.textBetween(end + 1, end + 2));
+    // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
+    // Mid-text, skipping the space would glue them to the next word instead.
+    const caret =
+      hasSpace && (blockEnd === end + 1 || (action === "saved" && hasSecondSpace)) ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
+    editor
+      .chain()
+      .setMeta(SILENT_SELECTION_META, sent)
+      .setMeta(citationResumeKey, action === "saved" && hasSpace && caret === end ? end : null)
+      .focus(caret)
+      .run();
   };
 
   return (
@@ -593,17 +677,22 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
+            if (open) commentActionRef.current = null;
             commentContext.onOpenChange(citeKey, open);
           },
           ...(removeOnCancel ? { onCancel: onRemove } : {}),
-          onSave: onSaveComment,
+          onSave: (comment) => {
+            if (!onSaveComment(comment)) return false;
+            commentActionRef.current = "saved";
+            return true;
+          },
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
-            sentRef.current = commentContext.onSubmitAndSend();
+            commentActionRef.current = commentContext.onSubmitAndSend() ? "sent" : "saved";
             return true;
           },
-          onRestoreFocus,
+          onRestoreFocus: () => onRestoreFocus(true),
         }}
       />
     </NodeViewWrapper>
