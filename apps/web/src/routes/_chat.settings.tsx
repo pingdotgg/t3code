@@ -153,7 +153,7 @@ function SettingsContentLayout() {
   const contentScopeKey =
     pathname === "/settings/diagnostics" || pathname === "/settings/providers"
       ? environment?.environmentId
-      : location.pathname === "/settings/projects"
+      : pathname === "/settings/projects"
         ? // The project page resets its own scoped sections, so the scroll position survives.
           search.project
         : JSON.stringify(search);

@@ -279,7 +279,11 @@ async function mountSettings(search: SettingsScopeSearch) {
   const searchParams = new URLSearchParams(
     Object.entries(search).flatMap(([key, value]) => (value === undefined ? [] : [[key, value]])),
   );
-  const route = createRootRoute({
+  const rootRoute = createRootRoute();
+  // The page chrome reads the rendered match's pathname, so mount at the real route.
+  const route = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "settings/projects",
     validateSearch: validateSettingsScopeSearch,
     component: () => (
       <SettingsScopeProvider
@@ -292,7 +296,7 @@ async function mountSettings(search: SettingsScopeSearch) {
     ),
   });
   const router = createRouter({
-    routeTree: route,
+    routeTree: rootRoute.addChildren([route]),
     history: createMemoryHistory({
       initialEntries: [`/settings/projects?${searchParams.toString()}`],
     }),

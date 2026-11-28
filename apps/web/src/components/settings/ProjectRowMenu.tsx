@@ -119,7 +119,9 @@ export function ProjectRowMenu({
             <Trash2Icon />
             {hasOtherMembers
               ? gt("Remove from {environment}…", {
-                  environment: members[0]?.environmentLabel ?? gt("this environment"),
+                  environment:
+                    members[0]?.environmentLabel ??
+                    gt("this environment", { $context: "fills Remove from {environment}" }),
                 })
               : gt("Remove project…")}
           </MenuItem>
