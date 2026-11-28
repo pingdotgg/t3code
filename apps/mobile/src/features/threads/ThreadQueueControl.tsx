@@ -323,7 +323,7 @@ export function ThreadQueuedRuns(props: {
               />
               {canOfferSend ? (
                 <QueueAction
-                  primary
+                  icon="arrow.up"
                   label={gt("Send now")}
                   accessibilityLabel={gt("Send now, queued message {number}", {
                     number: index + 1,
@@ -347,7 +347,7 @@ function QueueAction(props: {
   readonly accessibilityLabel: string;
   readonly accessibilityHint?: string;
   readonly disabled: boolean;
-  readonly primary?: boolean;
+  readonly icon?: "arrow.up";
   readonly onPress: () => void;
 }) {
   return (
@@ -359,24 +359,12 @@ function QueueAction(props: {
       disabled={props.disabled}
       hitSlop={8}
       onPress={props.onPress}
-      className={
-        props.primary
-          ? "h-7 flex-row items-center gap-1 rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
-          : "h-7 justify-center rounded-full px-2 active:opacity-70 disabled:opacity-40"
-      }
+      className="h-7 flex-row items-center gap-0.5 rounded-full px-2 active:opacity-70 disabled:opacity-40"
     >
-      {props.primary ? (
-        <SymbolView name="arrow.up" size={11} tintColorClassName="accent-primary-foreground" />
+      {props.icon ? (
+        <SymbolView name={props.icon} size={10} tintColorClassName="accent-foreground-muted" />
       ) : null}
-      <Text
-        className={
-          props.primary
-            ? "font-t3-medium text-xs text-primary-foreground"
-            : "font-t3-medium text-xs text-foreground-muted"
-        }
-      >
-        {props.label}
-      </Text>
+      <Text className="font-t3-medium text-xs text-foreground-muted">{props.label}</Text>
     </Pressable>
   );
 }
