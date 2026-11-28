@@ -1297,11 +1297,16 @@ function parseCommandProgramName(
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
-      return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
+      const canSkipBracketProbe =
+        (executionContext === "shell" && token.startsWith("[")) ||
+        (wrapper === "sudo" &&
+          SKIPPABLE_SUDO_PROBES.has(token) &&
+          (token !== "[[" || tokens.slice(index + 1).includes("]]")));
+      return canSkipBracketProbe && commandSplit.remainingCommand
         ? commandProgramNameInternal(
             commandSplit.remainingCommand,
             depth,
-            executionContext,
+            "shell",
             segmentsRemaining - 1,
           )
         : null;
