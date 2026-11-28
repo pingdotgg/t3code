@@ -543,6 +543,33 @@ describe("hosted thread links", () => {
     }
   });
 
+  it("keeps Markdown reference link definitions intact when relabeling", () => {
+    const hosted = "https://app.t3.codes/threads/local/demo";
+    for (const markdown of [
+      `[Review][thread]\n\n[thread]: ${hosted}`,
+      `[Review][thread]\n\n[thread]:${hosted}`,
+      `[Review][thread]\n\n[thread]: <${hosted}>`,
+      `[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`,
+      `[Review][thread]\n\n[thread]:\n  ${hosted}`,
+      `[Review][thread]\n\n  [thread]: ${hosted} "Demo"`,
+      `> [Review][thread]\n>\n> [thread]: ${hosted}`,
+    ]) {
+      for (const title of [() => "Demo", () => undefined]) {
+        expect(relabelThreadLinks(markdown, local, title)).toBe(markdown);
+      }
+    }
+
+    const withLiveAfter = `[Review][thread]\n\n[thread]: ${hosted}\n\nSee ${hosted}`;
+    expect(relabelThreadLinks(withLiveAfter, local, () => "Demo")).toBe(
+      `[Review][thread]\n\n[thread]: ${hosted}\n\nSee [Demo](t3-thread://v2/local/demo)`,
+    );
+
+    const paragraphContinuation = `Intro\n[thread]: ${hosted}`;
+    expect(relabelThreadLinks(paragraphContinuation, local, () => "Demo")).toBe(
+      `Intro\n[thread]: [Demo](t3-thread://v2/local/demo)`,
+    );
+  });
+
   it("keeps relabeled links navigable when the thread id contains a space", () => {
     const linkUrl = (markdown: string) => {
       const paragraph = unified().use(remarkParse).parse(markdown).children[0];

@@ -109,6 +109,11 @@ describe("HtmlRender", () => {
         "<div style='height:calc(100dvmax - 1rem)'></div>",
         "<style>main{block-size:100vb}</style>",
         "<div style='margin-top:-50vh'></div>",
+        "<style-guide style='height:100vh'><p>hi</p></style-guide>",
+        "<script>box.innerHTML = \"<div style='height:100vh'></div>\";</script>",
+        '<script type="text/plain" style="display:block;height:100vh">example</script>',
+        `<div title=it's style="height:100vh">hi</div>`,
+        '<div data-x=foo="bar style="height:100vh">hi</div>',
         "<main style='min-height:+100vh'></main>",
         "<main style='min-height:1e2vh'></main>",
         "<style>main{min-height:1e+2vh}</style>",
@@ -124,6 +129,15 @@ describe("HtmlRender", () => {
       );
       yield* htmlRender.prepare(
         "<p>Avoid 100vh here.</p><!-- <div style=\"height:100vh\"></div> --><script>const unit = '100vh';</script>",
+      );
+      yield* htmlRender.prepare(
+        "<!doctype html><html><body><style-guide><p>Avoid 100vh here.</p></style-guide></body></html>",
+      );
+      yield* htmlRender.prepare(
+        "<style-guide title=\"Example style='height:100vh'\">ok</style-guide>",
+      );
+      yield* htmlRender.prepare(
+        "<script>const markup = '<!-- <div style=\"height:100vh\"></div> -->';</script>",
       );
       yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
     }).pipe(Effect.provide(layerTest)),
