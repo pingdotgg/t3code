@@ -255,6 +255,7 @@ import {
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
   messageFoldRunId,
+  threadFeedEntryMatchesSource,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { type ThreadWorkGroupScrollPosition } from "./thread-feed-scroll-position";
@@ -2040,7 +2041,7 @@ function renderFeedEntry(
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
-    readonly renderReasoning: (text: string) => ReactNode;
+    readonly renderReasoning: (text: string, sourceId?: MessageId) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly replyActionSize: { readonly button: number; readonly icon: number };
     readonly screenColor: string;
@@ -3780,10 +3781,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ) : null;
   };
   const markdownStyles = useMarkdownStyles();
-  const renderReasoning = (text: string) => (
+  const renderReasoning = (text: string, sourceId?: MessageId) => (
     <AssistantMarkdownContent
       markdown={text}
       environmentId={props.environmentId}
+      {...(sourceId
+        ? {
+            citationSource: { threadId: props.threadId, messageId: sourceId },
+            onCiteAssistantText: props.onCiteAssistantText,
+          }
+        : {})}
       markdownStyles={markdownStyles.assistant}
       linkHandlers={markdownLinkHandlers}
       renderImage={renderMarkdownImage}
@@ -3912,7 +3919,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
   const jumpRunId =
     jumpReady &&
-    !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    !presentedFeed.some((entry) => threadFeedEntryMatchesSource(entry, jumpToMessageId))
       ? messageFoldRunId(props.feed, jumpToMessageId, presentedFeed)
       : null;
   if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
@@ -3948,7 +3955,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
   const jumpIndex = jumpReady
-    ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    ? presentedFeed.findIndex((entry) => threadFeedEntryMatchesSource(entry, jumpToMessageId))
     : null;
   const landJump = useEffectEvent((index: number) => {
     const list = listRef.current;

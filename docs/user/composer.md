@@ -82,8 +82,8 @@ Mobile keeps local copies of draft attachments so you can preview them and queue
 
 ## Quote an assistant response
 
-- **Web and desktop**: Select text in an assistant message and click **Cite in composer**. Click the pencil on the chip to add or edit a comment; click the chip to jump back to the source.
-- **Mobile**: Long-press an assistant response, select text, and tap **Cite**. Tap a quote chip to edit its comment, remove it, or jump to the source message.
+- **Web and desktop**: Select text in an assistant message or an expanded proposed plan and click **Cite in composer**. Click the pencil on the chip to add or edit a comment; click the chip to jump back to the source.
+- **Mobile**: Long-press an assistant response or proposed plan, select text, and tap **Cite**. Tap a quote chip to edit its comment, remove it, or jump to the source.
 
 Quoted text and comments count toward the message length limit and are preserved across copy/paste and [stashed prompts](#prompt-stash).
 

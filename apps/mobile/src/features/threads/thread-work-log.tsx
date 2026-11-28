@@ -50,6 +50,7 @@ import {
   type EnvironmentId,
   type RunId,
   type ThreadId,
+  MessageId,
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -487,7 +488,7 @@ interface ThreadWorkLogProps {
   /** `groupId` is the group a lone call stands in for; it opens and closes with the row. */
   readonly onToggleRow: (rowId: string, anchorKey: string, groupId?: string) => void;
   readonly renderImage: MarkdownImageRenderer;
-  readonly renderReasoning: (text: string) => ReactNode;
+  readonly renderReasoning: (text: string, sourceId?: MessageId) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }
 
@@ -521,7 +522,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         environmentId={props.environmentId}
         workspaceRoot={props.workspaceRoot}
         markdown={plan.markdown}
-        renderMarkdown={props.renderReasoning}
+        renderMarkdown={(text) => props.renderReasoning(text, MessageId.make(plan.id))}
       />
     );
   }

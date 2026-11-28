@@ -181,6 +181,7 @@ import type {
   ThreadFeedEntry,
   ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
+import { threadFeedEntryMatchesSource } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
@@ -951,7 +952,7 @@ function ThreadDetailBody(
   );
   const jumpMessageLoaded =
     jumpMessageId !== null &&
-    selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === jumpMessageId);
+    selectedThreadFeed.some((entry) => threadFeedEntryMatchesSource(entry, jumpMessageId));
   const historyForJump = props.historyControls;
   // History down to the message in one request; another page if it is not
   // there yet.

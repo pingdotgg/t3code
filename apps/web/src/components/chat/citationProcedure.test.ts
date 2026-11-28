@@ -1,4 +1,4 @@
-import { MessageId, RunId } from "@t3tools/contracts";
+import { MessageId, PlanId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { TimelineEntry } from "../../session-logic";
 import {
@@ -204,6 +204,29 @@ describe("resolveCitationPhase", () => {
       message: { ...entry.message, role: "user" },
     } as TimelineEntry;
     expect(phase({ entries: [userEntry] })).toEqual({ _tag: "failed" });
+  });
+
+  it("finds a proposed plan by its item id and waits for its folded row", () => {
+    const plan: Extract<TimelineEntry, { kind: "proposed-plan" }> = {
+      kind: "proposed-plan",
+      id: messageId,
+      createdAt: at,
+      proposedPlan: {
+        id: PlanId.make("plan"),
+        runId,
+        planMarkdown: "Release checklist",
+        status: "active",
+        createdAt: at,
+        updatedAt: at,
+      },
+    };
+    expect(phase({ entries: [plan] })).toEqual({ _tag: "expanding" });
+    expect(
+      phase({
+        entries: [plan],
+        rows: [plan],
+      }),
+    ).toEqual({ _tag: "ready", rowId: messageId });
   });
 
   it("fails when the history procedure failed", () => {

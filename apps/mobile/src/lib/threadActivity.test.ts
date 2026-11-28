@@ -25,6 +25,7 @@ import {
   createThreadFeedCache,
   deriveThreadFeedPresentation,
   messageFoldRunId,
+  threadFeedEntryMatchesSource,
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -132,6 +133,11 @@ it("keeps historical plan detail accessible from its paged turn item", () => {
     "message",
   ]);
   expect(presented[2]).toMatchObject({ activities: [{ projectedItem: { item } }] });
+  expect(presented.findIndex((entry) => threadFeedEntryMatchesSource(entry, item.id))).toBe(2);
+  expect(presented.some((entry) => threadFeedEntryMatchesSource(entry, "missing-plan"))).toBe(
+    false,
+  );
+  expect(messageFoldRunId(entries, item.id, presented)).toBe(runId);
 });
 
 it("shows a compact command as one mobile divider before, during, and after compaction", () => {
