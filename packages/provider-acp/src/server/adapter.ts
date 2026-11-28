@@ -6899,6 +6899,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
+          options: { readonly replayedWake?: boolean } = {},
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
@@ -6909,7 +6910,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (yield* Ref.get(stoppedRunQuarantine))
           )
             return;
-          yield* projectExtractedContextUsage(notification, true);
+          if (options.replayedWake !== true) {
+            yield* projectExtractedContextUsage(notification, true);
+          }
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
           if (context !== null && (yield* projectDetachedUnawaitedTool(notification, context))) {
@@ -11005,9 +11008,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtimeCallbackPermit.withPermit(
                   Effect.gen(function* () {
                     const liveWork = agentWork;
-                    yield* Effect.forEach(yield* takeWakeBuffer, handleSessionUpdate, {
-                      discard: true,
-                    });
+                    yield* Effect.forEach(
+                      yield* takeWakeBuffer,
+                      (notification) => handleSessionUpdate(notification, { replayedWake: true }),
+                      { discard: true },
+                    );
                     agentWork = liveWork;
                     context.workAccepted = true;
                     yield* settleIdleWork(context);
@@ -11017,10 +11022,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const drainedWakeCount = yield* takeWakeBuffer.pipe(
                 Effect.tap((drained) =>
-                  Effect.forEach(drained, handleSessionUpdate, {
-                    concurrency: 1,
-                    discard: true,
-                  }),
+                  Effect.forEach(
+                    drained,
+                    (notification) => handleSessionUpdate(notification, { replayedWake: true }),
+                    { concurrency: 1, discard: true },
+                  ),
                 ),
                 Effect.map((drained) => drained.length),
               );
