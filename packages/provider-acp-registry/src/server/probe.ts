@@ -426,10 +426,12 @@ export type AcpRegistryConfigurationProbe<Requirements = never> = (
 const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverModelOptions")(
   function* (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-    originalModelId: string | null,
+    original: AcpRegistryLiveConfiguration,
     result: AcpRegistryConfigurationProbeResult,
     discovery: AcpRegistryModelDiscovery,
   ) {
+    const originalModelId = original.currentModelId;
+    const originalOptionIds = new Set(original.configOptions.map(({ id }) => id));
     const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
     if (modelOption === undefined || originalModelId === null) return;
     const offered = new Set(flattenSelectChoices(modelOption.options).map(({ value }) => value));
@@ -453,9 +455,15 @@ const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverMode
                   configOptions,
                   modeState,
                 );
-                return configuration.currentModelId === modelId
-                  ? discovery.onDiscovered(configuration)
-                  : Effect.void;
+                if (configuration.currentModelId !== modelId) return Effect.void;
+                // An option only this model reports belongs to it, whatever its category.
+                const modelOptionIds = configuration.configOptions
+                  .map(({ id }) => id)
+                  .filter(
+                    (id) =>
+                      !originalOptionIds.has(id) || configuration.modelOptionIds?.includes(id),
+                  );
+                return discovery.onDiscovered({ ...configuration, modelOptionIds });
               }),
               // A model the agent refuses keeps no options; the rest still count.
               Effect.ignore,
@@ -721,7 +729,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       if (input.modelDiscovery !== undefined) {
         yield* discoverAcpRegistryModelOptions(
           session.runtime,
-          session.liveConfiguration.currentModelId,
+          session.liveConfiguration,
           result,
           input.modelDiscovery,
         );
