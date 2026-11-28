@@ -4,6 +4,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
+import { selectRenderedContentOnSelectAll } from "./fileSurfaceChrome";
 import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
 
 const savedRowPositions = createPositionMemory<{
@@ -141,6 +142,7 @@ export default function VirtualTablePreview(props: {
           aria-colcount={props.source ? undefined : props.columns}
           className="flex h-full min-h-0 flex-col text-xs"
           style={{ width: tableWidth }}
+          onKeyDown={selectRenderedContentOnSelectAll}
         >
           {!props.source ? (
             <div

@@ -266,6 +266,15 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph.children.map(inline)).toEqual([["text", value]]);
   });
 
+  it("copies bracketed prose that does not read back as display math", () => {
+    const value = "Tags [WIP] and [done]";
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)), {
+      math: true,
+    });
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
+  });
+
   it("escapes literal block starts across containers without escaping real blocks or verbatim spans", () => {
     const el = (tag: string, ...children: Array<FakeElement | string>) =>
       new FakeElement(tag).append(
@@ -392,6 +401,7 @@ describe("serializeRenderedMarkdownFragment", () => {
 
   it.each([
     ["array[index]", "https://example.com"] as const,
+    ["C:\\repo\\file[1].ts", "https://example.com"] as const,
     ...[
       "support@example.com?subject=Help",
       "foo",
@@ -864,6 +874,23 @@ describe("copying a table as CSV", () => {
 
     expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
       'Col A,Col B\nline 1 line 2,para 1 para 2\nvisible,"a, b"',
+    );
+  });
+
+  it("keeps values under their headers across colspans and rowspans", () => {
+    const cell = (tag: string, text: string, attributes: Record<string, string> = {}) =>
+      new FakeElement(tag, [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(row(cell("TH", "A"), cell("TH", "B"), cell("TH", "C"))),
+      new FakeElement("TBODY").append(
+        row(cell("TD", "wide", { colspan: "2" }), cell("TD", "c1")),
+        row(cell("TD", "tall", { rowspan: "2" }), cell("TD", "b2"), cell("TD", "c2")),
+        row(cell("TD", "b3"), cell("TD", "c3")),
+      ),
+    );
+
+    expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
+      "A,B,C\nwide,,c1\ntall,b2,c2\n,b3,c3",
     );
   });
 

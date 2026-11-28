@@ -235,16 +235,22 @@ function serializeDetails(details: Element): string {
 }
 
 // Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
-// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
-const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
+// backticks, opening brackets, and emphasis or strikethrough runs (user remark-gfm sets
+// singleTilde: false). A closing bracket stays bare: `\[…\]` would read as display math.
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
 const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
+
+/** Where a word's unfinished drive path starts, after which backslashes and brackets read literally. */
+function driveStartOf(word: string): number {
+  // Check each word once; testing every escape's growing prefix would be quadratic.
+  const drive = UNFINISHED_DRIVE_PATH.exec(word);
+  return drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+}
 
 /** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
 function escapeProse(text: string): string {
   return text.replace(/\S+/g, (word, wordOffset: number) => {
-    // Check each word once; testing every escape's growing prefix would be quadratic.
-    const drive = UNFINISHED_DRIVE_PATH.exec(word);
-    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    const driveStart = driveStartOf(word);
     return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
       if (offset >= driveStart) return match;
       const before = text[wordOffset + offset - 1];
@@ -345,7 +351,16 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
 
 function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  // Prose leaves `]` bare, but inside a label it would end the label. Drive paths stay literal.
+  const text = outsideCode(label, (prose) =>
+    prose.replace(/\S+/g, (word) => {
+      const driveStart = driveStartOf(word);
+      return word.replace(/(?<!\\)(?:\\\\)*\]/g, (match: string, offset: number) =>
+        offset + match.length > driveStart ? match : `${match.slice(0, -1)}\\]`,
+      );
+    }),
+  );
+  return `[${text}](${destination})`;
 }
 
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
@@ -563,16 +578,10 @@ function csvCell(value: string): string {
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = tableRows(table);
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row.children].filter(
-      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
-    );
-    if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
-  }
-  return lines.join("\n");
+  // Spanned slots stay as empty fields, so values after a span stay under their headers.
+  return tableGrid(table)
+    .map((row) => Array.from(row, (slot) => csvCell(slot?.text ?? "")).join(","))
+    .join("\n");
 }
 
 // CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
@@ -599,11 +608,8 @@ function padToWidth(text: string, width: number, align: string): string {
   return text + " ".repeat(gap);
 }
 
-/**
- * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
- * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
- */
-export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+/** Each rendered row's cells by column; a spanned slot repeats its cell with empty text. */
+function tableGrid(table: Element): Array<Array<{ text: string; cell: Element }>> {
   // Lay cells onto the grid the table renders, so values after a span stay under their headers.
   // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
   // Row groups in document order, with footers last as rendered; consecutive rows directly in
@@ -652,7 +658,15 @@ export function serializeTableElementForChat(table: Element): MarkdownClipboardP
       }
     });
   }
-  const rows = grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+  return grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  const rows = tableGrid(table);
   if (rows.length === 0) return { text: "", html: "" };
   const columns = Math.max(...rows.map((gridRow) => gridRow.length));
   const texts = rows.map((gridRow) =>
