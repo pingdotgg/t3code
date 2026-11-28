@@ -439,6 +439,7 @@ export function ReviewThreadCard({
             threadId={thread.id}
             completionScope={completionScope}
             pending={pending}
+            collapsed={!expanded}
             onReply={onReply}
             onSent={keepLoadedPage}
           />
@@ -453,7 +454,8 @@ export function PullRequestThreadReplyForm({
   reference,
   threadId,
   completionScope,
-  pending,
+  pending: actionPending,
+  collapsed = false,
   className,
   onReply,
   onSent,
@@ -463,6 +465,8 @@ export function PullRequestThreadReplyForm({
   threadId: string;
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
+  /** Stops dictation, which would keep recording behind hidden controls. */
+  collapsed?: boolean;
   className?: string;
   onReply: (body: string) => Promise<boolean>;
   onSent?: () => void;
@@ -470,20 +474,22 @@ export function PullRequestThreadReplyForm({
   // Resolving, reopening, or filtering remounts the form, so the draft lives in the store.
   const replyKey = pullRequestThreadReplyKey(reference, threadId);
   const reply = usePullRequestReviewStore((store) => store.replies[replyKey] ?? "");
+  const sending = usePullRequestReviewStore((store) => store.pendingReplies[replyKey] === true);
+  const pending = actionPending || sending;
   const storeReply = usePullRequestReviewStore((store) => store.setReply);
   const clearReply = usePullRequestReviewStore((store) => store.clearReply);
   const setReply = (next: string) => storeReply(replyKey, next);
   const [replying, setReplying] = useState(reply.length > 0);
-  const sendingRef = useRef(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const gt = useGT();
 
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || pending || sendingRef.current) return;
-    sendingRef.current = true;
+    const store = usePullRequestReviewStore.getState();
+    if (trimmed.length === 0 || pending || store.pendingReplies[replyKey]) return;
+    store.setReplyPending(replyKey, true);
     const result = await settlePromise(() => onReply(trimmed));
-    sendingRef.current = false;
+    store.setReplyPending(replyKey, false);
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     if (!result.value) return;
     onSent?.();
@@ -508,7 +514,7 @@ export function PullRequestThreadReplyForm({
       text={reply}
       textareaRef={replyRef}
       onTextChange={setReply}
-      disabled={pending}
+      disabled={pending || collapsed}
     >
       {(speech) => (
         <div className={cn("mt-2", className)}>

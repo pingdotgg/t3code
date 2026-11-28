@@ -39,8 +39,11 @@ fragment ThreadComment on PullRequestReviewComment {
   url
   isMinimized
   # A review link names the review, not its comments; this lets it find the comments it posted.
+  # A pending or hidden review is not in the conversation, so it gets no link.
   pullRequestReview {
     url
+    state
+    isMinimized
   }
   ...Reactions
 }

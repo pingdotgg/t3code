@@ -123,10 +123,12 @@ function reviewerKey(login: string): string {
 function CommentIdentity({
   comment,
   detail,
+  action,
   threadRef,
 }: {
-  comment: PullRequestComment;
+  comment: Pick<PullRequestComment, "author" | "createdAt" | "url">;
   detail: PullRequestDetailView;
+  action?: string;
   threadRef: ScopedThreadRef | null;
 }) {
   const gt = useGT();
@@ -145,6 +147,7 @@ function CommentIdentity({
         threadRef={threadRef}
         className="max-w-full"
       />
+      {action ? <span className="text-muted-foreground">{action}</span> : null}
       <SharedTooltipTrigger
         render={
           url ? (
@@ -311,7 +314,7 @@ function CollapsedComment({
   resolveButton,
   detail,
   thread,
-  replyCount = 0,
+  count = null,
   replies = null,
   moreReplies = null,
   replyForm = null,
@@ -325,13 +328,13 @@ function CollapsedComment({
   resolveButton: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestConversationThread | undefined;
-  replyCount?: number;
+  /** What the collapsed card holds, such as "2 replies". */
+  count?: string | null;
   replies?: ReactNode;
   moreReplies?: ReactNode;
-  replyForm?: ReactNode;
+  replyForm?: ((collapsed: boolean) => ReactNode) | null;
   onAddToChat?: (() => void) | undefined;
 }) {
-  const gt = useGT();
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
@@ -340,12 +343,8 @@ function CollapsedComment({
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} threadRef={editing.threadRef} />
-            {replyCount > 0 ? (
-              <span className="shrink-0 py-1 text-xs text-muted-foreground">
-                {gt("{count, plural, one {{count} reply} other {{count} replies}}", {
-                  count: replyCount,
-                })}
-              </span>
+            {count ? (
+              <span className="shrink-0 py-1 text-xs text-muted-foreground">{count}</span>
             ) : null}
             {/* Collapsed, the status label already says "Resolved". It goes before the
                 trigger so opening doesn't shift the trigger out from under the cursor. */}
@@ -386,7 +385,7 @@ function CollapsedComment({
         {/* Stays mounted while collapsed so an unsent reply survives. */}
         {replyForm ? (
           <div hidden={!open} className="px-3 pb-3">
-            {replyForm}
+            {replyForm(!open)}
           </div>
         ) : null}
         {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
@@ -508,6 +507,7 @@ const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, r
 
 // Memoized: it renders every comment, and the panel re-renders on each query state change.
 export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
+  active = true,
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -528,6 +528,7 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
+  active?: boolean;
   /** A clicked link to scroll to, until onRevealSettled reports it shown. */
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
@@ -795,7 +796,11 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
     onRefresh();
     return true;
   };
-  const threadReplyForm = (thread: PullRequestConversationThread, className?: string) =>
+  const threadReplyForm = (
+    thread: PullRequestConversationThread,
+    className?: string,
+    collapsed = false,
+  ) =>
     canReplyToThreads ? (
       <PullRequestThreadReplyForm
         // Host thread ids can collide across pull requests.
@@ -805,6 +810,7 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
         threadId={thread.id}
         completionScope={completionScope}
         pending={threadReplyPending}
+        collapsed={collapsed || !active}
         {...(className === undefined ? {} : { className })}
         onReply={(body) => sendThreadReply(thread.id, body)}
       />
@@ -957,52 +963,106 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
     );
   };
 
-  const renderItem = (item: PullRequestConversationItem) => {
-    const comment = item.kind === "comment" ? item.comment : item.root;
-    const thread = item.kind === "thread" ? item.thread : undefined;
-    const replies =
-      item.kind === "thread" && item.replies.length > 0 ? (
-        <div className="ml-4 space-y-2 border-l-2 border-border/60 pl-3">
-          {item.replies.map((reply) => renderCommentCard(reply, undefined, { reply: true }))}
+  const countOf = (count: number, kind: "thread" | "reply"): string | null => {
+    if (count === 0) return null;
+    return kind === "thread"
+      ? gt("{count, plural, one {{count} thread} other {{count} threads}}", { count })
+      : gt("{count, plural, one {{count} reply} other {{count} replies}}", { count });
+  };
+
+  const renderItem = (item: PullRequestConversationItem): ReactNode => {
+    if (item.kind === "review") {
+      const threads = (
+        <div className="ml-4 space-y-3 border-l-2 border-border/60 pl-3">
+          {item.threads.map(renderItem)}
         </div>
-      ) : null;
-    const moreReplies =
-      item.kind === "thread" && item.hasMoreReplies ? (
-        <PullRequestMoreReplies {...item} threadRef={threadRef} />
-      ) : null;
-    if (isPullRequestCommentFinished(comment, thread)) {
-      const chat = chatSubject(comment, thread);
+      );
+      const review = item.review;
+      // A dismissed review collapses together with the threads it posted.
+      if (review !== null && isPullRequestCommentFinished(review)) {
+        return renderCollapsed(
+          { kind: "comment", id: review.id, createdAt: review.createdAt, comment: review },
+          threads,
+          countOf(item.threads.length, "thread"),
+        );
+      }
       return (
-        <CollapsedComment
-          key={`${detail.url}:${item.kind}:${item.id}`}
-          comment={comment}
-          editing={commentEditing}
-          detail={detail}
-          thread={thread}
-          label={
-            thread?.isResolved
-              ? gt("Resolved", { $context: "review thread state" })
-              : gt("Review dismissed")
-          }
-          body={visibleBody(comment.body)}
-          replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
-          replies={replies}
-          moreReplies={moreReplies}
-          replyForm={thread ? threadReplyForm(thread, "mt-0") : null}
-          onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
-          reactionBar={reactionBarFor(comment)}
-          resolveButton={resolveButtonFor(thread)}
-        />
+        <div key={`${detail.url}:review:${item.id}`} className="space-y-2">
+          {review === null ? (
+            <div className="px-1 py-0.5">
+              <CommentIdentity
+                comment={item}
+                detail={detail}
+                action={gt("reviewed", { $context: "review author action" })}
+                threadRef={threadRef}
+              />
+            </div>
+          ) : (
+            renderCommentCard(review, undefined)
+          )}
+          {threads}
+        </div>
       );
     }
-    if (item.kind === "comment") return renderCommentCard(comment, undefined);
+    const thread = item.kind === "thread" ? item.thread : undefined;
+    if (isPullRequestCommentFinished(item.kind === "comment" ? item.comment : item.root, thread)) {
+      return renderCollapsed(
+        item,
+        threadReplies(item),
+        item.kind === "thread" ? countOf(item.replies.length + item.moreReplies, "reply") : null,
+      );
+    }
+    if (item.kind === "comment") return renderCommentCard(item.comment, undefined);
     return (
       <div key={`${detail.url}:thread:${item.id}`} className="space-y-2">
-        {renderCommentCard(comment, thread)}
-        {replies}
-        {moreReplies}
-        {thread ? threadReplyForm(thread, "mt-0") : null}
+        {renderCommentCard(item.root, item.thread)}
+        {threadReplies(item)}
+        {item.hasMoreReplies ? <PullRequestMoreReplies {...item} threadRef={threadRef} /> : null}
+        {threadReplyForm(item.thread, "mt-0")}
       </div>
+    );
+  };
+
+  const threadReplies = (item: PullRequestConversationItem) =>
+    item.kind === "thread" && item.replies.length > 0 ? (
+      <div className="ml-4 space-y-2 border-l-2 border-border/60 pl-3">
+        {item.replies.map((reply) => renderCommentCard(reply, undefined, { reply: true }))}
+      </div>
+    ) : null;
+
+  const renderCollapsed = (
+    item: Exclude<PullRequestConversationItem, { kind: "review" }>,
+    replies: ReactNode,
+    count: string | null,
+  ) => {
+    const comment = item.kind === "comment" ? item.comment : item.root;
+    const thread = item.kind === "thread" ? item.thread : undefined;
+    const chat = chatSubject(comment, thread);
+    return (
+      <CollapsedComment
+        key={`${detail.url}:${item.kind}:${item.id}`}
+        comment={comment}
+        editing={commentEditing}
+        detail={detail}
+        thread={thread}
+        label={
+          thread?.isResolved
+            ? gt("Resolved", { $context: "review thread state" })
+            : gt("Review dismissed")
+        }
+        body={visibleBody(comment.body)}
+        count={count}
+        replies={replies}
+        moreReplies={
+          item.kind === "thread" && item.hasMoreReplies ? (
+            <PullRequestMoreReplies {...item} threadRef={threadRef} />
+          ) : null
+        }
+        replyForm={thread ? (collapsed) => threadReplyForm(thread, "mt-0", collapsed) : null}
+        onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
+        reactionBar={reactionBarFor(comment)}
+        resolveButton={resolveButtonFor(thread)}
+      />
     );
   };
 

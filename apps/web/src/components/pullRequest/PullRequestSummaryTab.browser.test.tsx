@@ -425,6 +425,33 @@ it("adds a quote that arrives as posting settles along with the ones queued befo
   await expect.element(screen.getByRole("textbox")).toHaveValue("> second\n\n> third");
 });
 
+it("blocks another reply form for the same thread while a reply is posting", async () => {
+  setup();
+  const { PullRequestThreadReplyForm } = await import("./PullRequestReviewAnnotation");
+  const sent = Promise.withResolvers<boolean>();
+  const onReply = vi.fn(() => sent.promise);
+  const form = (key: string) => (
+    <PullRequestThreadReplyForm
+      key={key}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      threadId="pending-reply-thread"
+      completionScope={null}
+      pending={false}
+      onReply={onReply}
+    />
+  );
+  await using screen = await renderUi(form("summary"));
+  await userEvent.click(screen.getByRole("button", { name: "Reply" }));
+  await userEvent.type(screen.getByLabelText("Reply to this conversation"), "A reply");
+  await userEvent.click(screen.getByRole("button", { name: "Reply", exact: true }));
+  await screen.rerender(form("code"));
+  await expect.element(screen.getByRole("button", { name: "Reply", exact: true })).toBeDisabled();
+  await act(async () => sent.resolve(true));
+  expect(onReply).toHaveBeenCalledTimes(1);
+  await expect.element(screen.getByLabelText("Reply to this conversation")).toHaveValue("");
+});
+
 it("opens comment timestamps through the link-target setting, not a popup", async () => {
   setup();
   const author = { login: "reviewer", name: null, avatarUrl: null };

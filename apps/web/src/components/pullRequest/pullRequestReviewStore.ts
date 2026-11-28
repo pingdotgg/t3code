@@ -27,6 +27,8 @@ interface PullRequestReviewStoreState {
   readonly summaries: Readonly<Record<string, string>>;
   /** Unsent thread replies, so a reply form that remounts elsewhere reads the live draft. */
   readonly replies: Readonly<Record<string, string>>;
+  readonly pendingReplies: Readonly<Record<string, boolean>>;
+  readonly setReplyPending: (key: string, pending: boolean) => void;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
   readonly removeComment: (key: string, commentId: string) => void;
   readonly removeComments: (key: string, commentIds: ReadonlyArray<string>) => void;
@@ -65,6 +67,13 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()(
       drafts: {},
       summaries: {},
       replies: {},
+      pendingReplies: {},
+      setReplyPending: (key, pending) =>
+        set((state) => {
+          if (pending) return { pendingReplies: { ...state.pendingReplies, [key]: true } };
+          const { [key]: _removed, ...rest } = state.pendingReplies;
+          return { pendingReplies: rest };
+        }),
       addComment: (key, comment) =>
         set((state) => ({
           drafts: { ...state.drafts, [key]: [...(state.drafts[key] ?? EMPTY), comment] },
