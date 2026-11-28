@@ -1643,7 +1643,7 @@ async function renderRunningThread(name: string) {
   await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
   await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
   return {
-    editor: page.getByTestId("composer-editor"),
+    editor: page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true }),
     [Symbol.asyncDispose]: async () => {
       await app[Symbol.asyncDispose]();
       environment[Symbol.dispose]();
@@ -1712,7 +1712,7 @@ it("picking /clear while editing a queued message does not arm a fresh session",
   });
   await page.getByRole("button", { name: "Edit queued message" }).click();
   await expect.element(page.getByText("Editing in the composer")).toBeVisible();
-  const editor = page.getByTestId("composer-editor");
+  const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
   await userEvent.click(editor);
   await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
   await insertText("/");
