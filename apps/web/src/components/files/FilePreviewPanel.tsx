@@ -1693,7 +1693,7 @@ function FilePreviewPanelContent({
               onPress={() => {
                 const pressed = !rendered;
                 setRenderedPreferred(pressed);
-                if (isMarkdown) dismissMarkdownPreview?.();
+                dismissMarkdownPreview?.();
                 setHandledReveal(
                   pressed && relativePath !== null
                     ? { path: relativePath, requestId: revealRequestId }
