@@ -52,6 +52,10 @@ import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vc
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { View } from "react-native";
+import { BrandMark } from "../../components/BrandMark";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { connectionRetryLabel } from "./floating-working-status";
@@ -185,8 +189,6 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 }
 
 function ThreadUnavailableScreen(props: {
-  readonly title?: string;
-  readonly detail?: string;
   readonly actionLabel: string;
   readonly onAction: () => void;
 }) {
@@ -204,14 +206,40 @@ function ThreadUnavailableScreen(props: {
         className="bg-screen flex-1 android:bg-transparent"
       >
         <EmptyState
-          title={props.title ?? gt("Thread unavailable")}
-          detail={
-            props.detail ?? gt("This thread is not available in the current mobile snapshot.")
-          }
+          title={gt("Thread unavailable")}
+          detail={gt("This thread is not available in the current mobile snapshot.")}
           actionLabel={props.actionLabel}
           onAction={props.onAction}
         />
       </ScrollView>
+    </ThreadRouteFallbackLayout>
+  );
+}
+
+// Laid out like the loading screen it replaces, so the logo doesn't jump when an attempt fails.
+function ThreadConnectionWaitScreen(props: {
+  readonly title: string;
+  readonly detail: string;
+  readonly onRetry: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <ThreadRouteFallbackLayout>
+      <View className="flex-1 items-center justify-center gap-5 px-8">
+        <BrandMark compact />
+        <View className="items-center gap-2">
+          <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
+          <Text
+            textRole="body"
+            className="text-center font-sans leading-normal text-foreground-muted"
+          >
+            {props.detail}
+          </Text>
+        </View>
+        <View>
+          <Button tone="primary" label={gt("Retry")} onPress={props.onRetry} />
+        </View>
+      </View>
     </ThreadRouteFallbackLayout>
   );
 }
@@ -387,7 +415,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? runtimeConnectionErrorText(routeEnvironmentRuntime, m)
       : null;
     return withInspectorHeader(
-      <ThreadUnavailableScreen
+      <ThreadConnectionWaitScreen
         title={
           approvalDetail === null
             ? gt("Waiting to connect")
@@ -397,8 +425,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
           approvalDetail ??
           gt("Can't reach {environment} yet. The thread opens once it connects.", { environment })
         }
-        actionLabel={gt("Retry")}
-        onAction={() => onReconnectEnvironment(environmentId)}
+        onRetry={() => onReconnectEnvironment(environmentId)}
       />,
     );
   }
