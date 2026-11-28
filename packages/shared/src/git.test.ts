@@ -18,6 +18,23 @@ import {
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
+  it.each([
+    ["/home/me/project/.git", "/home/me/project/.git"],
+    ["/home/me/project/.git/", "/home/me/project/%2Egit"],
+    ["/project/.git", "/project/.git"],
+  ])("matches SCP checkout path %s to SSH URL path %s", (scpPath, sshPath) => {
+    expect(normalizeGitRemoteUrl(`git@forge.example:${scpPath}`)).toBe(
+      normalizeGitRemoteUrl(`ssh://git@forge.example${sshPath}`),
+    );
+  });
+
+  it("preserves literal percent characters in SCP paths", () => {
+    const key = normalizeGitRemoteUrl("git@forge.example:/home/me/project/%2Egit");
+    expect(key).toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/%252Egit"));
+    expect(key).not.toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/.git"));
+    expect(key).not.toBe(normalizeGitRemoteUrl("ssh://git@forge.example/home/me/project/.git.git"));
+  });
+
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
     expect(normalizeGitRemoteUrl("git@github.com:T3Tools/T3Code.git")).toBe(
       "github.com/t3tools/t3code",
