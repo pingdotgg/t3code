@@ -922,6 +922,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             {
               name,
               version: found[0].version,
+              ...(found[0].title === undefined ? {} : { title: found[0].title }),
+              ...(found[0].description === undefined ? {} : { description: found[0].description }),
+              ...(found[0].background ? { background: true } : {}),
               triggers: found[0].triggers.map(triggerText),
               ...(Object.keys(found[0].asks).length === 0
                 ? {}
@@ -1363,7 +1366,12 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         .map(toRun);
       const about = new Set(runs.map((run) => run.runId));
       const open = yield* questions;
-      return { runs, questions: open.filter((question) => about.has(question.runId)) };
+      return {
+        runs,
+        questions: open.filter((question) => about.has(question.runId)),
+        workflows: summaries,
+        worked: yield* store.runsThatWorked([...about]),
+      };
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.

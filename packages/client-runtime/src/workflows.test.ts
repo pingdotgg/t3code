@@ -20,7 +20,10 @@ import {
   isOwnWorkflowAnswer,
   workflowAnswer,
   workflowWithdrawal,
-  workflowChip,
+  foldWorkflowRunsAbout,
+  workflowRunMark,
+  workflowRunOutcome,
+  workflowTitle,
   workflowFlowFocus,
   workflowPausedBeat,
   workflowResultLines,
@@ -347,12 +350,82 @@ describe("the list of runs", () => {
     expect(listedWorkflowRuns(runs, true)).toEqual({ runs, skipped: 1 });
   });
 
-  it("marks a workflow with the same letters and colour every time", () => {
-    expect(workflowChip("nightly-report").letters).toBe("NR");
-    expect(workflowChip("issue").letters).toBe("IS");
-    expect(workflowChip("issue")).toEqual(workflowChip("issue"));
-    expect(workflowChip("𠮷野-report").letters).toBe("𠮷R");
-    expect(workflowChip("a𝒜b").letters).toBe("A𝒜");
+  it("names a workflow by its title, and by its name when it declares none", () => {
+    const workflows = [
+      { name: "merged", version: 1, title: "Clean up after a merge", triggers: [] },
+      { name: "recheck", version: 1, triggers: [] },
+    ];
+    expect(workflowTitle(workflows, "merged")).toBe("Clean up after a merge");
+    expect(workflowTitle(workflows, "recheck")).toBe("recheck");
+    expect(workflowTitle(workflows, "gone")).toBe("gone");
+    const groups = groupWorkflowRuns(
+      [{ ...workflows[0]!, background: true }, workflows[1]!],
+      [],
+      [],
+    );
+    expect(
+      groups.workflows.map(({ name, title, background }) => ({ name, title, background })),
+    ).toEqual([
+      { name: "merged", title: "Clean up after a merge", background: true },
+      { name: "recheck", title: "recheck", background: false },
+    ]);
+  });
+
+  it("marks a run by its state", () => {
+    const node = (fields: Partial<WorkflowRun>, questions: WorkflowQuestion[] = []) => ({
+      run: run("r", fields),
+      children: [],
+      questions,
+    });
+    expect(workflowRunMark(node({ status: "running" }))).toBe("working");
+    expect(workflowRunMark(node({ status: "paused" }))).toBe("paused");
+    expect(workflowRunMark(node({ status: "waiting", detail: "sleep nap" }))).toBe("waiting");
+    expect(workflowRunMark(node({ status: "completed", endedAt: at(1) }))).toBe("done");
+    expect(workflowRunMark(node({ status: "cancelled", endedAt: at(1) }))).toBe("cancelled");
+    expect(workflowRunMark(node({ status: "stopped", endedAt: at(1) }))).toBe("ended");
+  });
+
+  it("tells a finished run by what it returned only when that is a short line", () => {
+    const ended = (result: WorkflowRun["result"]) =>
+      run("r", { status: "completed", endedAt: at(1), result });
+    expect(workflowRunOutcome(ended(" merged #123 "))).toBe("merged #123");
+    expect(workflowRunOutcome(ended({ merged: 123 }))).toBeNull();
+    expect(workflowRunOutcome(ended("one\ntwo"))).toBeNull();
+    expect(workflowRunOutcome(ended("x".repeat(81)))).toBeNull();
+    expect(workflowRunOutcome(run("r", { result: "merged #123" }))).toBeNull();
+  });
+
+  it("folds an item's runs that did nothing for the reader", () => {
+    const node = (
+      runId: string,
+      fields: Partial<WorkflowRun>,
+      questions: WorkflowQuestion[] = [],
+    ) => ({
+      run: run(runId, fields),
+      children: [],
+      questions,
+    });
+    const ended = { status: "completed", endedAt: at(1) } as const;
+    const nodes = [
+      node("router", ended),
+      node("cancelled", { status: "cancelled", endedAt: at(1) }),
+      node("timer", { ...ended, workflow: "sweep" }),
+      node("fix", ended),
+      node("starting", { status: "running" }),
+      node("asks", { status: "cancelled" }, [question("asks", "approve")]),
+    ];
+    const workflows = [{ name: "sweep", version: 1, background: true, triggers: [] }];
+    const folded = foldWorkflowRunsAbout(nodes, workflows, ["fix", "timer"]);
+    expect(folded.shown.map((shown) => shown.run.runId)).toEqual(["fix", "starting", "asks"]);
+    expect(folded.folded.map((hidden) => hidden.run.runId)).toEqual([
+      "router",
+      "cancelled",
+      "timer",
+    ]);
+    // An older server does not say which runs worked, so only what it can tell is folded.
+    expect(foldWorkflowRunsAbout(nodes, [], null).folded.map((hidden) => hidden.run.runId)).toEqual(
+      ["cancelled"],
+    );
   });
 });
 

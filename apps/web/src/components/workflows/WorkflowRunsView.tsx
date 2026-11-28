@@ -11,12 +11,20 @@ import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   RelativeLabel,
-  WorkflowChip,
   WorkflowRunFeed,
+  WorkflowStateIcon,
   WorkflowStateWord,
   type WorkflowThreadTarget,
 } from "./WorkflowRunFeed";
@@ -38,6 +46,8 @@ import {
   type WorkflowListTab,
   type WorkflowRunNode,
   workflowRunInvolves,
+  workflowTitle,
+  type WorkflowSection,
 } from "@t3tools/client-runtime/workflows";
 
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
@@ -287,6 +297,17 @@ export function WorkflowRunsView({
     onSelect((row === undefined ? null : askingKind([row], kind)?.run.runId) ?? runId);
   };
   const currentRunId = listedFor(shown);
+  const pickerItem = (candidate: WorkflowSection) => (
+    <SelectItem key={candidate.name} value={candidate.name}>
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span className="truncate">{candidate.title}</span>
+        {candidate.title === candidate.name ? null : (
+          <span className="shrink-0 text-xs text-muted-foreground">{candidate.name}</span>
+        )}
+      </span>
+    </SelectItem>
+  );
+  const background = groups.workflows.filter((candidate) => candidate.background);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}
@@ -327,21 +348,24 @@ export function WorkflowRunsView({
                   <SelectValue>
                     {section === null
                       ? gt("All {count} workflows", { count: groups.workflows.length })
-                      : section.name}
+                      : section.title}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectItem value={EVERY_WORKFLOW}>
                     <T>All workflows</T>
                   </SelectItem>
-                  {groups.workflows.map((candidate) => (
-                    <SelectItem key={candidate.name} value={candidate.name}>
-                      <span className="flex items-center gap-2">
-                        <WorkflowChip name={candidate.name} />
-                        {candidate.name}
-                      </span>
-                    </SelectItem>
-                  ))}
+                  {groups.workflows.filter((candidate) => !candidate.background).map(pickerItem)}
+                  {background.length === 0 ? null : (
+                    <SelectGroup>
+                      <SelectGroupLabel>
+                        {gt("Background", {
+                          $context: "group of workflows that run on timers or route webhooks",
+                        })}
+                      </SelectGroupLabel>
+                      {background.map(pickerItem)}
+                    </SelectGroup>
+                  )}
                 </SelectPopup>
               </Select>
             ) : null}
@@ -405,6 +429,7 @@ export function WorkflowRunsView({
                     <WorkflowRunListItem
                       key={node.run.runId}
                       node={node}
+                      workflowTitle={workflowTitle(snapshot.workflows, node.run.workflow)}
                       current={node.run.runId === currentRunId}
                       subjectOpen={
                         node.run.runId === selectedRunId && subjectShows(node.run.subject, shownTab)
@@ -441,6 +466,7 @@ export function WorkflowRunsView({
             <WorkflowRunFeed
               key={shown.run.runId}
               environmentId={environmentId}
+              workflows={snapshot.workflows}
               node={shown}
               parent={all.find((node) => node.run.runId === shown.run.parentRunId)?.run ?? null}
               shownTab={shownTab}
@@ -466,12 +492,14 @@ function subjectShows(subject: WorkflowRunSubject | undefined, shown: WorkflowPa
 /** A run in the thread list's own shape: which workflow, its state in a word, and what it is at. */
 function WorkflowRunListItem({
   node,
+  workflowTitle: title,
   current,
   subjectOpen,
   onSelect,
   onOpenSubject,
 }: {
   readonly node: WorkflowRunNode;
+  readonly workflowTitle: string;
   readonly current: boolean;
   /** The run's subject shows beside it now. */
   readonly subjectOpen: boolean;
@@ -493,9 +521,9 @@ function WorkflowRunListItem({
         onClick={() => onSelect(run.runId)}
       >
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <WorkflowChip name={run.workflow} />
-          <span className="min-w-0 flex-1 truncate">{run.workflow}</span>
-          <WorkflowStateWord node={node} />
+          <WorkflowStateIcon node={node} />
+          <span className="min-w-0 flex-1 truncate">{title}</span>
+          <WorkflowStateWord node={node} bare />
         </span>
         <span className="truncate text-sm text-foreground">{run.title}</span>
         <span className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">

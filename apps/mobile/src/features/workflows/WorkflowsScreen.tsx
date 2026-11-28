@@ -2,14 +2,16 @@ import {
   defaultWorkflowListTab,
   groupWorkflowRuns,
   listedWorkflowRuns,
-  workflowChip,
   workflowQuestionKinds,
   workflowRunAsksKind,
+  workflowRunMark,
   workflowRunLists,
   workflowRunNow,
   workflowRunState,
+  workflowTitle,
   type WorkflowListTab,
   type WorkflowRunNode,
+  type WorkflowRunMark,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId, WorkflowRunsSnapshot } from "@t3tools/contracts";
@@ -23,6 +25,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Chip } from "../../components/ui/Chip";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -59,27 +62,44 @@ export const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
   done: "text-foreground-muted",
 };
 
-// The same few colours every time for one workflow, so a list is read by its marks.
-const CHIP_CLASS = [
-  "bg-primary/15 text-primary",
-  "bg-warning/20 text-warning-foreground",
-  "bg-danger/15 text-danger-foreground",
-  "bg-subtle-strong text-foreground-secondary",
-  "bg-foreground/10 text-foreground",
-] as const;
+const MARK_SYMBOL = {
+  input: "questionmark.bubble",
+  paused: "pause",
+  waiting: "clock",
+  done: "checkmark",
+  ended: "circle.dashed",
+  cancelled: "xmark",
+} as const satisfies Record<Exclude<WorkflowRunMark, "working">, string>;
 
-export function WorkflowChip(props: { readonly name: string }) {
-  const chip = workflowChip(props.name);
-  const [surface, text] = (CHIP_CLASS[chip.tone % CHIP_CLASS.length] ?? CHIP_CLASS[0]).split(" ");
+const TONE_TINT: Record<WorkflowRunTone, string> = {
+  input: "accent-warning-foreground",
+  failed: "accent-danger-foreground",
+  working: "accent-foreground-muted",
+  quiet: "accent-foreground-muted",
+  done: "accent-foreground-muted",
+};
+
+/** A run's state at a glance, in the place a row gives its mark. */
+export function WorkflowStateIcon(props: { readonly node: WorkflowRunNode }) {
+  const mark = workflowRunMark(props.node);
   return (
-    <View className={cn("h-5 w-6 items-center justify-center rounded-md", surface)}>
-      <Text className={cn("font-t3-bold text-3xs", text)}>{chip.letters}</Text>
+    <View className="size-4 items-center justify-center">
+      {mark === "working" ? (
+        <View className="size-1.5 rounded-full bg-primary" />
+      ) : (
+        <SymbolView
+          name={MARK_SYMBOL[mark]}
+          size={12}
+          tintColorClassName={TONE_TINT[workflowRunState(props.node).tone]}
+        />
+      )}
     </View>
   );
 }
 
 function RunRow(props: {
   readonly node: WorkflowRunNode;
+  readonly workflowTitle: string;
   readonly onOpen: () => void;
   /** Null when the run has no subject, or one this device cannot open. */
   readonly onOpenSubject: (() => void) | null;
@@ -95,9 +115,9 @@ function RunRow(props: {
       onPress={props.onOpen}
     >
       <View className="flex-row items-center gap-2">
-        <WorkflowChip name={run.workflow} />
+        <WorkflowStateIcon node={props.node} />
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-          {run.workflow}
+          {props.workflowTitle}
         </Text>
         <Text className={cn("font-t3-medium text-xs", WORKFLOW_TONE_CLASS[state.tone])}>
           {state.word}
@@ -177,6 +197,7 @@ function EnvironmentRuns(props: {
           <RunRow
             key={node.run.runId}
             node={node}
+            workflowTitle={workflowTitle(snapshot.workflows, node.run.workflow)}
             onOpenSubject={node.run.subject === undefined ? null : subjectOpener(node.run.subject)}
             onOpen={() =>
               navigation.navigate("WorkflowRun", {

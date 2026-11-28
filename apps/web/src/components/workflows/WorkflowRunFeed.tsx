@@ -11,6 +11,7 @@ import {
   type WorkflowQuestion,
   type WorkflowRun,
   type WorkflowRunReference,
+  type WorkflowSummary,
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
@@ -21,11 +22,17 @@ import {
   ExternalLinkIcon,
   ChevronRightIcon,
   BotIcon,
+  BanIcon,
   CheckIcon,
   CircleAlertIcon,
+  CircleDashedIcon,
+  ClockIcon,
   HourglassIcon,
+  MessageCircleQuestionIcon,
   MoonIcon,
+  PauseIcon,
   SquareIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import {
@@ -60,7 +67,9 @@ import {
   workflowAgentSummary,
   isOwnWorkflowAnswer,
   workflowAnswer,
-  workflowChip,
+  workflowRunMark,
+  workflowTitle,
+  type WorkflowRunMark,
   workflowFlowFocus,
   workflowPausedBeat,
   workflowResultLines,
@@ -135,30 +144,6 @@ export function RelativeLabel({ value }: { readonly value: string }) {
   return formatRelativeTimeLabel(value, useNowMs());
 }
 
-const CHIP_TONES = [
-  "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-  "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-] as const;
-
-/** Which workflow a run is of, at a glance: the same letters and colour wherever it shows. */
-export function WorkflowChip({ name }: { readonly name: string }) {
-  const chip = workflowChip(name);
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-sm text-4xs leading-none font-bold",
-        CHIP_TONES[chip.tone],
-      )}
-    >
-      {chip.letters}
-    </span>
-  );
-}
-
 // The thread list's own colours for the same states, so a run reads like a thread does.
 const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
   input: "text-warning-foreground",
@@ -168,7 +153,38 @@ const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
   done: "text-success-foreground",
 };
 
-export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) {
+const MARK_ICON: Record<Exclude<WorkflowRunMark, "working">, typeof CheckIcon> = {
+  input: MessageCircleQuestionIcon,
+  paused: PauseIcon,
+  waiting: ClockIcon,
+  done: CheckIcon,
+  ended: CircleDashedIcon,
+  cancelled: BanIcon,
+};
+
+/** A run's state at a glance, in the place a list gives each row's mark. */
+export function WorkflowStateIcon({ node }: { readonly node: WorkflowRunNode }) {
+  const mark = workflowRunMark(node);
+  const tone = WORKFLOW_TONE_CLASS[workflowRunState(node).tone];
+  if (mark === "working") {
+    return (
+      <span aria-hidden className="grid size-4 shrink-0 place-items-center">
+        <span className="size-1.5 rounded-full bg-info" />
+      </span>
+    );
+  }
+  const Icon = MARK_ICON[mark];
+  return <Icon aria-hidden className={cn("size-3.5 shrink-0", tone)} />;
+}
+
+export function WorkflowStateWord({
+  node,
+  bare = false,
+}: {
+  readonly node: WorkflowRunNode;
+  /** Only the word, where a `WorkflowStateIcon` already marks the row. */
+  readonly bare?: boolean;
+}) {
   const m = useMessages();
   const state = workflowRunState(node, m);
   return (
@@ -178,7 +194,7 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
         WORKFLOW_TONE_CLASS[state.tone],
       )}
     >
-      {state.tone === "working" ? (
+      {bare ? null : state.tone === "working" ? (
         <span aria-hidden className="size-1.5 rounded-full bg-info" />
       ) : state.tone === "done" ? (
         <CheckIcon aria-hidden className="size-3" />
@@ -214,6 +230,7 @@ const AnswerDrafts = createContext<{
 
 export function WorkflowRunFeed({
   environmentId,
+  workflows,
   node,
   parent,
   shownTab,
@@ -222,6 +239,8 @@ export function WorkflowRunFeed({
   onOpenReference,
 }: {
   readonly environmentId: EnvironmentId;
+  /** The environment's workflows, for their titles. */
+  readonly workflows: ReadonlyArray<WorkflowSummary>;
   readonly node: WorkflowRunNode;
   readonly parent: WorkflowRun | null;
   /** What shows beside the run, so the card or chip that opened it can say so. */
@@ -233,6 +252,7 @@ export function WorkflowRunFeed({
   const { run } = node;
   const gt = useGT();
   const m = useMessages();
+  const titleOf = (name: string) => workflowTitle(workflows, name);
   const clockMs = useRunNowMs(node.run.endedAt === null);
   // An ended run's last step can still read as running for a moment; it ran until the run ended.
   const nowMs = node.run.endedAt === null ? clockMs : Date.parse(node.run.endedAt);
@@ -355,6 +375,7 @@ export function WorkflowRunFeed({
       beat={beat}
       child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
       nowMs={nowMs}
+      titleOf={titleOf}
       open={
         beat.thread !== null &&
         openThread !== null &&
@@ -498,8 +519,7 @@ export function WorkflowRunFeed({
             )}
           </div>
           <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-            <WorkflowChip name={run.workflow} />
-            <span>{run.workflow}</span>
+            <span>{titleOf(run.workflow)}</span>
             <span aria-hidden>·</span>
             <span>
               <T>
@@ -1348,7 +1368,7 @@ function WorkflowBeatRow({
             size="compact"
           />
         ) : beat.kind === "run" ? (
-          <WorkflowChip name={beat.childRun?.workflow ?? beat.name} />
+          <WorkflowIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         ) : undefined
       }
       name={beat.childRun?.title ?? beat.name}
@@ -1509,6 +1529,7 @@ function WorkflowBeatCard({
   beat,
   child,
   nowMs,
+  titleOf,
   open,
   onSelect,
   onOpenThread,
@@ -1517,6 +1538,7 @@ function WorkflowBeatCard({
   readonly beat: WorkflowBeat;
   readonly child: WorkflowRunNode | null;
   readonly nowMs: number;
+  readonly titleOf: (workflow: string) => string;
   readonly open: boolean;
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
@@ -1657,12 +1679,12 @@ function WorkflowBeatCard({
       return (
         <FeedCard label={title}>
           <CardHead
-            mark={<WorkflowChip name={beat.childRun?.workflow ?? beat.name} />}
+            mark={<WorkflowIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
             name={title}
             sub={
               child === null
-                ? `${beat.childRun?.workflow ?? ""} · ${length}`
-                : `${child.run.workflow} · ${workflowRunNow(child, m)}`
+                ? `${beat.childRun === null ? "" : titleOf(beat.childRun.workflow)} · ${length}`
+                : `${titleOf(child.run.workflow)} · ${workflowRunNow(child, m)}`
             }
             action={
               <>

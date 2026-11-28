@@ -5739,5 +5739,7 @@
   "6b7765835778dc77": "Wszystkie pliki są ukryte",
   "bd2cfcb7be24cd38": "Przejrzane pliki są ukryte w tym przeglądzie.",
   "6ae1484aa5bd2bc8": "Pokaż przejrzane pliki",
-  "15db3431c35d4927": "{count, plural, one {Ukryto {count} przejrzany} few {Ukryto {count} przejrzane} many {Ukryto {count} przejrzanych} other {Ukryto {count} przejrzanego}}"
+  "15db3431c35d4927": "{count, plural, one {Ukryto {count} przejrzany} few {Ukryto {count} przejrzane} many {Ukryto {count} przejrzanych} other {Ukryto {count} przejrzanego}}",
+  "2c5dd03cec4ac860": "Jeszcze {count}",
+  "ae3b63552e352863": "Udostępnij odpowiedź"
 }

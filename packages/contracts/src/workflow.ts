@@ -109,6 +109,12 @@ export type WorkflowHook = typeof WorkflowHook.Type;
 export const WorkflowSummary = Schema.Struct({
   name: Schema.String,
   version: Schema.Number,
+  /** What a person reads for it in place of `name`. Absent when its definition gives none. */
+  title: Schema.optional(Schema.String),
+  /** One line on what it is for. */
+  description: Schema.optional(Schema.String),
+  /** Timers and routers: listed apart, and folded away on an item's runs. */
+  background: Schema.optional(Schema.Boolean),
   /** In words: "every 1h", "daily at 09:00", "webhook issues". Empty when only started by hand. */
   triggers: Schema.Array(Schema.String),
   /** The kinds of question it declares, in that order, each with its label. Absent when none. */
@@ -275,6 +281,10 @@ export type WorkflowRunsAboutInput = typeof WorkflowRunsAboutInput.Type;
 export const WorkflowRunsAbout = Schema.Struct({
   runs: Schema.Array(WorkflowRun),
   questions: Schema.Array(WorkflowQuestion),
+  /** The registered workflows, for their titles. Absent from an older server. */
+  workflows: Schema.optional(Schema.Array(WorkflowSummary)),
+  /** Which of those runs ran an agent step. Absent from an older server. */
+  worked: Schema.optional(Schema.Array(Schema.String)),
 });
 export type WorkflowRunsAbout = typeof WorkflowRunsAbout.Type;
 

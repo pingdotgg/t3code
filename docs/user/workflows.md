@@ -64,6 +64,8 @@ t3 workflow store set <key> '<json>'
 
 ## Questions, tags, and subjects
 
+- **Names**: Give a workflow `title: "Fix an issue"` and a one-line `description` to show in the picker, run rows, and an item's **Workflow runs** in place of its name. The name stays its key, so changing the title needs no new version. Mark timers and routers `background: true` to list them under **Background** in the picker and fold their runs away on items.
+- **Outcomes**: A run that returns a short string, such as `"merged #123"`, shows it on an item's **Workflow runs** instead of **Done**. Cancelled runs and runs that ran no agent and asked nothing are folded behind **N more** there.
 - **Question kinds & tags**: Declare `asks: { kindKey: "Label" }` in workflow options and pass `kind` to `ask(...)` to filter open questions under **Needs you** (and `t3 workflow questions --kind <kind>`). Use `tags([...])` to label runs for filtering.
 - **Rich choices & links**: Pass `links: [{ label, url }]` and choice objects `{ value, description, requireReason }` to require an explanation before answering. Answers record `answeredAt` and `answeredBy`.
 - **Subjects**: Call `subject(issueOrPrOrThreadOrUrl)` (or pass `{ subject }` to `start(...)`) to display and link the target item in run lists, issue/PR views, and `t3 workflow list --subject <url>`.
