@@ -5,7 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -327,6 +327,22 @@ describe("omitOlderSettledShells", () => {
       "side-chat",
     ]);
     expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
+  });
+
+  // Clients nest a linked environment's delegated task under its parent, never in Settled,
+  // so an omitted one is counted in "Show N more" but can never be listed.
+  it("keeps an older settled task delegated from a linked environment", () => {
+    const result = omit([
+      ...newest,
+      row("delegated", 30, {
+        delegatedFrom: {
+          environmentId: EnvironmentId.make("environment-a"),
+          threadId: ThreadId.make("parent-elsewhere"),
+          title: "Parent",
+        },
+      }),
+    ]);
+    expect(result.threads.map((thread) => thread.id).slice(25)).toEqual(["delegated"]);
   });
 });
 
