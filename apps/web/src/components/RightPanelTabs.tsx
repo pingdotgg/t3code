@@ -106,6 +106,7 @@ import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
+import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
 import {
   newestPullRequestSummary,
   pullRequestEnvironment,
@@ -1572,6 +1573,10 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     };
   };
 
+  // The panel's content slides with its closing edge. The tab bar stays against the
+  // window's edge instead, or it would slide under the title bar controls.
+  const tabBarPinned = props.mode === "inline" && props.open !== undefined && !props.maximized;
+
   return (
     <PreviewPanelShell
       workspaceArea
@@ -1609,7 +1614,9 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          tabBarPinned && "absolute top-0 right-0",
         )}
+        style={tabBarPinned ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` } : undefined}
         data-right-panel-tabbar
       >
         <ScrollArea
@@ -1817,7 +1824,13 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          tabBarPinned && "pt-(--workspace-topbar-height)",
+        )}
+        data-right-panel-surface-content
+      >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
