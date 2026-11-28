@@ -9,7 +9,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand, runsGitWithoutConsole } from "@t3tools/shared/shell";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -280,6 +281,8 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     input.env === undefined ? {} : { env: input.env, extendEnv },
   );
 
+  const platform = yield* HostProcess.Platform;
+
   const toSpawnError = (cause: unknown) =>
     new ProcessSpawnError({
       command: input.command,
@@ -304,6 +307,9 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
           : {}),
         shell: spawnCommand.shell,
         forceKillAfter: FORCE_KILL_AFTER,
+        ...(runsGitWithoutConsole(platform, spawnCommand.command, spawnCommand.args)
+          ? { detached: true, windowsHide: true }
+          : {}),
       }),
     )
     .pipe(
