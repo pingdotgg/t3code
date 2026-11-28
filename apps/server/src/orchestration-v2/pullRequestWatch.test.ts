@@ -1306,6 +1306,29 @@ Review triggered.
     assert.isFalse(pending([], watch({ headSha: "aaaaaaaaaa", checksPending: false })));
     const unreadable = { ...check("approvals", "action-required"), placeholder: true };
     assert.isTrue(pending([unreadable], watch({ headSha: "aaaaaaaaaa", checksPending: true })));
+
+    const running = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [ci, check("CodeRabbit", "pending")] }),
+      noRemarks,
+    );
+    assert.isTrue(running.next.passed);
+    const finishedChecks = [ci, check("CodeRabbit", "success")];
+    const incomplete = evaluatePullRequestWatch(
+      running.next,
+      detail({ checks: [...finishedChecks, unreadable] }),
+      noRemarks,
+    );
+    assert.deepEqual(incomplete.changes, []);
+    assert.isTrue(incomplete.next.checksPending);
+    const complete = evaluatePullRequestWatch(
+      incomplete.next,
+      detail({ checks: finishedChecks }),
+      noRemarks,
+    );
+    assert.deepEqual(complete.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.isFalse(complete.next.checksPending);
+    assert.isFalse(pending([...finishedChecks, unreadable], complete.next));
   });
 
   it("waits a while for a new head's checks on every host", () => {

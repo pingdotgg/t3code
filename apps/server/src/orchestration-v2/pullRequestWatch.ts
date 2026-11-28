@@ -93,10 +93,8 @@ export function evaluatePullRequestWatch(
   const newlyFailed = failed.filter((check) => !failedBefore.includes(check.name));
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
-    // An unfinished baseline read keeps the seed below for the next one.
-    checksPending =
-      checks.some((check) => check.status === "pending") ||
-      (checksBaseline && unread && watch.checksPending === true);
+    // An incomplete read cannot clear a pending watch, even if its visible checks finished.
+    checksPending = checks.some((check) => check.status === "pending") || (unread && checksPending);
     // The baseline hides failures from before the watch, but CI running at the start can fail
     // before the first read.
     if (newlyFailed.length > 0 && (!checksBaseline || watch.checksPending === true)) {
