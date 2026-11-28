@@ -32,7 +32,7 @@ export function start(configuration: DeviceStreamConfiguration) {
   stop();
   // oxlint-disable-next-line unicorn/require-post-message-target-origin -- The native WebView bridge takes one string.
   const post = (message: object) => window.ReactNativeWebView.postMessage(JSON.stringify(message));
-  const { colors, platform } = configuration;
+  const { colors, platform, usKeyboardLayout = false } = configuration;
   Object.assign(document.documentElement.style, { height: "100%", overflow: "hidden" });
   Object.assign(document.body.style, {
     margin: "0",
@@ -186,9 +186,9 @@ export function start(configuration: DeviceStreamConfiguration) {
   frame.addEventListener("lostpointercapture", endTouch);
   frame.addEventListener("keydown", (event) => {
     event.preventDefault();
-    client.sendKey(event, "down");
+    client.sendKey(event, "down", usKeyboardLayout);
   });
-  frame.addEventListener("keyup", (event) => client.sendKey(event, "up"));
+  frame.addEventListener("keyup", (event) => client.sendKey(event, "up", usKeyboardLayout));
   window.addEventListener("pagehide", stop, { once: true });
   post({ type: "input", connected: false });
   client.start();

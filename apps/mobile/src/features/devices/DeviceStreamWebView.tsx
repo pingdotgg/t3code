@@ -67,6 +67,7 @@ export function DeviceStreamWebView({
     platform: props.platform,
     deviceId: props.deviceId,
     ...(props.serveSimOnly ? { serveSimOnly: true } : {}),
+    ...(props.usKeyboardLayout ? { usKeyboardLayout: true } : {}),
     colors: props.colors,
     labels: {
       screen: props.platform === "ios" ? gt("iOS Simulator screen") : gt("Android Emulator screen"),

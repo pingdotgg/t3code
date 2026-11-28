@@ -8,6 +8,8 @@ export interface DeviceStreamConfiguration {
   readonly deviceId: string;
   /** See `DeviceStreamTarget.serveSimOnly`. */
   readonly serveSimOnly?: boolean;
+  /** iOS only: the simulator's hardware keyboard is US, so keys are typed through US keys. */
+  readonly usKeyboardLayout?: boolean;
   readonly colors: {
     readonly background: string;
     readonly foreground: string;

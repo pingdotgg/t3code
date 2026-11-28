@@ -1,12 +1,18 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { T, useGT } from "gt-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { Button } from "~/components/ui/button";
-import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import {
+  deviceDetailAtom,
+  deviceDetailReadAtom,
+  renewDeviceHubAccess,
+  useDeviceHubAccess,
+} from "~/state/device";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
@@ -16,7 +22,7 @@ import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import type { DeviceAxElement } from "./deviceHubApi";
-import { androidFoldViewAtom, deviceAxElementsAtom } from "./deviceHubAtoms";
+import { androidFoldViewAtom, deviceAxElementsAtom, NOOP_ATOM } from "./deviceHubAtoms";
 import {
   deviceScreenKey,
   deviceStreamSessionAtom,
@@ -34,6 +40,7 @@ const NO_AX_ATOM = Atom.make(AsyncResult.initial<ReadonlyArray<DeviceAxElement>,
   Atom.withLabel("device-ax-elements:none"),
 );
 const CONTROLS_RAIL_WIDTH = 56;
+const IOS_COMMAND_KEYS = new Set(["a", "c", "r", "x", "z"]);
 
 function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
   if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
@@ -129,6 +136,22 @@ export function DeviceStreamView(props: {
       : NO_SESSION_ATOM,
   );
   const client = session?.stream ?? null;
+  const detailKey = {
+    environmentId: props.environmentId,
+    hostId: props.hostId,
+    deviceId: props.deviceId,
+  };
+  useAtomMount(
+    props.platform === "ios" && props.visible ? deviceDetailReadAtom(detailKey) : NOOP_ATOM,
+  );
+  const deviceDetail = useAtomValue(deviceDetailAtom(detailKey));
+  const layoutPending =
+    props.platform === "ios" && deviceDetail.detail === null && deviceDetail.error === null;
+  // Until the layout is known, keys go by key place as they did before layouts were read, so
+  // they stay in order with touches.
+  const usKeyboardLayout = deviceDetail.detail?.settings.usKeyboardLayout ?? !layoutPending;
+  const sendKey = (event: KeyboardEvent, phase: "down" | "up") =>
+    client?.sendKey(event, phase, usKeyboardLayout);
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -332,7 +355,10 @@ export function DeviceStreamView(props: {
         }
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.metaKey && !["r", "R"].includes(event.key)) return;
+          const commandKey = surfaceShortcutKey(event) ?? "";
+          const sendsCommand =
+            props.platform === "ios" ? IOS_COMMAND_KEYS.has(commandKey) : commandKey === "r";
+          if (event.metaKey && !sendsCommand) return;
           // Let browser paste chords fire the paste event.
           if (
             (event.ctrlKey && (event.key === "v" || event.key === "V")) ||
@@ -341,7 +367,7 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
-          client?.sendKey(event.nativeEvent, "down");
+          sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -350,7 +376,7 @@ export function DeviceStreamView(props: {
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
-          client?.sendKey(event.nativeEvent, "up");
+          sendKey(event.nativeEvent, "up");
         }}
       >
         <div
