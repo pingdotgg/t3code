@@ -52,7 +52,7 @@ export interface ThreadDetailsUsageInput {
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 
-type UsageTone = "error" | "warning" | null;
+export type UsageTone = "error" | "warning" | null;
 
 function limitTone(left: number): UsageTone {
   if (left <= 10) return "error";
@@ -356,7 +356,7 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
 }
 
 /** One label, hairline, and value row; the whole row opens the details tooltip. With `opensUsage` it links to the usage page. */
-function UsageRow({
+export function UsageRow({
   label,
   fill,
   tone,
