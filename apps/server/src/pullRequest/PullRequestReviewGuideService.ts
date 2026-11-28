@@ -12,6 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import {
   PullRequestOperationError,
+  type OrchestrationProjectShell,
   type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuide,
@@ -29,6 +30,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -66,6 +68,7 @@ const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const guides = yield* PullRequestReviewGuides.PullRequestReviewGuideRepository;
   const projects = yield* ProjectService.ProjectService;
+  const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -91,23 +94,30 @@ const make = Effect.gen(function* () {
         detail: "Could not identify this pull request's host.",
       });
     }
-    return { key, workspaceRoot: project.workspaceRoot, identity: project.repositoryIdentity };
+    return { key, project };
   });
 
-  const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
-    function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own = ownPullRequestRepositories(identity).find(
-        (candidate) =>
-          candidate.key.host === key.host && candidate.key.repository === key.repository,
-      );
-      if (own === undefined) {
-        return yield* new PullRequestOperationError({
-          operation: "generateReviewGuide",
-          detail:
-            "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
-        });
+  const ownLocator = (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) =>
+    ownPullRequestRepositories(identity).find(
+      (candidate) => candidate.key.host === key.host && candidate.key.repository === key.repository,
+    )?.locator;
+
+  // The project root's checkout first, then each tracked folder that is a checkout of the PR's repository.
+  const requireOwnCheckout = Effect.fn("PullRequestReviewGuideService.requireOwnCheckout")(
+    function* (key: ThreadPullRequestKey, project: OrchestrationProjectShell) {
+      const rootLocator = ownLocator(key, project.repositoryIdentity);
+      if (rootLocator !== undefined) {
+        return { workspaceRoot: project.workspaceRoot, locator: rootLocator };
       }
-      return own.locator;
+      for (const folder of project.trackedFolders ?? []) {
+        const locator = ownLocator(key, yield* repositoryIdentities.resolve(folder.path));
+        if (locator !== undefined) return { workspaceRoot: folder.path, locator };
+      }
+      return yield* new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail:
+          "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
+      });
     },
   );
 
@@ -455,8 +465,8 @@ const make = Effect.gen(function* () {
         detail: "Review guides are off. Turn them on in Settings → Source control & issues.",
       });
     }
-    const { key, workspaceRoot, identity } = yield* keyFor(input);
-    const locator = yield* requireOwnRepository(key, identity);
+    const { key, project } = yield* keyFor(input);
+    const { workspaceRoot, locator } = yield* requireOwnCheckout(key, project);
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {

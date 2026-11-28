@@ -17,13 +17,16 @@ import {
   type PullRequestDetail,
   type PullRequestStack,
   type PullRequestRef,
+  type RepositoryIdentity,
   type RepositoryOrigin,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -163,6 +166,8 @@ const makeLayer = (input: {
   readonly currentHead?: Ref.Ref<string>;
   readonly identity?: typeof ACME_APP & { readonly origin?: RepositoryOrigin };
   readonly locator?: typeof ACME_APP.locator;
+  readonly trackedFolders?: ReadonlyArray<{ readonly path: string; readonly name: string }>;
+  readonly folderIdentities?: ReadonlyMap<string, RepositoryIdentity>;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -202,8 +207,14 @@ const makeLayer = (input: {
               ...(input.identity ?? ACME_APP),
               locator: input.locator ?? { ...ACME_APP.locator, remoteUrl: input.remote },
             },
+            trackedFolders: input.trackedFolders ?? [],
           }),
       } as unknown as ProjectService.ProjectService["Service"]),
+    ),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (cwd) => Effect.succeed(input.folderIdentities?.get(cwd) ?? null),
+      }),
     ),
     Layer.provide(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -618,6 +629,50 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             origin: { canonicalKey: "github.com/acme/app", remoteUrl: repositories.remote },
           },
           locator: { source: "git-remote", remoteName: "upstream", remoteUrl: parent },
+          generate: () => Effect.succeed({ stops: [] }),
+        }),
+      );
+      const service = Context.get(
+        context,
+        PullRequestReviewGuideService.PullRequestReviewGuideService,
+      );
+      const runs = yield* watchRuns;
+      yield* runs.generate(service, reference);
+      const result = yield* runs.settled(service, reference);
+      assert.notStrictEqual(result.run?._tag, "Failed", JSON.stringify(result.run));
+      assert.strictEqual(result.guide?.headSha, repositories.headSha);
+    }),
+  );
+
+  it.effect("writes a guide for a pull request in one of the project's tracked repositories", () =>
+    Effect.gen(function* () {
+      const repositories = yield* makeRepositories;
+      // The project root is a checkout of another repository, which has none of the PR's commits.
+      const projectRoot = `${repositories.root}/project-root`;
+      yield* git(repositories.root, ["init", "--quiet", "--initial-branch=main", projectRoot]);
+      const stored = yield* Deferred.make<void>();
+      const context = yield* Layer.build(
+        makeLayer({
+          ...repositories,
+          workspace: projectRoot,
+          stored,
+          identity: {
+            ...ACME_APP,
+            canonicalKey: "github.com/acme/other",
+            displayName: "acme/other",
+            name: "other",
+          },
+          trackedFolders: [{ path: repositories.workspace, name: "app" }],
+          folderIdentities: new Map<string, RepositoryIdentity>([
+            [
+              repositories.workspace,
+              {
+                ...ACME_APP,
+                provider: SourceControlProviderKind.make("github"),
+                locator: { ...ACME_APP.locator, remoteUrl: repositories.remote },
+              },
+            ],
+          ]),
           generate: () => Effect.succeed({ stops: [] }),
         }),
       );
