@@ -1301,6 +1301,29 @@ describe("pooled account columns", () => {
     expect(accounts).toEqual(snapshot);
   });
 
+  it("suppresses a Codex session pool while a daily window is exhausted", () => {
+    const daily = {
+      id: "daily",
+      kind: "daily",
+      label: "Daily",
+      windowDurationMins: 24 * 60,
+      resetsAt: "2026-09-04T12:00:00.000Z",
+    } as const;
+    const a = {
+      ...account("codex", [
+        { ...window, id: "primary", usedPercent: 20 },
+        { ...daily, usedPercent: 100 },
+      ]),
+      driver: ProviderDriverKind.make("codex"),
+    };
+    const [pool] = collectLimitPools([a], now);
+    const session = pool!.windows.find((w) => w.members[0]!.window.kind === "session");
+    expect(session?.remainingPercent).toBe(0);
+    // The exhausted daily window itself stays reported rather than self-suppressing.
+    const dailyPool = pool!.windows.find((w) => w.members[0]!.window.kind === "daily");
+    expect(dailyPool?.remainingPercent).toBe(0);
+  });
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [

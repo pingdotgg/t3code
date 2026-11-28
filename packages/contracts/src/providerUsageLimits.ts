@@ -12,7 +12,7 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 /** Stable per-provider ids let sparse updates merge with full probes. */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
-  kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
+  kind: Schema.Literals(["session", "daily", "weekly", "monthly", "other"]),
   label: TrimmedNonEmptyString,
   /** When present, this limit applies only to these provider model IDs. */
   modelIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),

@@ -554,9 +554,10 @@ export function displayLimitWindows(pool: LimitPool) {
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
-  weekly: 1,
-  monthly: 2,
-  other: 3,
+  daily: 1,
+  weekly: 2,
+  monthly: 3,
+  other: 4,
 };
 
 export function collectLimitPools(
@@ -606,7 +607,7 @@ const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra:
 
 function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
   if (!account.plan) return undefined;
-  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+  if (account.driver === "codex" && (kind === "session" || kind === "daily" || kind === "weekly")) {
     return CODEX_PLAN_CAPACITY[account.plan];
   }
   if (account.driver === "claudeAgent" && kind === "session") {
@@ -621,38 +622,40 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
 }
 
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
-  const spentWeekly =
-    reported.kind === "session"
+  const spentWindow =
+    reported.kind === "session" || reported.kind === "daily"
       ? account.limits.windows.find(
           (window) =>
+            window !== reported &&
             window.usedPercent >= 100 &&
             (account.driver === "claudeAgent"
               ? window.id === "seven_day"
-              : account.driver === "codex" && window.kind === "weekly"),
+              : account.driver === "codex" &&
+                (window.kind === "weekly" || window.kind === "daily")),
         )
       : undefined;
-  if (!spentWeekly) return { account, window: reported, refillPercent: reported.usedPercent };
+  if (!spentWindow) return { account, window: reported, refillPercent: reported.usedPercent };
 
-  const weeklyReset = resetMillis(spentWeekly);
+  const blockingReset = resetMillis(spentWindow);
   const sessionReset = resetMillis(reported);
   const cutoff = Math.max(now, Date.parse(account.limits.checkedAt));
   let resetsAt: string | undefined;
   let refillPercent = 0;
   // A stale or missing clock cannot tell us when blocked quota becomes usable.
   if (
-    weeklyReset !== null &&
+    blockingReset !== null &&
     sessionReset !== null &&
-    weeklyReset > cutoff &&
+    blockingReset > cutoff &&
     sessionReset > cutoff
   ) {
-    if (sessionReset <= weeklyReset) {
-      resetsAt = spentWeekly.resetsAt;
+    if (sessionReset <= blockingReset) {
+      resetsAt = spentWindow.resetsAt;
       refillPercent = 100;
     } else if (reported.usedPercent >= 100) {
       resetsAt = reported.resetsAt;
       refillPercent = 100;
     } else {
-      resetsAt = spentWeekly.resetsAt;
+      resetsAt = spentWindow.resetsAt;
       refillPercent = 100 - Math.max(0, Math.min(100, reported.usedPercent));
     }
   }
