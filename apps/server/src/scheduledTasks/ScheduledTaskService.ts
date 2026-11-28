@@ -889,6 +889,24 @@ export const layer = Layer.effect(
           : null;
     });
 
+    // Each send would start a turn that fails on the limit and notifies the user again.
+    // Another account on the thread, or a passed reset, lets the next occurrence send.
+    const waitsForUsageLimitReset = Effect.fn("ScheduledTaskService.waitsForUsageLimitReset")(
+      function* (threadId: ThreadId, now: DateTime.DateTime) {
+        const shell = yield* threadManagement.getThreadShell(threadId);
+        if (
+          shell?.status !== "failed" ||
+          shell.lastErrorClass !== "usage_limit" ||
+          shell.latestRunId === null ||
+          !(Date.parse(shell.usageLimitResetAt ?? "") > DateTime.toEpochMillis(now))
+        )
+          return false;
+        const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"]);
+        const limited = runs.find((run) => run.id === shell.latestRunId);
+        return limited?.providerInstanceId === shell.modelSelection.instanceId;
+      },
+    );
+
     // The run already started the thread, so a failed write only costs the binding.
     // A thread deleted before the binding landed already ran its task cleanup, so apply that
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
@@ -1027,10 +1045,10 @@ export const layer = Layer.effect(
           active.schedule.type !== "once" &&
           active.threadId !== null
         ) {
-          const occurrence = yield* queuedOccurrence(
-            active.id,
-            ThreadId.make(active.threadId),
-          ).pipe(Effect.orElseSucceed(() => null));
+          const threadId = ThreadId.make(active.threadId);
+          const occurrence = yield* queuedOccurrence(active.id, threadId).pipe(
+            Effect.orElseSucceed(() => null),
+          );
           if (occurrence !== null) {
             yield* rescheduleMissedRun(
               active,
@@ -1038,6 +1056,14 @@ export const layer = Layer.effect(
               "previous occurrence still queued",
               occurrence === "held" ? HELD_OCCURRENCE_ERROR : undefined,
             );
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
+          if (
+            yield* waitsForUsageLimitReset(threadId, startedAt).pipe(
+              Effect.orElseSucceed(() => false),
+            )
+          ) {
+            yield* rescheduleMissedRun(active, startedAt, "thread waits for its usage limit reset");
             return { task: active, threadId: null, dispatchFailed: false };
           }
         }

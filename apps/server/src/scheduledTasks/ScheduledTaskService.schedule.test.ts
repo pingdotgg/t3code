@@ -210,6 +210,17 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
     const runDueWork = yield* Ref.make<Effect.Effect<void>>(Effect.void);
     const sql = yield* SqlClient.SqlClient;
     const outcomeDuringLookup = yield* Ref.make(false);
+    const idleShell = {
+      projectId: "project-busy-thread",
+      deletedAt: null,
+      archivedAt: null,
+      status: "running",
+      lastErrorClass: null,
+      latestRunId: activeRun.id,
+      usageLimitResetAt: null,
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    };
+    const shell = yield* Ref.make(idleShell);
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       ManagedPolicy.layerTest(),
@@ -268,12 +279,7 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
             }
             return (yield* Ref.get(thread)) as never;
           }).pipe(Effect.orDie),
-        getThreadShell: () =>
-          Effect.succeed({
-            projectId: "project-busy-thread",
-            deletedAt: null,
-            archivedAt: null,
-          } as never),
+        getThreadShell: () => Ref.get(shell).pipe(Effect.map((current) => current as never)),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
@@ -384,6 +390,66 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrencesOf(once.id)).toBe(2);
+
+      // An idle thread stopped by a usage limit skips occurrences until its reset.
+      const limitedRun = {
+        id: RunId.make("run:limited"),
+        status: "failed",
+        providerInstanceId: "codex",
+        userMessageId: MessageId.make("message:limited"),
+      } as OrchestrationV2Run;
+      yield* Ref.update(thread, (current) => ({
+        ...current,
+        runs: [
+          ...current.runs.map((run) => ({ ...run, status: "completed" }) as OrchestrationV2Run),
+          limitedRun,
+        ],
+      }));
+      const resetAt = Date.parse("2026-07-01T09:12:00.000Z");
+      yield* Ref.set(shell, {
+        ...idleShell,
+        status: "failed",
+        lastErrorClass: "usage_limit",
+        latestRunId: limitedRun.id,
+        usageLimitResetAt: "2026-07-01T09:12:00.000Z",
+      } as never);
+      const nextRunAtOf = service
+        .list()
+        .pipe(
+          Effect.map(({ tasks }) =>
+            Date.parse(tasks.find((listed) => listed.id === task.id)?.nextRunAt ?? ""),
+          ),
+        );
+      const dueBeforeLimit = yield* nextRunAtOf;
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      expect(yield* queuedOccurrences).toBe(0);
+      expect(yield* nextRunAtOf).toBeGreaterThan(dueBeforeLimit);
+
+      // Switching the thread to another account lets the next occurrence send.
+      yield* Ref.update(shell, (current) => ({
+        ...current,
+        modelSelection: { instanceId: "codex-work", model: "gpt-5.4" },
+      }));
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      expect(yield* queuedOccurrences).toBe(1);
+
+      // On the limited account, the first occurrence after the reset sends.
+      yield* Ref.update(thread, (current) => ({
+        ...current,
+        runs: current.runs.filter((run) => run.status !== "queued"),
+      }));
+      yield* Ref.update(shell, (current) => ({
+        ...current,
+        modelSelection: idleShell.modelSelection,
+      }));
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      expect(yield* queuedOccurrences).toBe(0);
+      yield* TestClock.setTime(resetAt + 61_000);
+      yield* Effect.flatten(Ref.get(runDueWork));
+      expect(yield* queuedOccurrences).toBe(1);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
