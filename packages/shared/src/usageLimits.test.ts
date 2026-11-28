@@ -971,6 +971,37 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("does not show a window whose reset has passed as current usage", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("offline"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [
+                  provider({
+                    usageLimits: {
+                      checkedAt: "2026-09-01T12:00:00.000Z",
+                      windows: [
+                        { ...weekly, usedPercent: 51, resetsAt: "2026-09-02T12:00:00.000Z" },
+                      ],
+                    },
+                  }),
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    const pooledWeekly = pool?.windows.find((candidate) => candidate.kind === "weekly");
+    expect(pooledWeekly?.remainingPercent).not.toBe(49);
+    expect(pooledWeekly?.resets.filter((reset) => reset.at <= now) ?? []).toEqual([]);
+  });
+
   it("weights pooled Codex quota and resets by each account's plan capacity", () => {
     const [pool] = collectLimitPools(
       collectLimitAccounts(
