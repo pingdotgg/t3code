@@ -3035,31 +3035,43 @@ const make = Effect.gen(function* () {
         // names it, so the child gets its worktree at the parent's commit whatever the default
         // selection would drop.
         const parentCheckout = parent.thread.worktreePath;
-        const parentIsRepositoryRoot =
-          parentCheckout !== null &&
-          (yield* gitDriver
-            .execute({
-              operation: "OrchestratorMcpService.delegateTask",
-              cwd: parentCheckout,
-              args: ["rev-parse", "--show-prefix"],
-            })
-            .pipe(
-              Effect.map((result) => result.stdout.trim() === ""),
-              Effect.orElseSucceed(() => false),
-            ));
-        const parentCommit = parentIsRepositoryRoot
-          ? yield* gitDriver.resolveCommit({ cwd: parentCheckout, revision: "HEAD" }).pipe(
-              Effect.map((resolved) => resolved.commitSha),
-              Effect.orElseSucceed(() => null),
-            )
-          : null;
+        // `--show-prefix` is the parent's folder below its repository's root, with `/` separators.
+        const parentPrefix =
+          parentCheckout === null
+            ? null
+            : yield* gitDriver
+                .execute({
+                  operation: "OrchestratorMcpService.delegateTask",
+                  cwd: parentCheckout,
+                  args: ["rev-parse", "--show-prefix"],
+                })
+                .pipe(
+                  Effect.map((result) => result.stdout.trim()),
+                  Effect.orElseSucceed(() => null),
+                );
+        let parentRepository = parentPrefix === null ? null : parentCheckout;
+        const depth = (parentPrefix ?? "").split("/").filter((segment) => segment !== "").length;
+        for (let level = 0; level < depth && parentRepository !== null; level++) {
+          const trimmed = parentRepository.replace(/[\\/]+$/, "");
+          parentRepository = trimmed.slice(
+            0,
+            Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")),
+          );
+        }
+        const parentCommit =
+          parentCheckout === null || parentRepository === null
+            ? null
+            : yield* gitDriver.resolveCommit({ cwd: parentCheckout, revision: "HEAD" }).pipe(
+                Effect.map((resolved) => resolved.commitSha),
+                Effect.orElseSucceed(() => null),
+              );
         workspaceStrategy =
-          parentCheckout !== null && parentCommit !== null
+          parentRepository !== null && parentCommit !== null
             ? {
                 type: "worktree",
                 baseRef: parentCommit,
                 startFromOrigin: false,
-                repositories: [{ path: parentCheckout }],
+                repositories: [{ path: parentRepository }],
               }
             : // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
               { type: "worktree", baseRef: "HEAD" };

@@ -2941,9 +2941,9 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   // A Scratch thread's own folder can be a Git repository the plain Scratch root does not track.
-  it.live(
-    "does not hand a worktree child a plain-folder copy when the parent works in an untracked Git repository",
-    () =>
+  it.live.each(["", "/subdir"])(
+    "does not hand a worktree child a plain-folder copy when the parent works in an untracked Git repository (folder '%s')",
+    (subfolder) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const git = yield* GitVcsDriver.GitVcsDriver;
@@ -2960,6 +2960,8 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]) {
           yield* git.execute({ operation: "delegate-scratch-test", cwd: parentCheckout, args });
         }
+        const parentFolder = `${parentCheckout}${subfolder}`;
+        yield* fileSystem.makeDirectory(parentFolder, { recursive: true });
         const parentCommit = (yield* git.resolveCommit({ cwd: parentCheckout, revision: "HEAD" }))
           .commitSha;
         const commands: Array<unknown> = [];
@@ -2985,7 +2987,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                         ...parent,
                         thread: {
                           ...parent.thread,
-                          worktreePath: parentCheckout,
+                          worktreePath: parentFolder,
                           branch: "master",
                         },
                       } as OrchestrationV2ThreadProjection;
@@ -3032,13 +3034,15 @@ describe("OrchestratorMcpService provider resolution", () => {
               clientRequestId: "worktree-scratch-repo",
             })
             .pipe(Effect.result);
-          if (Result.isFailure(result)) {
-            assert.equal(result.failure.code, "invalid_request");
-            return;
-          }
-          assert.include(
-            JSON.stringify((commands[0] as { workspaceStrategy?: unknown }).workspaceStrategy),
-            parentCommit,
+          assert.isTrue(Result.isSuccess(result));
+          assert.deepEqual(
+            (commands[0] as { workspaceStrategy?: unknown }).workspaceStrategy,
+            {
+              type: "worktree",
+              baseRef: parentCommit,
+              startFromOrigin: false,
+              repositories: [{ path: parentCheckout }],
+            },
             "the child gets a plain copy of the project root instead of a checkout of the parent's repository",
           );
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));

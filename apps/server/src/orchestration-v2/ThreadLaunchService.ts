@@ -329,20 +329,25 @@ const make = Effect.gen(function* () {
   const maxRuntimeMode = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   /**
    * A subagent works where its parent does: in its task folder's worktree of the repository the
-   * parent's folder is (a Scratch thread's own repository), not the plain copy around it.
+   * parent's folder is in (a Scratch thread's own repository), not the plain copy around it.
    */
   const parentRepositoryWorktree = Effect.fn("ThreadLaunchService.parentRepositoryWorktree")(
     function* (threadId: ThreadId, taskFolder: TaskFolder) {
-      const shell = (id: ThreadId) =>
-        threads.getThreadShell(id).pipe(Effect.orElseSucceed(() => null));
-      const lineage = (yield* shell(threadId))?.lineage;
+      const lineage = (yield* threads.getThreadShell(threadId))?.lineage;
       if (lineage?.relationshipToParent !== "subagent" || lineage.parentThreadId === null)
         return undefined;
-      const parentCheckout = (yield* shell(lineage.parentThreadId))?.worktreePath;
+      const parentCheckout = (yield* threads.getThreadShell(lineage.parentThreadId))?.worktreePath;
       if (parentCheckout === undefined || parentCheckout === null) return undefined;
-      return taskFolder.repositories.find(
-        (repository) => path.resolve(repository.repositoryPath) === path.resolve(parentCheckout),
-      )?.worktreePath;
+      const repository = taskFolder.repositories.find((candidate) =>
+        isWithinRoot(path, path.resolve(parentCheckout), path.resolve(candidate.repositoryPath)),
+      );
+      if (repository === undefined) return undefined;
+      const mapped = path.join(
+        repository.worktreePath,
+        path.relative(path.resolve(repository.repositoryPath), path.resolve(parentCheckout)),
+      );
+      // A folder Git does not track (an empty one, say) is not in the worktree.
+      return (yield* fileSystem.exists(mapped)) ? mapped : repository.worktreePath;
     },
   );
 
