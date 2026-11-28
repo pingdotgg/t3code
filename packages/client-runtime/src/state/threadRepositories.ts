@@ -138,7 +138,7 @@ function relativeFolderPath(from: string, to: string): string | undefined {
     return undefined;
   }
   const same = (left: string, right: string) =>
-    source.root.endsWith(":") ? left.toLowerCase() === right.toLowerCase() : left === right;
+    source.root === "/" ? left === right : left.toLowerCase() === right.toLowerCase();
   let shared = 0;
   while (
     shared < source.segments.length &&
