@@ -2,7 +2,6 @@ import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
-import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { formatWorktreePathForDisplay } from "../../worktreeCleanup";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
@@ -56,7 +55,6 @@ import {
   Undo2Icon,
   UnplugIcon,
   UserRoundIcon,
-  XIcon,
 } from "lucide-react";
 import {
   memo,
@@ -752,11 +750,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, messages);
   const terminalProcessCount = runningTerminalIds.length;
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
-  const handleDiscardDraftClick = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    discardComposerDraft(threadRef);
-  };
 
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
@@ -1717,7 +1710,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                   )}
                 </span>
-                {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
+                {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
                       // Mouse clicks leave Settle focused; focus-within would pin controls over
@@ -1726,25 +1719,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       snoozeMenuOpen && "pointer-events-auto static opacity-100",
                     )}
                   >
-                    {hasUnsentDraft ? (
-                      <SharedTooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            aria-label={gt("Discard draft")}
-                            onClick={handleDiscardDraftClick}
-                            className="inline-flex cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                          />
-                        }
-                        label={
-                          <>
-                            <T>Discard draft</T>
-                          </>
-                        }
-                      >
-                        <XIcon className="size-3.5" />
-                      </SharedTooltipTrigger>
-                    ) : null}
                     {showSnoozeButton ? (
                       <SnoozeMenuButton
                         open={snoozeMenuOpen}
