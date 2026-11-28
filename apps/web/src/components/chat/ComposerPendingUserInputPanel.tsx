@@ -1,5 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { markdownProseDirection, textDirection } from "~/textDirection";
+import { fieldDirection, markdownProseDirection } from "~/textDirection";
 import { useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -183,14 +183,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const promptDirection = markdownProseDirection(
-    prompt.questions
-      .flatMap((question) => [
-        question.header,
-        question.question,
-        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
-      ])
-      .join(" "),
+    ...prompt.questions.flatMap((question) => [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+    ]),
   );
+  const labelDirection = (text: string) => fieldDirection(text, promptDirection);
   const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
 
   return (
@@ -217,7 +216,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               "min-w-0 text-muted-foreground",
               isCollapsed ? "max-w-1/2 truncate" : "wrap-anywhere",
             )}
-            dir={textDirection(activeQuestion.header)}
+            dir={labelDirection(activeQuestion.header)}
           >
             {activeQuestion.header}
           </span>
@@ -299,13 +298,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
+                      <span className="text-sm font-medium" dir={labelDirection(option.label)}>
                         {option.label}
                       </span>
                       {option.description && option.description !== option.label ? (
                         <span
                           className="text-secondary-label text-2xs"
-                          dir={textDirection(option.description)}
+                          dir={labelDirection(option.description)}
                         >
                           {option.description}
                         </span>

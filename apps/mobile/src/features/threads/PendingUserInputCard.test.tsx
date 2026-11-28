@@ -14,7 +14,7 @@ const harness = vi.hoisted(() => ({
 type Children = { children?: ReactNode };
 
 vi.mock("react-native", () => ({
-  Platform: { OS: "ios" },
+  Platform: { OS: process.env.T3_MOBILE_TEST_PLATFORM ?? "ios" },
   View: ({ children }: Children) => <div>{children}</div>,
   ScrollView: ({ children }: Children) => <div>{children}</div>,
   Pressable: ({ children, onPress }: Children & { onPress?: () => void }) => (
@@ -127,8 +127,12 @@ function setup(questionMarkdown: string) {
   };
 }
 
-it("opens a workspace file link in a question in the thread's file viewer", async () => {
-  using screen = setup("Should I update [probe.md](docs/probe.md:12)?");
+it.each([
+  "Should I update [probe.md](docs/probe.md:12)?",
+  "האם לעדכן את הקובץ [probe.md](docs/probe.md:12)?",
+  "هل يجب تحديث الملف [probe.md](docs/probe.md:12)؟",
+])("opens a workspace file link in the thread's file viewer: %s", async (markdown) => {
+  using screen = setup(markdown);
 
   await screen.pressLink("probe.md");
 

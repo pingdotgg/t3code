@@ -155,6 +155,7 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { textDirection } from "~/textDirection";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
@@ -1966,6 +1967,7 @@ function ScheduledTaskEditorForm({
               className="max-h-64 overflow-y-auto"
               placeholder={gt("What should the agent do each time this runs?")}
               value={draft.prompt}
+              dir={textDirection(draft.prompt)}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, prompt: event.target.value }))
               }

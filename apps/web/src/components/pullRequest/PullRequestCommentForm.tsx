@@ -19,6 +19,7 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { textDirection } from "~/textDirection";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -124,6 +125,7 @@ export function PullRequestCommentForm({
         disabled={locked}
         readOnly={speech.freezesEditor}
         value={body}
+        dir={textDirection(body)}
         rows={3}
         placeholder={gt("Leave a comment")}
         aria-label={gt(

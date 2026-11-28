@@ -10,6 +10,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+import { textDirection } from "~/textDirection";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -208,7 +209,12 @@ export function PullRequestDetailCrumbs({
             />
             <SharedTooltipTrigger
               render={
-                <span className="min-w-0 truncate font-medium text-foreground">{detail.title}</span>
+                <span
+                  className="min-w-0 truncate font-medium text-foreground"
+                  dir={textDirection(detail.title)}
+                >
+                  {detail.title}
+                </span>
               }
               label={detail.title}
             />

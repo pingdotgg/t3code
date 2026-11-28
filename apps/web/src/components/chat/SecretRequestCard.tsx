@@ -39,6 +39,8 @@ import {
 import { useId, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 
+import { cn } from "~/lib/utils";
+import { fieldDirection, markdownProseDirection, textDirection } from "~/textDirection";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -46,6 +48,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
+import { BidiMarkdownText } from "./BidiMarkdownText";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -69,7 +72,7 @@ export function SecretRequestCard(props: {
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>
-            {item.label} · {display.label}
+            <bdi dir={textDirection(item.label)}>{item.label}</bdi> · {display.label}
           </>
         }
       />
@@ -117,6 +120,8 @@ function PendingSecretRequestForm(props: {
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
   const inFlight = useRef(false);
+  const cardDirection = markdownProseDirection(item.label, item.reason);
+  const labelDirection = fieldDirection(item.label, cardDirection);
   const inputs = secretRequestInputs(item, messages);
   const inputId = (index: number) => `${formId}-${index}`;
   const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
@@ -202,16 +207,32 @@ function PendingSecretRequestForm(props: {
         document.getElementById(inputId(Math.max(empty, 0)))?.focus();
       }}
     >
-      <div className="flex min-w-0 flex-col gap-1">
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-1",
+          cardDirection === "rtl" ? "text-right" : "text-left",
+        )}
+      >
         {multiple ? (
-          <p className="text-sm font-medium text-foreground">{item.label}</p>
+          <p className="text-sm font-medium text-foreground" dir={labelDirection}>
+            {item.label}
+          </p>
         ) : (
-          <label htmlFor={inputId(0)} className="text-sm font-medium text-foreground">
+          <label
+            htmlFor={inputId(0)}
+            className="text-sm font-medium text-foreground"
+            dir={labelDirection}
+          >
             {item.label}
           </label>
         )}
         {item.reason.trim() ? (
-          <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
+          <p
+            className="text-sm wrap-anywhere text-muted-foreground"
+            dir={fieldDirection(item.reason, cardDirection)}
+          >
+            <BidiMarkdownText text={item.reason} />
+          </p>
         ) : null}
       </div>
       {link !== null ? (
@@ -343,6 +364,7 @@ function SecretRequestField(props: {
         data-1p-ignore
         data-lpignore="true"
         data-bwignore
+        dir={input.secret && props.value ? "ltr" : textDirection(props.value || input.placeholder)}
         placeholder={input.placeholder}
         value={props.value}
         disabled={props.disabled}
@@ -372,7 +394,11 @@ function SecretRequestField(props: {
   if (props.label === undefined) return control;
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <label htmlFor={props.id} className="text-xs font-medium text-muted-foreground">
+      <label
+        htmlFor={props.id}
+        className="text-xs font-medium text-muted-foreground"
+        dir={textDirection(props.label)}
+      >
         {props.label}
       </label>
       {control}

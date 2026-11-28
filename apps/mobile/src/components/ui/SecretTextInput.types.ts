@@ -10,6 +10,7 @@ export interface SecretTextInputProps {
   /** Receives the field's current text, so a submit never uses a stale render of it. */
   readonly onSubmitEditing: (value: string) => void;
   readonly editable: boolean;
+  readonly textDirection?: "ltr" | "rtl";
   /** False shows the text with no eye toggle, for a value such as an email. Defaults to true. */
   readonly secret?: boolean;
   /** "next" keeps the keyboard open for the following field. */

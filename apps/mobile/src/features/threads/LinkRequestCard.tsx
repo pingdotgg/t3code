@@ -22,6 +22,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { textDirection } from "@t3tools/shared/textDirection";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
@@ -40,6 +41,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 import { Sheet } from "../../components/ui/Sheet";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
@@ -142,7 +144,12 @@ function PendingLinkRequest(props: {
             : gt("Link {target} to this environment", { target: linkDestination(item.url) })}
         </Text>
         {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
+          <Text
+            className="font-sans text-sm leading-5 text-foreground-muted"
+            style={proseDirectionStyle(item.reason, textDirection(item.reason))}
+          >
+            {directionalText(item.reason)}
+          </Text>
         ) : null}
       </View>
       {error !== null ? (

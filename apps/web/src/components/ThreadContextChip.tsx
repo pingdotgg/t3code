@@ -11,6 +11,7 @@ import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { textDirection } from "~/textDirection";
 import { ThreadChipHoverCard } from "./ThreadChipHoverCard";
 import { ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { Tooltip, TooltipTrigger } from "./ui/tooltip";
@@ -72,7 +73,7 @@ export function ThreadContextChip(props: {
             ) : (
               <MessagesSquareIcon />
             )}
-            <ContextChipLabel>{title}</ContextChipLabel>
+            <ContextChipLabel dir={textDirection(title)}>{title}</ContextChipLabel>
           </ContextChip>
         }
       />
