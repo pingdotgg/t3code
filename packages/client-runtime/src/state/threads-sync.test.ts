@@ -792,7 +792,39 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "deleted",
       );
       expect(Option.isNone(state.data)).toBe(true);
-      expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+      // One HTTP check, then it parks: the old snapshot stays out and no socket opens.
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+      expect(yield* SubscriptionRef.get(resumed.subscriptionCount)).toBe(0);
+    }),
+  );
+
+  it.effect("opens a deleted thread again once the server has it back", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+          const update = deleted();
+          if (update.kind !== "event") return yield* Effect.die("Expected an event");
+          yield* Queue.offer(first.inputs, { ...update, sequence: 8 });
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 12, projection: BASE_PROJECTION },
+        },
+      });
+      yield* Queue.offer(resumed.inputs, synchronized());
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
     }),
   );
 

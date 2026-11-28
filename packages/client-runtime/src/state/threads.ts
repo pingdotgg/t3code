@@ -1078,6 +1078,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   yield* markSynchronizing;
   // A 404 can arrive before the thread exists, so a miss asks HTTP again while mounted.
   let httpMisses = 0;
+  // An import can bring a deleted thread back under its id, so a deletion kept from an
+  // earlier mount asks the server once, over HTTP, before it parks.
+  let recheckDeletion = initialState.status === "deleted";
   let defectRetries = 0;
   const backOffAfterDefect = Effect.suspend(() => {
     const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
@@ -1095,7 +1098,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* startAttempt;
         let current = yield* SubscriptionRef.get(state);
         // A delete event already cleared this thread. Park without opening the socket.
-        if (current.status === "deleted" && httpMisses === 0) {
+        if (current.status === "deleted" && httpMisses === 0 && !recheckDeletion) {
           return yield* Effect.never;
         }
 
@@ -1107,6 +1110,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // A server that pages snapshots sends the same bounded window over the
         // socket, so a cold open can skip the HTTP round trip.
         const socketOnly =
+          !recheckDeletion &&
           Option.isNone(current.data) &&
           canLoadHistory &&
           Option.exists(config, (value) => value.threadSnapshotPagination === true) &&
@@ -1133,6 +1137,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           switch (httpResult._tag) {
             case "present": {
               httpMisses = 0;
+              recheckDeletion = false;
               if (canLoadHistory && httpResult.history !== undefined) {
                 yield* Ref.set(acceptsBoundedSocketSnapshots, true);
               }
@@ -1161,6 +1166,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
+              if (recheckDeletion) {
+                recheckDeletion = false;
+                return yield* Effect.never;
+              }
               if (current.status !== "deleted") yield* setDeleted();
               // A 404 also means "not created yet". Only a delete event may outlive this mount.
               if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
@@ -1171,6 +1180,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               return yield* Effect.never;
             }
             case "unavailable": {
+              if (recheckDeletion) {
+                recheckDeletion = false;
+                return yield* Effect.never;
+              }
               break;
             }
           }
