@@ -1386,6 +1386,55 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
       );
     }),
   );
+
+  it.effect("keeps message hits in the selected projects before the limit", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const selected = ProjectId.make("project:oriole-a");
+      const busy = ProjectId.make("project:oriole-b");
+      yield* createProject(selected);
+      yield* createProject(busy);
+      const target = ThreadId.make("thread:oriole-target");
+      yield* Effect.forEach(
+        [
+          thread(target, selected, { title: "Neutral" }),
+          message(target, "oriole-target", "user", "the oriole handoff", { minute: 1 }),
+          ...Array.from({ length: 50 }, (_, index) => {
+            const busyThread = ThreadId.make(`thread:oriole-busy-${index}`);
+            return [
+              thread(busyThread, busy, { title: "Neutral" }),
+              ...Array.from({ length: 3 }, (_, hit) =>
+                message(busyThread, `oriole-busy-${index}-${hit}`, "user", "oriole handoff", {
+                  minute: 20,
+                }),
+              ),
+            ];
+          }).flat(),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const { matches } = yield* ThreadSearch.searchThreadsWithOlderSettledRows({
+        request: {
+          query: "oriole handoff",
+          olderSettledBefore: DateTime.formatIso(at(0)),
+          projectIds: [selected],
+        },
+        search: search.search,
+        searchOlderSettled: search.searchOlderSettled,
+        sql,
+        readThreads: (threadIds) =>
+          projections.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(7),
+      });
+      assert.deepEqual(
+        matches.map((match) => match.threadId),
+        [target],
+      );
+    }),
+  );
 });
 
 it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
