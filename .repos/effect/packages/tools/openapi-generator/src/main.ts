@@ -73,7 +73,9 @@ const root = Command.make("openapigen", { spec, format, name, patch }).pipe(
       onWarning: (warning) => {
         warnings.push(warning)
       }
-    })
+    }).pipe(
+      Effect.mapError((error) => new CliError.UserError({ cause: error }))
+    )
     yield* Effect.forEach(
       warnings,
       (warning) => Console.error(OpenApiGenerator.formatWarning(warning)),

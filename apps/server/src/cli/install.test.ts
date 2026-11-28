@@ -70,15 +70,36 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const onPath = yield* provide(installCli(), { PATH: `/usr/bin:${path.join(root, "bin")}/` });
       assert.isTrue(onPath.onPath);
       // Another t3 earlier on PATH still runs first, so `t3` would not run this one.
+      const binDir = path.join(root, "bin");
       const otherBin = path.join(root, "other-bin");
       yield* fs.makeDirectory(otherBin);
       yield* fs.writeFileString(path.join(otherBin, "t3"), "", { mode: 0o755 });
-      const shadowed = yield* provide(installCli(), {
-        PATH: `${otherBin}:${path.join(root, "bin")}`,
-      });
-      assert.isFalse(shadowed.onPath);
-      assert.equal(shadowed.shadowedBy, path.join(otherBin, "t3"));
-      assert.isUndefined(shadowed.pathCommand);
+      const installIn = (cwd: string, PATH: string) =>
+        provide(installCli().pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd)), {
+          PATH,
+        });
+      const assertShadowed = (result: Effect.Success<ReturnType<typeof installCli>>) => {
+        assert.isFalse(result.onPath);
+        assert.equal(result.shadowedBy, path.join(otherBin, "t3"));
+        assert.isUndefined(result.pathCommand);
+      };
+      assertShadowed(yield* provide(installCli(), { PATH: `${otherBin}:${binDir}` }));
+      // Relative and empty entries resolve against the working directory.
+      assertShadowed(yield* installIn(root, `other-bin:${binDir}`));
+      assertShadowed(yield* installIn(otherBin, `:${binDir}`));
+      // An empty PATH is not the working directory.
+      const offPath = yield* installIn(otherBin, "");
+      assert.isUndefined(offPath.shadowedBy);
+      assert.isDefined(offPath.pathCommand);
+      // A symlink to binDir, or a relative entry to it that wins first, is this install.
+      yield* fs.remove(alias);
+      yield* fs.symlink(binDir, alias);
+      for (const pathEnv of [`${alias}:${otherBin}`, `bin:other-bin:${binDir}`]) {
+        const installedOnPath = yield* installIn(root, pathEnv);
+        assert.isTrue(installedOnPath.onPath);
+        assert.isUndefined(installedOnPath.shadowedBy);
+      }
+      yield* fs.remove(alias);
       yield* fs.remove(path.join(otherBin, "t3"));
       yield* fs.makeDirectory(path.join(otherBin, "t3"));
       const directory = yield* provide(installCli(), {
@@ -212,17 +233,32 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const globalBin = path.join(root, "global-bin");
       yield* fs.makeDirectory(globalBin);
       yield* fs.writeFileString(path.join(globalBin, "t3"), "");
+      yield* fs.chmod(path.join(globalBin, "t3"), 0o755);
       yield* offer(false, { env: { PATH: globalBin } });
       assert.equal(asked, 0);
       assert.isFalse(yield* fs.exists(link));
 
-      // A runner's own .bin on PATH is not an installed t3.
+      // A directory or non-executable file named `t3` on PATH is not an installed t3.
+      const dirBin = path.join(root, "dir-bin");
+      yield* fs.makeDirectory(path.join(dirBin, "t3"), { recursive: true });
+      const nonExecBin = path.join(root, "non-exec-bin");
+      yield* fs.makeDirectory(nonExecBin);
+      yield* fs.writeFileString(path.join(nonExecBin, "t3"), "");
+      assert.isFalse(yield* offer(undefined, { env: { PATH: dirBin } }));
+      assert.equal(asked, 1);
+      assert.isFalse(yield* offer(undefined, { env: { PATH: nonExecBin } }));
+      assert.equal(asked, 2);
+      asked = 0;
+
+      // A runner's own .bin on PATH, even found through a bare launcher record, is not an installed t3.
       const npxBin = path.join(npmPackage, "../.bin");
       const pnpmBin = path.join(root, ".cache/pnpm/dlx/abc/node_modules/.bin");
       for (const bin of [npxBin, pnpmBin]) {
         yield* fs.makeDirectory(bin, { recursive: true });
         yield* fs.writeFileString(path.join(bin, "t3"), "");
+        yield* fs.chmod(path.join(bin, "t3"), 0o755);
       }
+      yield* fs.writeFileString(path.join(runtimeDir, "launchers"), "t3\n");
       assert.isFalse(yield* offer(undefined, { env: { PATH: `${npxBin}:${pnpmBin}` } }));
       assert.equal(asked, 1);
       assert.isFalse(yield* fs.exists(path.join(runtimeDir, "install-prompt-declined")));

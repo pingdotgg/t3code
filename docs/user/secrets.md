@@ -1,64 +1,27 @@
 # Secrets
 
-T3 Code can read credentials from a secret provider, so the credential stays in your password
-manager and T3 Code saves only a reference to it. Agents can also ask you for a secret in a
-private card instead of in the chat.
+Keep credentials in 1Password instead of storing raw values in T3 Code, and let agents request one-off secrets in a private card instead of chat history.
 
-The Secrets settings page is in preview and is not in every build yet. Secret requests from agents
-work everywhere.
+> Note: **Settings → Secrets** is in preview and may not appear in every build. In-thread secret request cards from agents work everywhere.
 
-## Secret providers
+## Connect 1Password
 
-1Password is the supported provider. T3 Code reads secrets with the
-[1Password CLI](https://developer.1password.com/docs/cli/) (`op`), so `op` must be installed and
-signed in on the machine that runs the T3 Code server. When you use T3 Code on another machine or
-from your phone, that is the remote machine, not the device in front of you.
+Install and sign in to the [1Password CLI](https://developer.1password.com/docs/cli/) (`op`) on the **T3 Code server machine**. On headless or remote servers, use a [1Password service account](./secrets-1password-service-account.md) or [1Password Connect](./secrets-1password-connect.md) so `op` doesn't wait for desktop approval.
 
-A desktop sign-in asks for approval on that machine, which a remote user cannot answer. On a remote
-or headless server, sign `op` in with a [service account](./secrets-1password-service-account.md) or a
-[Connect server](./secrets-1password-connect.md) instead.
+1. Open **Settings → Secrets → Add provider** (configured per environment).
+2. Enter a name and the 1Password account shorthand, sign-in address (without `https://`), or ID from `op account list`.
 
-To add one, open **Settings → Secrets**, select **Add provider**, and enter a name and the
-1Password account: the shorthand, sign-in address (without `https://`), or ID that
-`op account list` shows. Secret providers belong to the environment you are connected to. Each
-environment keeps its own list.
+## Use secret references
 
-## Use a secret reference
+Credential fields in Settings (provider env vars, source control tokens, usage keys, device host tokens) include a source picker: choose **Value** for a literal value or select your 1Password provider and paste a reference like `op://vault/item/field`.
 
-Credential fields in Settings, such as provider environment variables and credentials, source
-control tokens, usage limit keys, and device host tokens, show a source picker next to the field.
-Pick **Value** to save the credential itself, or pick a secret provider and enter a reference such
-as `op://vault/item/field`. Copy the reference from 1Password with **Copy Secret Reference**.
-Select the check button next to a reference to read it now. If it reads, providers that use it
-start using the new value.
-
-T3 Code reads the secret when it needs it, for example when a provider starts. Change the
-credential in 1Password and refresh to use the new value.
-
-## When a secret cannot be read
-
-If 1Password is locked or signed out, the provider or feature that needs the secret shows an error
-naming the secret provider. Unlock 1Password on the server's machine, then select **Refresh** in
-**Settings → Providers**. T3 Code never replaces a saved credential it cannot read with another
-login.
-
-## Remove a secret provider
-
-When you remove a secret provider in **Settings → Secrets**, T3 Code lists the fields that read
-from it. Removing it clears those fields, so set them again before you need them. The secrets in
-1Password are not touched.
+- Click the check button to verify a reference immediately.
+- T3 Code reads secrets on demand (e.g. when starting a provider). If 1Password is locked, unlock it on the server and click **Refresh** in **Settings → Providers**.
+- Removing a secret provider clears fields referencing it in T3 Code without touching 1Password.
 
 ## When an agent asks for a secret
 
-An agent that needs a token or password shows a secret request card in the thread instead of asking
-you to paste it into the chat. Type or paste the value and select **Save securely**, or select
-**Decline**. You can answer from web, desktop, or mobile.
+When an agent calls `request_secret`, T3 Code displays a private card in the thread (web, desktop, and mobile) instead of asking you to paste into chat.
 
-If the environment has a secret provider, the card also lets you pick it and enter a reference
-instead of the value. T3 Code reads the secret once, when you answer. If 1Password is locked, the
-card says so and the request stays open: unlock it and try again, or enter the value.
-
-The value never appears in the conversation. Most requests keep it from the agent too: T3 Code
-passes it to the tool that needs it. When an agent has to run a command with the value, the card
-says so instead: the value goes into a private file that the agent's commands can read for about 24
-hours.
+- Enter a value (or pick a 1Password reference if configured and permitted) and click **Save securely**, or **Decline**.
+- Values never appear in conversation history. For T3 tools, the secret is passed directly without exposing it to the agent; for shell commands, the card tells you that the value is written to a private temporary file readable by the agent's commands for ~24 hours.
