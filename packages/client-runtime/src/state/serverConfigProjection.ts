@@ -1,4 +1,5 @@
 import {
+  worstHostPressureLevel,
   applyServerProviderDeltas,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -13,14 +14,23 @@ export interface ServerConfigProjection {
 }
 
 /**
- * Published themes and usage-limit sources are current machine state, so a
- * cache could restore a set the machine no longer reports.
+ * Published themes, usage-limit sources and host pressure are current machine
+ * state, so a cache could restore a set the machine no longer reports.
  */
 export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
-  if (config.environmentThemes === undefined && config.usageLimitSources === undefined) {
+  if (
+    config.environmentThemes === undefined &&
+    config.usageLimitSources === undefined &&
+    config.hostPressure === undefined
+  ) {
     return config;
   }
-  const { environmentThemes: _themes, usageLimitSources: _sources, ...rest } = config;
+  const {
+    environmentThemes: _themes,
+    usageLimitSources: _sources,
+    hostPressure: _pressure,
+    ...rest
+  } = config;
   return rest;
 }
 
@@ -107,6 +117,12 @@ export function applyServerConfigProjection(
       const carriedSources = Option.isSome(current)
         ? current.value.config.usageLimitSources
         : undefined;
+      // A server without the event would never clear carried pressure.
+      const heldPressure = Option.isSome(current) ? current.value.config.hostPressure : undefined;
+      const carriedPressure =
+        heldPressure !== undefined && event.config.environment.capabilities.hostPressure === true
+          ? heldPressure
+          : undefined;
       const config: ServerConfig = {
         ...event.config,
         providers: withHeldProviderCatalogs(
@@ -115,6 +131,7 @@ export function applyServerConfigProjection(
         ),
         ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
         ...(carriedSources === undefined ? {} : { usageLimitSources: carriedSources }),
+        ...(carriedPressure === undefined ? {} : { hostPressure: carriedPressure }),
       };
       return Option.some({
         // Every reconnect re-sends the whole config, usually unchanged apart from timestamps.
@@ -172,6 +189,24 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "hostPressureUpdated":
+      return Option.flatMap(current, (projection) => {
+        // The same projection, so screens do not re-render, but still Some so the
+        // session records this `none` and replays it to subscribers holding a warning.
+        const calm = worstHostPressureLevel(event.payload) === "none";
+        if (calm && projection.config.hostPressure === undefined) return current;
+        const { hostPressure: _previous, ...config } = projection.config;
+        return Option.some({
+          config: calm
+            ? config
+            : {
+                ...config,
+                hostPressure: reuseUnchanged(projection.config.hostPressure, event.payload),
+              },
+          latestEvent: event,
+          source: "live",
+        });
+      });
     case "usageLimitSourcesUpdated":
       return Option.map(current, (projection) => ({
         config: {

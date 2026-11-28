@@ -3,6 +3,7 @@ import {
   ServerSettings,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  CALM_HOST_PRESSURE,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -134,5 +135,38 @@ describe("applyServerConfigProjection provider catalogs", () => {
     });
     expect(legacy.slashCommands).toBe(slashCommands);
     expect(legacy.loadedCatalogDigest).toBeUndefined();
+  });
+});
+
+describe("applyServerConfigProjection hostPressureUpdated", () => {
+  it("keeps pressure across a reconnect snapshot from a server that sends it, and drops it once pressure ends", () => {
+    const pressure = (level: "none" | "severe") =>
+      ({
+        type: "hostPressureUpdated",
+        version: 1,
+        payload: { ...CALM_HOST_PRESSURE, memory: level },
+      }) as ServerConfigStreamEvent;
+    const snapshotFrom = (hostPressure: boolean) =>
+      ({
+        type: "snapshot",
+        version: 1,
+        config: { environment: { capabilities: { hostPressure } } },
+      }) as ServerConfigStreamEvent;
+    const snapshot = snapshotFrom(true);
+    // Kept, not dropped: a session that drops it cannot replay the calm to a client still holding severe.
+    const fresh = applyServerConfigProjection(Option.none(), snapshot);
+    expect(Option.getOrThrow(applyServerConfigProjection(fresh, pressure("none")))).toBe(
+      Option.getOrThrow(fresh),
+    );
+    const severe = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), snapshot),
+      pressure("severe"),
+    );
+    const reconnected = applyServerConfigProjection(severe, snapshot);
+    expect(Option.getOrThrow(reconnected).config.hostPressure?.memory).toBe("severe");
+    const olderServer = applyServerConfigProjection(severe, snapshotFrom(false));
+    expect(Option.getOrThrow(olderServer).config.hostPressure).toBeUndefined();
+    const ended = applyServerConfigProjection(reconnected, pressure("none"));
+    expect(Option.getOrThrow(ended).config.hostPressure).toBeUndefined();
   });
 });
