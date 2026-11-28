@@ -851,6 +851,19 @@ describe("open file in preview browser", () => {
   });
 });
 
+describe("save file", () => {
+  it("offers one Save file, whether the toolbar or the preview provides it", async () => {
+    using _settings = setup();
+    state.file = { relativePath: "notes.txt", contents: "notes", byteLength: 5, truncated: false };
+    await using screen = await render(filePreview("notes.txt"));
+    await expect.element(screen.getByRole("button", { name: "Save file" })).toBeVisible();
+
+    await screen.rerender(documentPreview("mutation-1", "revision-1"));
+    await expect.element(screen.getByTestId("office-preview")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save file" }).elements()).toHaveLength(1);
+  });
+});
+
 describe("rendered Markdown select all", () => {
   it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();

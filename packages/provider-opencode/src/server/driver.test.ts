@@ -95,6 +95,7 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, 
     displayName: undefined,
     environment: [],
     enabled,
+    usageAccess: Effect.succeed(true),
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
@@ -1345,6 +1346,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       };
       const instance = yield* OpenCodeDriver.create({
         instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
+        usageAccess: Effect.succeed(true),
         displayName: undefined,
         environment: [
           {
@@ -1431,7 +1433,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("reads Go usage from a stored key when the local server has no Console workspace", () =>
+  it.effect.each([
+    { name: "reads Go usage from a stored key", usageAccess: true },
+    { name: "reads no Go key before usage access is allowed", usageAccess: false },
+  ])("$name when the local server has no Console workspace", ({ usageAccess }) =>
     Effect.gen(function* () {
       let goUsageReads = 0;
       const usageStarted = yield* Deferred.make<void>();
@@ -1476,6 +1481,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       };
       const instance = yield* OpenCodeDriver.create({
         instanceId: ProviderInstanceId.make("opencode-go-key-only"),
+        usageAccess: Effect.succeed(usageAccess),
         displayName: undefined,
         environment: [
           {
@@ -1502,6 +1508,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       yield* TestClock.adjust("5 seconds");
       const [snapshot] = Array.from(yield* Fiber.join(initial));
       assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
+      if (!usageAccess) {
+        assert.strictEqual(snapshot?.usageLimits?.needsUsageAccess, true);
+        assert.strictEqual(goUsageReads, 0);
+        return;
+      }
       assert.deepStrictEqual(
         snapshot?.usageLimits?.windows.map((window) => window.kind),
         ["session", "weekly", "monthly"],
