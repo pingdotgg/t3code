@@ -484,6 +484,20 @@ const blankNonMarkup = (html: string) => {
   return parts.join("");
 };
 
+// Offset after optional initial BOM, ASCII whitespace, and `<!-- ... -->` comments (-1 if unclosed, abrupt, or `--!>`-closed).
+export function htmlDocumentStartOffset(html: string): number {
+  let at = html.startsWith("\uFEFF") ? 1 : 0;
+  while (at < html.length) {
+    while (/[ \t\n\f\r]/.test(html.charAt(at))) at += 1;
+    if (!html.startsWith("<!--", at)) return at;
+    if (html[at + 4] === ">" || html.startsWith("->", at + 4)) return -1;
+    const end = html.indexOf("-->", at + 4);
+    if (end === -1 || html.slice(at + 4, end).includes("--!>")) return -1;
+    at = end + 3;
+  }
+  return at;
+}
+
 export function injectHtmlRenderBootstrap(html: string): string {
   const scan = blankNonMarkup(html);
   const markup = bootstrapMarkup(scan);
@@ -497,9 +511,13 @@ export function injectHtmlRenderBootstrap(html: string): string {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
-  const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
+  const start = htmlDocumentStartOffset(html);
+  // Match `<!doctype html...>` with ASCII whitespace through the first `>`; others fall through.
+  const doctypePattern = /<!doctype[ \t\n\f\r]+html(?:[ \t\n\f\r][^>]*)?>/iy;
+  if (start !== -1) doctypePattern.lastIndex = start;
+  const doctype = start === -1 ? null : doctypePattern.exec(html);
   if (doctype) {
-    const at = doctype[0].length;
+    const at = start + doctype[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;

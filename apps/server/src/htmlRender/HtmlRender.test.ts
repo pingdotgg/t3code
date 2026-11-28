@@ -345,6 +345,45 @@ describe("HtmlRender", () => {
       expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: null })).toEqual(first);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
+
+      const commented = path.join(directory, "commented.html");
+      yield* fileSystem.writeFileString(
+        commented,
+        "<!-- Generated chart -->\n<!doctype html>\n<p>Chart</p>",
+      );
+      const commentedRef = yield* htmlRender.publish({
+        threadId,
+        path: commented,
+        title: "Chart",
+        height: 300,
+      });
+      const storedCommented = yield* fileSystem.readFileString(
+        resolveAttachmentPathById({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: commentedRef.attachmentId,
+        }) ?? "",
+      );
+      expect(storedCommented).toContain("<p>Chart</p>");
+
+      const bomPrefix = '\uFEFF<!-- note -->\n<html lang="en">';
+      const bomHtml = path.join(directory, "bom.html");
+      yield* fileSystem.writeFileString(bomHtml, `${bomPrefix}<body><p>Page</p></body></html>`);
+      const bomRef = yield* htmlRender.publish({
+        threadId,
+        path: bomHtml,
+        title: "Page",
+        height: 300,
+      });
+      const storedBom = Buffer.from(
+        yield* fileSystem.readFile(
+          resolveAttachmentPathById({
+            attachmentsDir: config.attachmentsDir,
+            attachmentId: bomRef.attachmentId,
+          }) ?? "",
+        ),
+      ).toString("utf8");
+      expect(storedBom.startsWith(bomPrefix)).toBe(true);
+      expect(storedBom).toContain("<p>Page</p>");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -365,6 +404,18 @@ describe("HtmlRender", () => {
       // `mv .env renamed.html` keeps one link and an .html name; only its bytes give it away.
       const renamed = path.join(directory, "renamed.html");
       yield* fileSystem.writeFileString(renamed, "API_KEY=abc123\n");
+      const invalidMarkers: Array<string> = [];
+      for (const [name, content] of [
+        ["comment-secret.html", "<!-- note -->\nAPI_KEY=abc123\n"],
+        ["nbsp-doctype.html", "<!doctype\u00A0html><p>x</p>"],
+        ["bom-html.html", "<html\uFEFF><p>x</p>"],
+        ["unfinished-doctype.html", "<!doctype html API_KEY=abc123"],
+        ["unfinished-html.html", '<html lang="en" API_KEY=abc123'],
+      ] as const) {
+        const invalid = path.join(directory, name);
+        yield* fileSystem.writeFileString(invalid, content);
+        invalidMarkers.push(invalid);
+      }
       const folder = path.join(directory, "folder.html");
       yield* fileSystem.makeDirectory(folder);
       const internal = path.join(config.secretsDir, "page.html");
@@ -378,6 +429,7 @@ describe("HtmlRender", () => {
         secret,
         hardLinked,
         renamed,
+        ...invalidMarkers,
         folder,
         internal,
       ]) {
