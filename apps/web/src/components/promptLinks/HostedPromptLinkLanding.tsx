@@ -2,6 +2,7 @@ import {
   type LinkedPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { parseNewThreadLink, parseThreadLinkPrompt } from "@t3tools/shared/promptLinksCopy";
 import { useLocation } from "@tanstack/react-router";
@@ -87,7 +88,7 @@ function summarize(
         repository
           ? resolve(
               msg("Repository {repository}", {
-                repository: `${repository.owner}/${repository.name}`,
+                repository: promptLinkRepositoryName(repository),
               }),
             )
           : resolve(msg("No project")),
