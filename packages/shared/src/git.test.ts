@@ -224,6 +224,16 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
+  it.each(["\u2028", "\u2029"])(
+    "preserves Unicode line separators in remote urls: %j",
+    (separator) => {
+      const url = `ssh://git@forge.example/org/first${separator}last.git`;
+      for (const gap of ["\n", "\r\n", " "]) {
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = ${url}\n`)).toBe(url);
+      }
+    },
+  );
+
   it("reads settings on the remote header line", () => {
     const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
     expect(
