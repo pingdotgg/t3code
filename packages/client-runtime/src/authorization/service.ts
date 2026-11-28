@@ -7,7 +7,10 @@ import {
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
-import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
+import {
+  RelayEnvironmentConnectScope,
+  type RelayEnvironmentConnectResponse,
+} from "@t3tools/contracts/relay";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
@@ -199,6 +202,14 @@ export const make = Effect.gen(function* () {
       readonly issued: Effect.Effect<IssuedDpopToken, ConnectionAttemptError>;
     }
   >();
+  const unspentBootstraps = new Map<
+    EnvironmentId,
+    {
+      readonly identity: ClientCapabilities.CloudSessionIdentity;
+      readonly thumbprint: string;
+      readonly bootstrap: RelayEnvironmentConnectResponse;
+    }
+  >();
 
   // A route or host check hands its descriptor to the connect it leads to, once,
   // so the connect skips a round trip. Only over HTTPS or loopback: any other
@@ -381,9 +392,26 @@ export const make = Effect.gen(function* () {
       thumbprint: string,
       identity: ClientCapabilities.CloudSessionIdentity,
     ) {
-      const bootstrap = yield* obtainBootstrap(environmentId, identity);
+      yield* assertSession(identity);
+      const cached = unspentBootstraps.get(environmentId);
+      unspentBootstraps.delete(environmentId);
+      const now = yield* Clock.currentTimeMillis;
+      const bootstrap =
+        cached?.identity === identity &&
+        cached.thumbprint === thumbprint &&
+        Date.parse(cached.bootstrap.expiresAt) > now + DPOP_AUTHORIZATION_TIMEOUT_MS
+          ? cached.bootstrap
+          : yield* obtainBootstrap(environmentId, identity);
       const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        // This request uses no credential, so DNS and tunnel failures can retry the same grant.
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error._tag === "ConnectionTransientError" && error.hop === "tunnel") {
+              unspentBootstraps.set(environmentId, { identity, thumbprint, bootstrap });
+            }
+          }),
+        ),
         Effect.withSpan("environment.authorization.descriptor"),
       );
       if (descriptor.environmentId !== environmentId) {
