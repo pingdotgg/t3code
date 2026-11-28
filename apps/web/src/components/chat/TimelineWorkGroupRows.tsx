@@ -225,7 +225,6 @@ function ExpandedWorkGroupEntries({
 
   const viewedImages = useWorkGroupViewedImages(groupedEntries);
   const groupView = {
-    state: viewState,
     viewedImages,
     onToggleEntry: (collapsed: boolean, entryId: string) =>
       onToggleWorkEntry(disclosureAnchorKey, collapsed, entryId),
@@ -292,8 +291,9 @@ function ExpandedWorkGroupEntries({
   const updateExpandedContentHeight = () => {
     const state = listRef.current?.getState();
     let height = 0;
-    for (const entryId of viewState.expandedEntries) {
-      if (state?.indexByKey(entryId) === undefined) continue;
+    // Only rows the user opened grow the panel; rows open by default scroll inside its cap.
+    for (const [entryId, open] of viewState.entryExpansion) {
+      if (!open || state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
         (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,

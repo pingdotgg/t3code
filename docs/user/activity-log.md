@@ -21,6 +21,10 @@ Configure **Settings → Chat → Tool calls in chat** (web and desktop) or **Se
 
 Approvals, questions, and errors are always shown. On web and desktop, opening Find temporarily reveals hidden intermediate messages.
 
+On web and desktop, **Tool call details** in the same section starts tool call and thought rows open,
+with their output showing. Rows inside **Worked for** or a group of calls show once you open it. A
+row you open or close yourself keeps that until you reload.
+
 ## Screen reader announcements
 
 On web and desktop, configure **Settings → Chat → Screen reader announcements** to hear turn progress for the open thread (per device/browser):

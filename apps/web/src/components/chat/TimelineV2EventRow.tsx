@@ -71,8 +71,8 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   const gt = useGT();
   const m = useMessages();
   const groupId = `subagent-group:${row.id}`;
-  const [expanded, setExpanded] = useState(() =>
-    ctx.workGroupViewState.expandedEntries.has(groupId),
+  const [expanded, setExpanded] = useState(
+    () => ctx.workGroupViewState.entryExpansion.get(groupId) ?? false,
   );
   const members = (row.subagents ?? [row.projectedItem]).flatMap(({ item }) =>
     item.type === "subagent" ? [item] : [],
@@ -102,8 +102,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   );
   const toggleExpanded = (open: boolean) => {
     ctx.onToggleWorkEntry(row.id, expanded);
-    if (open) ctx.workGroupViewState.expandedEntries.add(groupId);
-    else ctx.workGroupViewState.expandedEntries.delete(groupId);
+    ctx.workGroupViewState.entryExpansion.set(groupId, open);
     setExpanded(open);
   };
   return (

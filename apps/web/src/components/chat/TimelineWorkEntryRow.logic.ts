@@ -3,6 +3,7 @@ import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
+  workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
@@ -90,6 +91,17 @@ export function workEntryRawCommand(
     return null;
   }
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
+}
+
+/** Whether a row the user has not opened or closed starts open. */
+export function workEntryStartsExpanded(
+  workEntry: TimelineWorkEntry,
+  expandedByDefault: boolean,
+): boolean {
+  if (!expandedByDefault || workEntry.questionAnswer) return false;
+  // Viewed images already show in the group's strip; a thought has nothing to show until it has text.
+  if (workEntryViewedImagePath(workEntry) !== null) return false;
+  return workEntry.itemType !== "reasoning" || /\S/.test(workEntry.detail ?? "");
 }
 
 export function buildToolCallExpandedBody(
