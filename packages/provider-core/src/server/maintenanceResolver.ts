@@ -82,6 +82,8 @@ export type ProviderMaintenanceResolverServices =
   | ChildProcessSpawner.ChildProcessSpawner;
 
 export interface ProviderMaintenanceCapabilitiesResolver {
+  /** Scripts this resolver launches through an interpreter instead of the OS. */
+  readonly windowsScriptExtensions?: ReadonlyArray<string>;
   readonly resolve: (
     context: ProviderMaintenanceResolutionContext | null,
   ) => Effect.Effect<ProviderMaintenanceCapabilities, never, ProviderMaintenanceResolverServices>;
@@ -1399,7 +1401,13 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     }
 
     const env = options?.env ?? (yield* readCommandLookupEnv);
-    const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
+    const platform = yield* HostProcess.Platform;
+    const scriptExtension = resolver.windowsScriptExtensions?.find((extension) =>
+      binaryPath.toLowerCase().endsWith(extension),
+    );
+    const lookupEnv =
+      platform === "win32" && scriptExtension ? { ...env, PATHEXT: scriptExtension } : env;
+    const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env: lookupEnv });
     if (!resolvedCommandPath) {
       return yield* resolver.resolve(null);
     }
@@ -1416,7 +1424,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
       resolvedCommandPath,
       realCommandPath,
       env,
-      platform: yield* HostProcess.Platform,
+      platform,
     });
   },
   (effect, _resolver, options) =>
