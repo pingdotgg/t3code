@@ -1,3 +1,6 @@
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
@@ -38,5 +41,20 @@ describe("a leading byte-order mark", () => {
       "Intro text\n\n| a | c |\n|---|---|\n| [./a|b.ts](<./a|b.ts>) | b |",
     );
     expect(render(`${BOM}${markdown}`)).toBe(`${BOM}${render(markdown)}`);
+  });
+});
+
+describe("single tildes", () => {
+  // md4c's strikethrough, like remark-gfm's default, closes a run on a single `~`.
+  const nativeDocument = (markdown: string) =>
+    JSON.stringify(unified().use(remarkParse).use(remarkGfm).parse(render(markdown)));
+
+  it("reach the native renderer as literal text", () => {
+    const document = nativeDocument("Around 10~20ms (about 80~90%), under com~apple~CloudDocs.");
+    expect(document).not.toContain('"type":"delete"');
+  });
+
+  it("leave double-tilde strikethrough alone", () => {
+    expect(nativeDocument("Drop ~~old~~ now")).toContain('"type":"delete"');
   });
 });
