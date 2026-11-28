@@ -285,7 +285,7 @@ export const ChatHeader = memo(function ChatHeader({
                     type="button"
                     aria-label={gt("Open {bot}", { bot: workerOfBot.title })}
                     onClick={() => onOpenThread(workerOfBot.id)}
-                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   />
                 }
                 label={gt("Open {bot}", { bot: workerOfBot.title })}
@@ -294,7 +294,8 @@ export const ChatHeader = memo(function ChatHeader({
                   threadId={workerOfBot.id}
                   choice={workerOfBot.botConfig?.avatar}
                   state="idle"
-                  size={16}
+                  // Matches the Bot's own header, so its name stays put when a worker is appended.
+                  size={22}
                 />
                 <MiddleTruncate
                   data-slot="workspace-breadcrumb-text"
