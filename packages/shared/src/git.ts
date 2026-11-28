@@ -168,11 +168,10 @@ export function parseGitRemoteRepository(
     try {
       // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
-      const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
-        .split("/")
-        .filter((segment) => segment.length > 0);
+      const path = dropSuffix(canonicalRepositoryPath(url.pathname.replace(/\/+$/, "")));
+      const repositorySegments = path.split("/").filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
-        return { host: url.hostname, path: canonicalRepositoryPath(repositorySegments.join("/")) };
+        return { host: url.hostname, path: repositorySegments.join("/") };
       }
     } catch {
       return null;
