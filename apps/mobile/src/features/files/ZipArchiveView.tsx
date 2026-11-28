@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
@@ -139,11 +140,16 @@ async function readArchiveBody(
   return bytes.buffer;
 }
 
-async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
+async function openArchive(bytes: ArrayBuffer, signal: AbortSignal, password?: string) {
   let files: Awaited<ReturnType<typeof boundedZip>>;
   try {
-    files = await boundedZip(bytes);
+    files = await boundedZip(bytes, ARCHIVE_MAX_BYTES, { password, signal });
   } catch (cause) {
+    if (
+      isZipError(cause) &&
+      (cause.code === "password-required" || cause.code === "password-incorrect")
+    )
+      return { status: "locked", bytes, incorrect: cause.code === "password-incorrect" } as const;
     throw new ZipFailureError({
       failure: {
         title: msg("Couldn't browse this ZIP"),
@@ -171,12 +177,16 @@ async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
       bytes: file.bytes,
     };
   });
-  return { entries, fileCount: entries.filter((entry) => !entry.isDirectory).length };
+  const archive: ZipArchive = {
+    entries,
+    fileCount: entries.filter((entry) => !entry.isDirectory).length,
+  };
+  return { status: "ready", archive } as const;
 }
 
 type ArchiveState =
   | { readonly status: "loading"; readonly receivedBytes: number; readonly timeLeft: string | null }
-  | { readonly status: "ready"; readonly archive: ZipArchive }
+  | Awaited<ReturnType<typeof openArchive>>
   | { readonly status: "failed"; readonly failure: ZipFailure };
 
 function useZipArchive(input: {
@@ -208,7 +218,7 @@ function useZipArchive(input: {
       if (isLocal) {
         const file = new File(uri);
         if ((file.size ?? 0) > ARCHIVE_MAX_BYTES) throw new ZipFailureError({ failure: TOO_LARGE });
-        return openArchive(await file.arrayBuffer());
+        return openArchive(await file.arrayBuffer(), abort.signal);
       }
       const url = (await refresh()) ?? uri;
       const response = await fetch(url, { signal: abort.signal });
@@ -225,10 +235,10 @@ function useZipArchive(input: {
         }),
       );
       abort.signal.throwIfAborted();
-      return openArchive(bytes);
+      return openArchive(bytes, abort.signal);
     })()
-      .then((archive) => {
-        if (!abort.signal.aborted) setState({ status: "ready", archive });
+      .then((result) => {
+        if (!abort.signal.aborted) setState(result);
       })
       .catch((cause: unknown) => {
         if (!abort.signal.aborted)
@@ -242,6 +252,23 @@ function useZipArchive(input: {
   }, [uri, isLocal, sizeBytes, revision]);
   return {
     state,
+    unlock: (password: string) => {
+      const signal = controller.current?.signal;
+      if (state.status !== "locked" || !signal || signal.aborted) return;
+      setState({ status: "loading", receivedBytes: 0, timeLeft: null });
+      void openArchive(state.bytes, signal, password).then(
+        (result) => {
+          if (!signal.aborted) setState(result);
+        },
+        (cause: unknown) => {
+          if (!signal.aborted)
+            setState({
+              status: "failed",
+              failure: isZipFailureError(cause) ? cause.failure : NETWORK,
+            });
+        },
+      );
+    },
     retry: () => setRevision((value) => value + 1),
     cancel: () => {
       controller.current?.abort();
@@ -267,7 +294,7 @@ function ZipTreeRowView(props: {
       accessibilityLabel={entry ? entry.path : gt("{path} folder", { path: node.path })}
       accessibilityState={entry ? undefined : { expanded: !props.collapsed }}
       onPress={() => (entry ? props.onOpen(entry) : props.onToggle(node.path))}
-      className="mx-2 h-11 flex-row items-center gap-1.5 rounded-lg pr-2.5 active:bg-subtle"
+      className="mx-2 min-h-[44px] flex-row items-center gap-1.5 rounded-lg pr-2.5 active:bg-subtle android:min-h-[48px]"
       style={{ paddingLeft: 8 + depth * 18 }}
     >
       <View className="w-4 items-center">
@@ -520,7 +547,7 @@ export function ZipArchiveView(props: {
   readonly onSave: () => void;
   readonly onRemove: (() => void) | null;
 }) {
-  const { state, retry, cancel } = useZipArchive(props);
+  const { state, unlock, retry, cancel } = useZipArchive(props);
   const gt = useGT();
   const messages = useMessages();
   const [selection, setSelection] = useState<{
@@ -578,6 +605,8 @@ export function ZipArchiveView(props: {
                 onCancel={cancel}
               />
             )
+          ) : state.status === "locked" ? (
+            <FilePasswordPrompt incorrect={state.incorrect} onSubmit={unlock} />
           ) : (
             <ZipArchiveFailure failure={state.failure} onRetry={retry} onSave={props.onSave} />
           )}

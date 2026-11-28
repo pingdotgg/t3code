@@ -102,7 +102,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         const notifications =
           yield* Deferred.make<ReadonlyArray<AcpProtocol.AcpIncomingNotification>>();
         yield* transport.incoming.pipe(
-          Stream.take(2),
+          Stream.take(3),
           Stream.runCollect,
           Effect.flatMap((notificationChunk) => Deferred.succeed(notifications, notificationChunk)),
           Effect.forkScoped,
@@ -143,8 +143,29 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         });
 
+        const commandResult = {
+          exit_code: null,
+          signal: null,
+          timed_out: false,
+          termination_indeterminate: true,
+        };
+        const cancelledToolFrame = encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "cancelled-tool",
+                status: "failed",
+                command_result: commandResult,
+              },
+            },
+          })}\n`,
+        );
         // Frames split across reads, with one read ending one frame and starting the next.
-        const wire = new Uint8Array([...updateFrame, ...completionFrame]);
+        const wire = new Uint8Array([...updateFrame, ...completionFrame, ...cancelledToolFrame]);
         const splits = [10, updateFrame.length + 10, wire.length];
         let start = 0;
         for (const end of splits) {
@@ -152,9 +173,18 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           start = end;
         }
 
-        const [update, completion] = yield* Deferred.await(notifications);
+        const [update, completion, cancelledTool] = yield* Deferred.await(notifications);
         assert.equal(update?._tag, "SessionUpdate");
         assert.equal(completion?._tag, "ElicitationComplete");
+        assert.deepEqual(cancelledTool?.params, {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "cancelled-tool",
+            status: "failed",
+            command_result: commandResult,
+          },
+        });
       }),
   );
 
@@ -364,6 +394,55 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         retained,
         Array.from({ length: 32 }, (_, index) => index),
       );
+    }),
+  );
+
+  it.effect("hands a notification that fails to decode to its handler before the next one", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const seen: Array<unknown> = [];
+      const done = yield* Deferred.make<void>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onUndecodableNotification: (method, payload) =>
+          Effect.sync(() => {
+            seen.push({ undecodable: method, payload });
+          }).pipe(
+            // A handler that dies is isolated like any other notification handler.
+            Effect.andThen(Effect.die("handler defect")),
+          ),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            seen.push({ decoded: notification.params });
+          }).pipe(Effect.andThen(Deferred.succeed(done, undefined))),
+      });
+      const send = (params: unknown) =>
+        Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "session/update", params })}\n`,
+          ),
+        );
+      const unreadable = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          locations: [{ path: "/work/a.ts" }, { path: 7 }],
+        },
+      };
+      const readable = {
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed" },
+      };
+      yield* send(unreadable);
+      yield* send(readable);
+      yield* TestClock.withLive(Deferred.await(done).pipe(Effect.timeout("2 seconds")));
+      assert.deepEqual(seen, [
+        { undecodable: "session/update", payload: unreadable },
+        { decoded: readable },
+      ]);
     }),
   );
 

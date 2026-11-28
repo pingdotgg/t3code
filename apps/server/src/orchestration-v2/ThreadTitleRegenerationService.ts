@@ -58,6 +58,11 @@ type Outcome =
 const MAX_FAILURE_MESSAGE_LENGTH = 300;
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+// An auth, permission or quota refusal fails the same way on every attempt.
+const PROVIDER_REFUSAL = /\b(?:40[13]|forbidden|unauthori[sz]ed|quota|usage limit)\b/iu;
+
+const isRetryableFailure = (error: unknown) =>
+  !(isTextGenerationError(error) && PROVIDER_REFUSAL.test(error.detail));
 
 function failureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -69,9 +74,11 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
     : [];
   const detail = lines.at(-1);
   if (detail === undefined) return "Title generation failed.";
-  return detail.length > MAX_FAILURE_MESSAGE_LENGTH
-    ? `${detail.slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)}…`
-    : detail;
+  if (detail.length <= MAX_FAILURE_MESSAGE_LENGTH) return detail;
+  const keep = MAX_FAILURE_MESSAGE_LENGTH - 1;
+  const last = detail.charCodeAt(keep - 1);
+  const end = keep - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  return `${detail.slice(0, end)}…`;
 }
 
 const make = Effect.gen(function* () {
@@ -238,6 +245,7 @@ const make = Effect.gen(function* () {
       Effect.retry({
         times: input.kind.type === "initial" ? 2 : 0,
         schedule: Schedule.exponential("2 seconds"),
+        while: isRetryableFailure,
       }),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

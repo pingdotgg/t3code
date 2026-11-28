@@ -264,9 +264,22 @@ export function createFileMetadataAtoms<R, E>(
     if (isCurrent && !isCurrent(session.value)) return;
     for (const entry of entries) {
       const path = resolveWorkspaceFilePath(entry.path, cwd);
-      const previous = knownEntry(session.value, path, now);
-      if (previous?.value?.kind === entry.kind) continue;
-      remember(session.value, path, { kind: entry.kind }, now, true);
+      if (entry.kind === "directory") {
+        if (knownEntry(session.value, path, now)?.value?.kind !== "directory")
+          remember(session.value, path, { kind: "directory" }, now, true);
+        continue;
+      }
+
+      // A file listing can invalidate the cached kind but only a stat supplies full metadata.
+      const key = normalizeProjectPathForComparison(path);
+      const cached = cache.get(session.value);
+      if (cached?.get(key)?.value?.kind === "file") continue;
+      cached?.delete(key);
+      for (const thread of retainedThreads.values()) {
+        const retained = thread.sessions.get(session.value);
+        const previous = retained?.get(key);
+        if (previous && previous.value?.kind !== "file") retained?.delete(key);
+      }
     }
   });
 

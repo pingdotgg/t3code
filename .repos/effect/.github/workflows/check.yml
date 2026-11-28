@@ -51,15 +51,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # CI type checks with the official compiler; `pnpm check` runs tsrs locally.
           - name: Check
             deno: ""
-            command: pnpm check
+            command: pnpm check-tsc
           - name: Deno
             deno: v2.9.6
             command: deno check .
           - name: Tests
             deno: ""
             command: pnpm test-types --target '>=5.9'
+          - name: Alchemy
+            deno: ""
+            command: pnpm exec tsc -b packages/platform/cloudflare/tsconfig.alchemy.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install dependencies
@@ -160,7 +164,8 @@ jobs:
             node: ""
             deno: ""
             bun: ""
-            command: pnpm test --max-concurrency=10
+            # The full suite exceeds Node's default ~2 GiB heap on this runner.
+            command: NODE_OPTIONS=--max-old-space-size=4096 pnpm test --max-concurrency=10
           # Node 25 and older handle upgrade request bodies differently.
           - runtime: Node 24 (platform-node)
             node: 24
@@ -170,10 +175,12 @@ jobs:
           - runtime: Deno
             deno: v2.9.6
             bun: ""
+            pg-lifecycle: true
             command: deno task test --max-concurrency=10
           - runtime: Bun
             deno: ""
             bun: 1.4.0
+            pg-lifecycle: true
             command: bun run --bun vitest run --max-concurrency=10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -195,10 +202,10 @@ jobs:
           deno-version: ${{ matrix.deno }}
           bun-version: ${{ matrix.bun }}
       - name: Test
-        if: matrix.runtime != 'Deno'
+        if: ${{ !matrix.pg-lifecycle }}
         run: ${{ matrix.command }}
       - name: Test with PostgreSQL lifecycle capture
-        if: matrix.runtime == 'Deno'
+        if: matrix.pg-lifecycle
         shell: bash
         env:
           PG_LIFECYCLE_DIAGNOSTICS: "1"
@@ -222,10 +229,10 @@ jobs:
           trap 'exit 143' TERM
           ${{ matrix.command }} 2>&1 | tee "$capture_dir/tests.log"
       - name: Upload PostgreSQL lifecycle diagnostics
-        if: always() && matrix.runtime == 'Deno' && (failure() || cancelled())
+        if: always() && matrix.pg-lifecycle && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: deno-pg-lifecycle-${{ github.run_attempt }}
+          name: ${{ matrix.runtime }}-pg-lifecycle-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pg-lifecycle
           if-no-files-found: warn
 

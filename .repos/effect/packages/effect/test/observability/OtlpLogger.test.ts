@@ -1,18 +1,18 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Clock, Effect, Layer, Tracer } from "effect"
+import { Cause, Clock, Effect, Layer, Logger, Tracer } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import type { HttpClientError, HttpClientRequest } from "effect/http"
 import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
 import { TestClock } from "effect/testing"
 import * as Version from "effect/Version"
 
-const capture = () => {
+const capture = (status = 200) => {
   const requests: Array<HttpClientRequest.HttpClientRequest> = []
   const httpClient = HttpClient.makeWith(
     Effect.fnUntraced(function*(requestEffect) {
       const request = yield* requestEffect
       requests.push(request)
-      return HttpClientResponse.fromWeb(request, new Response())
+      return HttpClientResponse.fromWeb(request, new Response(null, { status }))
     }),
     Effect.succeed as HttpClient.HttpClient.Preprocess<HttpClientError.HttpClientError, never>
   )
@@ -46,6 +46,37 @@ const attributesOf = (request: HttpClientRequest.HttpClientRequest) =>
   )
 
 describe("OtlpLogger", () => {
+  it.effect("warns once when a rejected batch disables log export", () => {
+    const { httpClient, requests } = capture(400)
+    let warnings = 0
+    const observer = Logger.make(({ logLevel }) => {
+      if (logLevel === "Warn") warnings++
+    })
+    return Effect.gen(function*() {
+      const { flush } = yield* OtlpExporter.Flusher
+      yield* Effect.logInfo("first batch")
+      yield* flush
+      assert.strictEqual(warnings, 1)
+
+      yield* TestClock.adjust("60 seconds")
+      yield* flush
+      assert.lengthOf(requests, 1)
+    }).pipe(
+      Effect.provide(
+        OtlpLogger.layer({
+          url: "http://localhost:4318/v1/logs",
+          resource: { serviceName: "test", serviceVersion: "service-version" },
+          exportInterval: "1 hour",
+          mergeWithExisting: true
+        }).pipe(
+          Layer.provide(OtlpSerialization.layerJson),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient))
+        )
+      ),
+      Effect.provide(Logger.layer([observer], { mergeWithExisting: false }))
+    )
+  })
+
   it.effect("keeps event time separate from observed time", () => {
     const { httpClient, requests } = capture()
     return Effect.scoped(Effect.gen(function*() {
@@ -121,6 +152,40 @@ describe("OtlpLogger", () => {
       yield* (yield* OtlpExporter.Flusher).flush
 
       assert.strictEqual(logRecordOf(requests[0]).traceId, "0000000000000000463ac35c9f6413ad")
+    }).pipe(Effect.provide(makeTestLayer(httpClient)))
+  })
+
+  it.effect("correlates logs with the nearest span that allows propagation", () => {
+    const { httpClient, requests } = capture()
+    return Effect.gen(function*() {
+      const logs = Effect.all([
+        Effect.log("tracing disabled").pipe(
+          Effect.withSpan("disabled"),
+          Effect.withTracerEnabled(false)
+        ),
+        Effect.log("propagation disabled").pipe(
+          Effect.withSpan("disabled", { annotations: Tracer.DisablePropagation.context(true) })
+        )
+      ])
+      yield* logs
+      const unsampled = Tracer.externalSpan({
+        traceId: "80f198ee56343ba864fe8b2a57d3eff7",
+        spanId: "0020000000000001",
+        sampled: false
+      })
+      yield* logs.pipe(Effect.withParentSpan(unsampled))
+      yield* (yield* OtlpExporter.Flusher).flush
+
+      const records = bodyOf(requests[0]).resourceLogs[0].scopeLogs[0].logRecords
+      assert.deepStrictEqual(
+        records.map((record: { traceId?: string; spanId?: string }) => [record.traceId, record.spanId]),
+        [
+          [undefined, undefined],
+          [undefined, undefined],
+          ["80f198ee56343ba864fe8b2a57d3eff7", "0020000000000001"],
+          ["80f198ee56343ba864fe8b2a57d3eff7", "0020000000000001"]
+        ]
+      )
     }).pipe(Effect.provide(makeTestLayer(httpClient)))
   })
 })

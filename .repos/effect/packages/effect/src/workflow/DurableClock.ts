@@ -64,6 +64,25 @@ const InstanceTag = Context.Service<
 )
 
 /**
+ * Context reference containing the default `inMemoryThreshold` used by
+ * {@link sleep} when the option is not passed.
+ *
+ * **Details**
+ *
+ * Workflow engines whose timers are always durable (for example the Cloudflare
+ * Durable Object engine) provide `Duration.zero` so every `sleep` without an
+ * explicit `inMemoryThreshold` schedules a durable clock.
+ *
+ * @stability unstable
+ * @category services
+ * @since 4.1.3
+ */
+export const InMemoryThreshold = Context.Reference<Duration.Duration>(
+  "effect/workflow/DurableClock/InMemoryThreshold",
+  { defaultValue: () => Duration.seconds(60) }
+)
+
+/**
  * Waits inside a workflow, using an in-memory activity for durations at or
  * below the threshold and scheduling a durable clock for longer durations.
  *
@@ -99,7 +118,7 @@ export const sleep: (
 
   const inMemoryThreshold = options.inMemoryThreshold !== undefined
     ? Duration.fromInputUnsafe(options.inMemoryThreshold)
-    : defaultInMemoryThreshold
+    : yield* InMemoryThreshold
 
   if (Duration.isLessThanOrEqualTo(duration, inMemoryThreshold)) {
     return yield* Activity.make({
@@ -117,5 +136,3 @@ export const sleep: (
   })
   return yield* DurableDeferred.await(clock.deferred)
 })
-
-const defaultInMemoryThreshold = Duration.seconds(60)

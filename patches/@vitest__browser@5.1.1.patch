@@ -1,0 +1,49 @@
+diff --git a/dist/client.js b/dist/client.js
+index c0c541c3a29c412eb98e5e9128e1633150ccbd91..0de1aa8021c30c97bf72afdd8480f5de1aff611b 100644
+--- a/dist/client.js
++++ b/dist/client.js
+@@ -446,20 +446,32 @@ function createClient() {
+ 		ctx.ws = new WebSocket(ENTRY_URL);
+ 		registerWS();
+ 	}
++	// One pending promise spans every reconnect attempt, so a caller already waiting on a
++	// socket that closed before opening resolves when a later attempt opens.
++	let resolveOpen;
++	let openSettled = true;
+ 	function registerWS() {
+-		openPromise = new Promise((resolve, reject) => {
+-			const timeout = setTimeout(() => {
+-				reject(new Error(`Cannot connect to the server in ${connectTimeout / 1e3} seconds`));
+-			}, connectTimeout);
+-			if (ctx.ws.OPEN === ctx.ws.readyState) {
+-				resolve();
+-			}
+-			// still have a listener even if it's already open to update tries
+-			ctx.ws.addEventListener("open", () => {
+-				tries = reconnectTries;
+-				resolve();
+-				clearTimeout(timeout);
++		if (openSettled) {
++			openSettled = false;
++			openPromise = new Promise((resolve, reject) => {
++				const timeout = setTimeout(() => {
++					openSettled = true;
++					reject(new Error(`Cannot connect to the server in ${connectTimeout / 1e3} seconds`));
++				}, connectTimeout);
++				resolveOpen = () => {
++					openSettled = true;
++					clearTimeout(timeout);
++					resolve();
++				};
+ 			});
++		}
++		if (ctx.ws.OPEN === ctx.ws.readyState) {
++			resolveOpen();
++		}
++		// still have a listener even if it's already open to update tries
++		ctx.ws.addEventListener("open", () => {
++			tries = reconnectTries;
++			resolveOpen();
+ 		});
+ 		ctx.ws.addEventListener("message", (v) => {
+ 			onMessage(v.data);

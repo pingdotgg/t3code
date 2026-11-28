@@ -95,6 +95,14 @@ describe("BunHttpPlatform", { concurrent: false }, () => {
       )
     }).pipe(Effect.provide(BunHttpPlatform.layer)))
 
+  it.effect("fileWebResponse looks up the content type from the name when File.type is empty", () =>
+    Effect.gen(function*() {
+      const platform = yield* HttpPlatform.HttpPlatform
+      const response = yield* platform.fileWebResponse(new File(["<h1>Effect</h1>"], "INDEX.HTML"))
+
+      assert.strictEqual(response.headers["content-type"], "text/html")
+    }).pipe(Effect.provide(BunHttpPlatform.layer)))
+
   it.effect("fileResponse supports exact and empty ranges", () =>
     Effect.gen(function*() {
       const platform = yield* HttpPlatform.HttpPlatform

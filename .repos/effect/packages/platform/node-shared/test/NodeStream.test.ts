@@ -492,4 +492,25 @@ describe("Stream", () => {
       assert.strictEqual(error, "maxBytes exceeded")
       assert.isTrue(stream.destroyed)
     }))
+
+  it.effect("toArrayBuffer encodes strings from a stream that already decodes", () =>
+    Effect.gen(function*() {
+      const stream = Readable.from([Buffer.from([0x63, 0x61, 0x66, 0xe9])], { objectMode: false })
+      stream.setEncoding("latin1")
+      const buffer = yield* NodeStream.toArrayBuffer(() => stream)
+
+      assert.deepStrictEqual(new Uint8Array(buffer), new Uint8Array([0x63, 0x61, 0x66, 0xe9]))
+    }))
+
+  it.effect("toArrayBuffer limits string chunks by their UTF-8 length", () =>
+    Effect.gen(function*() {
+      const chunks = () => Readable.from(["ca", Buffer.from("f"), "é"])
+      const buffer = yield* NodeStream.toArrayBuffer(chunks, { maxBytes: 5 })
+      const error = yield* NodeStream.toArrayBuffer(chunks, { maxBytes: 4, onError: (error) => error }).pipe(
+        Effect.flip
+      )
+
+      assert.deepStrictEqual(new Uint8Array(buffer), new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9]))
+      assert.instanceOf(error, NodeStream.MaxBytesError)
+    }))
 })

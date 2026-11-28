@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   formatChatTimestampTooltip,
+  formatDateTimeTimestamp,
   formatDayAwareTimestamp,
   formatUpcomingTimestamp,
 } from "./timestampFormat";
@@ -17,6 +18,32 @@ function useTimeZone(timeZone: string): Disposable {
     },
   };
 }
+
+it("writes full timestamps in the system locale", async () => {
+  using _zone = useTimeZone("UTC");
+  vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "de-DE" } });
+  vi.resetModules();
+  try {
+    const { formatFullTimestamp } = await import("./timestampFormat");
+    expect(formatFullTimestamp("2026-11-19T18:05:00.000Z", "24-hour")).toBe("19.11.2026, 18:05:00");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("localizes the day period while honoring the system clock and explicit 24-hour mode", async () => {
+  using _zone = useTimeZone("UTC");
+  vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-US" } });
+  vi.resetModules();
+  try {
+    const { formatShortTimestamp } = await import("./timestampFormat");
+    const date = "2026-11-19T18:05:00.000Z";
+    expect(formatShortTimestamp(date, "locale", "zh")).toBe("下午6:05");
+    expect(formatShortTimestamp(date, "24-hour", "zh")).toBe("18:05");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 describe("timestamps in an explicit time zone", () => {
   // 23:00 UTC on July 1 is 7 PM on July 1 in New York, whatever the host zone.
@@ -71,6 +98,22 @@ describe("timestamps after the system time zone changes", () => {
       timeIn(sameDay, "Asia/Bangkok"),
       `${dayIn(earlierInWeek, "Asia/Bangkok")} ${timeIn(earlierInWeek, "Asia/Bangkok")}`,
     ]);
+  });
+
+  it("renders date and time labels in the new zone", () => {
+    const iso = "2026-11-07T04:45:00.000Z";
+    const dateTimeIn = (timeZone: string) =>
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        hour12: true,
+        timeZone,
+      }).format(new Date(iso));
+    using _zone = useTimeZone("America/New_York");
+    expect(formatDateTimeTimestamp(iso, "12-hour")).toBe(dateTimeIn("America/New_York"));
+
+    process.env.TZ = "Asia/Bangkok";
+    expect(formatDateTimeTimestamp(iso, "12-hour")).toBe(dateTimeIn("Asia/Bangkok"));
   });
 
   it("renders the tooltip in the new zone", () => {
