@@ -94,6 +94,7 @@ const LAUNCH_CONFIG_FIELDS = [
   "launchArgs",
   "homePath",
   "shadowHomePath",
+  "dedicatedHome",
   "commandPath",
   "commandArgs",
   "serverUrl",
@@ -196,7 +197,7 @@ const HOME_VARIABLES: ReadonlyMap<
   [ProviderDriverKind.make("claudeAgent"), { variable: "CLAUDE_CONFIG_DIR", fields: ["homePath"] }],
   [
     ProviderDriverKind.make("codex"),
-    { variable: "CODEX_HOME", fields: ["homePath", "shadowHomePath"] },
+    { variable: "CODEX_HOME", fields: ["homePath", "shadowHomePath", "dedicatedHome"] },
   ],
 ]);
 

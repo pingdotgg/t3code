@@ -20,11 +20,14 @@ import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
-  providerAuthQuery: null as unknown,
+  config: null as unknown as Atom.Writable<unknown>,
+  providerAuthQuery: null as unknown as Atom.Writable<AsyncResult.AsyncResult<ProviderAuthState>>,
   providerAuth: null as ProviderAuthState | null,
   settings: null as unknown as UnifiedSettings,
   canManageProviders: true,
   canWriteSettings: true,
+  canOperateTerminal: true,
+  httpBaseUrl: "https://remote.example.test",
   searchTargetId: null as string | null,
   readEnvironmentIds: [] as string[],
   updateEnvironmentIds: [] as string[],
@@ -37,6 +40,10 @@ const state = vi.hoisted(() => ({
   updateModelPreferences: vi.fn(),
   toggleFavorite: vi.fn(),
   mutateProviderInstance: vi.fn(),
+  startAuth: vi.fn(),
+  openTerminal: vi.fn(),
+  writeTerminal: vi.fn(),
+  closeTerminal: vi.fn(),
   confirm: vi.fn<() => Promise<boolean>>(),
 }));
 
@@ -45,11 +52,13 @@ vi.mock(import("../../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const providers = Atom.make<ReadonlyArray<ServerProvider>>([]).pipe(Atom.keepAlive);
   state.providers = providers;
-  const config = Atom.make(null);
-  const providerAuth = Atom.make(null);
+  const config = Atom.make<unknown>(null).pipe(Atom.keepAlive);
+  state.config = config;
+  const providerAuth = Atom.make<AsyncResult.AsyncResult<ProviderAuthState>>(AsyncResult.initial());
   state.providerAuthQuery = providerAuth;
   const commandLabels = {
     refreshProviders: "refresh",
+    startProviderAuth: "start-auth",
     updateProvider: "update",
     uninstallAcpRegistryManagedBinary: "uninstall",
     acceptAcpRegistryUrlAuth: "accept-url-auth",
@@ -77,9 +86,13 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   useAtomCommand: ((command: { label?: string }) =>
     ({
       refresh: state.refresh,
+      "start-auth": state.startAuth,
       update: state.updateProvider,
       uninstall: state.uninstall,
       "accept-url-auth": state.acceptUrlAuth,
+      "test-terminal-open": state.openTerminal,
+      "test-terminal-write": state.writeTerminal,
+      "test-terminal-close": state.closeTerminal,
     })[command.label ?? ""] ?? vi.fn()) as never,
 }));
 vi.mock(import("~/localApi"), async (original) => {
@@ -123,13 +136,36 @@ vi.mock(import("../../state/session"), async (original) => {
       ? state.canManageProviders
       : requested === "settings:write"
         ? state.canWriteSettings
-        : requested === "orchestration:read");
+        : requested === "terminal:operate"
+          ? state.canOperateTerminal
+          : requested === "orchestration:read");
   return {
     ...(await original()),
     useEnvironmentScope: scope as never,
     readEnvironmentScope: scope as never,
+    readPreparedConnection: (() => ({ httpBaseUrl: state.httpBaseUrl })) as never,
   };
 });
+vi.mock(import("../../state/terminal"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    terminalEnvironment: {
+      ...actual.terminalEnvironment,
+      open: { label: "test-terminal-open" },
+      write: { label: "test-terminal-write" },
+      close: { label: "test-terminal-close" },
+    } as never,
+  };
+});
+vi.mock(import("../../state/terminalSessions"), async (original) => ({
+  ...(await original()),
+  useThreadRunningTerminalIds: () => [],
+}));
+vi.mock(import("../ThreadTerminalDrawer"), async (original) => ({
+  ...(await original()),
+  TerminalViewport: () => <div />,
+}));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => []) as never,
@@ -232,6 +268,8 @@ async function setup() {
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.canManageProviders = true;
   state.canWriteSettings = true;
+  state.canOperateTerminal = true;
+  state.httpBaseUrl = "https://remote.example.test";
   state.searchTargetId = null;
   state.providerAuth = null;
   state.readEnvironmentIds = [];
@@ -241,12 +279,19 @@ async function setup() {
   state.updateModelPreferences.mockReset();
   state.toggleFavorite.mockReset();
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success({}));
+  state.openTerminal.mockReset().mockResolvedValue(AsyncResult.success({}));
+  state.writeTerminal.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.closeTerminal.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.confirm.mockReset().mockResolvedValue(false);
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateProvider.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.acceptUrlAuth.mockReset().mockResolvedValue(AsyncResult.success({ accepted: true }));
   await setProviders([]);
+  await act(() => {
+    appAtomRegistry.set(state.config, null);
+    appAtomRegistry.set(state.providerAuthQuery, AsyncResult.initial());
+  });
 }
 
 describe("EnvironmentProviderSettings routing", () => {
@@ -418,6 +463,151 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+
+  it.each(["existing", "managed"] as const)(
+    "offers a dedicated home for %s Codex and saves it on the selected environment",
+    async (setupMode) => {
+      await setup();
+      const codex = ProviderDriverKind.make("codex");
+      const config = { setupMode, homePath: "/codex/custom", shadowHomePath: "/codex/shadow" };
+      const stored = (dedicatedHome = false) => ({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [codexId]: {
+            driver: codex,
+            config: dedicatedHome ? { ...config, dedicatedHome } : config,
+          },
+        },
+      });
+      state.settings = stored();
+      await setProviders([provider()]);
+      const settingsPanel = () => panel({ targetInstanceId: codexId });
+      await using screen = await render(settingsPanel());
+      if (setupMode === "managed") {
+        await userEvent.click(page.getByRole("button", { name: "Runtime" }));
+      }
+
+      const dedicatedHome = page.getByRole("switch", { name: "Dedicated Codex Home" });
+      const homePath = page.getByRole("textbox", { name: "CODEX_HOME path", exact: true });
+      const shadowHomePath = page.getByRole("textbox", { name: "Shadow home path", exact: true });
+      await expect.element(dedicatedHome).not.toBeChecked();
+      if (setupMode === "existing") {
+        await expect.element(homePath).toHaveValue(config.homePath);
+        await expect.element(shadowHomePath).toHaveValue(config.shadowHomePath);
+      }
+      await userEvent.click(dedicatedHome);
+
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith(
+        {
+          operation: "upsert",
+          instanceId: codexId,
+          instance: { driver: codex, config: { ...config, dedicatedHome: true } },
+        },
+        {},
+      );
+
+      if (setupMode === "existing") {
+        state.settings = stored(true);
+        await screen.rerender(settingsPanel());
+        await expect.element(dedicatedHome).toBeChecked();
+        await expect.element(homePath).not.toBeInTheDocument();
+        await expect.element(shadowHomePath).not.toBeInTheDocument();
+        await expect.element(page.getByRole("textbox", { name: "Binary path" })).toBeEnabled();
+        await expect.element(page.getByRole("textbox", { name: "Launch arguments" })).toBeEnabled();
+
+        await userEvent.click(dedicatedHome);
+        expect(state.mutateProviderInstance).toHaveBeenLastCalledWith(
+          { operation: "upsert", instanceId: codexId, instance: { driver: codex, config } },
+          {},
+        );
+        state.settings = stored();
+        await screen.rerender(settingsPanel());
+        await expect.element(homePath).toHaveValue(config.homePath);
+        await expect.element(shadowHomePath).toHaveValue(config.shadowHomePath);
+      }
+    },
+  );
+
+  it.each([
+    ["http://localhost:3000", "chatgpt-browser"],
+    ["https://remote.example.test", "chatgpt-device-code"],
+  ])("opens dedicated Codex sign-in in the browser for %s", async (url, methodId) => {
+    await setup();
+    state.httpBaseUrl = url;
+    state.canOperateTerminal = false;
+    state.canManageProviders = false;
+    const codex = ProviderDriverKind.make("codex");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: codex, config: { setupMode: "existing", dedicatedHome: true } },
+      },
+    };
+    const idle: ProviderAuthState = {
+      instanceId: customId,
+      phase: "idle",
+      flowId: null,
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+    };
+    state.providerAuth = idle;
+    const signInUrl = "https://auth.example.test/login";
+    const interaction: ProviderAuthState["interaction"] =
+      methodId === "chatgpt-browser"
+        ? { type: "browser", id: "flow", url: signInUrl, requiresConsent: false }
+        : { type: "deviceCode", id: "flow", url: signInUrl, userCode: "ABCD-1234" };
+    const waiting: ProviderAuthState = {
+      ...idle,
+      phase: "waiting",
+      flowId: "flow",
+      authorizationUrl: signInUrl,
+      interaction,
+    };
+    state.startAuth
+      .mockReset()
+      .mockResolvedValue(AsyncResult.success({ ...idle, phase: "starting", flowId: "flow" }));
+    await setProviders([
+      {
+        ...provider(),
+        instanceId: customId,
+        auth: { status: "unauthenticated" },
+        setup: { canAuthenticate: true, canInstall: false },
+      },
+    ]);
+    const settingsPanel = () => (
+      <div key={String(state.canManageProviders)}>{panel({ targetInstanceId: customId })}</div>
+    );
+    await using screen = await render(settingsPanel());
+    const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+    await expect.element(signIn).toBeDisabled();
+
+    state.canManageProviders = true;
+    await screen.rerender(settingsPanel());
+    const tab = { opener: window, location: { href: "" }, closed: false, close: vi.fn() };
+    const openTab = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    try {
+      await userEvent.click(signIn);
+      expect(state.startAuth).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId: customId, methodId },
+      });
+      expect(openTab).toHaveBeenCalledWith("", "_blank");
+      expect(tab.opener).toBeNull();
+      expect(tab.location.href).toBe("");
+      await act(() => appAtomRegistry.set(state.providerAuthQuery, AsyncResult.success(waiting)));
+      expect(tab.location.href).toBe(signInUrl);
+      expect(state.openTerminal).not.toHaveBeenCalled();
+
+      if (methodId === "chatgpt-device-code") {
+        state.providerAuth = waiting;
+        await screen.rerender(settingsPanel());
+        await expect.element(page.getByText("ABCD-1234")).toBeVisible();
+      }
+    } finally {
+      openTab.mockRestore();
+    }
   });
 
   it("lets a signed-out managed Codex account switch to the existing CLI", async () => {

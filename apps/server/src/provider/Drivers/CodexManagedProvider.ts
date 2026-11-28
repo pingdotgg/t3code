@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
+import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -319,7 +320,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
                 probeCodexSkillsForCwd({
                   binaryPath: effective.config.binaryPath,
                   homePath: effective.config.homePath,
-                  launchArgs: effective.config.launchArgs,
+                  launchArgs: resolveCodexLaunchArgs(effective.config, effective.environment),
                   cwd,
                   environment: effective.environment,
                 }).pipe(

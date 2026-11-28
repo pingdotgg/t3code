@@ -280,7 +280,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         requestedModel;
       // The selection's options were chosen for the requested model and may not fit a fallback.
       const fellBack = matchedModel === undefined && model !== requestedModel;
-      const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
+      const launchArgs = resolveCodexLaunchArgs(effectiveConfig, effectiveEnvironment);
       const reasoningEffort =
         (fellBack
           ? undefined

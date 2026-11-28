@@ -2279,6 +2279,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         serverSettings,
         path,
         rawProviderInstanceId: instanceId,
+        stateDir: serverConfig.stateDir,
         env: undefined,
       });
       const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);

@@ -34,6 +34,7 @@ import {
   probeCodexUsageLimits,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
+import { makeCodexCliAuth } from "../CodexCliAuth.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -56,8 +57,8 @@ import {
 import {
   codexContinuationIdentity,
   codexHomeLaunchArgs,
-  materializeCodexShadowHome,
-  resolveCodexHomeLayout,
+  materializeCodexHomeLayout,
+  resolveCodexProviderHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
@@ -152,7 +153,7 @@ export type CodexDriverEnv =
 export const CodexDriver: ProviderDriver<
   CodexSettings,
   CodexDriverEnv,
-  Path.Path | CodexUsageHistory.CodexUsageHistory
+  Path.Path | CodexUsageHistory.CodexUsageHistory | ServerConfig.ServerConfig
 > = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -198,16 +199,26 @@ export const CodexDriver: ProviderDriver<
       !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
         : config;
-    const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
+    const homeLayout = yield* resolveCodexProviderHomeLayout(
+      homeConfig,
+      host.paths.stateDir,
+      instanceId,
+    );
     const continuationIdentity = codexContinuationIdentity(homeLayout);
-    const stampIdentity = withInstanceIdentity({
+    const stamp = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    yield* materializeCodexShadowHome(homeLayout).pipe(
+    const stampIdentity = (draft: Parameters<typeof stamp>[0]) =>
+      stamp(
+        enabled && homeLayout.mode === "dedicated"
+          ? { ...draft, setup: { canAuthenticate: true, canInstall: false } }
+          : draft,
+      );
+    yield* materializeCodexHomeLayout(homeLayout).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
@@ -347,7 +358,7 @@ export const CodexDriver: ProviderDriver<
             probeSkills({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+              launchArgs: resolveCodexLaunchArgs(effectiveConfig, processEnv),
               cwd,
               environment: processEnv,
             }).pipe(Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv))),
@@ -368,17 +379,22 @@ export const CodexDriver: ProviderDriver<
     // until the outcome, and bound the wait so a hung app-server cannot hold the account lock.
     // Auth overlays use effectiveHomePath; the continuation key would conflate them with shared homes.
     const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+    const launch = {
+      binaryPath: effectiveConfig.binaryPath,
+      homePath: effectiveConfig.homePath,
+      launchArgs: resolveCodexLaunchArgs(effectiveConfig, processEnv),
+      cwd: process.cwd(),
+      environment: processEnv,
+    };
+    const auth =
+      enabled && homeLayout.mode === "dedicated"
+        ? yield* makeCodexCliAuth({ instanceId, launch, refresh: snapshot.refresh })
+        : undefined;
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
       resetCreditCoordinator
         .redeem(accountKey, (idempotencyKey) =>
           Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
+            const { client } = yield* withCodexAppServerClient(launch);
             const response = yield* client.request("account/rateLimitResetCredit/consume", {
               idempotencyKey,
             });
@@ -441,6 +457,7 @@ export const CodexDriver: ProviderDriver<
       enabled,
       snapshot,
       snapshotForCwd,
+      ...(auth ? { auth } : {}),
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,
