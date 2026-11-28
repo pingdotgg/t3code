@@ -104,6 +104,42 @@ describe("injectHtmlRenderBootstrap", () => {
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
   });
+
+  it("ignores tag-like markup inside quoted attribute values", () => {
+    const button = '<button data-code="<head>">Copy</button><p>Hello</p>';
+    const injectedButton = injectHtmlRenderBootstrap(button);
+    expect(injectedButton.startsWith("<!doctype html><head>")).toBe(true);
+    expect(injectedButton.indexOf('<style id="t3-theme">')).toBeLessThan(
+      injectedButton.indexOf("<button"),
+    );
+    expect(injectedButton.endsWith(button)).toBe(true);
+
+    const commentedAttr =
+      '<!doctype html><html data-hint="<!--"><head><title>x</title></head><body>y</body></html>';
+    const injectedAttr = injectHtmlRenderBootstrap(commentedAttr);
+    const themeAt = injectedAttr.indexOf('<style id="t3-theme">');
+    expect(injectedAttr.startsWith('<!doctype html><html data-hint="<!--"><head>')).toBe(true);
+    expect(themeAt).toBeGreaterThan(injectedAttr.indexOf('<html data-hint="<!--"><head>'));
+    expect(themeAt).toBeLessThan(injectedAttr.indexOf("<title>x</title>"));
+
+    const attrMeta = '<div data-code=\'<meta name="viewport">\' data-tpl="<template>">hi</div>';
+    const injectedMeta = injectHtmlRenderBootstrap(attrMeta);
+    expect(injectedMeta.startsWith("<!doctype html><head>")).toBe(true);
+    expect(injectedMeta).toContain('<meta name="viewport" content="width=device-width');
+    expect(injectedMeta.endsWith(attrMeta)).toBe(true);
+  });
+
+  it.each([
+    "<!--><html><head><title>x</title></head><body>y</body></html>",
+    "<!-- note --!><html><head><title>x</title></head><body>y</body></html>",
+    "<title-bar>x</title-bar><html><head><title>x</title></head><body>y</body></html>",
+  ])("handles abrupt comments and hyphenated custom elements: %s", (html) => {
+    const injected = injectHtmlRenderBootstrap(html);
+    const themeAt = injected.indexOf('<style id="t3-theme">');
+    expect(injected.startsWith(html.slice(0, html.indexOf("<head>") + "<head>".length))).toBe(true);
+    expect(themeAt).toBeGreaterThan(injected.indexOf("<html><head>"));
+    expect(themeAt).toBeLessThan(injected.indexOf("<title>x</title>"));
+  });
 });
 
 describe("readHtmlRenderLinkRequest", () => {
