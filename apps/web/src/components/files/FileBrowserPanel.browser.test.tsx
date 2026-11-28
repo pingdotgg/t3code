@@ -1,4 +1,5 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
@@ -57,17 +58,33 @@ vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
 }));
-vi.mock(import("~/hooks/useFileMetadata"), async (original) => ({
-  ...(await original()),
-  getFileMetadataQueryAtom: (_environmentId, path) => {
-    const metadata = previewMetadata.get(path);
-    return Atom.make(AsyncResult.success(metadata ?? null));
-  },
-}));
+vi.mock(import("~/state/projects"), async (original) => {
+  const module = await original();
+  return {
+    ...module,
+    projectEnvironment: {
+      ...module.projectEnvironment,
+      readFile: ({ input }) => {
+        const byteLength = previewSizes.get(input.relativePath);
+        return Atom.make(
+          byteLength === undefined
+            ? AsyncResult.failure(Cause.die("File size unavailable"))
+            : AsyncResult.success({
+                relativePath: input.relativePath,
+                contents: "",
+                byteLength,
+                truncated: byteLength > 0,
+              }),
+        );
+      },
+    },
+  };
+});
 
-const previewMetadata = new Map([
-  ["README.md", { kind: "file" as const, byteLength: FULL_TEXT_MAX_BYTES }],
-  ["empty.md", { kind: "file" as const, byteLength: 0 }],
+const previewSizes = new Map([
+  ["README.md", FULL_TEXT_MAX_BYTES],
+  ["empty.md", 0],
+  ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
 ]);
 
 function findTreeRow(path: string): HTMLElement | null {
@@ -175,7 +192,7 @@ describe("FileBrowserPanel", () => {
   it("offers Open preview for Markdown files within the render limit", async () => {
     using _listing = withDirectoryListing([
       ...entries,
-      ...["empty.md", "missing.md", "notes.txt"].map((path): ProjectEntry => ({
+      ...["empty.md", "missing.md", "notes.txt", "oversized.md"].map((path): ProjectEntry => ({
         path,
         kind: "file",
       })),
@@ -198,7 +215,8 @@ describe("FileBrowserPanel", () => {
     for (const [path, offersPreview] of [
       ["README.md", true],
       ["empty.md", true],
-      ["missing.md", false],
+      ["missing.md", true],
+      ["oversized.md", false],
       ["notes.txt", false],
       ["src/", false],
     ] as const) {

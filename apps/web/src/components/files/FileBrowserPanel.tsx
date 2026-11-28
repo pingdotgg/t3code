@@ -29,11 +29,11 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { getFileMetadataQueryAtom } from "~/hooks/useFileMetadata";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { projectEnvironment } from "~/state/projects";
 import { readEnvironmentScope } from "~/state/session";
 import {
   PIERRE_TREE_UNSAFE_CSS,
@@ -229,7 +229,7 @@ export default function FileBrowserPanel({
   // path update scrolls to it again until the user takes over the scroll position.
   const followedRevealRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const menuRequestRef = useRef(0);
+  const pendingMenuRef = useRef<AbortController | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{
@@ -241,7 +241,7 @@ export default function FileBrowserPanel({
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
-      const requestId = ++menuRequestRef.current;
+      pendingMenuRef.current?.abort();
       const api = readLocalApi();
       if (!api) {
         context.close();
@@ -262,28 +262,45 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-      const previewMetadataQuery =
+      const isPreviewCandidate =
         onOpenFilePreview !== undefined &&
         entryKindsRef.current.get(relativePath) === "file" &&
-        isMarkdownPreviewFile(relativePath) &&
-        readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-          ? getFileMetadataQueryAtom(environmentId, relativePath, cwd)
-          : null;
+        isMarkdownPreviewFile(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
-        const metadata = previewMetadataQuery
-          ? await executeAtomQuery(appAtomRegistry, previewMetadataQuery, {
+        let canOpenPreview = isPreviewCandidate;
+        if (isPreviewCandidate && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+          const pending = new AbortController();
+          pendingMenuRef.current = pending;
+          const options = { capture: true, signal: pending.signal };
+          document.addEventListener("pointerdown", () => pending.abort(), options);
+          document.addEventListener(
+            "keydown",
+            (event) => {
+              if (event.key === "Escape") pending.abort();
+            },
+            options,
+          );
+          const metadata = await executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.readFile({
+              environmentId,
+              input: { cwd, relativePath, metadataOnly: true },
+            }),
+            {
+              refresh: true,
               reportFailure: false,
-              signal: AbortSignal.timeout(1_000),
-            })
-          : null;
-        if (requestId !== menuRequestRef.current || !panelRef.current?.isConnected) return;
-        const entry = metadata?._tag === "Success" ? metadata.value : null;
-        const canOpenPreview =
-          entry?.kind === "file" &&
-          entry.byteLength !== undefined &&
-          entry.byteLength <= FULL_TEXT_MAX_BYTES;
+              signal: AbortSignal.any([pending.signal, AbortSignal.timeout(400)]),
+            },
+          );
+          const dismissed = pending.signal.aborted || !panelRef.current?.getClientRects().length;
+          pending.abort();
+          if (pendingMenuRef.current === pending) pendingMenuRef.current = null;
+          if (dismissed) return;
+          canOpenPreview =
+            metadata._tag !== "Success" || metadata.value.byteLength <= FULL_TEXT_MAX_BYTES;
+        }
         const clicked = await api.contextMenu.show(
           [
             ...(canOpenPreview ? [{ id: "open-preview", label: gt("Open preview") }] : []),

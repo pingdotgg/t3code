@@ -289,6 +289,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reports the file size without reading contents in a metadata-only read", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes.md", "ab\0cd");
+        expect(
+          yield* files.readFile({ cwd, relativePath: "notes.md", metadataOnly: true }),
+        ).toEqual({
+          relativePath: "notes.md",
+          contents: "",
+          byteLength: 5,
+          truncated: true,
+        });
+      }),
+    );
+
     it.effect("finishes short reads before decoding UTF-8 text", () =>
       Effect.gen(function* () {
         const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;

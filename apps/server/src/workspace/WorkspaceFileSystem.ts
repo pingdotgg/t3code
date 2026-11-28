@@ -450,7 +450,9 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+          const bytesToRead = input.metadataOnly
+            ? 0
+            : Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
           let offset = 0;
           while (offset < bytesToRead) {
@@ -470,7 +472,7 @@ export const make = Effect.gen(function* () {
             offset += bytesRead;
           }
           const fileBytes = buffer.subarray(0, offset);
-          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          const truncated = stat.size > bytesToRead;
           const binaryFileError = () =>
             new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
