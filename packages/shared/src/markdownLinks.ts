@@ -515,13 +515,30 @@ const SETEXT_UNDERLINE_PATTERN = /^(?:=+|-+) *$/;
 const PARAGRAPH_INTERRUPTION_PATTERN =
   /^(?:>|`{3,}(?![^`]*`)|~{3,}|(?:[-+*]|\d{1,9}[.)])(?: |$)|#{1,6}(?: |$)|([-*_]) *(?:\1 *){2,}$)/;
 
+const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(?:\\[\\[\]]|\\(?![\\[\]])|[^\s\\[\]]){1,999}\]: */;
+const TABLE_DELIMITER_PATTERN = /^\|? *:?-+:? *(?:\| *:?-+:? *)*\|? *$/;
+
 const BLOCKQUOTE = 0;
+
+function tableColumnCount(row: string): number {
+  const trimmed = row.trimEnd();
+  let columns = 1;
+  for (const match of trimmed.matchAll(/\\[\\|]|\|/g)) {
+    if (match[0] === "|" && match.index > 0 && match.index < trimmed.length - 1) columns += 1;
+  }
+  return columns;
+}
+
+// Normalize lone CR without changing offsets or splitting CRLF into two line endings.
+function normalizeLoneCarriageReturns(text: string): string {
+  return text.includes("\r") ? text.replace(/\r(?!\n)/g, "\n") : text;
+}
 
 export function extractInlineCodeSpans(text: string): string[] {
   if (!text.includes("`")) return [];
   const spans: string[] = [];
-  visitMarkdownLines(text, (line, _start, kind) => {
-    if (kind !== "fenced") collectLineCodeSpans(line, spans);
+  visitMarkdownLines(normalizeLoneCarriageReturns(text), (line, _start, code) => {
+    if (!code) collectLineCodeSpans(line, spans);
   });
   return spans;
 }
@@ -534,7 +551,7 @@ export function extractInlineCodeSpans(text: string): string[] {
  */
 function visitMarkdownLines(
   text: string,
-  visit: (line: string, start: number, kind: "text" | "fenced" | "indented") => void,
+  visit: (line: string, start: number, code: boolean) => void,
 ) {
   // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
   const containers: number[] = [];
@@ -543,10 +560,14 @@ function visitMarkdownLines(
   // micromark lets neither be interrupted by an empty list item or one not numbered 1.
   let paragraph = false;
   let indentedCode = false;
+  // A table has a header candidate until its delimiter row opens the body.
+  let table: { depth: number; header?: string } | undefined;
   // Depth of an item that has only its marker so far; a blank line next ends it.
   let emptyItemDepth = 0;
   let lineStart = 0;
   for (const line of text.split("\n")) {
+    const previousTable = table;
+    table = undefined;
     const start = lineStart;
     lineStart += line.length + 1;
     let source = line.endsWith("\r") ? line.slice(0, -1) : line;
@@ -596,7 +617,7 @@ function visitMarkdownLines(
         if (content === "") continue;
         // A fence written inside indented code ends with that code.
         if (!fence.indented || indent >= 4) {
-          visit(line, start, "fenced");
+          visit(line, start, true);
           const closer = FENCE_CLOSER_PATTERN.exec(content)?.[1];
           if (
             closer?.startsWith(fence.marker[0]!) &&
@@ -617,9 +638,11 @@ function visitMarkdownLines(
       if (
         paragraph &&
         content !== "" &&
-        (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
+        (indent >= 4 ||
+          (!PARAGRAPH_INTERRUPTION_PATTERN.test(content) &&
+            !FOOTNOTE_DEFINITION_PATTERN.test(content)))
       ) {
-        visit(line, start, "text");
+        visit(line, start, false);
         continue;
       }
       containers.length = matched;
@@ -638,20 +661,19 @@ function visitMarkdownLines(
       const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
       if (indent >= 4) {
         if (!paragraph && !closedContainer) indentedCode = true;
-        // A fence shown inside indented code still hides its lines from the code span scan. Inside
-        // a paragraph an indented line is text, where only a backtick run opens code (a span).
+        // Inside a paragraph an indented line is text, where only a backtick run opens code (a span).
         if (opener && (!paragraph || opener[0] === "`")) {
           fence = { marker: opener, indented: true };
-          visit(line, start, "fenced");
+          visit(line, start, true);
         } else {
-          visit(line, start, paragraph ? "text" : "indented");
+          visit(line, start, !paragraph);
         }
         break;
       }
       indentedCode = false;
       if (opener) {
         fence = { marker: opener, indented: false };
-        visit(line, start, "fenced");
+        visit(line, start, true);
         break;
       }
       if (content[0] === ">") {
@@ -664,6 +686,14 @@ function visitMarkdownLines(
       if (THEMATIC_BREAK_PATTERN.test(content)) {
         paragraph = false;
         break;
+      }
+      const footnote = content.startsWith("[^") && FOOTNOTE_DEFINITION_PATTERN.exec(content);
+      if (footnote) {
+        containers.push(4);
+        position += indent + footnote[0].length;
+        paragraph = false;
+        readIndent();
+        continue;
       }
       const item = LIST_MARKER_PATTERN.exec(content);
       const emptyItem = item?.[0].length === content.length;
@@ -679,13 +709,35 @@ function visitMarkdownLines(
         position += indent + width;
         paragraph = false;
         readIndent();
+        // The renderer recovers same-line indented list code with whitespace left in its value.
+        if (!emptyItem && padding > 5) {
+          visit(line, start, false);
+          paragraph = true;
+          break;
+        }
         continue;
       }
-      visit(line, start, "text");
-      paragraph = !(
+      visit(line, start, false);
+      if (
         ATX_HEADING_PATTERN.test(content) ||
         (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
-      );
+      ) {
+        paragraph = false;
+      } else if (
+        previousTable?.depth === containers.length &&
+        !closedContainer &&
+        (previousTable.header === undefined ||
+          (previousTable.header.trimEnd() !== "|" &&
+            /[|:]/.test(content) &&
+            TABLE_DELIMITER_PATTERN.test(content) &&
+            tableColumnCount(content) === tableColumnCount(previousTable.header)))
+      ) {
+        table = { depth: containers.length };
+        paragraph = false;
+      } else {
+        table = { depth: containers.length, header: content };
+        paragraph = true;
+      }
       break;
     }
   }
@@ -779,8 +831,8 @@ function blankCodeBlocks(text: string): string {
   if (!/ {4}|\t|```|~~~/.test(text)) return text;
   let blanked = "";
   let copied = 0;
-  visitMarkdownLines(text, (line, start, kind) => {
-    if (kind === "text") return;
+  visitMarkdownLines(text, (line, start, code) => {
+    if (!code) return;
     blanked += text.slice(copied, start) + line.replace(/[^\r]/g, " ");
     copied = start + line.length;
   });
@@ -790,7 +842,7 @@ function blankCodeBlocks(text: string): string {
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(text: string): string[] {
-  const markdown = blankCodeBlocks(text);
+  const markdown = blankCodeBlocks(normalizeLoneCarriageReturns(text));
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
   const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);
