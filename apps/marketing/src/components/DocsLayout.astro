@@ -1,0 +1,1135 @@
+---
+import type { MarkdownHeading } from "astro";
+
+import Layout from "../layouts/Layout.astro";
+import type { DocsCatalog, ResolvedDoc } from "../lib/docs";
+import { breadcrumbJsonLd } from "../lib/seo";
+
+interface Props {
+  readonly doc: ResolvedDoc;
+  readonly catalog: DocsCatalog;
+  readonly headings: ReadonlyArray<MarkdownHeading>;
+  readonly prev: ResolvedDoc | null;
+  readonly next: ResolvedDoc | null;
+}
+
+const { doc, catalog, headings, prev, next } = Astro.props;
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+const isIndex = doc.slug === null;
+
+const pageTitle = isIndex ? "Docs | T3 Code" : `${doc.title} | T3 Code Docs`;
+const breadcrumbs = isIndex
+  ? [
+      { name: "T3 Code", path: "/" },
+      { name: "Docs", path: "/docs" },
+    ]
+  : [
+      { name: "T3 Code", path: "/" },
+      { name: "Docs", path: "/docs" },
+      { name: doc.title, path: doc.href },
+    ];
+---
+
+<Layout
+  title={pageTitle}
+  description={doc.description}
+  pageClass="docs-page-shell"
+  jsonLd={[breadcrumbJsonLd(breadcrumbs)]}
+>
+  <div class="docs-shell">
+    <div class="docs-mobile-bar">
+      <button type="button" class="docs-mobile-menu-btn" data-docs-drawer-open aria-expanded="false" aria-controls="docs-sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+        <span>Docs menu</span>
+      </button>
+      <button type="button" class="docs-search-trigger docs-search-trigger--compact" data-docs-search-open aria-label="Search docs">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <span>Search</span>
+      </button>
+    </div>
+
+    <div class="docs-drawer-backdrop" data-docs-drawer-close hidden></div>
+
+    <aside id="docs-sidebar" class="docs-sidebar" aria-label="Documentation navigation">
+      <div class="docs-sidebar-top">
+        <button type="button" class="docs-search-trigger" data-docs-search-open>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <span>Search docs…</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <button type="button" class="docs-drawer-close" data-docs-drawer-close aria-label="Close navigation">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <nav class="docs-nav">
+        <div class="docs-nav-overview">
+          <a href="/docs" class="docs-nav-link" aria-current={isIndex ? "page" : undefined}>
+            Overview &amp; Index
+          </a>
+        </div>
+
+        {catalog.groups.map((group) => (
+          <div class="docs-nav-group">
+            <p class="docs-nav-heading">{group.category}</p>
+            <ul>
+              {group.items.map((item) => (
+                <li>
+                  <a
+                    href={`/docs/${item.slug}`}
+                    class="docs-nav-link"
+                    aria-current={doc.slug === item.slug ? "page" : undefined}
+                  >
+                    {item.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+
+    <div class="docs-content">
+      <header class="docs-header">
+        <div class="docs-header-meta">
+          <p class="eyebrow">{doc.category}</p>
+          <div class="docs-header-actions">
+            <a href={doc.rawHref} class="docs-meta-link" title="View raw Markdown">
+              Markdown
+            </a>
+            <a
+              href={doc.githubUrl}
+              class="docs-meta-link"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Edit this page on GitHub"
+            >
+              Edit on GitHub
+            </a>
+          </div>
+        </div>
+        <h1>{doc.title}</h1>
+      </header>
+
+      <article class="docs-prose">
+        <slot />
+      </article>
+
+      {(prev || next) && (
+        <nav class="docs-pager" aria-label="Adjacent pages">
+          {prev ? (
+            <a href={prev.href} class="docs-pager-link docs-pager-prev">
+              <span class="docs-pager-dir">← Previous</span>
+              <span class="docs-pager-title">{prev.title}</span>
+            </a>
+          ) : (
+            <div />
+          )}
+          {next && (
+            <a href={next.href} class="docs-pager-link docs-pager-next">
+              <span class="docs-pager-dir">Next →</span>
+              <span class="docs-pager-title">{next.title}</span>
+            </a>
+          )}
+        </nav>
+      )}
+    </div>
+
+    {tocHeadings.length > 0 && (
+      <aside class="docs-toc" aria-label="On this page">
+        <p class="docs-toc-label">On this page</p>
+        <ul>
+          {tocHeadings.map((heading) => (
+            <li class:list={[heading.depth === 3 && "is-sub"]}>
+              <a href={`#${heading.slug}`} data-docs-toc-link={heading.slug}>
+                {heading.text}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </aside>
+    )}
+  </div>
+
+  <dialog class="docs-search-dialog" data-docs-search-dialog aria-label="Search documentation">
+    <div class="docs-search-box">
+      <div class="docs-search-input-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <input
+          type="search"
+          class="docs-search-input"
+          data-docs-search-input
+          placeholder="Search T3 Code docs…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <kbd>Esc</kbd>
+      </div>
+      <div class="docs-search-results" data-docs-search-results role="listbox">
+        <p class="docs-search-empty">Type to search across all guides and sections.</p>
+      </div>
+    </div>
+  </dialog>
+</Layout>
+
+<script>
+  const sidebar = document.getElementById("docs-sidebar");
+  const openBtn = document.querySelector<HTMLButtonElement>("[data-docs-drawer-open]");
+  const closeBtns = document.querySelectorAll<HTMLElement>("[data-docs-drawer-close]");
+  const backdrop = document.querySelector<HTMLElement>(".docs-drawer-backdrop");
+
+  const setDrawerOpen = (open: boolean) => {
+    if (!sidebar || !openBtn || !backdrop) return;
+    sidebar.classList.toggle("is-open", open);
+    openBtn.setAttribute("aria-expanded", String(open));
+    backdrop.hidden = !open;
+    document.body.style.overflow = open ? "hidden" : "";
+  };
+
+  openBtn?.addEventListener("click", () => setDrawerOpen(true));
+  for (const el of closeBtns) {
+    el.addEventListener("click", () => setDrawerOpen(false));
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sidebar?.classList.contains("is-open")) {
+      setDrawerOpen(false);
+    }
+  });
+
+  // Scroll the active sidebar link into view on load without jarring the whole page.
+  const activeNavLink = sidebar?.querySelector<HTMLAnchorElement>('[aria-current="page"]');
+  if (activeNavLink && sidebar && sidebar.scrollHeight > sidebar.clientHeight) {
+    const linkTop = activeNavLink.offsetTop;
+    if (linkTop > sidebar.clientHeight * 0.65) {
+      sidebar.scrollTop = linkTop - sidebar.clientHeight * 0.35;
+    }
+  }
+
+  const tocLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-docs-toc-link]"));
+  const tocTargets = tocLinks
+    .map((link) => {
+      const id = link.dataset.docsTocLink;
+      const heading = id ? document.getElementById(id) : null;
+      return heading ? { link, heading } : null;
+    })
+    .filter((entry): entry is { link: HTMLAnchorElement; heading: HTMLElement } => entry !== null);
+
+  if (tocTargets.length > 0) {
+    let activeId = "";
+    let frame = 0;
+
+    const updateToc = () => {
+      frame = 0;
+      const marker = Math.min(140, window.innerHeight * 0.25);
+      let active = tocTargets[0];
+      for (const entry of tocTargets) {
+        if (entry.heading.getBoundingClientRect().top > marker) break;
+        active = entry;
+      }
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) {
+        active = tocTargets[tocTargets.length - 1];
+      }
+      if (!active || active.heading.id === activeId) return;
+      activeId = active.heading.id;
+      for (const { link, heading } of tocTargets) {
+        if (heading.id === activeId) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      }
+    };
+
+    const scheduleToc = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(updateToc);
+    };
+
+    updateToc();
+    window.addEventListener("scroll", scheduleToc, { passive: true });
+    window.addEventListener("resize", scheduleToc);
+  }
+
+  for (const pre of document.querySelectorAll<HTMLPreElement>(".docs-prose pre")) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "docs-code-block";
+    pre.parentNode?.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "docs-code-copy";
+    copyBtn.textContent = "Copy";
+    copyBtn.setAttribute("aria-label", "Copy code to clipboard");
+    copyBtn.addEventListener("click", async () => {
+      const text = pre.textContent ?? "";
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = "Copied";
+        copyBtn.classList.add("is-copied");
+        window.setTimeout(() => {
+          copyBtn.textContent = "Copy";
+          copyBtn.classList.remove("is-copied");
+        }, 1600);
+      } catch {
+        copyBtn.textContent = "Failed";
+      }
+    });
+    wrapper.appendChild(copyBtn);
+  }
+
+  for (const table of document.querySelectorAll<HTMLTableElement>(".docs-prose table")) {
+    const wrap = document.createElement("div");
+    wrap.className = "docs-table-wrap";
+    table.parentNode?.insertBefore(wrap, table);
+    wrap.appendChild(table);
+  }
+
+  interface SearchEntry {
+    readonly title: string;
+    readonly category: string;
+    readonly href: string;
+    readonly description: string;
+    readonly headings: ReadonlyArray<{ readonly text: string; readonly slug: string }>;
+  }
+
+  interface SearchHit {
+    readonly title: string;
+    readonly subtitle: string;
+    readonly category: string;
+    readonly href: string;
+    readonly score: number;
+  }
+
+  const dialog = document.querySelector<HTMLDialogElement>("[data-docs-search-dialog]");
+  const input = document.querySelector<HTMLInputElement>("[data-docs-search-input]");
+  const resultsEl = document.querySelector<HTMLElement>("[data-docs-search-results]");
+  const searchOpenBtns = document.querySelectorAll<HTMLButtonElement>("[data-docs-search-open]");
+
+  let searchIndexPromise: Promise<ReadonlyArray<SearchEntry>> | null = null;
+  let activeResultIndex = 0;
+
+  const loadSearchIndex = () => {
+    if (!searchIndexPromise) {
+      searchIndexPromise = fetch("/docs/search-index.json")
+        .then((res) => (res.ok ? (res.json() as Promise<ReadonlyArray<SearchEntry>>) : []))
+        .catch(() => []);
+    }
+    return searchIndexPromise;
+  };
+
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const renderHits = (hits: ReadonlyArray<SearchHit>, query: string) => {
+    if (!resultsEl) return;
+    activeResultIndex = 0;
+    if (!query.trim()) {
+      resultsEl.innerHTML = `<p class="docs-search-empty">Type to search across all guides and sections.</p>`;
+      return;
+    }
+    if (hits.length === 0) {
+      resultsEl.innerHTML = `<p class="docs-search-empty">No results for "${escapeHtml(query)}".</p>`;
+      return;
+    }
+    resultsEl.innerHTML = hits
+      .map(
+        (hit, index) => `
+          <a href="${escapeHtml(hit.href)}" class="docs-search-hit${index === 0 ? " is-active" : ""}" role="option" aria-selected="${index === 0 ? "true" : "false"}">
+            <span class="docs-search-hit-head">
+              <span class="docs-search-hit-title">${escapeHtml(hit.title)}</span>
+              <span class="docs-search-hit-cat">${escapeHtml(hit.category)}</span>
+            </span>
+            ${hit.subtitle ? `<span class="docs-search-hit-sub">${escapeHtml(hit.subtitle)}</span>` : ""}
+          </a>
+        `,
+      )
+      .join("");
+  };
+
+  const runSearch = async (query: string) => {
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+    if (terms.length === 0) {
+      renderHits([], query);
+      return;
+    }
+
+    const index = await loadSearchIndex();
+    const hits: SearchHit[] = [];
+
+    for (const doc of index) {
+      const titleLower = doc.title.toLowerCase();
+      const catLower = doc.category.toLowerCase();
+      const descLower = doc.description.toLowerCase();
+      const pageHaystack = `${titleLower} ${catLower} ${descLower}`;
+
+      if (terms.every((t) => pageHaystack.includes(t))) {
+        let score = 0;
+        for (const t of terms) {
+          if (titleLower === t) score += 100;
+          else if (titleLower.startsWith(t)) score += 60;
+          else if (titleLower.includes(t)) score += 40;
+          if (catLower.includes(t)) score += 15;
+          if (descLower.includes(t)) score += 10;
+        }
+        hits.push({
+          title: doc.title,
+          subtitle: doc.description,
+          category: doc.category,
+          href: doc.href,
+          score,
+        });
+      }
+
+      for (const h of doc.headings) {
+        const headingLower = h.text.toLowerCase();
+        const combined = `${titleLower} ${headingLower}`;
+        if (terms.every((t) => combined.includes(t)) && terms.some((t) => headingLower.includes(t))) {
+          let score = 20;
+          for (const t of terms) {
+            if (headingLower.startsWith(t)) score += 30;
+            else if (headingLower.includes(t)) score += 18;
+          }
+          hits.push({
+            title: `${doc.title} → ${h.text}`,
+            subtitle: "",
+            category: doc.category,
+            href: `${doc.href}#${h.slug}`,
+            score,
+          });
+        }
+      }
+    }
+
+    hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    renderHits(hits.slice(0, 12), query);
+  };
+
+  const openSearch = () => {
+    if (!dialog || !input) return;
+    setDrawerOpen(false);
+    void loadSearchIndex();
+    if (!dialog.open) dialog.showModal();
+    input.focus();
+    input.select();
+  };
+
+  for (const btn of searchOpenBtns) {
+    btn.addEventListener("click", openSearch);
+  }
+
+  dialog?.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+
+  input?.addEventListener("input", () => {
+    void runSearch(input.value);
+  });
+
+  input?.addEventListener("keydown", (event) => {
+    const items = resultsEl ? Array.from(resultsEl.querySelectorAll<HTMLAnchorElement>(".docs-search-hit")) : [];
+    if (items.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      items[activeResultIndex]?.classList.remove("is-active");
+      items[activeResultIndex]?.setAttribute("aria-selected", "false");
+      activeResultIndex =
+        event.key === "ArrowDown"
+          ? (activeResultIndex + 1) % items.length
+          : (activeResultIndex - 1 + items.length) % items.length;
+      const next = items[activeResultIndex];
+      next?.classList.add("is-active");
+      next?.setAttribute("aria-selected", "true");
+      next?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") {
+      const target = items[activeResultIndex];
+      if (target) {
+        event.preventDefault();
+        dialog?.close();
+        window.location.href = target.href;
+      }
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement | null;
+    const inEditable =
+      target !== null &&
+      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (dialog?.open) dialog.close();
+      else openSearch();
+    } else if (event.key === "/" && !inEditable && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      openSearch();
+    }
+  });
+</script>
+
+<style is:global>
+  .docs-shell {
+    width: 100%;
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: grid;
+    grid-template-columns: 248px minmax(0, 740px) 200px;
+    justify-content: space-between;
+    gap: 40px;
+    align-items: start;
+  }
+
+  .docs-mobile-bar {
+    display: none;
+  }
+
+  .docs-drawer-close {
+    display: none;
+  }
+
+  /* Sidebar */
+  .docs-sidebar {
+    position: sticky;
+    top: 64px;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    padding: 28px 16px 48px 0;
+    border-right: 1px solid var(--border);
+    scrollbar-width: thin;
+  }
+
+  .docs-sidebar-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .docs-search-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev);
+    color: var(--fg-dim);
+    font-size: 13px;
+    transition: border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .docs-search-trigger:hover {
+    border-color: var(--border-strong);
+    color: var(--fg-muted);
+  }
+
+  .docs-search-trigger span {
+    flex: 1;
+    text-align: left;
+  }
+
+  .docs-search-trigger kbd,
+  .docs-search-input-row kbd {
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-card);
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .docs-nav {
+    display: grid;
+    gap: 22px;
+  }
+
+  .docs-nav-overview {
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .docs-nav-heading {
+    margin-bottom: 6px;
+    padding-left: 10px;
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .docs-nav-group ul {
+    list-style: none;
+    display: grid;
+    gap: 1px;
+  }
+
+  .docs-nav-link {
+    display: block;
+    padding: 5px 10px;
+    border-radius: 6px;
+    color: var(--fg-muted);
+    font-size: 13.5px;
+    line-height: 1.4;
+    transition: color 0.14s ease, background-color 0.14s ease;
+  }
+
+  .docs-nav-link:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.035);
+  }
+
+  .docs-nav-link[aria-current="page"] {
+    color: var(--fg);
+    font-weight: 500;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: inset 2px 0 var(--accent);
+  }
+
+  /* Main content */
+  .docs-content {
+    min-width: 0;
+    padding: 36px 0 96px;
+  }
+
+  .docs-header {
+    padding-bottom: 24px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .docs-header-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .docs-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .docs-meta-link {
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    transition: color 0.14s ease;
+  }
+
+  .docs-meta-link:hover {
+    color: var(--fg);
+  }
+
+  .docs-header h1 {
+    margin-top: 10px;
+    font-size: clamp(1.9rem, 3.2vw, 2.55rem);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.12;
+  }
+
+  /* Markdown prose */
+  .docs-prose {
+    color: var(--fg-muted);
+    font-size: 15.5px;
+    line-height: 1.72;
+  }
+
+  .docs-prose > :first-child {
+    margin-top: 0;
+  }
+
+  .docs-prose h2 {
+    margin: 44px 0 14px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--fg);
+    font-size: 1.38rem;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+    scroll-margin-top: 84px;
+  }
+
+  .docs-prose h3 {
+    margin: 28px 0 10px;
+    color: var(--fg);
+    font-size: 1.06rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.35;
+    scroll-margin-top: 84px;
+  }
+
+  .docs-prose h4 {
+    margin: 22px 0 8px;
+    color: var(--fg);
+    font-size: 0.96rem;
+    font-weight: 600;
+    scroll-margin-top: 84px;
+  }
+
+  .docs-prose p {
+    margin: 14px 0;
+  }
+
+  .docs-prose strong {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .docs-prose a {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 0.14s ease;
+  }
+
+  .docs-prose a:hover {
+    text-decoration-color: var(--accent);
+  }
+
+  .docs-prose ul,
+  .docs-prose ol {
+    margin: 14px 0;
+    padding-left: 1.35rem;
+    display: grid;
+    gap: 8px;
+  }
+
+  .docs-prose li > ul,
+  .docs-prose li > ol {
+    margin: 8px 0 2px;
+  }
+
+  .docs-prose li::marker {
+    color: var(--fg-faint);
+  }
+
+  .docs-prose hr {
+    border: 0;
+    height: 1px;
+    margin: 36px 0;
+    background: var(--border);
+  }
+
+  .docs-prose blockquote {
+    margin: 18px 0;
+    padding: 12px 16px;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-card));
+    color: var(--fg-muted);
+  }
+
+  .docs-prose blockquote p {
+    margin: 0;
+  }
+
+  .docs-prose :not(pre) > code {
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-card);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+
+  .docs-code-block {
+    position: relative;
+    margin: 18px 0;
+  }
+
+  .docs-prose pre {
+    padding: 16px 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card) !important;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .docs-code-copy {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 4px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elev);
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  }
+
+  .docs-code-block:hover .docs-code-copy,
+  .docs-code-copy:focus-visible,
+  .docs-code-copy.is-copied {
+    opacity: 1;
+  }
+
+  .docs-code-copy:hover {
+    color: var(--fg);
+    border-color: var(--border-strong);
+  }
+
+  .docs-code-copy.is-copied {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  }
+
+  .docs-table-wrap {
+    margin: 18px 0;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+  }
+
+  .docs-prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .docs-prose th,
+  .docs-prose td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .docs-prose th {
+    color: var(--fg);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .docs-prose tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* Pager */
+  .docs-pager {
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .docs-pager-link {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    transition: border-color 0.16s ease, background-color 0.16s ease;
+  }
+
+  .docs-pager-link:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-elev);
+  }
+
+  .docs-pager-next {
+    text-align: right;
+  }
+
+  .docs-pager-dir {
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .docs-pager-title {
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  /* Right TOC */
+  .docs-toc {
+    position: sticky;
+    top: 84px;
+    max-height: calc(100vh - 104px);
+    overflow-y: auto;
+    padding-bottom: 24px;
+    scrollbar-width: thin;
+  }
+
+  .docs-toc-label {
+    margin-bottom: 12px;
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .docs-toc ul {
+    list-style: none;
+    display: grid;
+    gap: 4px;
+    border-left: 1px solid var(--border);
+  }
+
+  .docs-toc a {
+    display: block;
+    padding: 4px 0 4px 12px;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    line-height: 1.4;
+    transition: color 0.14s ease, border-color 0.14s ease;
+  }
+
+  .docs-toc li.is-sub a {
+    padding-left: 22px;
+    font-size: 12px;
+  }
+
+  .docs-toc a:hover {
+    color: var(--fg);
+  }
+
+  .docs-toc a[aria-current="location"] {
+    color: var(--fg);
+    border-left-color: var(--accent);
+  }
+
+  /* Search dialog */
+  .docs-search-dialog {
+    margin: min(12vh, 96px) auto auto;
+    padding: 0;
+    width: min(600px, calc(100% - 32px));
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    color: var(--fg);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.75);
+  }
+
+  .docs-search-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+  }
+
+  .docs-search-input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-dim);
+  }
+
+  .docs-search-input {
+    flex: 1;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 15px;
+  }
+
+  .docs-search-input::placeholder {
+    color: var(--fg-dim);
+  }
+
+  .docs-search-results {
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    padding: 8px;
+    display: grid;
+    gap: 2px;
+  }
+
+  .docs-search-empty {
+    padding: 24px 14px;
+    color: var(--fg-dim);
+    font-size: 13.5px;
+    text-align: center;
+  }
+
+  .docs-search-hit {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    transition: background-color 0.12s ease;
+  }
+
+  .docs-search-hit:hover,
+  .docs-search-hit.is-active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
+  .docs-search-hit-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .docs-search-hit-title {
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .docs-search-hit-cat {
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    flex-shrink: 0;
+  }
+
+  .docs-search-hit-sub {
+    color: var(--fg-muted);
+    font-size: 12.5px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Responsive */
+  @media (max-width: 1140px) {
+    .docs-shell {
+      grid-template-columns: 236px minmax(0, 1fr);
+    }
+
+    .docs-toc {
+      display: none;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .docs-shell {
+      display: block;
+      padding: 0 20px;
+    }
+
+    .docs-mobile-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .docs-mobile-menu-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-elev);
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .docs-search-trigger--compact {
+      width: auto;
+      padding: 0 12px;
+    }
+
+    .docs-drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      background: rgba(0, 0, 0, 0.65);
+    }
+
+    .docs-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 70;
+      width: min(300px, 86vw);
+      max-height: none;
+      padding: 18px 16px 36px;
+      background: var(--bg);
+      border-right: 1px solid var(--border-strong);
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+
+    .docs-sidebar.is-open {
+      transform: translateX(0);
+    }
+
+    .docs-drawer-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--fg-muted);
+    }
+
+    .docs-content {
+      padding: 24px 0 64px;
+    }
+
+    .docs-pager {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

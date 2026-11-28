@@ -7,6 +7,7 @@ export const zh: Messages = {
     socialImageAlt:
       "T3 Code：面向编程智能体的开源控制中心，支持 Claude Code、Codex、Cursor、OpenCode、Grok 和 Antigravity。",
     homeLabel: "T3 Code 首页",
+    docs: "文档",
     download: "下载",
     starsLabel: "在 GitHub 上为 T3 Code 加星标，已有 {stars} 个星标",
     githubStars: "{stars} GitHub 星标",

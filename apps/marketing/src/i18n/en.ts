@@ -7,6 +7,7 @@ export const en = {
     socialImageAlt:
       "T3 Code: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.",
     homeLabel: "T3 Code home",
+    docs: "Docs",
     download: "Download",
     starsLabel: "Star T3 Code on GitHub, {stars} stars",
     githubStars: "{stars} GitHub stars",

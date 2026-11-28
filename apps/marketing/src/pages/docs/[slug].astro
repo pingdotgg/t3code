@@ -1,0 +1,29 @@
+---
+import { render } from "astro:content";
+
+import DocsLayout from "../../components/DocsLayout.astro";
+import { getDocsCatalog, getPrevNext, type ResolvedDoc } from "../../lib/docs";
+
+export async function getStaticPaths() {
+  const catalog = await getDocsCatalog();
+  return catalog.docs
+    .filter((doc): doc is ResolvedDoc & { readonly slug: string } => doc.slug !== null)
+    .map((doc) => ({
+      params: { slug: doc.slug },
+      props: { doc },
+    }));
+}
+
+interface Props {
+  readonly doc: ResolvedDoc & { readonly slug: string };
+}
+
+const { doc } = Astro.props;
+const catalog = await getDocsCatalog();
+const { Content, headings } = await render(doc.entry);
+const { prev, next } = getPrevNext(catalog, doc.slug);
+---
+
+<DocsLayout doc={doc} catalog={catalog} headings={headings} prev={prev} next={next}>
+  <Content />
+</DocsLayout>

@@ -7,6 +7,7 @@ export const ptBR: Messages = {
     socialImageAlt:
       "T3 Code: o painel de controle open source para agentes de programação, com Claude Code, Codex, Cursor, OpenCode, Grok e Antigravity.",
     homeLabel: "Página inicial do T3 Code",
+    docs: "Docs",
     download: "Baixar",
     starsLabel: "Dê uma estrela ao T3 Code no GitHub, {stars} estrelas",
     githubStars: "{stars} estrelas no GitHub",

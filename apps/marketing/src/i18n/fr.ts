@@ -7,6 +7,7 @@ export const fr: Messages = {
     socialImageAlt:
       "T3 Code : le poste de pilotage open source pour agents de codage, avec Claude Code, Codex, Cursor, OpenCode, Grok et Antigravity.",
     homeLabel: "Accueil T3 Code",
+    docs: "Docs",
     download: "Télécharger",
     starsLabel: "Mettre une étoile à T3 Code sur GitHub, {stars} étoiles",
     githubStars: "{stars} étoiles sur GitHub",
