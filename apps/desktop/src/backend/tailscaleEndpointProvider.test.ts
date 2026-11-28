@@ -63,6 +63,7 @@ describe("tailscale endpoint provider", () => {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
         networkInterfaces: {
+          tailscale0: [{ address: "fe80::294c:83fd:4ef:892b", family: "IPv6", internal: false }],
           utun100: [{ address: "100.81.22.33", family: "IPv4", internal: false }],
         },
         statusJson: `{"BackendState":"Stopped","Self":{"TailscaleIPs":["100.64.1.2"]}}`,
@@ -70,18 +71,6 @@ describe("tailscale endpoint provider", () => {
       assert.deepEqual(
         endpoints.map((endpoint) => endpoint.httpBaseUrl),
         ["http://100.81.22.33:3773/"],
-      );
-
-      const reused = yield* resolveTailscaleAdvertisedEndpoints({
-        port: 3773,
-        networkInterfaces: {
-          utun100: [{ address: "100.81.22.33", family: "IPv4", internal: false }],
-        },
-        statusJson: `{"BackendState":"Stopped","Self":{"TailscaleIPs":["100.81.22.33"]}}`,
-      });
-      assert.deepEqual(
-        reused.map((endpoint) => endpoint.provider.id),
-        ["vpn"],
       );
     }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );

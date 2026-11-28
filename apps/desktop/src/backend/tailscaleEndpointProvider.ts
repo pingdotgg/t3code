@@ -34,19 +34,19 @@ const VPN_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   isAddon: true,
 };
 
-// CGNAT is shared with other VPNs; adapter identity works without current CLI status.
+// CGNAT is shared with other VPNs; adapter identity works without current CLI status. A stopped
+// Tailscale on Linux keeps tailscale0 with only a link-local address, so the name alone is not enough.
 function isTailscaleInterface(
   interfaceName: string,
   interfaceAddresses: NonNullable<NetworkInterfaces[string]>,
 ): boolean {
-  return (
-    /^tailscale(?:\d+|ipv[46])?$/iu.test(interfaceName) ||
-    interfaceAddresses.some(
-      (address) =>
-        !address.internal &&
-        address.family === "IPv6" &&
-        /^fd7a:115c:a1e0:/iu.test(address.address),
-    )
+  return interfaceAddresses.some(
+    (address) =>
+      !address.internal &&
+      (address.family === "IPv6"
+        ? /^fd7a:115c:a1e0:/iu.test(address.address)
+        : /^tailscale(?:\d+|ipv[46])?$/iu.test(interfaceName) &&
+          isTailscaleIpv4Address(address.address)),
   );
 }
 
