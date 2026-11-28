@@ -7,14 +7,17 @@ import type {
   PullRequestDiffFileContentsResult,
 } from "@t3tools/contracts";
 
-import { createNativeReviewDiffSourceLoader } from "../diffs/nativeReviewDiffSource";
+import {
+  createDiffHighlightCache,
+  withDiffSourceLoaders,
+} from "../diffs/nativeReviewDiffHighlightFiles";
 import {
   diffHighlightTraceHash,
   diffHighlightTraceId,
   traceDiffHighlight,
 } from "../diffs/nativeReviewDiffTrace";
-import type { NativeReviewDiffFile, NativeReviewDiffSource } from "../diffs/nativeReviewDiffTypes";
-import type { ReviewParsedDiff, ReviewRenderableFile } from "../review/reviewModel";
+import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
+import type { ReviewParsedDiff } from "../review/reviewModel";
 import type { pullRequestTarget } from "./usePullRequestDiff";
 
 type FetchContents<E> = (request: {
@@ -22,21 +25,7 @@ type FetchContents<E> = (request: {
   readonly input: PullRequestDiffFileContentsInput;
 }) => Promise<AtomCommandResult<PullRequestDiffFileContentsResult, E>>;
 
-type SourceRequest = () => Promise<NativeReviewDiffSource>;
-
-interface SourceSnapshot {
-  readonly firstFile: ReviewRenderableFile;
-  readonly scope: string;
-  readonly load: ReturnType<typeof createNativeReviewDiffSourceLoader<SourceRequest>>;
-  readonly requests: WeakMap<
-    ReviewRenderableFile,
-    { readonly completePatch: boolean; readonly request: SourceRequest }
-  >;
-}
-
-export function createPullRequestDiffHighlightCache(): { snapshot?: SourceSnapshot } {
-  return {};
-}
+export const createPullRequestDiffHighlightCache = createDiffHighlightCache;
 
 export function createPullRequestDiffHighlightFiles<E>(
   source: {
@@ -49,7 +38,6 @@ export function createPullRequestDiffHighlightFiles<E>(
   cache = createPullRequestDiffHighlightCache(),
 ): ReadonlyArray<NativeReviewDiffFile> {
   if (parsed.kind !== "files" || !parsed.files[0]) return files;
-  const byId = new Map(parsed.files.map((file) => [file.id, file]));
   const { target, commit } = source;
   traceDiffHighlight("source-target", {
     environment: diffHighlightTraceHash(target.environmentId),
@@ -65,28 +53,11 @@ export function createPullRequestDiffHighlightFiles<E>(
     target.input.host,
     commit,
   ]);
-  const firstFile = parsed.files[0];
-  // Appended pages share one loader budget; a new first file starts a new snapshot.
-  let snapshot = cache.snapshot;
-  if (!snapshot || snapshot.firstFile !== firstFile || snapshot.scope !== scope) {
-    snapshot = {
-      firstFile,
-      scope,
-      load: createNativeReviewDiffSourceLoader<SourceRequest>((request) => request()),
-      requests: new WeakMap(),
-    };
-    cache.snapshot = snapshot;
-  }
-  const { load, requests } = snapshot;
-  return files.map((nativeFile) => {
-    const file = byId.get(nativeFile.id);
-    if (!file) return nativeFile;
-    const completePatch = parsed.notice === null && !!file.completePatchSource;
-    const cached = requests.get(file);
-    if (cached?.completePatch === completePatch)
-      return { ...nativeFile, loadContents: (signal) => load(cached.request, signal) };
-    const request: SourceRequest = async () => {
-      if (completePatch && file.completePatchSource) return file.completePatchSource();
+  return withDiffSourceLoaders(
+    scope,
+    parsed,
+    files,
+    async (file) => {
       traceDiffHighlight("source-params", {
         file: diffHighlightTraceId(file.id),
         oldPath: diffHighlightTraceHash(file.previousPath ?? file.path),
@@ -106,8 +77,7 @@ export function createPullRequestDiffHighlightFiles<E>(
       });
       if (result._tag !== "Success") throw squashAtomCommandFailure(result);
       return result.value;
-    };
-    requests.set(file, { completePatch, request });
-    return { ...nativeFile, loadContents: (signal) => load(request, signal) };
-  });
+    },
+    cache,
+  );
 }

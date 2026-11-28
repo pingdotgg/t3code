@@ -2,7 +2,7 @@ import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
-import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { OrchestrationGetTurnDiffResult, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -40,6 +40,8 @@ export interface ReviewSectionItem {
   readonly files?: ReviewDiffPreviewSource["files"];
   readonly truncated?: boolean;
   readonly source?: ReviewGitSource;
+  /** The revisions a turn diff compares; absent from older servers. */
+  readonly turnSource?: OrchestrationGetTurnDiffResult["source"];
   /** Set when a turn's patch spans more than one folder. */
   readonly repositoryGroups?: ReadonlyArray<ReviewRepositoryGroup>;
   /** Repositories the turn changed that have nothing recorded before it to compare with. */
@@ -767,7 +769,10 @@ export function applyReviewDiffMetadata(
   const stats = new Map(selectedSection.files.map((file) => [file.path, file]));
   const files = previewDiff.files.map((file) => {
     const stat = stats.get(file.path);
-    return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+    // An unchanged file keeps its identity; the whole-file loaders are kept per file object.
+    return stat && (stat.additions !== file.additions || stat.deletions !== file.deletions)
+      ? { ...file, additions: stat.additions, deletions: stat.deletions }
+      : file;
   });
   return { ...previewDiff, ...totals, files, fileCount: selectedSection.files.length, notice };
 }

@@ -5797,6 +5797,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return result.stdout;
   });
 
+  const readReviewFilesAtRevisions = Effect.fn("readReviewFilesAtRevisions")(function* (
+    input: ReviewDiffFileContentsInput,
+    oldRevision: string,
+    newRevision: string,
+  ) {
+    const [oldContents, newContents] = yield* Effect.all(
+      [
+        input.changeType === "new"
+          ? Effect.succeed("")
+          : readReviewFileAtRevision(input, oldRevision, input.oldPath),
+        input.changeType === "deleted"
+          ? Effect.succeed("")
+          : readReviewFileAtRevision(input, newRevision, input.newPath),
+      ],
+      { concurrency: 2 },
+    );
+    return { oldContents, newContents };
+  });
+
   const readWorkingTreeReviewFile = Effect.fn("readWorkingTreeReviewFile")(function* (
     input: ReviewDiffFileContentsInput,
     repositoryRoot: string,
@@ -5923,18 +5942,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "Selected commit changed. Refresh the comparison.",
         );
       }
-      const [oldContents, newContents] = yield* Effect.all(
-        [
-          input.changeType === "new"
-            ? Effect.succeed("")
-            : readReviewFileAtRevision(input, commit.parent, input.oldPath),
-          input.changeType === "deleted"
-            ? Effect.succeed("")
-            : readReviewFileAtRevision(input, commit.sha, input.newPath),
-        ],
-        { concurrency: 2 },
-      );
-      return { oldContents, newContents };
+      return yield* readReviewFilesAtRevisions(input, commit.parent, commit.sha);
+    }
+    if (input.sourceKind === "revision-range") {
+      if (!input.baseRef || !input.headRef) {
+        return yield* reviewDiffFileError(input, "Both revisions of the diff are required.");
+      }
+      return yield* readReviewFilesAtRevisions(input, input.baseRef, input.headRef);
     }
     const oldRevision =
       input.sourceKind === "working-tree"

@@ -95,7 +95,8 @@ export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 
 export const ReviewDiffFileContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  sourceKind: ReviewDiffPreviewSourceKind,
+  // "revision-range" reads the old file at baseRef and the new one at headRef, as a turn diff does.
+  sourceKind: Schema.Literals([...ReviewDiffPreviewSourceKind.literals, "revision-range"]),
   changeType: ReviewDiffChangeType,
   baseRef: Schema.NullOr(GitRefName),
   headRef: Schema.NullOr(GitRefName),

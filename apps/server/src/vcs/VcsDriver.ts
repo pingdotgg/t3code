@@ -118,6 +118,8 @@ export interface VcsCheckpointOps {
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
+  /** The revision `diffCheckpoints` reads its old side from, which a branch switch moves. */
+  readonly resolveDiffBase: (input: VcsListAuthoredPathsInput) => Effect.Effect<string, VcsError>;
   readonly listAuthoredPaths: (
     input: VcsListAuthoredPathsInput,
   ) => Effect.Effect<ReadonlySet<string> | null, VcsError>;

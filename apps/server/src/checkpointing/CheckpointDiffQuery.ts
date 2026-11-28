@@ -81,6 +81,7 @@ function buildTurnDiffResult(
   },
   diff: string,
   repositories?: ReadonlyArray<ThreadTurnRepositoryDiff>,
+  source?: OrchestrationGetTurnDiffResultType["source"],
 ): OrchestrationGetTurnDiffResultType {
   return {
     threadId: input.threadId,
@@ -88,6 +89,7 @@ function buildTurnDiffResult(
     toTurnCount: input.toTurnCount,
     diff,
     ...(repositories === undefined ? {} : { repositories }),
+    ...(source === undefined ? {} : { source }),
   };
 }
 
@@ -354,7 +356,10 @@ export const make = Effect.gen(function* () {
             Effect.provideService(Path.Path, path),
           )
         : undefined;
-      const withRepositories = Effect.fnUntraced(function* (diff: string) {
+      const withRepositories = Effect.fnUntraced(function* (
+        diff: string,
+        source?: OrchestrationGetTurnDiffResultType["source"],
+      ) {
         const repositories =
           nested === undefined
             ? undefined
@@ -367,7 +372,7 @@ export const make = Effect.gen(function* () {
                 nested,
                 maxBytes: Math.max(0, CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(diff)),
               });
-        const turnDiff = buildTurnDiffResult(input, diff, repositories);
+        const turnDiff = buildTurnDiffResult(input, diff, repositories, source);
         if (!isTurnDiffResult(turnDiff)) {
           return yield* new CheckpointDiffResultInvalidError({
             operation,
@@ -418,18 +423,24 @@ export const make = Effect.gen(function* () {
       }
 
       const excludePaths = nested?.get(toScope.id);
-      const diff = yield* patchBetween(
-        {
-          cwd: toScope.cwd,
-          fromCheckpointRef,
-          toCheckpointRef: toCheckpoint.ref,
-          fallbackFromToHead: false,
-          ignoreWhitespace,
-          ...(excludePaths === undefined ? {} : { excludePaths }),
-        },
-        CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+      const comparison = {
+        cwd: toScope.cwd,
+        fromCheckpointRef,
+        toCheckpointRef: toCheckpoint.ref,
+        fallbackFromToHead: false,
+        ignoreWhitespace,
+        ...(excludePaths === undefined ? {} : { excludePaths }),
+      } as const;
+      const diff = yield* patchBetween(comparison, CHECKPOINT_DIFF_MAX_OUTPUT_BYTES);
+      const baseRef = yield* checkpointStore
+        .resolveDiffBase(comparison)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      return yield* withRepositories(
+        diff,
+        baseRef === undefined
+          ? undefined
+          : { cwd: comparison.cwd, baseRef, headRef: comparison.toCheckpointRef },
       );
-      return yield* withRepositories(diff);
     },
   );
 

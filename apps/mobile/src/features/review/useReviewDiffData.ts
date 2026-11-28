@@ -4,6 +4,10 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
 import { parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
+import {
+  createReviewDiffHighlightFiles,
+  type ReviewDiffContentsSource,
+} from "./reviewDiffHighlightFiles";
 import { getCachedReviewParsedDiff } from "./reviewState";
 import {
   applyReviewDiffMetadata,
@@ -24,6 +28,8 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { reviewEnvironment } from "../../state/review";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { createDiffHighlightCache } from "../diffs/nativeReviewDiffHighlightFiles";
 import type { MessageResolver } from "../../i18n/messages";
 import {
   filterPullRequestTestFiles,
@@ -302,10 +308,58 @@ export function useReviewDiffData(input: {
         ? parsedDiff.fileCount - shownDiff.fileCount
         : 0,
   };
-  const nativeReviewDiffData = getCachedNativeReviewDiffData({
-    parsedDiff: fileFilter.parsed,
+  const baseNativeReviewDiffData = getCachedNativeReviewDiffData({
+    parsedDiff: shownDiff,
     comments: selectedSectionInlineComments,
   });
+  const fetchContents = useAtomCommand(reviewEnvironment.diffFileContents, {
+    reportFailure: false,
+  });
+  const [highlightCache] = useState(createDiffHighlightCache);
+  const turnSource = selectedSection?.turnSource;
+  const nativeReviewDiffData = useMemo(() => {
+    const contentsSource: ReviewDiffContentsSource | null =
+      !environmentId || !selectedSectionId
+        ? null
+        : turnSource
+          ? {
+              environmentId,
+              cwd: turnSource.cwd,
+              sourceKind: "revision-range",
+              baseRef: turnSource.baseRef,
+              headRef: turnSource.headRef,
+              diffKey: selectedSectionId,
+            }
+          : source && cwd
+            ? {
+                environmentId,
+                cwd,
+                sourceKind: source.kind,
+                baseRef: source.baseRef,
+                headRef: source.headRef,
+                diffKey: source.diffHash,
+              }
+            : null;
+    if (!contentsSource) return baseNativeReviewDiffData;
+    const files = createReviewDiffHighlightFiles(
+      contentsSource,
+      shownDiff,
+      baseNativeReviewDiffData.files,
+      fetchContents,
+      highlightCache,
+    );
+    return { ...baseNativeReviewDiffData, files };
+  }, [
+    environmentId,
+    selectedSectionId,
+    turnSource,
+    source,
+    cwd,
+    shownDiff,
+    baseNativeReviewDiffData,
+    fetchContents,
+    highlightCache,
+  ]);
   const pendingReviewCommentCount = inlineReviewComments.length;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records review perf marks and diagnostic logs once a parsed diff has committed

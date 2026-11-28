@@ -103,6 +103,11 @@ export class CheckpointStore extends Context.Service<
       input: DiffCheckpointsInput,
     ) => Effect.Effect<string, CheckpointStoreError>;
 
+    /** The revision `diffCheckpoints` reads its old side from. */
+    readonly resolveDiffBase: (
+      input: ListAuthoredPathsInput,
+    ) => Effect.Effect<string, CheckpointStoreError>;
+
     /** Null means HEAD is unchanged or unrecorded; all changed paths then belong to the turn. */
     readonly listAuthoredPaths: (
       input: ListAuthoredPathsInput,
@@ -183,6 +188,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.diffCheckpoints(input);
   });
 
+  const resolveDiffBase: CheckpointStore["Service"]["resolveDiffBase"] = Effect.fn(
+    "resolveDiffBase",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.resolveDiffBase(input);
+  });
+
   const listAuthoredPaths: CheckpointStore["Service"]["listAuthoredPaths"] = Effect.fn(
     "listAuthoredPaths",
   )(function* (input) {
@@ -206,6 +218,7 @@ export const make = Effect.gen(function* () {
     copyCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    resolveDiffBase,
     listAuthoredPaths,
     deleteCheckpointRefs,
   });

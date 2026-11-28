@@ -40,6 +40,14 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
     diff: Schema.String,
     /** Tracked repositories that changed in the range. Absent when the thread has none. */
     repositories: Schema.optionalKey(Schema.Array(ThreadTurnRepositoryDiff)),
+    // The revisions `diff` compares, for loading either side's whole file. Older servers omit it.
+    source: Schema.optionalKey(
+      Schema.Struct({
+        cwd: TrimmedNonEmptyString,
+        baseRef: TrimmedNonEmptyString,
+        headRef: TrimmedNonEmptyString,
+      }),
+    ),
   }),
   { unsafePreserveChecks: true },
 );

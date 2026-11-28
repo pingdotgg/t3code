@@ -29,7 +29,7 @@ import {
   ChevronsUpDownIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type ComponentProps, type MouseEvent, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -118,7 +118,11 @@ import { reviewEnvironment } from "../state/review";
 import { filesystemEnvironment } from "../state/filesystem";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+import {
+  claimHighlightContextLoad,
+  createGitDiffFileContentsLoader,
+  releaseHighlightContextLoad,
+} from "../lib/diffFileContents";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
@@ -137,6 +141,14 @@ import {
 import { useOpenLink } from "../browser/useOpenLink";
 
 type DiffThemeType = "light" | "dark";
+// Pierre overloads the callback for file and diff items; one handler takes either set of arguments.
+type CodeViewPostRenderArgs =
+  NonNullable<ComponentProps<typeof AnnotatableCodeView>["options"]["onPostRender"]> extends {
+    (...args: infer FileArgs): void;
+    (...args: infer DiffArgs): void;
+  }
+    ? FileArgs | DiffArgs
+    : never;
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const ALL_REPOSITORIES = "__all_repositories__";
 const THREAD_FOLDER = "__thread_folder__";
@@ -652,17 +664,34 @@ export default function DiffPanel({
           { additions: 0, deletions: 0 },
         )
       : null;
-  const currentLoadDiffFiles =
-    isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
-      ? createGitDiffFileContentsLoader(getDiffFileContents, {
-          environmentId: activeThread.environmentId,
-          cwd: preview.cwd,
-          sourceKind: selectedGitSource.kind,
-          baseRef: selectedGitSource.baseRef,
-          headRef: selectedGitSource.headRef,
-          cacheKey: selectedGitSource.diffHash,
-        })
+  // The source names the thread folder's own patch; a turn that also changed tracked
+  // repositories shows their patches beside it, which it cannot load files for.
+  const turnDiffSource =
+    selectedTurn && !toolCallSelection && repositorySections.length === 0
+      ? activeCheckpointDiff.data?.source
       : undefined;
+  const currentLoadDiffFiles =
+    !activeThread || !canReadFiles
+      ? undefined
+      : turnDiffSource && selectedTurn
+        ? createGitDiffFileContentsLoader(getDiffFileContents, {
+            environmentId: activeThread.environmentId,
+            cwd: turnDiffSource.cwd,
+            sourceKind: "revision-range",
+            baseRef: turnDiffSource.baseRef,
+            headRef: turnDiffSource.headRef,
+            cacheKey: `turn:${selectedTurn.runId}`,
+          })
+        : isGitSelection && preview && selectedGitSource
+          ? createGitDiffFileContentsLoader(getDiffFileContents, {
+              environmentId: activeThread.environmentId,
+              cwd: preview.cwd,
+              sourceKind: selectedGitSource.kind,
+              baseRef: selectedGitSource.baseRef,
+              headRef: selectedGitSource.headRef,
+              cacheKey: selectedGitSource.diffHash,
+            })
+          : undefined;
   const loadDiffFiles: FileDiffContentsLoader = useStableCallback(async (fileDiff) => {
     if (!currentLoadDiffFiles) {
       throw new Error(gt("Diff file contents are unavailable for this selection."));
@@ -826,6 +855,24 @@ export default function DiffPanel({
     codeViewScroll.flush();
     codeViewReveal.flush();
   });
+  const onCodeViewPostRender = useStableCallback(
+    (...[, , phase, context]: CodeViewPostRenderArgs) => {
+      if (context.type === "diff") {
+        const { fileDiff, collapsed } = context.item;
+        if (phase === "unmount") {
+          releaseHighlightContextLoad(fileDiff);
+        } else if (
+          currentLoadDiffFiles &&
+          collapsed !== true &&
+          claimHighlightContextLoad(fileDiff)
+        ) {
+          // Rejects when the files cannot load; the patch stays as rendered.
+          context.instance.prepareForEditing().catch(() => undefined);
+        }
+      }
+      flushCodeView();
+    },
+  );
   const revealDiffFile = (filePath: string) => {
     const index = renderableFileEntries.findIndex(
       (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
@@ -1826,7 +1873,7 @@ export default function DiffPanel({
                       preferredHighlighter: PREFERRED_HIGHLIGHTER,
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
-                      onPostRender: flushCodeView,
+                      onPostRender: onCodeViewPostRender,
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />

@@ -3880,6 +3880,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reads both sides of a revision range from Git, not the working tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const baseRef = (yield* git(cwd, ["rev-parse", "HEAD"])).trim();
+        yield* writeTextFile(cwd, "README.md", "# later\n");
+        yield* git(cwd, ["commit", "-am", "later"]);
+        const headRef = (yield* git(cwd, ["rev-parse", "HEAD"])).trim();
+        yield* writeTextFile(cwd, "README.md", "# dirty\n");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "revision-range", baseRef, headRef }),
+        );
+
+        assert.deepStrictEqual(contents, { oldContents: "# test\n", newContents: "# later\n" });
+      }),
+    );
+
     it.effect("loads repository-relative files from nested directories and aliases", () =>
       Effect.gen(function* () {
         const directory = yield* makeTmpDir();

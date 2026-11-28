@@ -138,6 +138,11 @@ export function useReviewSections(input: {
     () => (activeTurnDiffData == null ? null : reviewTurnDiffText(activeTurnDiffData)),
     [activeTurnDiffData],
   );
+  // The source names the thread folder's own patch, so it serves only a turn with no other patch.
+  const turnSource =
+    canReadFiles && activeTurnDiffData != null && activeTurnDiffText === activeTurnDiffData.diff
+      ? activeTurnDiffData.source
+      : undefined;
 
   const reviewSections = cachedSections.map((section): ReviewSectionItem => {
     if (section.kind === "turn") {
@@ -146,6 +151,7 @@ export function useReviewSections(input: {
             ...section,
             diff: activeTurnDiffText ?? section.diff,
             isLoading: activeTurnDiff.isPending,
+            ...(turnSource ? { turnSource } : {}),
           }
         : section;
     }
