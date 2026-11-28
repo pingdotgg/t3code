@@ -52,4 +52,4 @@ Create a separate Claude instance with its own config directory (e.g. `~/.claude
 | `ANTHROPIC_AUTH_TOKEN` | Your OpenRouter API key (mark Sensitive) |
 | `ANTHROPIC_API_KEY`    | Explicitly empty                         |
 
-Add unlisted OpenRouter models via **Add custom model** in the instance settings. See the [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration) or [Claude Code Router](https://github.com/musistudio/claude-code-router) for local router setup.
+Add unlisted OpenRouter models via **Add custom model** in the instance settings. A custom model ID ending in `[1m]` gets a Context Window choice between 1M and 200K, and choosing 200K sends the same ID without the suffix. See the [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration) or [Claude Code Router](https://github.com/musistudio/claude-code-router) for local router setup.
