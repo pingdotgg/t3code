@@ -5,11 +5,7 @@ import { resolveSpellCheckerLanguages } from "./SpellCheckerLanguages.ts";
 const AVAILABLE = ["de-DE", "en-AU", "en-GB", "en-US", "fr", "pt-BR", "pt-PT"];
 
 describe("resolveSpellCheckerLanguages", () => {
-  it("replaces the packaged en-US default with the OS language", () => {
-    expect(resolveSpellCheckerLanguages(["en-US"], ["en-GB"], AVAILABLE)).toEqual(["en-GB"]);
-  });
-
-  it("keeps every preferred OS language in order", () => {
+  it("replaces the packaged en-US default with the OS languages in order", () => {
     expect(resolveSpellCheckerLanguages(["en-US"], ["en-GB", "pt-BR"], AVAILABLE)).toEqual([
       "en-GB",
       "pt-BR",
