@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
+import { BOOT_SERVICE_UNIT_FILE } from "../cloud/bootService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
@@ -92,7 +93,13 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
 
 // systemd's default 90 s stop timeout would outlast our leftover-agent wait.
 // Delegation lets rootless containers (Podman, kind) manage their own cgroups.
-const SCOPE_OPTIONS = ["--property=TimeoutStopSec=10s", "--property=Delegate=yes"];
+// Before= makes the user manager stop the server's service first at shutdown, so it
+// can prepare restart continuations while agents still run; harmless without the unit.
+const SCOPE_OPTIONS = [
+  "--property=TimeoutStopSec=10s",
+  "--property=Delegate=yes",
+  `--property=Before=${BOOT_SERVICE_UNIT_FILE}`,
+];
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
 const CLEAR_FAILED_INTERVAL = "1 second";

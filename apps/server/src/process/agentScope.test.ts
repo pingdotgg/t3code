@@ -409,6 +409,18 @@ describe("AgentScope service", () => {
     ),
   );
 
+  it.effect("stops agent scopes only after the server service at host shutdown", () =>
+    withFakeSystemd(({ scope }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const codex = yield* launchCodex(scope, "a");
+        for (const launch of [agent, codex]) {
+          expect(launch.args).toContain("--property=Before=t3code.service");
+        }
+      }),
+    ),
+  );
+
   it.effect("caps agent memory and yields CPU, disk, and tasks to the server", () =>
     withFakeSystemd(({ scope, calls }) =>
       Effect.gen(function* () {
