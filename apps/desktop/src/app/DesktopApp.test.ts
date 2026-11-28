@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
@@ -87,11 +90,14 @@ interface StubbedDesktop {
   readonly flushRendererHistory?: Effect.Effect<void>;
   readonly tokenRequested?: Deferred.Deferred<void>;
   readonly activationStarted?: Deferred.Deferred<void>;
+  readonly primaryRequested?: Deferred.Deferred<void>;
+  readonly messageBoxResponse?: number;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
   Effect.gen(function* () {
     const quitting = yield* Ref.make(false);
+    const localEnvironmentEnabled = yield* Ref.make(stub.localEnvironmentEnabled);
     const runApp = DesktopApp.program
       .pipe(
         Effect.provide(NodeCrypto.layer),
@@ -105,6 +111,10 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         } as unknown as ElectronApp.ElectronApp["Service"]),
         Effect.provideService(ElectronDialog.ElectronDialog, {
           showErrorBox: () => Effect.die("unexpected fatal startup error"),
+          showMessageBox: () =>
+            stub.messageBoxResponse === undefined
+              ? Effect.die("unexpected message box")
+              : Effect.succeed({ response: stub.messageBoxResponse, checkboxChecked: false }),
         } as unknown as ElectronDialog.ElectronDialog["Service"]),
         Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
           platform: "linux",
@@ -128,14 +138,23 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         }),
         Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
           load: Effect.void,
-          get: Effect.succeed({
-            localEnvironmentEnabled: stub.localEnvironmentEnabled,
-            serverExposureMode: "local-only",
-          }),
+          get: Ref.get(localEnvironmentEnabled).pipe(
+            Effect.map((enabled) => ({
+              localEnvironmentEnabled: enabled,
+              serverExposureMode: "local-only",
+            })),
+          ),
+          setLocalEnvironmentEnabled: (enabled: boolean) =>
+            Ref.set(localEnvironmentEnabled, enabled).pipe(Effect.as({ changed: true })),
         } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
         Effect.provideService(DesktopLifecycle.DesktopLifecycle, {
           register: Effect.void,
-          relaunch: () => Effect.void,
+          relaunch: () =>
+            Ref.get(localEnvironmentEnabled).pipe(
+              Effect.flatMap((enabled) =>
+                stub.record(enabled ? "relaunch" : "relaunch with Local environment off"),
+              ),
+            ),
         }),
         Effect.provideService(DesktopClerk.DesktopClerk, {
           configure: Effect.void,
@@ -178,10 +197,15 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
             .pipe(Effect.andThen(Deferred.succeed(stub.windowStarted, undefined))),
         } as unknown as DesktopWindow.DesktopWindow["Service"]),
         Effect.provideService(DesktopBackendPool.DesktopBackendPool, {
-          primary: Effect.succeed({
-            start: stub.record("backend"),
-            currentConfig: Effect.succeedSome({ preflightFailure: Option.none() }),
-          }),
+          primary: (stub.primaryRequested
+            ? Deferred.succeed(stub.primaryRequested, undefined)
+            : Effect.void
+          ).pipe(
+            Effect.as({
+              start: stub.record("backend"),
+              currentConfig: Effect.succeedSome({ preflightFailure: Option.none() }),
+            }),
+          ),
           list: Effect.succeed(stub.backends ?? []),
         } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]),
         Effect.provideService(DesktopServerExposure.DesktopServerExposure, {
@@ -384,6 +408,53 @@ it.effect(
       assert.isTrue(
         yield* Deferred.isDone(activationStarted),
         "startup left the t3 <dir> control socket closed",
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
+);
+
+it.effect(
+  "choosing the running server on an owned T3 home relaunches without opening this run's window",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-owned-home-" });
+      yield* fs.writeFileString(
+        `${stateDir}/server-runtime.json`,
+        JSON.stringify({ pid: process.pid, port: 3773, serviceManaged: true }),
+      );
+      const lock = new NodeSqlite.DatabaseSync(`${stateDir}/server-owner.sqlite`);
+      lock.exec("BEGIN EXCLUSIVE;");
+      yield* Effect.addFinalizer(() => Effect.sync(() => lock.close()));
+      const events: string[] = [];
+      const primaryRequested = yield* Deferred.make<void>();
+      const activationStarted = yield* Deferred.make<void>();
+
+      const app = yield* runStubbedDesktop({
+        localEnvironmentEnabled: true,
+        // Packaged Linux recovers stranded backends with real I/O before the ownership wait.
+        environment: { platform: "darwin", isPackaged: false, stateDir },
+        fileSystem: Layer.succeed(FileSystem.FileSystem, fs),
+        record: (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        windowStarted: yield* Deferred.make<void>(),
+        registerLinuxUrlHandler: Effect.void,
+        primaryRequested,
+        activationStarted,
+        messageBoxResponse: 1,
+      });
+      yield* Deferred.await(primaryRequested);
+      yield* TestClock.adjust("1 minute");
+      yield* (yield* DesktopShutdown.DesktopShutdown).request;
+      yield* Fiber.join(app);
+
+      assert.include(events, "relaunch with Local environment off");
+      assert.notInclude(events, "backend");
+      assert.notInclude(events, "window", "the relaunching run opened a client window");
+      assert.isFalse(
+        yield* Deferred.isDone(activationStarted),
+        "the relaunching run bound the t3 <dir> control socket",
       );
     }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
 );

@@ -1,6 +1,9 @@
 {
   "743bb98558dcdddf": "O T3 Code não conseguiu iniciar",
   "45e444e807bececb": "Este T3 home não está disponível",
+  "2be6b85ee4a104c9": "Para manter esse servidor em execução, escolha Usar o servidor em execução. O T3 Code reinicia sem o próprio servidor. Depois, execute `t3 pair --base-dir {home}` e abra o link exibido para conectar.",
+  "3874c9f538653a6d": "Sair",
+  "76e2849d0b9d9f85": "Usar o servidor em execução",
   "97665653aa9129ad": "Verificando se há uma versão mais recente…",
   "dce25e68e60eb512": "A versão {version} está disponível. Ela pode conter uma correção.",
   "2f015e6d5459dce9": "Atualizar para {version}",
@@ -13,7 +16,6 @@
   "7e21da2485a8e0bb": "A política gerenciada da sua organização impediu o T3 Code de iniciar. Envie os detalhes abaixo para o administrador de TI.",
   "55a19ca527948aaa": "O T3 Code não pôde iniciar",
   "4825d2a18a5fc093": "Copiar detalhes",
-  "3874c9f538653a6d": "Sair",
   "0eec8b51246f5e2c": "O servidor não gerou saída.",
   "6cb1b68bddf39b35": "Versão {version}. O T3 Code tenta novamente em segundo plano. Logs: {logDir}",
   "895f988b9de16f88": "O backend do WSL continua indisponível",

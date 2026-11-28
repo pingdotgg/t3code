@@ -158,6 +158,53 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   yield* electronApp.quit;
 });
 
+// Matches the server's `hostShellWord`, so the printed command survives `$`, quotes and spaces when pasted.
+const hostShellWord = (platform: NodeJS.Platform, value: string) =>
+  platform === "win32"
+    ? `"${value
+        .replaceAll("`", "``")
+        .replaceAll("$", "`$")
+        .replace(/["“”„]/g, "$&$&")}"`
+    : /^[\w@%+=:,./-]+$/.test(value)
+      ? value
+      : `'${value.replaceAll("'", `'"'"'`)}'`;
+
+// Settings is unreachable from here, so the dialog offers its supported setup: a client of that server.
+const refuseOwnedHome = Effect.fn("desktop.bootstrap.refuseOwnedHome")(function* (
+  owner: Option.Option<DesktopHomeOwner.HomeOwner>,
+) {
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const electronApp = yield* ElectronApp.ElectronApp;
+  const title = m(msg("This T3 home is unavailable"));
+  if (Option.isNone(owner)) {
+    yield* electronDialog.showErrorBox(title, DesktopHomeOwner.homeOwnedMessage(owner));
+    return yield* electronApp.quit;
+  }
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const { response } = yield* electronDialog.showMessageBox({
+    type: "warning",
+    title,
+    message: title,
+    detail: `${DesktopHomeOwner.homeOwnedMessage(owner)}\n\n${m(
+      msg(
+        "To keep that server running, choose Use the running server. T3 Code restarts without its own server. Then run `t3 pair --base-dir {home}` and open the link it prints to connect.",
+      ),
+      { home: hostShellWord(environment.platform, environment.baseDir) },
+    )}`,
+    buttons: [
+      m(msg("Quit", { $context: "button, quits the app" })),
+      m(msg("Use the running server")),
+    ],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  if (response === 0) {
+    return yield* electronApp.quit;
+  }
+  yield* (yield* DesktopAppSettings.DesktopAppSettings).setLocalEnvironmentEnabled(false);
+  yield* (yield* DesktopLifecycle.DesktopLifecycle).relaunch("localEnvironmentEnabled=false");
+});
+
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
@@ -224,7 +271,7 @@ const startLocalBackend = Effect.gen(function* () {
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
-    return false;
+    return "disabled";
   }
 
   const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
@@ -244,12 +291,9 @@ const startLocalBackend = Effect.gen(function* () {
     yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
       owner: Option.getOrNull(owner),
     });
-    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      m(msg("This T3 home is unavailable")),
-      DesktopHomeOwner.homeOwnedMessage(owner),
-    );
-    yield* (yield* ElectronApp.ElectronApp).quit;
-    return false;
+    yield* refuseOwnedHome(owner);
+    // The refusal may have turned the local environment off; the client-only startup must not run.
+    return "stopped";
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
@@ -288,7 +332,7 @@ const startLocalBackend = Effect.gen(function* () {
   }
 
   if (yield* Ref.get(state.quitting)) {
-    return false;
+    return "stopped";
   }
   if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
     yield* desktopWindow.showConnectingSplash;
@@ -302,10 +346,12 @@ const startLocalBackend = Effect.gen(function* () {
       Effect.ignore,
     ),
   );
-  return true;
+  return "started";
 }).pipe(Effect.withSpan("desktop.startLocalBackend"));
 
-const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: boolean) {
+const bootstrap = Effect.fn("desktop.bootstrap")(function* (
+  localBackend: "started" | "disabled" | "stopped",
+) {
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
@@ -317,7 +363,10 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
     Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
     Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
   );
-  if (settings.localEnvironmentEnabled && (!backendStarted || (yield* Ref.get(state.quitting)))) {
+  if (
+    localBackend === "stopped" ||
+    (localBackend === "started" && (yield* Ref.get(state.quitting)))
+  ) {
     return;
   }
 
@@ -433,14 +482,14 @@ const startup = Effect.gen(function* () {
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* DesktopStartupRecovery.listen;
-  const backendStarted = yield* startLocalBackend.pipe(
+  const localBackend = yield* startLocalBackend.pipe(
     Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
   );
   yield* previewPasskeys.configure;
   yield* applicationMenu.configure;
   // Portal identity is prepared pre-ready; MIME helpers must not gate the backend or window.
   yield* linuxUrlHandler.register.pipe(Effect.forkScoped);
-  yield* bootstrap(backendStarted).pipe(
+  yield* bootstrap(localBackend).pipe(
     Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
   );
 }).pipe(Effect.withSpan("desktop.startup"));
