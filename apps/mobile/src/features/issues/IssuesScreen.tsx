@@ -164,9 +164,10 @@ export function IssuesScreen(
   const loading = useRef(false);
   const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
   const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
+  const needsRetry = continuable.some(([, page]) => page.moreFailed);
   const loadMore = async (retry = false) => {
     // With nothing to continue, the spinner and new pages would only re-fire onEndReached forever.
-    if (loading.current || continuable.length === 0 || (moreFailure !== null && !retry)) return;
+    if (loading.current || continuable.length === 0 || (needsRetry && !retry)) return;
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(
@@ -464,9 +465,11 @@ export function IssuesScreen(
                 accessibilityLabel={gt("Loading more issues")}
               />
             </View>
-          ) : moreFailure ? (
+          ) : needsRetry ? (
             <View className="items-center gap-2 px-8 py-4">
-              <Text className="text-xs text-foreground-muted">{moreFailure}</Text>
+              {moreFailure ? (
+                <Text className="text-xs text-foreground-muted">{moreFailure}</Text>
+              ) : null}
               <Button
                 label={gt("Try again")}
                 accessibilityLabel={gt("Retry loading more issues")}
