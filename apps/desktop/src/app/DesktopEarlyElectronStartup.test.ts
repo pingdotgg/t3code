@@ -6,6 +6,7 @@ import {
   restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
+  resolveWindowsDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
@@ -127,6 +128,35 @@ describe("DesktopEarlyElectronStartup", () => {
           readHyprctlVersionJson: () => assert.fail("hyprctl should not run"),
         }),
       );
+    });
+  });
+
+  describe("resolveWindowsDisableFeaturesSwitch", () => {
+    it.each([
+      { disableFeatures: null, expected: "HideCursorWhileTyping" },
+      { disableFeatures: "Vulkan", expected: "Vulkan,HideCursorWhileTyping" },
+      // Chromium reads ":params" as part of a disabled name, so this entry leaves the feature on.
+      {
+        disableFeatures: "HideCursorWhileTyping:mode/strict",
+        expected: "HideCursorWhileTyping:mode/strict,HideCursorWhileTyping",
+      },
+    ])("disables hide-pointer-while-typing alongside $disableFeatures", (input) => {
+      assert.equal(
+        resolveWindowsDisableFeaturesSwitch({
+          enableFeatures: "Vulkan",
+          disableFeatures: input.disableFeatures,
+        }),
+        input.expected,
+      );
+    });
+
+    it.each([
+      { enableFeatures: null, disableFeatures: "Vulkan, HideCursorWhileTyping" },
+      { enableFeatures: null, disableFeatures: "HideCursorWhileTyping<Study" },
+      { enableFeatures: "HideCursorWhileTyping", disableFeatures: null },
+      { enableFeatures: "Vulkan,HideCursorWhileTyping<Study.Group:mode/strict", disableFeatures: null },
+    ])("leaves the switch alone for $enableFeatures / $disableFeatures", (input) => {
+      assert.isNull(resolveWindowsDisableFeaturesSwitch(input));
     });
   });
 });
