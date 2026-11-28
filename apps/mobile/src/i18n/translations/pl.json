@@ -3567,7 +3567,6 @@
   "e3332e8a849ddce3": "{count, plural, few {Usuwa wszystkie {count} wpisy checkoutów i ich wątki na każdej maszynie. Pliki na dysku pozostają nietknięte.} many {Usuwa wszystkie {count} wpisów checkoutów i ich wątki na każdej maszynie. Pliki na dysku pozostają nietknięte.} other {Usuwa wszystkie {count} wpisów checkoutów i ich wątki na każdej maszynie. Pliki na dysku pozostają nietknięte.}}",
   "5ddf3891266c3c9e": "Usuwa wpis projektu i jego wątki. Pliki na dysku pozostają nietknięte.",
   "3f01a81eaf73280c": "Usuń checkout {path}",
-  "82c158f932fbb0db": "Wybierz projekt filtrem powyżej, aby zarządzać jego nazwą, checkoutami i usuwaniem.",
   "fa38c677c3af4f00": "Ten projekt nie ma checkoutu na wybranych połączonych środowiskach. Zmień filtr powyżej.",
   "4614a422f1430cd7": "Nazwa",
   "89c5ab924f851b78": "Usuń checkout",

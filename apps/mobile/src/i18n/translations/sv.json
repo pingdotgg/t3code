@@ -3566,7 +3566,6 @@
   "e3332e8a849ddce3": "{count, plural, one {Tar bort {count} utcheckningspost och dess trådar på alla datorer. Filer på disken berörs inte.} other {Tar bort alla {count} utcheckningsposter och deras trådar på alla datorer. Filer på disken berörs inte.}}",
   "5ddf3891266c3c9e": "Tar bort projektposten och dess trådar. Filer på disken berörs inte.",
   "3f01a81eaf73280c": "Ta bort utcheckningen {path}",
-  "82c158f932fbb0db": "Välj ett projekt med filtret ovan för att hantera dess namn, utcheckningar och borttagning.",
   "fa38c677c3af4f00": "Projektet har ingen utcheckning i de valda anslutna miljöerna. Ändra filtret ovan.",
   "4614a422f1430cd7": "Namn",
   "89c5ab924f851b78": "Ta bort utcheckning",

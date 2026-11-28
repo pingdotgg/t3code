@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useLocale } from "gt-react-native";
+import { LegendList } from "@legendapp/list/react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -16,7 +17,7 @@ import {
   type ProjectGroup,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +39,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { ListRow } from "../../components/ui/ListRow";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ProjectRepositoriesSection } from "./ProjectRepositoriesSection";
@@ -48,6 +50,7 @@ import { workspaceHasColumns } from "../layout/workspace/workspace-selection-sto
 import { DEFAULT_SETTINGS_PAGE } from "../layout/workspace/workspace-tab-navigation";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { m } from "../../i18n/messages";
+import { useHardwareBack } from "../../lib/backHandler";
 
 export function SettingsProjectOverviewRouteScreen() {
   const gt = useGT();
@@ -87,6 +90,13 @@ export function SettingsProjectOverviewRouteScreen() {
     group?.members
       .map((entry) => entry.project)
       .filter((project) => selectedEnvironmentIds.has(project.environmentId)) ?? [];
+  const showProjects = () => selectProject(null);
+  useHardwareBack(selectedProjectKey !== null, () => {
+    showProjects();
+    return true;
+  });
+
+  if (selectedProjectKey === null) return <ProjectSettingsList />;
 
   return (
     <SettingsScreen title={gt("Projects")} menus={[environmentMenu]}>
@@ -97,11 +107,14 @@ export function SettingsProjectOverviewRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {selectedProjectKey === null ? (
-          <Text className="px-2 text-base text-foreground-muted">
-            <T>Choose a project with the filter above to manage its name, checkouts and removal.</T>
-          </Text>
-        ) : !group || members.length === 0 ? (
+        <SettingsSection>
+          <SettingsActionRow
+            icon="chevron.left"
+            label={gt("All projects")}
+            onPress={showProjects}
+          />
+        </SettingsSection>
+        {!group || members.length === 0 ? (
           <Text className="px-2 text-base text-foreground-muted">
             <T>
               This project has no checkout on the selected connected environments. Change the filter
@@ -125,6 +138,84 @@ export function SettingsProjectOverviewRouteScreen() {
           />
         )}
       </ScrollView>
+    </SettingsScreen>
+  );
+}
+
+function ProjectSettingsList() {
+  const gt = useGT();
+  const locale = useLocale();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const environmentMenu = useSettingsEnvironmentMenu();
+  const { selectableProjectGroups, selectedTargets, selectProject } =
+    useSettingsEnvironmentFilter();
+  const environmentIds = new Set(selectedTargets.map((target) => target.environmentId));
+  const projects = [...selectableProjectGroups].sort((left, right) =>
+    left.label.localeCompare(right.label, locale),
+  );
+
+  return (
+    <SettingsScreen title={gt("Projects")} menus={[environmentMenu]}>
+      <LegendList
+        renderScrollComponent={ScrollView}
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        contentInsetAdjustmentBehavior="automatic"
+        data={projects}
+        estimatedItemSize={56}
+        keyExtractor={(project) => project.key}
+        ListHeaderComponent={
+          <View className="px-5 pb-6 pt-4">
+            <SettingsSection>
+              <SettingsActionRow
+                icon="plus"
+                label={gt("Add project")}
+                disabled={selectedTargets.length === 0}
+                onPress={() =>
+                  navigation.dispatch(
+                    StackActions.push(
+                      "AddProject",
+                      selectedTargets.length === 1
+                        ? { environmentId: selectedTargets[0]!.environmentId }
+                        : {},
+                    ),
+                  )
+                }
+              />
+            </SettingsSection>
+          </View>
+        }
+        ListEmptyComponent={
+          <Text className="px-7 text-base text-foreground-muted">
+            {gt("No projects available")}
+          </Text>
+        }
+        renderItem={({ item }) => {
+          const representative = item.members.find((member) =>
+            environmentIds.has(member.project.environmentId),
+          )!.project;
+          return (
+            <View className="border-b border-border">
+              <ListRow
+                leading={
+                  <ProjectFavicon
+                    environmentId={representative.environmentId}
+                    projectTitle={item.label}
+                    projectIcon={representative.projectIcon}
+                    size={24}
+                  />
+                }
+                label={
+                  item.archived ? gt("{project} · Archived", { project: item.label }) : item.label
+                }
+                onPress={() => selectProject(item.key)}
+              />
+            </View>
+          );
+        }}
+        showsVerticalScrollIndicator={false}
+      />
     </SettingsScreen>
   );
 }

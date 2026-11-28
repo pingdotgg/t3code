@@ -3560,7 +3560,6 @@
   "e3332e8a849ddce3": "{count, plural, one {Supprime l’entrée de checkout et ses fils sur chaque machine. Les fichiers sur le disque ne sont pas touchés.} other {Supprime les {count} entrées de checkout et leurs fils sur chaque machine. Les fichiers sur le disque ne sont pas touchés.}}",
   "5ddf3891266c3c9e": "Supprime l’entrée du projet et ses fils. Les fichiers sur le disque ne sont pas touchés.",
   "3f01a81eaf73280c": "Supprimer le checkout {path}",
-  "82c158f932fbb0db": "Choisissez un projet avec le filtre ci-dessus pour gérer son nom, ses checkouts et sa suppression.",
   "fa38c677c3af4f00": "Ce projet n’a aucun checkout dans les environnements connectés sélectionnés. Modifiez le filtre ci-dessus.",
   "4614a422f1430cd7": "Nom",
   "89c5ab924f851b78": "Supprimer le checkout",
