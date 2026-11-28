@@ -183,10 +183,10 @@ export function MediaActions({
         const background = readImagePreviewBackground();
         items.push({
           id: "image-background",
-          label: "Image background",
+          label: m(msg("Image background")),
           children: imagePreviewBackgroundOptions.map((option) => ({
             id: `image-background-${option.value}`,
-            label: option.label,
+            label: m(option.label),
             checked: option.value === background,
           })),
         });

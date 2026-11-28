@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import type { CSSProperties } from "react";
 import {
   readLocalStorageValue,
@@ -11,10 +12,10 @@ const backgroundSchema = Schema.Literals(["theme", "light", "dark", "checker"]);
 type ImagePreviewBackground = typeof backgroundSchema.Type;
 
 export const imagePreviewBackgroundOptions = [
-  { value: "theme", label: "Theme" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "checker", label: "Checkerboard" },
+  { value: "theme", label: msg("Theme", { $context: "image background follows the app theme" }) },
+  { value: "light", label: msg("Light", { $context: "image background color" }) },
+  { value: "dark", label: msg("Dark", { $context: "image background color" }) },
+  { value: "checker", label: msg("Checkerboard") },
 ] satisfies { value: ImagePreviewBackground; label: string }[];
 
 export const imagePreviewBackgroundStyles: Record<ImagePreviewBackground, CSSProperties> = {

@@ -162,6 +162,7 @@ it("changes only the image background even when host file access is denied", asy
       }),
     ]),
     { x: 1, y: 1 },
+    "mouse",
   );
   await vi.waitFor(() => expect(readImagePreviewBackground()).toBe("checker"));
   expect(state.mint).not.toHaveBeenCalled();
