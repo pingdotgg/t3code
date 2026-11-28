@@ -1,11 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - Builds a Chromium-shaped cookie
 // table with the same native bindings the source reads.
 import * as NodePath from "node:path";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
@@ -16,7 +20,13 @@ import {
   BROWSER_IMPORT_SOURCES,
   chromiumProcessIsAlive,
   chromiumSingletonLockIsHeld,
+  deriveDiscoveredBrowserName,
+  discoverBrowserImportSources,
+  discoveredChromiumKeychainCandidates,
+  discoveredLinuxSecretApplications,
   firefoxSymlinkLockIsHeld,
+  isWithinRoot,
+  resolveChromiumLocalState,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
@@ -49,9 +59,13 @@ const run = <A, E>(
   effect: Effect.Effect<
     A,
     E,
-    FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+    | FileSystem.FileSystem
+    | Path.Path
+    | Scope.Scope
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Digest.Digest
   >,
-) => effect.pipe(Effect.provide(NodeServices.layer));
+) => effect.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerDigest)));
 
 const writeCookieDatabase = (file: string, count: number) =>
   Effect.sync(() => {
@@ -1023,6 +1037,278 @@ describe("Safari profiles", () => {
             { directory: store(workUuid), name: workUuid.toLowerCase() },
           ]);
           assert.isTrue(yield* isSourceInstalled(safari, context));
+        }),
+      ),
+  );
+});
+
+describe("Ardia, Dia, and discoverBrowserImportSources", () => {
+  const seedChromium = Effect.fnUntraced(function* (
+    root: string,
+    localState: Record<string, unknown>,
+    cookieSubpath = ["Default", "Network", "Cookies"],
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const db = path.join(root, ...cookieSubpath);
+    yield* fileSystem.makeDirectory(path.dirname(db), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(root, "Local State"), JSON.stringify(localState));
+    yield* writeCookieDatabase(db, 1);
+  });
+
+  const seedFirefox = Effect.fnUntraced(function* (
+    root: string,
+    profileDir: string,
+    iniPath = profileDir,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fullProfile = path.join(root, profileDir);
+    yield* fileSystem.makeDirectory(fullProfile, { recursive: true });
+    yield* fileSystem.writeFileString(
+      path.join(root, "profiles.ini"),
+      `[Profile0]\nName=Main\nIsRelative=1\nPath=${iniPath}\n`,
+    );
+    yield* writeFirefoxCookieDatabase(path.join(fullProfile, "cookies.sqlite"), 1, 0);
+  });
+
+  const discoveredSummary = (context: BrowserImportPathContext) =>
+    discoverBrowserImportSources(context).pipe(
+      Effect.map((sources) =>
+        sources
+          .filter((source) => source.id.startsWith("discovered:"))
+          .map((source) => [source.name, source.engine]),
+      ),
+    );
+
+  it.effect("registers Ardia and Dia and derives names and credential candidates", () =>
+    run(
+      Effect.gen(function* () {
+        const ardia = BROWSER_IMPORT_SOURCES.find((source) => source.id === "ardia")!;
+        const dia = BROWSER_IMPORT_SOURCES.find((source) => source.id === "dia")!;
+        const darwin = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: "/Users/browser-user" }),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+        );
+        const linux = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: "/home/browser-user" }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+
+        assert.equal(ardia.keychainService, "Ardia Safe Storage");
+        assert.equal(
+          ardia.userDataDirectory(darwin),
+          darwin.path.join(
+            "/Users/browser-user",
+            "Library",
+            "Application Support",
+            "com.ardia.browser",
+            "Chromium",
+          ),
+        );
+        assert.equal(
+          ardia.userDataDirectory(linux),
+          linux.path.join("/home/browser-user", ".config", "ardia"),
+        );
+        assert.equal(dia.keychainService, "Dia Safe Storage");
+        assert.equal(
+          dia.userDataDirectory(darwin),
+          darwin.path.join(
+            "/Users/browser-user",
+            "Library",
+            "Application Support",
+            "Dia",
+            "User Data",
+          ),
+        );
+        assert.isUndefined(dia.userDataDirectory(linux));
+
+        assert.equal(deriveDiscoveredBrowserName(["Google", "Chrome Canary"]), "Chrome Canary");
+        assert.equal(deriveDiscoveredBrowserName(["com.ardia.browser", "Chromium"]), "Ardia");
+        assert.equal(deriveDiscoveredBrowserName(["com.perplexity.comet"]), "Comet");
+        assert.isUndefined(deriveDiscoveredBrowserName(["T3 Code"]));
+        assert.isUndefined(deriveDiscoveredBrowserName(["Electron"]));
+
+        assert.deepEqual(discoveredChromiumKeychainCandidates("Chrome Canary"), [
+          { service: "Chrome Canary Safe Storage", account: "Chrome Canary" },
+          { service: "Chrome Canary Safe Storage", account: "Chrome" },
+          { service: "Chrome Canary Storage Key", account: "Chrome Canary" },
+          { service: "Chrome Safe Storage", account: "Chrome" },
+          { service: "Chromium Safe Storage", account: "Chromium" },
+        ]);
+        assert.deepEqual(
+          discoveredLinuxSecretApplications(["thorium-browser"], "Thorium Browser"),
+          ["thorium-browser", "thorium", "chromium", "chrome"],
+        );
+
+        // Canonical containment preserves case on win32 paths too (case-sensitive NTFS directories).
+        const winPath = yield* Path.Path.pipe(Effect.provide(NodePathLayer.layerWin32));
+        const winRoot = "C:\\Users\\dev\\AppData\\Local\\Thorium\\User Data";
+        assert.isTrue(isWithinRoot(winPath, winRoot, `${winRoot}\\Local State`));
+        assert.isTrue(isWithinRoot(winPath, winRoot, "Default\\Network\\Cookies"));
+        assert.isFalse(
+          isWithinRoot(
+            winPath,
+            winRoot,
+            "C:\\Users\\dev\\AppData\\Local\\Thorium\\user data\\Local State",
+          ),
+        );
+        assert.isFalse(
+          isWithinRoot(
+            winPath,
+            winRoot,
+            "C:\\Users\\dev\\AppData\\Local\\Thorium\\User Data-evil\\Local State",
+          ),
+        );
+        assert.isFalse(isWithinRoot(winPath, winRoot, "..\\Other\\Local State"));
+      }),
+    ),
+  );
+
+  it.effect(
+    "scans macOS, Linux, and Windows roots while excluding Electron, App-Bound Chromium, and EBWebView",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-discover-" });
+          const defaultState = { profile: { info_cache: { Default: { name: "Default" } } } };
+
+          // macOS: unlisted Chromium + Firefox + stale profiles.ini + Electron excluded + Ardia dedup.
+          const mac = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcess.Environment, { HOME: home }),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          const appSupport = path.join(home, "Library", "Application Support");
+          yield* seedChromium(path.join(appSupport, "Google", "Chrome Canary"), defaultState);
+          yield* seedFirefox(path.join(appSupport, "LibreWolf"), "Profiles/main.default");
+          yield* seedFirefox(
+            path.join(appSupport, "Waterfox"),
+            "Profiles/live.default",
+            "Profiles/stale.default",
+          );
+          yield* seedChromium(path.join(appSupport, "Slack"), {}, ["Network", "Cookies"]);
+          yield* seedChromium(path.join(appSupport, "Ardia", "Chromium"), defaultState);
+          const outsideRoot = path.join(home, "outside-browser");
+          yield* seedChromium(outsideRoot, defaultState);
+          yield* writeFirefoxCookieDatabase(path.join(outsideRoot, "cookies.sqlite"), 1, 0);
+          yield* fileSystem.makeDirectory(path.join(appSupport, "EscapeFox"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(appSupport, "EscapeFox", "profiles.ini"),
+            `[Profile0]\nName=Outside\nIsRelative=0\nPath=${outsideRoot}\n`,
+          );
+          if (symlinksSupported) {
+            yield* fileSystem.symlink(outsideRoot, path.join(appSupport, "LinkedBrowser"));
+          }
+          assert.deepEqual(yield* discoveredSummary(mac), [
+            ["Ardia", "chromium"],
+            ["Chrome Canary", "chromium"],
+            ["LibreWolf", "firefox"],
+            ["Waterfox", "firefox"],
+          ]);
+          yield* seedChromium(path.join(appSupport, "com.ardia.browser", "Chromium"), defaultState);
+          assert.deepEqual(yield* discoveredSummary(mac), [
+            ["Chrome Canary", "chromium"],
+            ["LibreWolf", "firefox"],
+            ["Waterfox", "firefox"],
+          ]);
+
+          // Linux: XDG Chromium + ~/.mozilla Firefox forks.
+          const linux = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcess.Environment, { HOME: home }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+          yield* seedChromium(path.join(home, ".config", "thorium"), defaultState);
+          yield* seedFirefox(path.join(home, ".mozilla", "waterfox"), "abc.default");
+          assert.deepEqual(yield* discoveredSummary(linux), [
+            ["Thorium", "chromium"],
+            ["Waterfox", "firefox"],
+          ]);
+
+          // Windows: Roaming Firefox + DPAPI Local Chromium, skipping App-Bound and EBWebView.
+          const appData = path.join(home, "AppData", "Roaming");
+          const localAppData = path.join(home, "AppData", "Local");
+          const win = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcess.Environment, {
+              HOME: home,
+              APPDATA: appData,
+              LOCALAPPDATA: localAppData,
+            }),
+            Effect.provideService(HostProcess.Platform, "win32"),
+          );
+          const dpapiKey = Buffer.concat([Buffer.from("DPAPI"), Buffer.from("key")]).toString(
+            "base64",
+          );
+          yield* seedFirefox(path.join(appData, "Floorp"), "Profiles/main.default");
+          yield* seedChromium(path.join(localAppData, "Thorium", "User Data"), {
+            os_crypt: { encrypted_key: dpapiKey },
+            ...defaultState,
+          });
+          yield* seedChromium(path.join(localAppData, "Google", "Chrome", "User Data"), {
+            os_crypt: { encrypted_key: dpapiKey, app_bound_encrypted_key: "app-bound" },
+            ...defaultState,
+          });
+          yield* seedChromium(path.join(localAppData, "SomeDesktopApp", "EBWebView"), {
+            os_crypt: { encrypted_key: dpapiKey },
+            ...defaultState,
+          });
+          const winDiscovered = yield* discoverBrowserImportSources(win);
+          assert.deepEqual(
+            winDiscovered
+              .filter((source) => source.id.startsWith("discovered:"))
+              .map((source) => [source.name, source.engine]),
+            [
+              ["Floorp", "firefox"],
+              ["Thorium", "chromium"],
+            ],
+          );
+          if (symlinksSupported) {
+            const thorium = winDiscovered.find((source) => source.name === "Thorium")!;
+            const thoriumLocalState = path.join(
+              localAppData,
+              "Thorium",
+              "User Data",
+              "Local State",
+            );
+            assert.isDefined(yield* resolveChromiumLocalState(thorium, win));
+            yield* fileSystem.remove(thoriumLocalState);
+            yield* fileSystem.symlink(path.join(outsideRoot, "Local State"), thoriumLocalState);
+            assert.isUndefined(yield* resolveChromiumLocalState(thorium, win));
+            yield* fileSystem.remove(thoriumLocalState);
+            yield* fileSystem.writeFileString(
+              thoriumLocalState,
+              JSON.stringify({ os_crypt: { encrypted_key: dpapiKey }, ...defaultState }),
+            );
+          }
+          // On case-sensitive filesystems, case-distinct Windows roots keep distinct IDs across rescans.
+          const lowerThoriumRoot = path.join(localAppData, "thorium", "User Data");
+          const caseSensitiveTempDir = !(yield* fileSystem.exists(lowerThoriumRoot));
+          if (caseSensitiveTempDir) {
+            yield* seedChromium(lowerThoriumRoot, {
+              os_crypt: { encrypted_key: dpapiKey },
+              ...defaultState,
+            });
+            const both = (yield* discoverBrowserImportSources(win)).filter(
+              (source) => source.name === "Thorium",
+            );
+            assert.equal(both.length, 2);
+            const upper = both.find((source) =>
+              source.userDataDirectory(win)?.includes(`${path.sep}Thorium${path.sep}`),
+            )!;
+            const lower = both.find((source) =>
+              source.userDataDirectory(win)?.includes(`${path.sep}thorium${path.sep}`),
+            )!;
+            assert.notEqual(upper.id, lower.id);
+            yield* fileSystem.remove(path.join(localAppData, "Thorium"), { recursive: true });
+            const remaining = (yield* discoverBrowserImportSources(win)).filter(
+              (source) => source.name === "Thorium",
+            );
+            assert.deepEqual(
+              remaining.map((source) => source.id),
+              [lower.id],
+            );
+          }
         }),
       ),
   );

@@ -227,48 +227,103 @@ export const readWindowsKey = Effect.fn("ChromiumKeys.readWindowsKey")(function*
   return yield* unwrapWindowsDpapiKey(yield* decodeWindowsWrappedKey(contents));
 });
 
+export interface KeychainCredentialCandidate {
+  readonly service: string;
+  readonly account: string;
+}
+
 export interface ChromiumKeyRequest {
   readonly platform: NodeJS.Platform;
   readonly keychainService: string | undefined;
   readonly keychainAccount: string | undefined;
+  readonly keychainCandidates?: ReadonlyArray<KeychainCredentialCandidate> | undefined;
   readonly linuxSecretApplication: string | undefined;
+  readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
 }
 
-export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* (
+export interface ChromiumKeyCandidateScore {
+  readonly accepted: boolean;
+  readonly score: number;
+}
+
+export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* <
+  E = never,
+  R = never,
+>(
   request: ChromiumKeyRequest,
+  scoreKey?: (keys: ChromiumKeyMaterial) => Effect.Effect<ChromiumKeyCandidateScore, E, R>,
 ): Effect.fn.Return<
   ChromiumKeyMaterial,
-  ChromiumKeyError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChromiumKeyError | E,
+  ChildProcessSpawner.ChildProcessSpawner | R
 > {
   if (request.platform === "darwin") {
-    if (!request.keychainService || !request.keychainAccount) {
+    const candidates: ReadonlyArray<KeychainCredentialCandidate> = request.keychainCandidates
+      ?.length
+      ? request.keychainCandidates
+      : request.keychainService && request.keychainAccount
+        ? [{ service: request.keychainService, account: request.keychainAccount }]
+        : [];
+    if (candidates.length === 0) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
     }
-    const secret = yield* readKeychainSecret(request.keychainService, request.keychainAccount);
-    return { cbcV10: derive(secret, MAC_KEY_ITERATIONS) };
+    let best: { readonly keys: ChromiumKeyMaterial; readonly score: number } | undefined;
+    let missingError: ChromiumKeyError | undefined;
+    for (const candidate of candidates) {
+      const attempt = yield* readKeychainSecret(candidate.service, candidate.account).pipe(
+        Effect.catchIf(
+          (error) => error.reason === "keychainItemMissing",
+          (error) => Effect.succeed(error),
+        ),
+      );
+      if (typeof attempt !== "string") {
+        missingError = attempt;
+        continue;
+      }
+      const keys: ChromiumKeyMaterial = { cbcV10: derive(attempt, MAC_KEY_ITERATIONS) };
+      if (scoreKey === undefined || candidates.length <= 1) return keys;
+      const verdict = yield* scoreKey(keys);
+      if (verdict.accepted) return keys;
+      if (best === undefined || verdict.score > best.score) best = { keys, score: verdict.score };
+    }
+    if (best !== undefined) return best.keys;
+    return yield* missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
 
   if (request.platform === "linux") {
     // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
-    const keyringSecret = request.linuxSecretApplication
-      ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
-          // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
-          Effect.catchIf(
-            (error) => error.reason !== "needsKeychainApproval",
-            (error) => Effect.succeed(error),
-          ),
-        )
-      : undefined;
-    return {
+    const applications: ReadonlyArray<string> = request.linuxSecretApplications?.length
+      ? request.linuxSecretApplications
+      : request.linuxSecretApplication
+        ? [request.linuxSecretApplication]
+        : [];
+    const base = {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
-      ...(typeof keyringSecret === "string"
-        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
-        : keyringSecret
-          ? { cbcV11Error: keyringSecret }
-          : {}),
       cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
     };
+    let best: { readonly keys: ChromiumKeyMaterial; readonly score: number } | undefined;
+    let lastError: ChromiumKeyError | undefined;
+    for (const application of applications) {
+      const attempt = yield* readLinuxSecret(application).pipe(
+        // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
+        Effect.catchIf(
+          (error) => error.reason !== "needsKeychainApproval",
+          (error) => Effect.succeed(error),
+        ),
+      );
+      if (typeof attempt !== "string") {
+        lastError = attempt;
+        if (attempt.reason !== "keychainItemMissing") break;
+        continue;
+      }
+      const keys: ChromiumKeyMaterial = { ...base, cbcV11: derive(attempt, LINUX_KEY_ITERATIONS) };
+      if (scoreKey === undefined || applications.length <= 1) return keys;
+      const verdict = yield* scoreKey(keys);
+      if (verdict.accepted) return keys;
+      if (best === undefined || verdict.score > best.score) best = { keys, score: verdict.score };
+    }
+    if (best !== undefined) return best.keys;
+    return lastError ? { ...base, cbcV11Error: lastError } : base;
   }
 
   return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });

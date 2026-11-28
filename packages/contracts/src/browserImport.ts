@@ -10,13 +10,20 @@ const BROWSER_IMPORT_SOURCE_IDS = [
   "vivaldi",
   "opera",
   "arc",
+  "dia",
+  "ardia",
   "helium",
   "firefox",
   "zen",
   "safari",
 ] as const;
 
-export const BrowserImportSourceId = Schema.Literals(BROWSER_IMPORT_SOURCE_IDS);
+const DISCOVERED_BROWSER_IMPORT_SOURCE_ID_PATTERN = /^discovered:(chromium|firefox):[0-9a-f]{16}$/;
+
+export const BrowserImportSourceId = Schema.Union([
+  Schema.Literals(BROWSER_IMPORT_SOURCE_IDS),
+  Schema.String.check(Schema.isPattern(DISCOVERED_BROWSER_IMPORT_SOURCE_ID_PATTERN)),
+]);
 export type BrowserImportSourceId = typeof BrowserImportSourceId.Type;
 
 export const BrowserImportUnavailableReason = Schema.Literals([
@@ -62,6 +69,14 @@ export const BrowserImportInput = Schema.Struct({
   targetProfileId: BrowserProfileId,
 });
 export type BrowserImportInput = typeof BrowserImportInput.Type;
+
+export const DesktopPreviewListBrowserImportSourcesInputSchema = Schema.UndefinedOr(
+  Schema.Struct({
+    scan: Schema.optional(Schema.Boolean),
+  }),
+);
+export type DesktopPreviewListBrowserImportSourcesInput =
+  typeof DesktopPreviewListBrowserImportSourcesInputSchema.Type;
 
 export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   environmentId: TrimmedNonEmptyString,

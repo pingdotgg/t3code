@@ -10,11 +10,13 @@ import {
   managedPolicyDeniedMessage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
@@ -30,6 +32,8 @@ import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts"
 import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
+  discoverBrowserImportSources,
+  resolveChromiumLocalState,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
@@ -117,7 +121,9 @@ export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWri
 export class BrowserImport extends Context.Service<
   BrowserImport,
   {
-    readonly listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>>;
+    readonly listSources: (options?: {
+      readonly scan?: boolean | undefined;
+    }) => Effect.Effect<ReadonlyArray<BrowserImportSource>>;
     readonly importCookies: (input: {
       readonly input: BrowserImportInput;
       readonly scope: string;
@@ -212,23 +218,42 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
   const platformServices = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Digest.Digest
   >();
   const pathContext = yield* sourcePathContext;
 
-  const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
-    BROWSER_IMPORT_SOURCES,
-    Effect.fnUntraced(function* (definition) {
-      const unavailable = yield* unavailableReason(definition, pathContext);
-      return {
-        id: definition.id,
-        name: definition.name,
-        profiles:
-          unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
-        ...(unavailable === undefined ? {} : { unavailable }),
-      } satisfies BrowserImportSource;
-    }),
-  ).pipe(Effect.provide(platformServices));
+  // Unlisted browser roots are only populated after an explicit user-triggered scan.
+  const scannedDefinitionsRef = yield* Ref.make<ReadonlyArray<BrowserImportSourceDefinition>>([]);
+
+  const listSources = Effect.fn("BrowserImport.listSources")(function* (options?: {
+    readonly scan?: boolean | undefined;
+  }) {
+    const definitions: ReadonlyArray<BrowserImportSourceDefinition> = options?.scan
+      ? yield* discoverBrowserImportSources(pathContext).pipe(
+          Effect.tap((all) =>
+            Ref.set(
+              scannedDefinitionsRef,
+              all.filter((definition) => definition.id.startsWith("discovered:")),
+            ),
+          ),
+          Effect.provide(platformServices),
+        )
+      : [...BROWSER_IMPORT_SOURCES, ...(yield* Ref.get(scannedDefinitionsRef))];
+
+    return yield* Effect.forEach(
+      definitions,
+      Effect.fnUntraced(function* (definition) {
+        const unavailable = yield* unavailableReason(definition, pathContext);
+        return {
+          id: definition.id,
+          name: definition.name,
+          profiles:
+            unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
+          ...(unavailable === undefined ? {} : { unavailable }),
+        } satisfies BrowserImportSource;
+      }),
+    ).pipe(Effect.provide(platformServices));
+  });
 
   const importCookies = Effect.fn("BrowserImport.importCookies")(function* (input: {
     readonly input: BrowserImportInput;
@@ -237,9 +262,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
     yield* checkBrowserImportPolicy(managedPolicy.read);
-    const definition = BROWSER_IMPORT_SOURCES.find(
-      (candidate) => candidate.id === input.input.sourceId,
-    );
+    const scannedDefinitions = yield* Ref.get(scannedDefinitionsRef);
+    const definition =
+      BROWSER_IMPORT_SOURCES.find((candidate) => candidate.id === input.input.sourceId) ??
+      scannedDefinitions.find((candidate) => candidate.id === input.input.sourceId);
     if (!definition) {
       return yield* new BrowserImportFailedError({
         sourceId: input.input.sourceId,
@@ -286,7 +312,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
     }
 
-    const userDataDirectory = definition.userDataDirectory(pathContext);
+    const windowsLocalStatePath =
+      platform === "win32" && definition.engine === "chromium"
+        ? yield* resolveChromiumLocalState(definition, pathContext).pipe(
+            Effect.provide(platformServices),
+          )
+        : undefined;
+    if (
+      platform === "win32" &&
+      definition.engine === "chromium" &&
+      windowsLocalStatePath === undefined
+    ) {
+      return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
+    }
     const read: Effect.Effect<
       CookieReadResult,
       ChromiumCookieReadError | FirefoxCookieReadError | SafariCookieReadError,
@@ -304,12 +342,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
               cookieDatabasePath: databasePath,
               keychainService: definition.keychainService,
               keychainAccount: definition.keychainAccount,
+              keychainCandidates: definition.keychainCandidates,
               linuxSecretApplication: definition.linuxSecretApplication,
-              ...(platform === "win32" && userDataDirectory !== undefined
-                ? {
-                    windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),
-                  }
-                : {}),
+              linuxSecretApplications: definition.linuxSecretApplications,
+              ...(windowsLocalStatePath !== undefined ? { windowsLocalStatePath } : {}),
               platform,
             });
 

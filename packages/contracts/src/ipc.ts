@@ -9,6 +9,7 @@ import type {
   BrowserImportResult,
   BrowserImportSource,
   BrowserImportSourceId,
+  DesktopPreviewListBrowserImportSourcesInput,
 } from "./browserImport.ts";
 import { AuthAccessTokenResult, AuthSessionState } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
@@ -1378,7 +1379,9 @@ export interface DesktopPreviewBridge {
   /** Whether the environment runs on this machine, where its ports need no forward. */
   sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;
   onPortForwards: (listener: (forwards: ReadonlyArray<DesktopPortForward>) => void) => () => void;
-  listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
+  listBrowserImportSources: (
+    input?: DesktopPreviewListBrowserImportSourcesInput,
+  ) => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;
     readonly sourceId: BrowserImportSourceId;

@@ -6,7 +6,11 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   decryptChromiumValue,
@@ -433,5 +437,291 @@ describe("readChromiumCookieDatabase", () => {
       expect(chips.undecryptable).toBe(1);
       expect(chips.undecryptableHosts).toEqual(["partitioned.example"]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "advances to the next Linux secret candidate when an earlier readable secret cannot decrypt v11 cookies",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-fallback-key-",
+        });
+        const filename = `${directory}/Cookies`;
+        const chromiumKey = NodeCrypto.pbkdf2Sync("chromium-secret", "saltysalt", 1, 16, "sha1");
+        const emptyKey = NodeCrypto.pbkdf2Sync("", "saltysalt", 1, 16, "sha1");
+        const bound = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("ardia.example").digest(),
+          Buffer.from("session-from-chromium-key"),
+        ]);
+        const boundEmpty = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("empty.example").digest(),
+          Buffer.from("empty-v11-value"),
+        ]);
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', 24)`;
+          yield* sql`
+            create table cookies (
+              host_key text not null, name text not null, value text not null,
+              encrypted_value blob not null, path text not null, expires_utc integer not null,
+              is_secure integer not null, is_httponly integer not null, samesite integer not null,
+              top_frame_site_key text not null default ''
+            )
+          `;
+          yield* sql`insert into cookies values
+            ('empty.example', 'empty-v11', '', ${encryptChromium("v11", boundEmpty, emptyKey)}, '/', 0, 1, 1, 1, '')`;
+          yield* sql`insert into cookies values
+            ('ardia.example', 'sid', '', ${encryptChromium("v11", bound, chromiumKey)}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const seenApps: Array<string> = [];
+        const result = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "chromium", "chrome"],
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                  seenApps.push(app);
+                  const secret = app === "ardia" ? "stale-ardia-secret" : "chromium-secret";
+                  return Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.encodeText(Stream.make(secret)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(seenApps).toEqual(["ardia", "chromium"]);
+        expect(result.undecryptable).toBe(0);
+        expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "empty-v11", value: "empty-v11-value" },
+          { name: "sid", value: "session-from-chromium-key" },
+        ]);
+
+        // In a mixed-key schema-24 jar where no single candidate decrypts every row, pick the candidate with the most verified rows.
+        const staleKey = NodeCrypto.pbkdf2Sync("stale-ardia-secret", "saltysalt", 1, 16, "sha1");
+        const boundStale = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("legacy.example").digest(),
+          Buffer.from("old-key-cookie"),
+        ]);
+        const boundSecond = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("second.example").digest(),
+          Buffer.from("second-chromium-cookie"),
+        ]);
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`insert into cookies values
+            ('legacy.example', 'old', '', ${encryptChromium("v11", boundStale, staleKey)}, '/', 0, 1, 1, 1, '')`;
+          yield* sql`insert into cookies values
+            ('second.example', 'sid2', '', ${encryptChromium("v11", boundSecond, chromiumKey)}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const mixedApps: Array<string> = [];
+        const mixed = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "chromium"],
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                  mixedApps.push(app);
+                  const secret = app === "ardia" ? "stale-ardia-secret" : "chromium-secret";
+                  return Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.encodeText(Stream.make(secret)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(mixedApps).toEqual(["ardia", "chromium"]);
+        expect(mixed.undecryptable).toBe(1);
+        expect(mixed.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "empty-v11", value: "empty-v11-value" },
+          { name: "sid", value: "session-from-chromium-key" },
+          { name: "sid2", value: "second-chromium-cookie" },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "does not accept a stale or empty-fallback Linux secret on schema 23 when wrong-key CBC output accidentally has valid padding",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-legacy-padding-",
+        });
+        const filename = `${directory}/Cookies`;
+        const chromiumKey = NodeCrypto.pbkdf2Sync("chromium-secret", "saltysalt", 1, 16, "sha1");
+        const emptyKey = NodeCrypto.pbkdf2Sync("", "saltysalt", 1, 16, "sha1");
+        const encrypted = encryptChromium("v11", "session-from-chromium-key", chromiumKey);
+        // Find a wrong secret whose PBKDF2 key produces valid PKCS#7 padding on `encrypted`.
+        let collidingSecret = "";
+        for (let i = 0; i < 4096; i += 1) {
+          const candidate = `stale-${i}`;
+          const candidateKey = NodeCrypto.pbkdf2Sync(candidate, "saltysalt", 1, 16, "sha1");
+          if (
+            decryptChromiumValue(
+              encrypted,
+              { cbcV11: candidateKey },
+              "ardia.example",
+              23,
+              "linux",
+            ) !== null
+          ) {
+            collidingSecret = candidate;
+            break;
+          }
+        }
+        expect(collidingSecret).not.toBe("");
+        // Find a second cookie whose ciphertext accidentally passes PKCS#7 padding under the empty-passphrase fallback.
+        let emptyCollidePlaintext = "";
+        let emptyCollideEncrypted: Uint8Array = new Uint8Array();
+        for (let i = 0; i < 4096; i += 1) {
+          const candidatePlain = `empty-collide-cookie-${i}`;
+          const candidateCipher = encryptChromium("v11", candidatePlain, chromiumKey);
+          if (
+            decryptChromiumValue(
+              candidateCipher,
+              { cbcV11: emptyKey },
+              "empty-collide.example",
+              23,
+              "linux",
+            ) !== null
+          ) {
+            emptyCollidePlaintext = candidatePlain;
+            emptyCollideEncrypted = candidateCipher;
+            break;
+          }
+        }
+        expect(emptyCollidePlaintext).not.toBe("");
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', 23)`;
+          yield* sql`
+            create table cookies (
+              host_key text not null, name text not null, value text not null,
+              encrypted_value blob not null, path text not null, expires_utc integer not null,
+              is_secure integer not null, is_httponly integer not null, samesite integer not null,
+              top_frame_site_key text not null default ''
+            )
+          `;
+          yield* sql`insert into cookies values
+            ('ardia.example', 'sid', '', ${encrypted}, '/', 0, 1, 1, 1, '')`;
+          yield* sql`insert into cookies values
+            ('empty-collide.example', 'ec', '', ${emptyCollideEncrypted}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const secretLayer = (secrets: Record<string, string>, seen?: Array<string>) =>
+          Layer.merge(
+            Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                seen?.push(app);
+                return Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(1),
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                    isRunning: Effect.succeed(false),
+                    kill: () => Effect.void,
+                    unref: Effect.succeed(Effect.void),
+                    stdin: Sink.drain,
+                    stdout: Stream.encodeText(Stream.make(secrets[app] ?? "")),
+                    stderr: Stream.empty,
+                    all: Stream.empty,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                  }),
+                );
+              }),
+            ),
+          );
+
+        const seenApps: Array<string> = [];
+        const result = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "chromium"],
+        }).pipe(
+          Effect.provide(
+            secretLayer({ ardia: collidingSecret, chromium: "chromium-secret" }, seenApps),
+          ),
+        );
+
+        expect(seenApps).toEqual(["ardia", "chromium"]);
+        expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "sid", value: "session-from-chromium-key" },
+          { name: "ec", value: emptyCollidePlaintext },
+        ]);
+
+        // When no guessed candidate matches, both primary and empty-key padding collisions are counted as undecryptable.
+        const allWrong = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "other-wrong"],
+        }).pipe(
+          Effect.provide(
+            secretLayer({ ardia: collidingSecret, "other-wrong": "also-wrong-secret" }),
+          ),
+        );
+        expect(allWrong.cookies).toEqual([]);
+        expect(allWrong.undecryptable).toBe(2);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

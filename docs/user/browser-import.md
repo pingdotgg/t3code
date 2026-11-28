@@ -5,7 +5,7 @@ Import cookies from another browser into the desktop app's [preview browser](./b
 ## Import a profile
 
 1. Close the source browser.
-2. Open **Settings → Browser → Browser profiles → Add profile** and choose a browser under **Import from**.
+2. Open **Settings → Browser → Browser profiles → Add profile** and choose a browser under **Import from installed browsers**. Select **Scan for other browsers** to scan for other installed Chromium- and Firefox-based browsers on demand.
 3. Allow any OS keyring unlock prompt.
 
 This is a one-time copy—later login changes stay separate, and some sites may still require signing in again.
@@ -13,5 +13,5 @@ This is a one-time copy—later login changes stay separate, and some sites may 
 ## Platform notes
 
 - **macOS (Safari)**: Requires temporary **Full Disk Access** (grant in System Settings, quit/reopen T3 Code if macOS requires it, then reopen the import wizard). You can revoke Full Disk Access afterward.
-- **Windows**: Supports Firefox, Zen, and Helium profiles using standard encryption. Other Chromium browsers use app-bound encryption and cannot be imported.
+- **Windows**: Supports Firefox-based browsers (such as Firefox and Zen) and Chromium browsers that use standard DPAPI encryption (such as Helium), including unlisted browsers in standard local app data locations. Chromium browsers that use app-bound encryption cannot be imported.
 - Partitioned cookies are skipped on all platforms. Administrators can disable cookie import via [managed policy](./managed-policy.md#other-capabilities).
