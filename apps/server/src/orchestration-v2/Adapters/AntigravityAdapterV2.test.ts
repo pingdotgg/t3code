@@ -204,6 +204,35 @@ describe("AntigravityAdapterV2 flavor", () => {
       assert.notStrictEqual(question.header, question.question);
     }
   });
+
+  it("asks a multi-select ask_question as one step with its Other text, not two", () => {
+    // agy's multi-select ask_question pairs an optional array `qN` with an optional `qN_other`.
+    const form = flavor.extractElicitationForm?.({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 1 question.",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          q1: {
+            type: "array",
+            title: "Which linters should this project run?",
+            items: {
+              anyOf: [
+                { const: "1", title: "oxlint" },
+                { const: "2", title: "eslint" },
+              ],
+            },
+          },
+          q1_other: { type: "string", title: "Other" },
+        },
+      },
+    } as EffectAcpSchema.CreateElicitationRequest);
+    assert.deepEqual(
+      form?.questions.map((question) => [question.id, question.allowCustomAnswer]),
+      [["q1", undefined]],
+    );
+  });
 });
 
 const layerSession = Layer.mergeAll(
