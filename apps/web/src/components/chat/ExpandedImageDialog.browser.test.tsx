@@ -232,7 +232,8 @@ describe("ExpandedImageDialog", () => {
     await expect
       .element(screen.getByRole("button", { name: "Draw on image" }))
       .toHaveAttribute("aria-pressed", "true");
-    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeEnabled();
+    // The redesign moves between media with its thumbnail strip.
+    await expect.element(screen.getByRole("option", { name: "other.png (2/2)" })).toBeEnabled();
 
     // The close button cancels the drawing and keeps the preview open.
     await userEvent.click(screen.getByRole("button", { name: "Cancel drawing" }));
