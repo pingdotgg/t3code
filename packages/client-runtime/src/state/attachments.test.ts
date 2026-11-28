@@ -145,6 +145,8 @@ describe("verifyPersistedAttachmentUpload", () => {
 
 describe("formatAttachmentSize", () => {
   it.each([
+    [0, "0 bytes"],
+    [1, "1 KB"],
     [1_047_552, "1023 KB"],
     [1_047_553, "1.0 MB"],
     [1_048_575, "1.0 MB"],

@@ -70,6 +70,9 @@ export function limitsNotice(
   limits: ServerProviderUsageLimits,
   resolve: MFunctionType = mFallback,
 ): string | null {
+  if (limits.needsUsageAccess) {
+    return resolve(msg("Allow usage access to show this agent's limits."));
+  }
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? resolve(msg("This account has no subscription limits."));
   }
@@ -92,15 +95,34 @@ export function collectLimitNotices(
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
-      const notice = provider.usageLimits ? limitsNotice(provider.usageLimits, resolve) : null;
+      const limits = provider.usageLimits;
+      // A bare unsupported means the account has no limits; an external usage link shows its message.
+      if (
+        limits?.unavailable?.reason === "unsupported" &&
+        (!limits.unavailable.message || limits.externalUsage)
+      ) {
+        continue;
+      }
+      const notice = limits ? limitsNotice(limits, resolve) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
       if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
+      } else if (source.accounts.length === 0 && source.unreadProviders?.length) {
+        notices.add(
+          resolve(
+            msg("{source}: No Codex, Claude, or Grok accounts. Skipped {providers}.", {
+              source: label(environmentLabel, source.label),
+              providers: source.unreadProviders.join(", "),
+            }),
+          ),
+        );
+      } else if (
+        (source.kind === "http" ? (source.quotaAccounts?.length ?? 0) : source.accounts.length) ===
+        0
+      ) {
         notices.add(
           resolve(
             msg("{source}: No accounts reported.", {

@@ -26,6 +26,7 @@ export function resolveChatCanvasLayout({
   preview,
   padding = 48,
   maxChatWidth = 768,
+  maxHtmlPreviewWidth = maxChatWidth,
   minChatWidth = 640,
   composerHeight = 0,
   detailsCard = null,
@@ -35,6 +36,7 @@ export function resolveChatCanvasLayout({
   preview: ChatCanvasPreview | null;
   padding?: number;
   maxChatWidth?: number;
+  maxHtmlPreviewWidth?: number;
   minChatWidth?: number;
   composerHeight?: number;
   detailsCard?: PreviewMiniPlayerObstacles["detailsCard"];
@@ -176,5 +178,19 @@ export function resolveChatCanvasLayout({
     frame.x + frame.width > detailsCard.left &&
     frame.y < detailsCard.bottom,
   );
-  return { chat, frame, overlapsChat, overlapsDetailsCard };
+  // A wider HTML preview stays centered on the chat column while that fits, and
+  // clear of the details card and a mini player the chat column sits beside.
+  const laneEnd = frame ? Math.min(laneRight, frame.x - GAP) : laneRight;
+  const htmlPreviewWidth = overlapsChat ? 0 : Math.min(maxHtmlPreviewWidth, laneEnd - padding);
+  const htmlPreview =
+    htmlPreviewWidth > chat.width
+      ? {
+          left: Math.max(
+            padding,
+            Math.min(chat.left + (chat.width - htmlPreviewWidth) / 2, laneEnd - htmlPreviewWidth),
+          ),
+          width: htmlPreviewWidth,
+        }
+      : { left: chat.left, width: chat.width };
+  return { chat, htmlPreview, frame, overlapsChat, overlapsDetailsCard };
 }

@@ -51,6 +51,5 @@ export function useSelectedThreadGitState(repository?: GitRepositoryTarget) {
     gitOperationLabel: vcsActionLabelText(gitActionState, messages),
     sourceControlDiscovery,
     selectedThreadBranches,
-    selectedThreadBranchesLoading: selectedThreadBranchState.isPending,
   };
 }

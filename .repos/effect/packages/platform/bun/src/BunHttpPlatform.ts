@@ -16,7 +16,9 @@ import type { FileSystem } from "effect/FileSystem"
 import * as Etag from "effect/http/Etag"
 import * as Platform from "effect/http/HttpPlatform"
 import * as Response from "effect/http/HttpServerResponse"
+import * as Mime from "effect/http/Mime"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as BunFileSystem from "./BunFileSystem.ts"
 
 // Bun's CompressionStream supports an extended format set covering brotli and
@@ -54,7 +56,15 @@ const make: Effect.Effect<
     const body = start > 0 || end !== undefined
       ? (file as File).slice(start, end, file.type)
       : file
-    return Response.raw(body, { headers, status, statusText })
+    return Response.raw(body, {
+      headers: {
+        ...headers,
+        "content-type": headers["content-type"] ??
+          (file.type === "" ? Option.getOrElse(Mime.getType(file.name), () => "application/octet-stream") : file.type)
+      },
+      status,
+      statusText
+    })
   }
 })
 

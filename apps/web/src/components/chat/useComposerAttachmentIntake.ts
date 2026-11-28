@@ -57,6 +57,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  joinPreparedImagesToDraft,
   movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -338,23 +339,30 @@ export function useComposerAttachmentIntake(input: {
       }));
     const unrestoredImageNames: string[] = [];
     const draftStore = useComposerDraftStore.getState();
-    const storedImageIds = new Set(
-      movedThread
-        ? draftStore.addImages(movedThread, nextImages, {
-            onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
-          })
-        : nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
-          : nextImages.length > 1
-            ? addComposerImagesToDraft(nextImages)
-            : [],
+    const storedImageIds = joinPreparedImagesToDraft(
+      () =>
+        new Set(
+          movedThread
+            ? draftStore.addImages(movedThread, nextImages, {
+                onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+              })
+            : nextImages.length === 1 && nextImages[0]
+              ? addComposerImage(nextImages[0])
+              : nextImages.length > 1
+                ? addComposerImagesToDraft(nextImages)
+                : [],
+        ),
     );
+    const completionErrors = [...compressionErrors]
+      .filter(([id]) => isPreparingComposerImage(completionTargetKey, id))
+      .map(([, message]) => message)
+      .slice(-1);
     // Keep the placeholders until the draft decides whether the recovered images fit,
     // so a held send can be cancelled before the last placeholder disappears.
     const stillPreparingIds = removePreparingComposerImages(
       completionTargetKey,
       new Set(preparingImages.map((image) => image.id)),
-      { cancelSubmission: compressionErrors.size > 0 || unrestoredImageNames.length > 0 },
+      { cancelSubmission: completionErrors.length > 0 || unrestoredImageNames.length > 0 },
     );
     if (questionAttachmentTarget && !movedThread)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
@@ -365,20 +373,18 @@ export function useComposerAttachmentIntake(input: {
     }
     if (storedImages.length > 0 && imageAttachmentsGetChips && !movedThread) {
       insertedAny =
-        insertAttachmentReferences(
-          storedImages.map(imageContextReference),
-          undefined,
-          pendingInsertion,
+        joinPreparedImagesToDraft(() =>
+          insertAttachmentReferences(
+            storedImages.map(imageContextReference),
+            undefined,
+            pendingInsertion,
+          ),
         ) || insertedAny;
     }
     // Only failures are reported here. Success must not pass `null`: by
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
-    const completionErrors = [...compressionErrors]
-      .filter(([id]) => stillPreparingIds.has(id))
-      .map(([, message]) => message)
-      .slice(-1);
     if (unrestoredImageNames.length > 0) {
       completionErrors.push(
         m(

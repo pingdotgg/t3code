@@ -19,7 +19,11 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useDebouncedValue } from "../../state/queries";
-import { pullRequestFilterChoices, pullRequestLabelColors } from "./pullRequestList";
+import {
+  pullRequestFilterChoices,
+  pullRequestLabelColors,
+  toggledPullRequestLabels,
+} from "./pullRequestList";
 import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestListControls } from "./usePullRequestListControls";
@@ -88,10 +92,13 @@ export function PullRequestFilterSearchScreen({
     ),
     query,
   });
-  const colors = {
-    ...pullRequestLabelColors(hosted.values.flatMap((options) => options.labels)),
-    ...labelColors,
-  };
+  const hostedColors = pullRequestLabelColors(hosted.values.flatMap((options) => options.labels));
+  // A label picked from an earlier search keeps its dot once the host answers a new query without it.
+  const [seenColors, setSeenColors] = useState(hostedColors);
+  if (Object.entries(hostedColors).some(([name, color]) => seenColors[name] !== color)) {
+    setSeenColors((previous) => ({ ...previous, ...hostedColors }));
+  }
+  const colors = { ...seenColors, ...labelColors };
   const isSelected = (value: string) =>
     selected.some((held) => held.toLowerCase() === value.toLowerCase());
   const choose = (value: string) => {
@@ -103,9 +110,7 @@ export function PullRequestFilterSearchScreen({
       navigation.goBack();
       return;
     }
-    const labels = isSelected(value)
-      ? selectedLabels.filter((label) => label.toLowerCase() !== value.toLowerCase())
-      : [...selectedLabels, value].slice(0, 10);
+    const labels = toggledPullRequestLabels(selectedLabels, value);
     listControls.setControls(environmentId, {
       ...controls,
       filters: {

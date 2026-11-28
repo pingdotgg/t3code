@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
+  serializeTableElementForChat,
+  serializeTableElementToCsv,
   serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
@@ -11,19 +13,27 @@ import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
-import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import type { Element as HastElement, ElementContent, Root } from "hast";
 
-import { unified } from "unified";
-import remarkParse from "remark-parse";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-} from "@t3tools/shared/markdownPipeline";
+import { markdownTree } from "./markdown/wordsHast";
 
-const userMarkdown = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+// Copied Markdown read back as the chat reads it, to check it says what was copied.
+const elementsOf = (node: Root | HastElement) =>
+  (node.children as ElementContent[]).filter(
+    (child): child is HastElement => child.type === "element",
+  );
+const textOf = (node: ElementContent): string =>
+  node.type === "text"
+    ? node.value
+    : node.type === "element"
+      ? node.children.map(textOf).join("")
+      : "";
+const readBack = (markdown: string, options?: Parameters<typeof markdownTree>[1]) =>
+  elementsOf(markdownTree(markdown, options))[0]!;
+// A user message's reading: a single `~` stays text.
+const readUserBack = (markdown: string) => readBack(markdown, { singleTilde: false });
+const inline = (node: ElementContent) =>
+  node.type === "element" ? [node.tagName, textOf(node)] : [node.type, textOf(node)];
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -223,10 +233,10 @@ describe("serializeRenderedMarkdownFragment", () => {
         new FakeText(" here."),
       ),
     );
-    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)));
+    const code = elementsOf(paragraph).find((child) => child.tagName === "code");
+    expect(paragraph.tagName).toBe("p");
+    expect(code && textOf(code)).toBe(value);
   });
 
   it.each([
@@ -236,30 +246,111 @@ describe("serializeRenderedMarkdownFragment", () => {
     String.raw`C:\work\a-_b.txt`,
     "a*word*b and a_word_b; ~~literal~~ and ~single~",
     String.raw`before\ after\	end`,
+    "- item\n+ item\n* item",
+    "# heading\n> quote",
+    "> quote\nfirst\n- item\n# heading",
+    "first\n1. ordered\n1) ordered",
+    "---\nfirst\n---\n--\n- - -\nlast",
+    "===\nfirst\n===\n=",
+    "___\n***\nfirst\n* * *\n_ _ _\nlast",
+    "~~~\nfirst\n~~~ js\n~~~\n~~~\nlast",
+    "a | b\n---|---",
+    "| a | b |\n| --- | --- |",
+    "a | b\n:--- | ---:\nc | d",
+    "| a |\n| - |",
+    "a\n:---\nb\n---:",
   ])("copies prose that parses back unchanged: %s", (value) => {
     const container = new FakeElement("DIV").append(new FakeText(value));
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.tagName).toBe("p");
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
+  });
+
+  it("escapes literal block starts across containers without escaping real blocks or verbatim spans", () => {
+    const el = (tag: string, ...children: Array<FakeElement | string>) =>
+      new FakeElement(tag).append(
+        ...children.map((c) => (typeof c === "string" ? new FakeText(c) : c)),
+      );
+    const copy = (node: FakeElement) => serializeRenderedMarkdownFragment(asNode(node));
+    const displayMath = new FakeElement("SPAN", [], {
+      "data-markdown-math": "display",
+      "data-markdown-copy": "\\[\n- x\n\\]\n\n",
+    }).append(new FakeText("- x"));
+    const rawCopy = new FakeElement("SPAN", [], { "data-markdown-copy": "- raw" }).append(
+      new FakeText("raw"),
+    );
+
+    for (const [node, expected] of [
+      [el("P", "first", el("BR"), "- second"), [["text", "first\n- second"]]],
+      [el("DIV", "# literal"), [["text", "# literal"]]],
+      [el("P", el("SPAN", "#"), " not a heading"), [["text", "# not a heading"]]],
+      [el("P", el("SPAN", "1"), ". not numbered"), [["text", "1. not numbered"]]],
+      [el("P", el("STRONG", "a", el("BR"), "- b")), [["strong", "a\n- b"]]],
+      [
+        el("P", "- prose ", el("CODE", "x\u2028- flag"), " ", el("CODE", "x\u2029# title")),
+        [
+          ["text", "- prose "],
+          ["code", "x\u2028- flag"],
+          ["text", " "],
+          ["code", "x\u2029# title"],
+        ],
+      ],
+    ] as const) {
+      expect(readUserBack(copy(el("DIV", node))).children.map(inline)).toEqual(expected);
+    }
+
+    for (const [node, tag, children] of [
+      [el("UL", el("LI", "- literal"), el("LI", "1. literal")), "ul", ["- literal", "1. literal"]],
+      [el("BLOCKQUOTE", "- literal"), "blockquote", ["- literal"]],
+      [el("BLOCKQUOTE", el("P", "# literal")), "blockquote", ["# literal"]],
+    ] as const) {
+      const parsed = readUserBack(copy(el("DIV", node)));
+      expect(parsed.tagName).toBe(tag);
+      expect(elementsOf(parsed).map(textOf)).toEqual(children);
+    }
+
+    const table = renderedTable(
+      [new FakeText("- col"), new FakeText("# col")],
+      [new FakeText("- cell"), new FakeText("1. cell")],
+    );
+    const expectedTable = "| - col | # col |\n| --- | --- |\n| - cell | 1. cell |";
+    for (const [node, expected] of [
+      [el("DIV", el("H2", "Title", el("BR"), "- x")), "## Title\n\\- x"],
+      [el("BODY", "- item"), "\\- item"],
+      [
+        el("DIV", el("DL", el("DT", "Term"), el("DD", "\n", el("UL", el("LI", "item"))))),
+        "Term\n- item",
+      ],
+      [el("DIV", el("P", el("SPAN", el("CODE", "# c\n- d")))), "# c\n- d"],
+      [el("DIV", el("P", el("CODE", "a\nb"), "- x")), "a\nb- x"],
+      [el("DIV", el("P", el("CODE", "a\nb\n"), "- x")), "a\nb\n\\- x"],
+      [el("DIV", el("P", "a", el("BR"), "\u0003- x")), "a\n\u0003- x"],
+      [el("DIV", rawCopy), "- raw"],
+      [el("P", "See ", renderedFormula("a\n- b"), " - end"), "See \\(a\n- b\\) - end"],
+      [el("DIV", displayMath, "- after"), "\\[\n- x\n\\]\n\n\\- after"],
+      [el("P", "See ", el("CODE", "x"), " - not a list"), "See `x` - not a list"],
+      [el("P", "intro", el("BR"), el("BR"), "    - literal"), "intro\n\n    - literal"],
+      ...["#123", "-flag", "1.5", "1234567890. ten", "= foo"].map((s) => [el("DIV", s), s]),
+      [el("DIV", table), expectedTable],
+    ] as Array<[FakeElement, string]>) {
+      expect(copy(node)).toBe(expected);
+    }
+    expect(serializeTableElementToMarkdown(table as unknown as Element)).toBe(expectedTable);
   });
 
   it.each([
-    ["*", "EM", "word", "emphasis"],
-    ["\\", "CODE", "value", "inlineCode"],
-  ])("keeps a text edge %j beside %s", (edge, tag, value, type) => {
+    ["*", "EM", "word"],
+    ["\\", "CODE", "value"],
+  ])("keeps a text edge %j beside %s", (edge, tag, value) => {
     const container = new FakeElement("DIV").append(
       new FakeText(edge),
       new FakeElement(tag).append(new FakeText(value)),
     );
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({
-      type: "paragraph",
-      children: [
-        { type: "text", value: edge },
-        type === "inlineCode" ? { type, value } : { type, children: [{ type: "text", value }] },
-      ],
-    });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.children.map(inline)).toEqual([
+      ["text", edge],
+      [tag.toLowerCase(), value],
+    ]);
   });
 
   it("copies email links with their address and drops in-app destinations", () => {
@@ -288,10 +379,10 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(copied).toBe(
       "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
     );
-    const paragraph = parseMarkdownWithMath(copied).children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
     expect(
-      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+      elementsOf(readBack(copied))
+        .filter((child) => child.tagName === "a")
+        .map((link) => link.properties.href),
     ).toEqual([
       "mailto:support@example.com",
       "mailto:support@example.com?subject=Help",
@@ -312,12 +403,14 @@ describe("serializeRenderedMarkdownFragment", () => {
   ])("keeps the link label and destination: %s", (label, href) => {
     const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
     const container = new FakeElement("DIV").append(anchor);
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children).toMatchObject([
-      { type: "link", url: href, children: [{ type: "text", value: label }] },
-    ]);
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(
+      paragraph.children.map((child) =>
+        child.type === "element"
+          ? [child.tagName, decodeURI(String(child.properties.href)), textOf(child)]
+          : [child.type, textOf(child)],
+      ),
+    ).toEqual([["a", href, label]]);
   });
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
@@ -484,31 +577,25 @@ describe("copying rendered Markdown tables", () => {
     );
     const markdown = serializeTableElementToMarkdown(table as unknown as Element);
 
-    const tree = parseMarkdownWithMath(markdown);
-    const parsed = tree.children[0];
-    if (parsed?.type !== "table") throw new Error("Expected a table");
-    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
-    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
-      "|x|",
-      "\\|x\\|",
-      "|y|",
-      "|z|",
-    ]);
-    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "*a* | ~~b~~" },
-    ]);
-    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "> c | d" },
-    ]);
-    const [, , codeRow, linkRow] = parsed.children;
-    expect(codeRow?.children[1]?.children[0]).toMatchObject({
-      type: "inlineCode",
-      value: "\\(c|d\\)",
-    });
-    expect(linkRow?.children[0]?.children[0]).toMatchObject({
-      type: "link",
-      url: "https://example.com/?q=a|b",
-    });
+    const parsed = readBack(markdown, { math: true });
+    expect(parsed.tagName).toBe("table");
+    const rows = elementsOf(parsed).flatMap((section) => elementsOf(section));
+    const cells = rows.map((row) => elementsOf(row));
+    expect(cells.map((row) => row.length)).toEqual([2, 2, 2, 2, 2]);
+    const formulas: string[] = [];
+    const visit = (node: HastElement) => {
+      if (node.tagName === "svg") formulas.push(String(node.properties.ariaLabel));
+      else elementsOf(node).forEach(visit);
+    };
+    visit(parsed);
+    expect(formulas).toEqual(["|x|", "\\|x\\|", "|y|", "|z|"]);
+    expect(textOf(cells[1]![1]!)).toBe("*a* | ~~b~~");
+    expect(textOf(cells[4]![1]!).trim()).toBe("> c | d");
+    expect(inline(cells[2]![1]!.children[0]!)).toEqual(["code", "\\(c|d\\)"]);
+    const link = cells[3]![0]!.children[0]!;
+    expect(link.type === "element" && decodeURI(String(link.properties.href))).toBe(
+      "https://example.com/?q=a|b",
+    );
   });
 
   it("copies code and diagrams in cells without markers or unescaped pipes", () => {
@@ -730,5 +817,174 @@ describe("copying a table as HTML", () => {
 
   it("returns an empty string for a table without cells", () => {
     expect(html(new FakeElement("TABLE").append(new FakeElement("TBODY").append(row())))).toBe("");
+  });
+});
+
+describe("copying a table as CSV", () => {
+  const row = (...cells: FakeElement[]) => new FakeElement("TR").append(...cells);
+  const td = (...children: Array<FakeElement | FakeText>) =>
+    new FakeElement("TD").append(...children);
+
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("separates line breaks and block edges, and leaves out hidden elements", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("Col A")),
+          new FakeElement("TH").append(new FakeText("Col B")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(
+          td(new FakeText("line 1"), new FakeElement("BR"), new FakeText("line 2")),
+          td(
+            new FakeElement("P").append(new FakeText("para 1")),
+            new FakeElement("P").append(new FakeText("para 2")),
+          ),
+        ),
+        row(
+          td(
+            new FakeElement("SPAN", ["sr-only"]).append(new FakeText("hidden")),
+            new FakeText("visible"),
+          ),
+          td(
+            new FakeElement("SPAN", [], { "aria-hidden": "true" }).append(new FakeText("icon")),
+            new FakeText("a, b"),
+          ),
+        ),
+      ),
+    );
+
+    expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
+      'Col A,Col B\nline 1 line 2,para 1 para 2\nvisible,"a, b"',
+    );
+  });
+
+  it("aligns columns with spaces inside a code fence for chat apps", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("Name")),
+          new FakeElement("TH", [], { align: "right" }).append(new FakeText("Amount")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(td(new FakeText("Ada")), td(new FakeText("1,200"))),
+        row(td(new FakeText("東京")), td(new FakeText("5"))),
+        row(td(new FakeText("```"))),
+      ),
+    );
+
+    const { text, html } = serializeTableElementForChat(table as unknown as Element);
+    const aligned = ["Name  Amount", "----  ------", "Ada    1,200", "東京       5", "```"].join(
+      "\n",
+    );
+    expect(text).toBe(`\`\`\`\`\n${aligned}\n\`\`\`\``);
+    expect(html).toBe(`<meta charset="utf-8"><pre>${aligned}</pre>`);
+  });
+
+  it("bounds rowspans by their row group and keeps empty rows while placing spans", () => {
+    const cell = (tag: string, text: string, attributes: Record<string, string> = {}) =>
+      new FakeElement(tag, [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(row(cell("TH", "A", { rowspan: "0" }), cell("TH", "B"))),
+      new FakeElement("TBODY").append(
+        row(cell("TD", "X", { rowspan: "2" }), cell("TD", "P", { rowspan: "2" })),
+        new FakeElement("TR"),
+        row(cell("TD", "Y"), cell("TD", "Z")),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(["```", "A  B", "-  -", "X  P", "Y  Z", "```"].join("\n"));
+  });
+
+  it("orders header, loose and footer rows as the table renders them", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("A")),
+          new FakeElement("TH", [], { align: "right" }).append(new FakeText("B")),
+        ),
+      ),
+      new FakeElement("TFOOT").append(row(td(new FakeText("t")), td(new FakeText("9")))),
+      row(td(new FakeText("x")), td(new FakeText("yy"))),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(["```", "A   B", "-  --", "x  yy", "t   9", "```"].join("\n"));
+  });
+
+  it("counts emoji and CJK as two columns, and digits and combining marks as one", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(new FakeElement("TH").append(new FakeText("ID")), td(new FakeText("Value"))),
+      ),
+      new FakeElement("TBODY").append(
+        row(td(new FakeText("🇺🇸")), td(new FakeText("x"))),
+        row(td(new FakeText("1️⃣")), td(new FakeText("y"))),
+        row(td(new FakeText("1")), td(new FakeText("z"))),
+        row(td(new FakeText("𠮷")), td(new FakeText("w"))),
+        row(td(new FakeText("𛀀")), td(new FakeText("v"))),
+        row(td(new FakeText("A\u3099")), td(new FakeText("u"))),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(
+      [
+        "```",
+        "ID  Value",
+        "--  -----",
+        "🇺🇸  x",
+        "1️⃣  y",
+        "1   z",
+        "𠮷  w",
+        "𛀀  v",
+        "A\u3099   u",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps values under their headers across spans, and copies footer rows", () => {
+    const span = (attributes: Record<string, string>, text: string) =>
+      new FakeElement("TD", [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("A")),
+          new FakeElement("TH").append(new FakeText("B")),
+          new FakeElement("TH").append(new FakeText("C")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(span({ rowspan: "2" }, "tall"), span({ colspan: "2" }, "wide")),
+        row(td(new FakeText("b2")), td(new FakeText("c2"))),
+      ),
+      new FakeElement("TFOOT").append(
+        row(td(new FakeText("total")), td(new FakeText("")), td(new FakeText("9"))),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(
+      [
+        "```",
+        "A      B     C",
+        "-----  ----  --",
+        "tall   wide",
+        "       b2    c2",
+        "total        9",
+        "```",
+      ].join("\n"),
+    );
   });
 });

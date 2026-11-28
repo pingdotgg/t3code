@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
@@ -8,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -20,6 +22,7 @@ import {
   applyThreadHistoryPage,
   applyThreadStreamItem,
   initialThreadStreamState,
+  prependThreadHistory,
   type ThreadStreamState,
 } from "./state/threadStream.ts";
 
@@ -86,8 +89,17 @@ export async function connectLinkedEnvironment(options: {
   if (pairing === null) return { type: "manual", label: options.label, host: null };
   const { label, urls } = pairing;
   // Asked together, taken in the linking environment's order of preference.
-  const answers = await Promise.all(urls.map((url) => options.reaches(url)));
-  const host = urls.find((_, index) => answers[index]) ?? null;
+  const probes = urls.map((url) =>
+    options.reaches(url).then(
+      (reached) => (reached ? url : null),
+      () => null,
+    ),
+  );
+  let host: string | null = null;
+  for (const probe of probes) {
+    host = await probe;
+    if (host !== null) break;
+  }
   if (pairing.type === "unsupported") {
     return { type: "manual", label, host: host ?? urls[0] ?? null };
   }
@@ -212,12 +224,38 @@ export function isLinkedThreadWorking(projection: OrchestrationV2ThreadProjectio
 /** How long a view waits before asking again for a thread whose environment did not answer. */
 export const LINKED_THREAD_RETRY_MS = 15_000;
 
+type HistoryAnchor = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
+
+interface LinkedHistoryWindow {
+  readonly sequence: number;
+  readonly cursor: string;
+}
+
+interface LinkedHistoryRequest {
+  readonly window: LinkedHistoryWindow;
+  readonly cursor: string;
+}
+
+function includesHistoryAnchor(rows: ReadonlyArray<HistoryAnchor>, anchor: HistoryAnchor): boolean {
+  return rows.some(
+    (row) =>
+      row.sourceThreadId === anchor.sourceThreadId && row.sourceItemId === anchor.sourceItemId,
+  );
+}
+
 /** A linked thread as its view holds it: the thread's own stream, reduced as any thread's is. */
 export interface LinkedThreadView {
   readonly thread: ThreadStreamState;
   /** Why the stream stopped, while the view waits to ask again; the next item clears it. */
   readonly error: unknown;
   readonly history: { readonly loading: boolean; readonly failed: boolean };
+  /** Pagination progress survives the temporary view that hides the cursor during reconnect. */
+  readonly loadedHistory: {
+    readonly window: LinkedHistoryWindow;
+    readonly nextCursor: string | null;
+    /** The oldest row still to recover, even if a read fails or the view closes during backfill. */
+    readonly restoreThrough: HistoryAnchor | null;
+  } | null;
   /** Loads the turns before the ones shown. Does nothing while a page loads or none is left. */
   readonly loadEarlier: () => void;
 }
@@ -233,7 +271,11 @@ export const keepLinkedThreadView = (
 ): LinkedThreadView =>
   next.thread.projection !== null || kept === null || kept.thread.projection === null
     ? next
-    : { ...next, thread: { ...kept.thread, historyCursor: null } };
+    : {
+        ...next,
+        thread: { ...kept.thread, historyCursor: null },
+        loadedHistory: kept.loadedHistory,
+      };
 
 /**
  * Follows a linked environment's thread for as long as something consumes the result. The thread
@@ -244,34 +286,100 @@ export const keepLinkedThreadView = (
 export const followLinkedThread = <E, R, E2, R2>(source: {
   readonly items: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>;
   readonly historyPage: (cursor: string) => Effect.Effect<OrchestrationV2ThreadHistoryPage, E2, R2>;
+  readonly previous?: LinkedThreadView | null;
 }): Stream.Stream<LinkedThreadView, E, R | R2> =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const requests = yield* Queue.unbounded<void>();
+      const requests = yield* Queue.unbounded<LinkedHistoryRequest | null>();
       let requested = false;
-      // Both halves below run one step at a time, so each reads the view the other left.
+      let previous = source.previous ?? null;
+      let snapshotWindow: LinkedHistoryWindow | null = null;
+      const requestPage = (window: LinkedHistoryWindow, cursor: string) => {
+        requested = true;
+        Queue.offerUnsafe(requests, { window, cursor });
+      };
       let view: LinkedThreadView = {
         thread: initialThreadStreamState,
         error: null,
         history: { loading: false, failed: false },
+        loadedHistory: null,
         loadEarlier: () => {
-          if (requested || view.thread.historyCursor === null) return;
-          requested = true;
-          Queue.offerUnsafe(requests, undefined);
+          const cursor = view.thread.historyCursor;
+          if (requested || snapshotWindow === null || cursor === null) return;
+          requestPage(snapshotWindow, cursor);
         },
       };
       const show = (patch: Partial<LinkedThreadView>) => {
         view = { ...view, ...patch };
         return view;
       };
-      const attempt = (): Stream.Stream<LinkedThreadView, E, R> =>
+
+      const onItem = (item: OrchestrationV2ThreadStreamItem) => {
+        let thread = applyThreadStreamItem(view.thread, item);
+        if (item.kind !== "snapshot") return show({ thread, error: null });
+
+        const kept = view.thread.projection === null ? previous : view;
+        previous = null;
+        const loaded = kept?.loadedHistory;
+        const window =
+          thread.historyCursor === null
+            ? null
+            : { sequence: thread.sequence, cursor: thread.historyCursor };
+        let loadedHistory: LinkedThreadView["loadedHistory"] = null;
+        if (window && kept?.thread.projection && loaded) {
+          // A live update can advance the revision and move the window without invalidating held rows.
+          if (
+            kept.thread.sequence === window.sequence &&
+            (window.sequence > loaded.window.sequence || window.cursor === loaded.window.cursor)
+          ) {
+            thread = prependThreadHistory(
+              thread,
+              {
+                items: kept.thread.projection.visibleTurnItems,
+                subagents: kept.thread.projection.subagents,
+              },
+              loaded.nextCursor,
+            );
+            loadedHistory = { ...loaded, window };
+          } else if (window.sequence > kept.thread.sequence) {
+            const oldest = loaded.restoreThrough ?? kept.thread.projection.visibleTurnItems[0];
+            if (oldest && !includesHistoryAnchor(item.projection.visibleTurnItems, oldest)) {
+              const { sourceThreadId, sourceItemId } = oldest;
+              loadedHistory = {
+                window,
+                nextCursor: window.cursor,
+                restoreThrough: { sourceThreadId, sourceItemId },
+              };
+            }
+          }
+        }
+
+        snapshotWindow = window;
+        requested = false;
+        if (window && thread.historyCursor !== null && loadedHistory?.restoreThrough) {
+          requestPage(window, thread.historyCursor);
+        } else {
+          Queue.offerUnsafe(requests, null);
+        }
+        return show({
+          thread,
+          loadedHistory,
+          history: { loading: requested, failed: false },
+          error: null,
+        });
+      };
+
+      const attempt = (): Stream.Stream<
+        | { readonly kind: "item"; readonly item: OrchestrationV2ThreadStreamItem }
+        | { readonly kind: "unreachable"; readonly error: E },
+        E,
+        R
+      > =>
         source.items.pipe(
-          Stream.map((item) =>
-            show({ thread: applyThreadStreamItem(view.thread, item), error: null }),
-          ),
+          Stream.map((item) => ({ kind: "item" as const, item })),
           Stream.catch((error) =>
             isLinkedThreadUnreachable(error)
-              ? Stream.make(show({ error })).pipe(
+              ? Stream.make({ kind: "unreachable" as const, error }).pipe(
                   Stream.concat(
                     Stream.unwrap(Effect.sleep(LINKED_THREAD_RETRY_MS).pipe(Effect.map(attempt))),
                   ),
@@ -279,38 +387,67 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
               : Stream.fail(error),
           ),
         );
+
       const earlier = Stream.fromQueue(requests).pipe(
-        Stream.flatMap(() =>
-          Stream.suspend(() => {
-            const cursor = view.thread.historyCursor;
-            if (cursor === null) {
-              requested = false;
-              return Stream.empty;
-            }
-            return Stream.make(show({ history: { loading: true, failed: false } })).pipe(
-              Stream.concat(
-                Stream.fromEffect(
-                  source.historyPage(cursor).pipe(
-                    Effect.match({
-                      onSuccess: (page) =>
-                        show({
-                          thread: applyThreadHistoryPage(view.thread, cursor, page),
-                          history: { loading: false, failed: false },
-                        }),
-                      onFailure: () => show({ history: { loading: false, failed: true } }),
-                    }),
-                    Effect.ensuring(
-                      Effect.sync(() => {
-                        requested = false;
-                      }),
+        Stream.switchMap((request) =>
+          request === null
+            ? Stream.empty
+            : Stream.make({ kind: "loading" as const, request }).pipe(
+                Stream.concat(
+                  Stream.fromEffect(
+                    source.historyPage(request.cursor).pipe(
+                      Effect.result,
+                      Effect.map((page) => ({ kind: "page" as const, request, page })),
                     ),
                   ),
                 ),
               ),
-            );
-          }),
         ),
       );
-      return Stream.merge(attempt(), earlier, { haltStrategy: "left" });
+
+      // Reduce snapshots, live items and history results in publication order.
+      return Stream.merge(attempt(), earlier, { haltStrategy: "left" }).pipe(
+        Stream.filterMap((update) => {
+          if (update.kind === "item") return Result.succeed(onItem(update.item));
+          if (update.kind === "unreachable") return Result.succeed(show({ error: update.error }));
+          const { window, cursor } = update.request;
+          if (snapshotWindow !== window || view.thread.historyCursor !== cursor) {
+            return Result.failVoid;
+          }
+          if (update.kind === "loading") {
+            return view.history.loading
+              ? Result.failVoid
+              : Result.succeed(show({ history: { loading: true, failed: false } }));
+          }
+          requested = false;
+          const page = update.page;
+          if (
+            Result.isFailure(page) ||
+            page.success.snapshotSequence < window.sequence ||
+            (page.success.hasMoreHistory && page.success.nextCursor === cursor)
+          ) {
+            return Result.succeed(show({ history: { loading: false, failed: true } }));
+          }
+
+          const thread = applyThreadHistoryPage(view.thread, cursor, page.success);
+          let restoreThrough = view.loadedHistory?.restoreThrough ?? null;
+          const nextCursor = thread.historyCursor;
+          if (
+            restoreThrough !== null &&
+            (nextCursor === null ||
+              includesHistoryAnchor(thread.projection?.visibleTurnItems ?? [], restoreThrough))
+          ) {
+            restoreThrough = null;
+          }
+          if (restoreThrough !== null && nextCursor !== null) requestPage(window, nextCursor);
+          return Result.succeed(
+            show({
+              thread,
+              loadedHistory: { window, nextCursor, restoreThrough },
+              history: { loading: requested, failed: false },
+            }),
+          );
+        }),
+      );
     }),
   );

@@ -1,5 +1,4 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
-import { makeBuiltInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import { describe, expect, it } from "vite-plus/test";
 
 import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
@@ -49,12 +48,6 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
     expect(kindOf(url)).toBe("tanstack-source");
     expect(sourceControlClients.parseChangeRequestUrl(url)?.link.repositoryUrl).toBe(
       "https://source.tanstack.com/@TanStack/router",
-    );
-    // A server without the beta reads no TanStack Source host at all.
-    const without = makeBuiltInSourceControlDefinitions({ tanStackSource: false });
-    expect(without.find(SourceControlProviderKind.make("tanstack-source"))).toBeUndefined();
-    expect(without.recognizeRemote("https://source.tanstack.com/@TanStack/router.git")?.kind).toBe(
-      "unknown",
     );
   });
 

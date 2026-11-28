@@ -189,6 +189,8 @@ function ContextPermissions() {
       environmentId={null}
       runtimeMode={mode}
       supportedRuntimeModes={["approval-required", "full-access"]}
+      instanceId={undefined}
+      cwd={null}
       onRuntimeModeChange={setMode}
     />
   );

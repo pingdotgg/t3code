@@ -1,6 +1,6 @@
 {
   "name": "@effect/ai-cloudflare",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "type": "module",
   "license": "MIT",
   "description": "A Cloudflare Workers AI decision provider for Effect",

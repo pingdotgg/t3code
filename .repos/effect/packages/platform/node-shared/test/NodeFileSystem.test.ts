@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as TestClock from "effect/testing/TestClock"
+import * as ChildProcess from "node:child_process"
 import * as NFS from "node:fs"
 import * as Path from "node:path"
 import { afterEach, beforeEach, vi } from "vitest"
@@ -90,6 +91,26 @@ describe("FileSystem", { concurrent: false }, () => {
     }).pipe(
       Effect.provide(NodeFileSystem.layer)
     ))
+
+  it.effect.skipIf(process.platform === "win32")(
+    "File handles and stream read and write a FIFO sequentially",
+    () =>
+      Effect.gen(function*() {
+        const fs = yield* FileSystem.FileSystem
+        const fifo = Path.join(yield* fs.makeTempDirectoryScoped(), "fifo")
+        ChildProcess.execFileSync("mkfifo", [fifo])
+
+        const [text] = yield* Effect.all([
+          fs.stream(fifo).pipe(Stream.decodeText(), Stream.mkString),
+          Effect.scoped(
+            Effect.flatMap(fs.open(fifo, { flag: "w" }), (file) => file.writeAll(Buffer.from("piped text")))
+          )
+        ], { concurrency: 2 })
+        assert.strictEqual(text, "piped text")
+      }).pipe(
+        Effect.provide(NodeFileSystem.layer)
+      )
+  )
 
   it.effect("watch reports Create for a new file outside the current directory", () =>
     Effect.gen(function*() {
@@ -202,7 +223,8 @@ describe("FileSystem", { concurrent: false }, () => {
 const state = vi.hoisted(() => ({
   enabled: false,
   values: {} as Record<string, bigint>,
-  positions: [] as Array<number | bigint | undefined>
+  positions: [] as Array<number | bigint | undefined>,
+  writes: [] as Array<number | NodeJS.ErrnoException>
 }))
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -235,10 +257,11 @@ vi.mock("node:fs", async (importOriginal) => {
       _offset: unknown,
       _length: unknown,
       position: number | bigint | undefined,
-      callback: (error: null, bytesWritten: number) => void
+      callback: (error: NodeJS.ErrnoException | null, bytesWritten?: number) => void
     ) => {
       state.positions.push(position)
-      callback(null, 1)
+      const result = state.writes.shift() ?? 1
+      return typeof result === "number" ? callback(null, result) : callback(result)
     }
   }
   return {
@@ -263,6 +286,7 @@ describe("NodeFileSystem precision", { concurrent: false }, () => {
   beforeEach(() => {
     state.enabled = true
     state.positions = []
+    state.writes = []
     state.values = {
       size: 4n,
       blksize: 4096n,
@@ -298,6 +322,16 @@ describe("NodeFileSystem precision", { concurrent: false }, () => {
       assert.strictEqual(error.reason._tag, "BadArgument")
       assert.deepStrictEqual(state.positions, [Number.MAX_SAFE_INTEGER])
       assert.strictEqual(yield* file.seek(0n, "current"), maxSafe + 1n)
+    }).pipe(Effect.provide(NodeFileSystem.layer)))
+
+  it.effect("writeAll does not rewrite bytes when a later chunk fails with ESPIPE", () =>
+    Effect.gen(function*() {
+      const espipe = Object.assign(new Error("ESPIPE"), { code: "ESPIPE" })
+      state.writes = [1, espipe, espipe]
+      const fs = yield* FileSystem.FileSystem
+      const file = yield* fs.open("precision.bin", { flag: "r+" })
+      yield* Effect.flip(file.writeAll(new Uint8Array([1, 2, 3])))
+      assert.deepStrictEqual(state.positions, [0, 1, undefined])
     }).pipe(Effect.provide(NodeFileSystem.layer)))
 
   for (const method of ["stat", "fstat"] as const) {

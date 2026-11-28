@@ -137,9 +137,73 @@ describe("truncateTraceAttributes", () => {
     assert.equal(error.nested[0]?.length, 500 + "…[truncated]".length);
     assert.equal(attributes.error.stack, stack);
   });
+
+  it.each([
+    ["a pair straddling the limit", "q".repeat(199)],
+    ["a pair ending at the limit", `${"q".repeat(198)}😀`],
+  ])("never splits a surrogate pair with %s", (_, head) => {
+    const nestedHead = `${"n".repeat(300)}${head}`;
+    const truncated = truncateTraceAttributes({
+      "db.query.text": `${head}😀${"x".repeat(1_000)}`,
+      error: { stack: `${nestedHead}😀${"x".repeat(1_000)}` },
+    });
+
+    const query = truncated["db.query.text"] as string;
+    const stack = (truncated["error"] as { stack: string }).stack;
+    assert.equal(query, `${head}…[truncated]`);
+    assert.equal(stack, `${nestedHead}…[truncated]`);
+    assert.isTrue(query.isWellFormed());
+    assert.isTrue(stack.isWellFormed());
+  });
 });
 
 describe("observability", () => {
+  it.effect("samples only fast successful routine spans in the local file", () =>
+    Effect.gen(function* () {
+      const names: Array<string> = [];
+      const delegates: Array<Tracer.Span> = [];
+      const tracer = yield* makeLocalFileTracer({
+        filePath: "unused",
+        maxBytes: 1024,
+        maxFiles: 1,
+        batchWindowMs: 1000,
+        sampleRoutineSpans: true,
+        sink: {
+          filePath: "unused",
+          push: (r) => names.push(r.name),
+          flush: Effect.void,
+          flushSync: () => {},
+          close: () => Effect.void,
+        },
+        delegate: Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            span._spanId = "1".repeat(14) + (options.name === "sample" ? "00" : "01");
+            delegates.push(span);
+            return span;
+          },
+        }),
+      });
+      for (const name of ["fast", "routine", "sample", "slow", "failed", "logged", "other"]) {
+        const span = yield* Effect.makeSpan(name).pipe(
+          Effect.provideService(Tracer.Tracer, tracer),
+        );
+        if (name === "routine") span.attribute("t3.trace.routine", true);
+        else if (name !== "other") span.attribute("db.system.name", "sqlite");
+        if (name === "logged") span.event("diagnostic", span.status.startTime);
+        span.end(
+          span.status.startTime + (name === "slow" ? 10_000_000n : 9_999_999n),
+          name === "failed" ? Exit.fail("busy") : Exit.void,
+        );
+      }
+      assert.deepEqual(names, ["sample", "slow", "failed", "logged", "other"]);
+      assert.deepEqual(
+        delegates.map((span) => span.status._tag),
+        Array(7).fill("Ended"),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "preserves successful results without retaining them in sampled or unsampled spans",
     () =>

@@ -12,6 +12,7 @@ import { useAppForeground } from "../../lib/appState";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { browserTabTitle } from "./browserTabs";
 import { PreviewStreamWebView } from "./PreviewStreamWebView";
+import { useThreadServerBrowserTabs } from "../../state/preview";
 import { usePreparedConnection } from "../../state/session";
 
 const PLAYER_LONG_SIDE = 184;
@@ -21,11 +22,13 @@ const PLAYER_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 export function ThreadBrowserFloat(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
-  readonly loaded: boolean;
+  /** Whether the environment serves browser tabs. */
+  readonly enabled: boolean;
   readonly top: number;
   readonly onOpen: (tabId: string) => void;
 }) {
+  // Read here rather than by the thread screen, so a list read re-renders only the float.
+  const { tabs, loaded } = useThreadServerBrowserTabs(props);
   const [tabId, setTabId] = useState<string | null>(null);
   // The reveal requests already seen, so only a tab revealed after the first
   // list pops the player.
@@ -33,16 +36,16 @@ export function ThreadBrowserFloat(props: {
     readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
     readonly reveals: ReadonlyMap<string, string | undefined>;
   } | null>(null);
-  if (props.loaded && seen?.tabs !== props.tabs) {
+  if (loaded && seen?.tabs !== tabs) {
     setSeen({
-      tabs: props.tabs,
-      reveals: new Map(props.tabs.map((tab) => [tab.tabId, tab.revealRequest?.id])),
+      tabs,
+      reveals: new Map(tabs.map((tab) => [tab.tabId, tab.revealRequest?.id])),
     });
     const previous = seen?.reveals;
     const opened =
       previous === undefined
         ? undefined
-        : props.tabs.findLast(
+        : tabs.findLast(
             (tab) =>
               tab.reveal === true &&
               (tab.revealRequest
@@ -53,7 +56,7 @@ export function ThreadBrowserFloat(props: {
   }
   const focused = useIsFocused();
   const foreground = useAppForeground();
-  const tab = props.tabs.find((entry) => entry.tabId === tabId) ?? null;
+  const tab = tabs.find((entry) => entry.tabId === tabId) ?? null;
   const onOpen = props.onOpen;
   const open = () => {
     if (tabId === null) return;

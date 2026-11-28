@@ -2,8 +2,9 @@ export type TextDirection = "ltr" | "rtl";
 
 // Hebrew through Arabic Extended-A, their presentation forms, and the
 // supplementary right-to-left blocks.
-const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
-const LETTER = /\p{L}/u;
+export const RTL_LETTER =
+  /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFC\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
+export const LETTER = /\p{L}/u;
 const SENTENCE_END = /(?<=[.!?؟])(?<!\b(?:e\.g|i\.e)\.)\s+|\n+/i;
 
 function majority(
@@ -48,7 +49,7 @@ export function textDirection(text: string): TextDirection | undefined {
 }
 
 const MARKDOWN_CODE_OR_URL =
-  /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`{1,2})(?!`)[\s\S]*?(?<!`)\2(?!`)|https?:\/\/\S+/g;
+  /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`{1,2})(?!`)[\s\S]*?(?<!`)\2(?!`)|<https?:\/\/[^\s<>]+>|https?:\/\/\S+/gi;
 
 export function markdownProseDirection(markdown: string): TextDirection | undefined {
   return textDirection(markdown.replace(MARKDOWN_CODE_OR_URL, " "));

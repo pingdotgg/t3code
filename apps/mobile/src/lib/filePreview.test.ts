@@ -23,6 +23,7 @@ import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
+import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
 
 const audio = vi.hoisted(() => ({
   status: {
@@ -203,12 +204,18 @@ vi.mock("../native/SelectableMarkdownText", () => ({
     onLinkPress(href: string): void;
     renderImage?: MarkdownImageRenderer;
   }) => {
-    const embed = props.markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    const embeds = [...props.markdown.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)];
     return createElement(
       "div",
       null,
       createElement("button", { onClick: () => props.onLinkPress("target.ts") }, props.markdown),
-      embed && props.renderImage?.({ href: embed[2]!, alt: embed[1]!, title: null }),
+      embeds.map(([, alt, href], index) =>
+        createElement(
+          Fragment,
+          { key: index },
+          props.renderImage?.({ href: href!, alt: alt!, title: null }),
+        ),
+      ),
     );
   },
 }));
@@ -238,7 +245,9 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }));
 vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
-vi.mock("expo-image", () => ({}));
+vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("expo/fetch", () => ({}));
+vi.mock("react-native-svg", () => ({}));
 vi.mock("uniwind", () => ({}));
 vi.mock("../components/ui/Dialog", () => ({}));
 vi.mock("../components/ui/Sheet", () => ({
@@ -254,13 +263,19 @@ vi.mock("../components/ui/NativePresentation", () => ({
 vi.mock("../components/ui/Menu", () => ({
   Menu: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/ui/FilePreviewGallery", () => ({
-  FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
-  useFilePreviewGallery: () => (source: unknown) => source,
-}));
+function previewPath(item: FilePreviewItem) {
+  return "resource" in item && "path" in item.resource ? item.resource.path : null;
+}
+
 vi.mock("../components/ui/FilePreviewModal", () => ({
-  FilePreviewModal: (props: { source: { name: string } | null }) =>
-    props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
+  FilePreviewModal: ({ source }: { source: FilePreviewSource | null }) =>
+    source
+      ? createElement("div", {
+          "data-file-preview": source.name,
+          "data-selected-path": previewPath(source),
+          "data-gallery": JSON.stringify(source.gallery?.map(previewPath)),
+        })
+      : null,
 }));
 vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../components/ComposerContextSheet", () => ({}));
@@ -285,7 +300,12 @@ vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
 vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ appearance: { baseFontSize: 14 }, themeAppearance: "dark" }),
+  useAppearancePreferences: () => ({
+    appearance: { baseFontSize: 14 },
+    themeAppearance: "dark",
+    fontFamilies: { regular: "System", medium: "System", bold: "System" },
+    monoFontFamily: "ui-monospace",
+  }),
 }));
 vi.mock("./useUniwindTheme", () => ({
   useUniwindTheme: () => new Proxy({}, { get: () => "#000000" }),
@@ -313,10 +333,6 @@ vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
 }));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
-vi.mock("../features/threads/ThreadMarkdownImage", async () => {
-  const { createContext } = await import("react");
-  return { MarkdownImageAvailableWidthContext: createContext(390) };
-});
 vi.mock("../features/threads/ZoomableImagePressable", async () => {
   const { Pressable } = await import("react-native");
   return { ZoomableImagePressable: Pressable };
@@ -1408,6 +1424,70 @@ describe("inline file previews", () => {
 });
 
 describe("ThreadFeed previews", () => {
+  it("opens a tapped workspace image on its own gallery page, in message order", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const threadId = ThreadId.make("thread-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () =>
+        root.render(
+          createElement(ThreadFeed, {
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId,
+            detailRef: null,
+            threadTitle: "preview",
+            workspaceRoot: "/repo",
+            feed: [
+              {
+                type: "message",
+                id: messageId,
+                createdAt: timestamp,
+                message: {
+                  id: messageId,
+                  role: "assistant",
+                  text: "![Red](./red.png)\n\n![Blue](./blue.png)",
+                  attachments: [],
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                  runId: null,
+                  streaming: false,
+                  visibility: "local",
+                  sourceThreadId: threadId,
+                },
+              },
+            ],
+            queuedMessages: [],
+            dispatchingMessageId: null,
+            onEditPendingMessage: null,
+            contentPresentation: { kind: "ready" },
+            latestRun: null,
+            activeWorkStartedAt: null,
+            listRef: { current: null },
+            freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+            contentInsetEndAdjustment: { value: 0 } as Parameters<
+              typeof ThreadFeed
+            >[0]["contentInsetEndAdjustment"],
+            anchorMessageId: null,
+            keyboardOffset: 0,
+          }),
+        ),
+      );
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>(`[aria-label="Red"]`)!.click(),
+      );
+      const preview = container.querySelector("[data-file-preview]");
+      expect(preview?.getAttribute("data-selected-path")).toBe("/repo/./red.png");
+      expect(preview?.getAttribute("data-gallery")).toBe(
+        JSON.stringify(["/repo/./red.png", "/repo/./blue.png"]),
+      );
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("does not commit an open preview over a different thread", async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const environmentId = EnvironmentId.make("environment-1");

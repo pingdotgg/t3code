@@ -1,4 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { T, useGT, Var } from "gt-react";
 import { PlusIcon, SearchIcon } from "lucide-react";
 
@@ -70,7 +71,10 @@ export function PullRequestListEmptyState({
   onRefresh: () => void;
 }) {
   const gt = useGT();
-  const shownQuery = query.length > 48 ? `${query.slice(0, 48)}…` : query;
+  const shownQuery =
+    query.length > 48
+      ? `${query.slice(0, splitsSurrogatePair(query, 48) ? 47 : 48).trimEnd()}…`
+      : query;
   if (!hasProjects) {
     return (
       <Empty>

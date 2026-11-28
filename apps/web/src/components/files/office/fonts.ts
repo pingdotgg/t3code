@@ -1,6 +1,7 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
 import type { BundledFontProvider } from "@betteroffice/docx/layout";
 import {
+  configureFontCdn,
   loadBundledFontBytes,
   resolveBundledFamilyFace,
   resolveLastResortFace,
@@ -11,6 +12,7 @@ import {
 
 // Every face loads from the app's own files, so no font request leaves the machine. The engines draw only with the
 // faces they are handed, never the system's, so CJK text needs the `@betteroffice/fonts-cjk` faces to show at all.
+configureFontCdn({ baseUrl: false });
 
 /** The faces Word substitutes for a document's fonts: metric-compatible ones first, then Word's own fallbacks. */
 export function wordFonts(): BundledFontProvider {

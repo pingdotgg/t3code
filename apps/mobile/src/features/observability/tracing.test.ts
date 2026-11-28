@@ -7,6 +7,7 @@ import { vi } from "vite-plus/test";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
+import { setConnectionTracesEnabled } from "./diagnosticsSetting";
 import * as Tracing from "./tracing";
 
 vi.mock("expo-constants", () => ({
@@ -17,9 +18,8 @@ vi.mock("expo-constants", () => ({
   },
 }));
 
-it.effect("does not let OTLP serialization failures alter application effects", () => {
-  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-  const layerTracing = Tracing.layerFromConfig(
+const layerTracingTo = (fetchFn: typeof fetch) =>
+  Tracing.layerFromConfig(
     {
       tracesUrl: "https://api.axiom.test/v1/traces",
       tracesDataset: "mobile-traces",
@@ -31,6 +31,11 @@ it.effect("does not let OTLP serialization failures alter application effects", 
       serviceVersion: "1.2.3",
     },
   ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
+
+it.effect.each([false, true])("gates relay sends and preserves typed failures (%s)", (enabled) => {
+  setConnectionTracesEnabled(enabled);
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+  const layerTracing = layerTracingTo(fetchFn);
   const failure = { durationNanos: 1n };
   const layerTracedApplication = Layer.effectDiscard(
     Effect.fail(failure).pipe(
@@ -52,7 +57,8 @@ it.effect("does not let OTLP serialization failures alter application effects", 
     Effect.scoped,
     Effect.andThen(
       Effect.sync(() => {
-        expect(fetchFn).toHaveBeenCalledOnce();
+        expect(fetchFn).toHaveBeenCalledTimes(Number(enabled));
+        if (!enabled) return;
         expect(new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array)).toContain(
           "mobile.test.failed-span",
         );

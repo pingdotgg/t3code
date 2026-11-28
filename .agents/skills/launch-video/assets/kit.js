@@ -160,7 +160,9 @@ window.Kit = (() => {
   const visible = (target, from, to = Infinity, fade = 0) => {
     const shown = from + fade;
     const open = !Number.isFinite(to);
-    const end = open ? shown + 1 : to;
+    // A closed window stays shown through `to`: when the next beat starts exactly on a frame,
+    // its first keyframe is still 0 there, and both hiding would flash black.
+    const end = open ? shown + 1 : to + 0.002;
     const keys = [
       { offset: 0, opacity: 0 },
       { offset: from / end, opacity: 0 },
@@ -169,7 +171,7 @@ window.Kit = (() => {
       ...(open
         ? [{ offset: 1, opacity: 1 }]
         : [
-            { offset: Math.max(shown, to - 0.001) / end, opacity: 1 },
+            { offset: Math.max(shown, to) / end, opacity: 1 },
             { offset: 1, opacity: 0 },
           ]),
     ];

@@ -22,8 +22,8 @@ import { m } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 class LicenseManifestLoadError extends Schema.TaggedError<LicenseManifestLoadError>()(
   "LicenseManifestLoadError",
@@ -174,24 +174,24 @@ function LicenseHeaderAction({
     return (
       <div className="flex items-center gap-1.5">
         <LicenseCount filteredCount={filteredCount} totalCount={totalCount} />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={gt("Search open-source licenses")}
-                onClick={() => onSearchOpenChange(true)}
-                size="icon-micro"
-                type="button"
-                variant="ghost-muted"
-              >
-                <SearchIcon className="size-3" />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top">
-            <T>Search licenses</T>
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              aria-label={gt("Search open-source licenses")}
+              onClick={() => onSearchOpenChange(true)}
+              size="icon-micro"
+              type="button"
+              variant="ghost-muted"
+            >
+              <SearchIcon className="size-3" />
+            </Button>
+          }
+          label={
+            <>
+              <T>Search licenses</T>
+            </>
+          }
+        />
       </div>
     );
   }
@@ -215,6 +215,10 @@ function LicenseHeaderAction({
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
+            event.stopPropagation();
+            // Unmounting the focused input lets the dialog move focus to a control whose
+            // tooltip would swallow the next Esc; the surface keeps Esc closing Settings.
+            event.currentTarget.closest<HTMLElement>("[data-app-modal]")?.focus();
             onQueryChange("");
             onSearchOpenChange(false);
           }}

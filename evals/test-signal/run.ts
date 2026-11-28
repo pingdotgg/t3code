@@ -80,7 +80,7 @@ const world = (entry: Case) => {
 
 // The check reads the rules at the PR head, where they always exist. Old case commits predate
 // them, so serve the rules from this checkout.
-const ruleFiles = new Set(["docs/internals/testing.md", "AGENTS.md"]);
+const ruleFiles = new Set(["docs/internals/15_testing.md", "AGENTS.md"]);
 const readAt = (entry: Case, files: Map<string, string>, path: string) =>
   ruleFiles.has(path)
     ? NodeFS.readFileSync(NodePath.join(repo, path), "utf8")

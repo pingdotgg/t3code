@@ -107,7 +107,7 @@ export function decodeEnvelope(
   };
 }
 
-function header(major: number, length: number): Uint8Array {
+export function header(major: number, length: number): Uint8Array {
   if (length < 24) return Uint8Array.of((major << 5) | length);
   if (length <= 255) return Uint8Array.of((major << 5) | 24, length);
   if (length <= 65535) return Uint8Array.of((major << 5) | 25, length >> 8, length & 255);
@@ -120,14 +120,17 @@ function header(major: number, length: number): Uint8Array {
   );
 }
 
+// A CBOR text or byte string with its header.
+export function cborString(value: string | Uint8Array): Uint8Array[] {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+  return [header(typeof value === 'string' ? 3 : 2, bytes.length), bytes];
+}
+
 export function encodeEnvelope(
   fields: Record<string, string | Uint8Array | null>,
 ): Uint8Array<ArrayBuffer> {
   const chunks = [header(5, Object.keys(fields).length)];
-  const string = (value: string | Uint8Array) => {
-    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
-    chunks.push(header(typeof value === 'string' ? 3 : 2, bytes.length), bytes);
-  };
+  const string = (value: string | Uint8Array) => chunks.push(...cborString(value));
   for (const [key, value] of Object.entries(fields)) {
     string(key);
     if (value === null) chunks.push(Uint8Array.of(246));

@@ -75,6 +75,18 @@ const configWithObservability: DesktopBackendBootstrapValue = {
   otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
 };
 
+const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+const readyControlChannel: ChildProcessSpawner.ChildProcessHandle["getOutputFd"] = (fd) =>
+  fd === 5 ? Stream.encodeText(Stream.make(`${readyLine}\n`)) : Stream.empty;
+
+// WSL backends get their bootstrap on stdin and have no control channel, so readiness is polled.
+const { desktopTelemetryControlFd: _controlFd, ...pollingBootstrap } = baseConfig.bootstrap;
+const pollingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
+  ...baseConfig,
+  bootstrap: pollingBootstrap,
+  bootstrapDelivery: "stdin",
+};
+
 function makeProcess(options?: {
   readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
@@ -92,7 +104,7 @@ function makeProcess(options?: {
     kill: options?.kill ?? (() => Effect.void),
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
-    getOutputFd: options?.getOutputFd ?? (() => Stream.empty),
+    getOutputFd: options?.getOutputFd ?? readyControlChannel,
     unref: Effect.succeed(Effect.void),
   });
 }
@@ -130,6 +142,9 @@ interface MakeInstanceInput {
   readonly onReady?: Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
   readonly onStateDirOwned?: Effect.Effect<void>;
+  readonly onMigrationProgress?: (
+    progress: { current: number; total: number } | null,
+  ) => Effect.Effect<void>;
   readonly onStartupFailure?: (
     failure: DesktopBackendManager.BackendStartupFailure,
   ) => Effect.Effect<void>;
@@ -193,6 +208,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
     ...(input.onStartupFailure ? { onStartupFailure: input.onStartupFailure } : {}),
+    ...(input.onMigrationProgress ? { onMigrationProgress: input.onMigrationProgress } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -205,6 +221,7 @@ describe("DesktopBackendManager", () => {
       const ready = yield* Deferred.make<void>();
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const instance = yield* makeTestInstance({
+        config: pollingConfig,
         spawnerLayer: Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
@@ -240,12 +257,66 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("a polled backend is ready only once its listener answers as this launch", () =>
+    Effect.gen(function* () {
+      const answersAsLaunch = yield* Ref.make(false);
+      const probedUrls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const ready = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const instance = yield* makeTestInstance({
+        config: {
+          ...pollingConfig,
+          readinessProbe: Effect.succeed({
+            path: "/launch-proof?challenge=abc",
+            accept: (body: string) => Effect.succeed(body === "proof-for-abc"),
+          }),
+        },
+        onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.acquireRelease(
+              Effect.succeed(makeProcess({ exitCode: Deferred.await(exit) })),
+              () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+            ),
+          ),
+        ),
+        httpClientLayer: layerHttpClient((request) =>
+          Ref.update(probedUrls, (urls) => [...urls, request.url]).pipe(
+            Effect.andThen(Ref.get(answersAsLaunch)),
+            Effect.map((asLaunch) =>
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(asLaunch ? "proof-for-abc" : "{}", { status: 200 }),
+              ),
+            ),
+          ),
+        ),
+      });
+      yield* instance.start;
+      yield* TestClock.adjust(Duration.seconds(5));
+
+      assert.isFalse(yield* Deferred.isDone(ready));
+      assert.isFalse((yield* instance.snapshot).ready);
+      assert.deepStrictEqual(
+        [...new Set(yield* Ref.get(probedUrls))],
+        ["http://127.0.0.1:3773/launch-proof?challenge=abc"],
+      );
+
+      yield* Ref.set(answersAsLaunch, true);
+      yield* TestClock.adjust(Duration.seconds(1));
+
+      assert.isTrue(yield* Deferred.isDone(ready));
+      yield* instance.stop();
+    }),
+  );
+
   it.effect("notices a WSL backend soon after it listens despite slow refused connects", () =>
     Effect.gen(function* () {
       const ready = yield* Deferred.make<void>();
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const instance = yield* makeTestInstance({
-        config: { ...baseConfig, httpBaseUrl: new URL("http://172.20.84.98:3773") },
+        config: { ...pollingConfig, httpBaseUrl: new URL("http://172.20.84.98:3773") },
         onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
         spawnerLayer: Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -358,6 +429,61 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("delivers fd3 bootstrap while ownership recording is pending", () =>
+    Effect.gen(function* () {
+      const recording = yield* Deferred.make<void>();
+      const finishRecording = yield* Deferred.make<void>();
+      const receivedBootstrap = yield* Deferred.make<Option.Option<string>>();
+      const exitObserved = yield* Deferred.make<void>();
+      const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const forgotten = yield* Ref.make(false);
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(
+          Effect.fnUntraced(function* (command) {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard local backend command");
+            }
+            const fd = command.options.additionalFds?.fd3;
+            if (fd?.type !== "input" || fd.stream === undefined) {
+              return yield* Effect.die("Expected a bootstrap stream on fd 3");
+            }
+            yield* fd.stream.pipe(
+              Stream.decodeText(),
+              Stream.mkString,
+              Effect.timeoutOption(Duration.seconds(1)),
+              Effect.flatMap((payload) => Deferred.succeed(receivedBootstrap, payload)),
+              Effect.forkScoped,
+            );
+            return makeProcess({ exitCode: Deferred.await(childExit) });
+          }),
+        ),
+      );
+      const run = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        onExitObserved: () => Deferred.succeed(exitObserved, undefined).pipe(Effect.asVoid),
+        trackProcess: () =>
+          Deferred.succeed(recording, undefined).pipe(
+            Effect.andThen(Deferred.await(finishRecording)),
+            Effect.as(Ref.set(forgotten, true)),
+          ),
+      }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)), Effect.forkChild);
+
+      yield* Deferred.await(recording);
+      yield* TestClock.adjust(Duration.seconds(2));
+      const payload = yield* Deferred.await(receivedBootstrap);
+      assert.isTrue(Option.isSome(payload), "desktop bootstrap missed the reader deadline");
+      assert.deepEqual(yield* decodeBootstrap(Option.getOrThrow(payload)), baseConfig.bootstrap);
+      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
+      yield* Deferred.await(exitObserved);
+      assert.isFalse(yield* Ref.get(forgotten));
+      yield* Deferred.succeed(finishRecording, undefined);
+      yield* Fiber.join(run);
+      assert.isTrue(yield* Ref.get(forgotten));
+    }),
+  );
+
   it.effect("reports a SIGKILL exit without an exit code", () =>
     Effect.gen(function* () {
       const exitCause = PlatformError.systemError({
@@ -416,40 +542,41 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("becomes ready from the server ready line while HTTP probes stall", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const probeStarted = yield* Deferred.make<void>();
-        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
-        const instance = yield* makeTestInstance({
-          spawnerLayer: Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
-              Effect.succeed(
-                makeProcess({
-                  getOutputFd: (fd) =>
-                    fd === 5
-                      ? Stream.fromEffect(Deferred.await(probeStarted)).pipe(
-                          Stream.flatMap(() => Stream.encodeText(Stream.make(`${readyLine}\n`))),
-                        )
-                      : Stream.empty,
-                  exitCode: Deferred.await(exit),
-                  kill: () =>
-                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
-                }),
-              ),
+  it.effect("a backend with a control channel is ready only once it says so there", () =>
+    Effect.gen(function* () {
+      const announce = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const instance = yield* makeTestInstance({
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                getOutputFd: (fd) =>
+                  fd === 5
+                    ? Stream.fromEffect(Deferred.await(announce)).pipe(
+                        Stream.flatMap(() => readyControlChannel(fd)),
+                      )
+                    : Stream.empty,
+                exitCode: Deferred.await(exit),
+                kill: () =>
+                  Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+              }),
             ),
           ),
-          httpClientLayer: layerHttpClient(() =>
-            Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never)),
-          ),
-        });
+        ),
+        // An HTTP answer on the port is not the backend's own ready signal.
+        httpClientLayer: layerHealthyHttpClient,
+      });
 
-        yield* instance.start;
-        assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
-      }),
-    ),
+      yield* instance.start;
+      const early = yield* instance.waitForReady(Duration.seconds(15)).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(15));
+      assert.isFalse(yield* Fiber.join(early));
+
+      yield* Deferred.succeed(announce, undefined);
+      assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
+    }).pipe(Effect.scoped),
   );
 
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
@@ -695,7 +822,8 @@ describe("DesktopBackendManager", () => {
     "reports exit $code with the server output after $exits exits",
     ({ code, exits, managedPolicy }) =>
       Effect.gen(function* () {
-        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
+        const message = `${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 3)\n  progress: 1 of 3\nError: Cannot find module 'zod/v4' in /Users/René`;
+        const progress: Array<{ current: number; total: number } | null> = [];
         let exitCount = 0;
         const firstExit = yield* Deferred.make<void>();
         const reports = yield* Queue.unbounded<{
@@ -729,6 +857,10 @@ describe("DesktopBackendManager", () => {
               return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
             },
           },
+          onMigrationProgress: (value) =>
+            Effect.sync(() => {
+              progress.push(value);
+            }),
           onStartupFailure: (failure) =>
             Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
         });
@@ -741,21 +873,33 @@ describe("DesktopBackendManager", () => {
         assert.equal(failure.managedPolicy, managedPolicy);
         assert.isTrue(failure.output.endsWith(message));
         assert.isTrue(failure.output.isWellFormed());
+        assert.isTrue(progress.some((value) => value?.current === 1 && value.total === 3));
+        assert.isNull(progress.at(-1));
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("waits out a slow startup and reports one that never becomes ready", () =>
     Effect.gen(function* () {
       const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-      const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>, stdout = "") =>
+      const progress: Array<{ current: number; total: number } | null> = [];
+      const outputProcessed = yield* Queue.unbounded<void>();
+      const startInstance = (
+        status: Ref.Ref<number>,
+        onReady?: Effect.Effect<void>,
+        stdout: string | Stream.Stream<Uint8Array> = "",
+      ) =>
         makeTestInstance({
+          config: pollingConfig,
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
               Effect.succeed(
                 makeProcess({
                   exitCode: Effect.never,
-                  stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  stdout:
+                    typeof stdout === "string"
+                      ? Stream.make(new TextEncoder().encode(stdout))
+                      : stdout,
                 }),
               ),
             ),
@@ -763,6 +907,13 @@ describe("DesktopBackendManager", () => {
           httpClientLayer: layerHttpClient((request) =>
             Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code))),
           ),
+          backendOutputLog: {
+            writeOutputChunk: () => Queue.offer(outputProcessed, undefined).pipe(Effect.asVoid),
+          },
+          onMigrationProgress: (value) =>
+            Effect.sync(() => {
+              progress.push(value);
+            }),
           onStartupFailure: (failure) => Queue.offer(reports, failure).pipe(Effect.asVoid),
           ...(onReady ? { onReady } : {}),
         }).pipe(Effect.tap((instance) => instance.start));
@@ -770,6 +921,7 @@ describe("DesktopBackendManager", () => {
       const slowStatus = yield* Ref.make(503);
       const ready = yield* Deferred.make<void>();
       yield* startInstance(slowStatus, Deferred.succeed(ready, undefined).pipe(Effect.asVoid));
+      yield* Queue.take(outputProcessed);
       yield* TestClock.adjust(Duration.seconds(66));
       yield* Ref.set(slowStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
@@ -778,22 +930,56 @@ describe("DesktopBackendManager", () => {
 
       const migratingStatus = yield* Ref.make(503);
       const migrated = yield* Deferred.make<void>();
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const writeOutput = (text: string) =>
+        Queue.offer(output, new TextEncoder().encode(text)).pipe(
+          Effect.andThen(Queue.take(outputProcessed)),
+        );
       yield* startInstance(
         migratingStatus,
         Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+        Stream.fromQueue(output),
+      );
+      yield* writeOutput(`INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n`);
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isNull(progress.at(-1));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      yield* writeOutput(
         // Enough progress lines that the start line scrolls out of the output tail.
         `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
           Array.from(
             { length: 80 },
             (_, index) =>
-              `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} migration=${index}_Migration progress="${index + 1} of 80"\n`,
+              `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} (${index + 1} of 80)\n  migration: ${index}_Migration\n  progress: ${index + 1} of 80\n`,
           ).join(""),
       );
       yield* TestClock.adjust(Duration.minutes(10));
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
       assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      const noise = "unrelated backend output\n".repeat(400);
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      yield* writeOutput(`${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(`${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 2)\n${noise}`);
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 2 });
+      yield* writeOutput(DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(0, 12));
+      yield* writeOutput(`${DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(12)}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(noise);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(
+        `${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 1)\n`,
+      );
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 1 });
       yield* Ref.set(migratingStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
       yield* Deferred.await(migrated);
+      assert.isNull(progress.at(-1));
 
       yield* startInstance(
         yield* Ref.make(503),
@@ -804,6 +990,7 @@ describe("DesktopBackendManager", () => {
       assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
       yield* TestClock.adjust(Duration.seconds(1));
       const failure = yield* Queue.take(reports);
+      assert.isNull(progress.at(-1));
       assert.equal(failure.reason, "The server started but did not become ready in time.");
     }).pipe(Effect.provide(TestClock.layer())),
   );

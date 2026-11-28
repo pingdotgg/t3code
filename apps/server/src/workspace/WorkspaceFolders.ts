@@ -11,6 +11,7 @@ import {
   type WorkspaceScanFoldersResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
@@ -64,6 +65,8 @@ export class WorkspaceFolders extends Context.Service<
     readonly submodules: (input: {
       readonly projectId: ProjectId;
       readonly worktreePath: string | null;
+      /** The thread's `forThread` folders; passed in so the project is walked once. */
+      readonly folders: ReadonlyArray<ThreadFolder>;
     }) => Effect.Effect<ReadonlyArray<ThreadFolder>, WorkspaceFoldersError>;
     readonly list: (
       input: WorkspaceListFoldersInput,
@@ -77,7 +80,11 @@ export class WorkspaceFolders extends Context.Service<
 const DETECTION_CONCURRENCY = 8;
 // What `ProjectTrackedFolder.name` allows.
 const FOLDER_NAME_MAX = 128;
-const boundedName = (name: string) => name.slice(0, FOLDER_NAME_MAX).trim();
+const boundedName = (name: string) => {
+  const trimmed = name.trimStart();
+  const end = splitsSurrogatePair(trimmed, FOLDER_NAME_MAX) ? FOLDER_NAME_MAX - 1 : FOLDER_NAME_MAX;
+  return trimmed.slice(0, end).trimEnd();
+};
 const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 
 const decodeCodeWorkspace = Schema.decodeUnknownEffect(
@@ -95,14 +102,60 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
   ),
 );
 
+const GIT_CONFIG_ESCAPES: Record<string, string> = { n: "\n", t: "\t", b: "\b" };
+const GIT_CONFIG_SECTION = /^\s*\[((?:"(?:\\.|[^"\\])*"|[^\]"])*)\]/s;
+const GIT_SUBMODULE_SECTION = /^submodule(?:\.([a-z0-9.-]*))?(?:\s+"((?:\\.|[^"\\])*)")?$/is;
+
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
-export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
-  text.split(/\r?\n/).flatMap((line) => {
-    const value = /^\s*path\s*=\s*(.*?)\s*$/.exec(line)?.[1];
-    if (value === undefined) return [];
-    const normalized = value.replaceAll('"', "").replaceAll("\\", "/").replace(/\/+$/, "");
-    return normalized === "" ? [] : [normalized];
-  });
+export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> => {
+  const lines = text.split(/\r?\n/);
+  const paths = new Map<string, string>();
+  let submoduleName: string | undefined;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    // Git allows a key, or another section, on the same line after a section header.
+    let rest = lines[lineIndex] ?? "";
+    let header = GIT_CONFIG_SECTION.exec(rest);
+    while (header !== null) {
+      const [, dottedName, quotedName] = GIT_SUBMODULE_SECTION.exec(header[1] ?? "") ?? [];
+      const dotted = dottedName?.toLowerCase();
+      const quoted = quotedName?.replace(/\\(.)/gs, "$1");
+      submoduleName =
+        dotted !== undefined && quoted !== undefined ? `${dotted}.${quoted}` : (dotted ?? quoted);
+      rest = rest.slice(header[0].length);
+      header = GIT_CONFIG_SECTION.exec(rest);
+    }
+    const entry = /^\s*([a-z][a-z0-9-]*)\s*=(.*)$/is.exec(rest);
+    if (entry === null) continue;
+    // Git's value syntax: unquoted whitespace at either end is dropped, `#` or `;` outside quotes
+    // starts a comment, and a backslash escapes a character or continues onto the next line,
+    // so every key's value is read even though only `path` is kept.
+    let raw = entry[2] ?? "";
+    let value = "";
+    let blank = "";
+    let quoted = false;
+    for (let index = 0; index < raw.length; index++) {
+      const char = raw[index] ?? "";
+      if (!quoted && " \t\r".includes(char)) {
+        if (value !== "") blank += char;
+        continue;
+      }
+      if (!quoted && (char === "#" || char === ";")) break;
+      value += blank;
+      blank = "";
+      if (char === '"') quoted = !quoted;
+      else if (char !== "\\") value += char;
+      else if (index === raw.length - 1) raw += lines[++lineIndex] ?? "";
+      else {
+        const next = raw[++index] ?? "";
+        value += GIT_CONFIG_ESCAPES[next] ?? next;
+      }
+    }
+    if (submoduleName !== undefined && entry[1]?.toLowerCase() === "path") {
+      paths.set(submoduleName, value.replace(/\/+$/, ""));
+    }
+  }
+  return [...paths.values()].filter((path) => path !== "");
+};
 
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
@@ -157,9 +210,10 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
     .pipe(Effect.flatMap(decodeCodeWorkspace), Effect.option);
   if (Option.isNone(document)) return null;
   return (document.value.folders ?? []).flatMap((folder) => {
-    const folderPath = folder.path?.trim();
+    const folderPath = folder.path;
     if (folderPath === undefined || folderPath === "") return [];
     const resolved = path.resolve(root, folderPath);
+    if (resolved !== resolved.trim()) return [];
     return [
       {
         path: resolved,
@@ -276,11 +330,7 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath, ownsHistory } = yield* folderProbes;
-  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
-  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) return [];
-  const root = scan.value.workspaceRoot;
-  const realRoot = yield* realPath(root);
+  const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
   const ignored = (
     parseT3ProjectFile(
       yield* fileSystem
@@ -288,6 +338,12 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
         .pipe(Effect.orElseSucceed(() => "")),
     )?.ignoreRepositories ?? []
   ).map((entry) => path.resolve(root, entry));
+  // Everything the scan could find would be dropped, so skip the walk.
+  if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
+  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
+  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
+  if (Option.isNone(scan)) return [];
+  const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter(
       (folder) =>
@@ -446,16 +502,46 @@ const make = Effect.gen(function* () {
     return found.flat().filter((folder) => !taken.has(folder.path));
   });
 
+  // A tracked repository an agent checked out where the task folder would have put it, after the
+  // folder was laid out. Only those inside the thread's own folder count: they need no grant.
+  const checkedOutSince = Effect.fnUntraced(function* (cwd: string, taskFolder: TaskFolder) {
+    const project = yield* readProject(taskFolder.projectId).pipe(Effect.option);
+    if (Option.isNone(project)) return [];
+    const recorded = new Set(
+      taskFolder.repositories.flatMap((repository) => [
+        repository.repositoryPath,
+        repository.worktreePath,
+      ]),
+    );
+    const found = yield* Effect.forEach(
+      yield* foldersOf(project.value),
+      Effect.fnUntraced(function* (folder) {
+        if (recorded.has(folder.path) || !isWithinRoot(path, folder.path, taskFolder.anchor))
+          return [];
+        const checkout = path.join(taskFolder.root, path.relative(taskFolder.anchor, folder.path));
+        if (recorded.has(checkout) || !(yield* exists(path.join(checkout, ".git")))) return [];
+        const real = yield* realPath(checkout);
+        if (real === cwd || !isWithinRoot(path, real, cwd)) return [];
+        return [
+          { name: folder.name, path: checkout, isGitRepository: true, repositoryPath: folder.path },
+        ];
+      }),
+      { concurrency: DETECTION_CONCURRENCY },
+    );
+    return found.flat();
+  });
+
   // A task folder's worktrees stand in for the tracked folders: the thread is told about, granted
   // and checkpoints only those, never the checkouts they were made from.
   const forTaskFolder = Effect.fnUntraced(function* (worktreePath: string, taskFolder: TaskFolder) {
     const cwd = yield* realPath(worktreePath);
-    const folders = taskFolder.repositories.map((repository) => ({
+    const recorded = taskFolder.repositories.map((repository) => ({
       name: repository.name,
       path: repository.worktreePath,
       isGitRepository: true,
       repositoryPath: repository.repositoryPath,
     }));
+    const folders = [...recorded, ...(yield* checkedOutSince(cwd, taskFolder))];
     const outside = yield* Effect.forEach(
       folders,
       (folder) =>
@@ -506,7 +592,6 @@ const make = Effect.gen(function* () {
   const submodules: WorkspaceFolders["Service"]["submodules"] = Effect.fn(
     "WorkspaceFolders.submodules",
   )(function* (input) {
-    const { folders } = yield* forThread(input);
     // A worktree can outlive its project record; its submodules are then named by where they are.
     const projectRoot = yield* readProject(input.projectId).pipe(
       Effect.map((project) => path.resolve(project.workspaceRoot)),
@@ -518,7 +603,7 @@ const make = Effect.gen(function* () {
     const identity = Option.getOrElse(projectRoot, () => root);
     return yield* submodulesOf([
       { path: root, identity },
-      ...folders.flatMap((folder) =>
+      ...input.folders.flatMap((folder) =>
         folder.isGitRepository
           ? [{ path: folder.path, identity: folder.repositoryPath ?? folder.path }]
           : [],

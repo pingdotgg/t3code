@@ -55,7 +55,7 @@ const NO_PAGES: OlderSettledPages = { reads: [], frontier: null, status: "ready"
 
 type OlderSettledRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+  "id" | "projectId" | "lineage" | "delegatedFrom" | "settledOverride" | "settledAt"
 >;
 
 export interface OlderSettledShelfEnvironment {

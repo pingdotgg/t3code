@@ -2,6 +2,8 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import { m, type MessageResolver } from "../i18n/messages";
+
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
 import {
@@ -90,12 +92,14 @@ export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
   icon: "circle-dashed",
 };
 
-export function composerChipSizeSuffix(record?: {
-  readonly kind?: string;
-  readonly sizeBytes?: number;
-}): string {
+export function composerChipSizeSuffix(
+  record?: { readonly kind?: string; readonly sizeBytes?: number },
+  resolve: MessageResolver = m,
+): string {
   if (record?.kind !== "file" && record?.kind !== "image") return "";
-  return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
+  return typeof record.sizeBytes === "number"
+    ? formatAttachmentSize(record.sizeBytes, resolve)
+    : "";
 }
 
 const PULL_REQUEST_CHIP_PRESENTATIONS = {

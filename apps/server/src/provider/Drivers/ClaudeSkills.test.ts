@@ -85,6 +85,65 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("loads only the skills a non-strict marketplace entry declares", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const marketplace = path.join(tempDir, "marketplace");
+      const marketplaceJson = JSON.stringify({
+        name: "shared-root",
+        plugins: [
+          { name: "collection-a", source: "./", strict: false, skills: ["./skills/skill-one"] },
+          { name: "collection-b", source: "./", strict: false, skills: ["./skills/skill-two"] },
+        ],
+      });
+      // `claude plugin install` copies the whole repository into each plugin's cache folder.
+      const installs = ["collection-a", "collection-b"].map((name) =>
+        path.join(configDir, "plugins", "cache", "shared-root", name, "abc123"),
+      );
+      for (const root of [marketplace, ...installs]) {
+        yield* writeSkill(path.join(root, "skills"), "skill-one", "# One");
+        yield* writeSkill(path.join(root, "skills"), "skill-two", "# Two");
+        yield* fs.makeDirectory(path.join(root, ".claude-plugin"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, ".claude-plugin", "marketplace.json"),
+          marketplaceJson,
+        );
+      }
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "known_marketplaces.json"),
+        JSON.stringify({
+          "shared-root": {
+            source: { source: "directory", path: marketplace },
+            installLocation: marketplace,
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          version: 2,
+          plugins: {
+            "collection-a@shared-root": [{ scope: "user", installPath: installs[0] }],
+            "collection-b@shared-root": [{ scope: "user", installPath: installs[1] }],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"collection-a@shared-root":true,"collection-b@shared-root":true}}',
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["collection-a:skill-one", "collection-b:skill-two"],
+      );
+    }),
+  );
+
   it.effect("merges plugin enablement and selects installs in native registry order", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -214,6 +273,52 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(
         yield* discoverClaudeSkills({ homePath: configDir }, linkedWorktree),
         localSettings,
+      );
+    }),
+  );
+
+  it.effect("finds a project plugin from a worktree whose name ends in Unicode whitespace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" }),
+      );
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const projectInstall = path.join(configDir, "plugins", "project");
+      yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+      yield* writeSkill(path.join(projectInstall, "skills"), "review", "# Review");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: {
+            "plugin@shop": [
+              { scope: "project", projectPath: workspace, installPath: projectInstall },
+            ],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"plugin@shop":true}}',
+      );
+      // Git keeps Unicode whitespace such as U+3000 at the end of a worktree's name.
+      const worktree = path.join(tempDir, "feature\u3000");
+      const worktreeGitDirectory = path.join(workspace, ".git", "worktrees", "feature\u3000");
+      yield* fs.makeDirectory(worktree);
+      yield* fs.makeDirectory(worktreeGitDirectory, { recursive: true });
+      yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDirectory}\n`);
+      yield* fs.writeFileString(path.join(worktreeGitDirectory, "commondir"), "../..\n");
+      yield* fs.writeFileString(
+        path.join(worktreeGitDirectory, "gitdir"),
+        `${path.join(worktree, ".git")}\n`,
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, worktree);
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope, skill.path]),
+        [["plugin:review", "project", path.join(projectInstall, "skills", "review", "SKILL.md")]],
       );
     }),
   );
