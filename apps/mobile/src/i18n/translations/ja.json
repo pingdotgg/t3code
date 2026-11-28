@@ -5698,8 +5698,8 @@
   "eb1fd384ad5919dd": "内部メモ",
   "b45f0b467e9406d0": "顧客に返信",
   "15e5597f8f93ce12": "{start}〜{end}",
-  "324eb1b534f4dd49": "Voice transcription does not support this language.",
-  "55d10b17c262bf53": "Dictation language",
-  "2bc9b4068b479b4f": "Device language",
-  "af8339c1f8150347": "Voice input transcribes on this device. The first use of a language downloads it."
+  "324eb1b534f4dd49": "音声文字起こしはこの言語に対応していません。",
+  "55d10b17c262bf53": "音声入力の言語",
+  "2bc9b4068b479b4f": "デバイスの言語",
+  "af8339c1f8150347": "音声入力はこのデバイス上で文字起こしします。言語を初めて使うときにダウンロードされます。"
 }

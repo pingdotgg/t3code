@@ -5705,8 +5705,8 @@
   "eb1fd384ad5919dd": "내부 메모",
   "b45f0b467e9406d0": "고객에게 답변",
   "15e5597f8f93ce12": "{start}~{end}",
-  "324eb1b534f4dd49": "Voice transcription does not support this language.",
-  "55d10b17c262bf53": "Dictation language",
-  "2bc9b4068b479b4f": "Device language",
-  "af8339c1f8150347": "Voice input transcribes on this device. The first use of a language downloads it."
+  "324eb1b534f4dd49": "음성 받아쓰기가 이 언어를 지원하지 않습니다.",
+  "55d10b17c262bf53": "받아쓰기 언어",
+  "2bc9b4068b479b4f": "기기 언어",
+  "af8339c1f8150347": "음성 입력은 이 기기에서 받아쓰기합니다. 언어를 처음 사용할 때 다운로드됩니다."
 }

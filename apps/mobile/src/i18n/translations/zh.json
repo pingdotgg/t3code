@@ -5708,8 +5708,8 @@
   "eb1fd384ad5919dd": "内部备注",
   "b45f0b467e9406d0": "回复客户",
   "15e5597f8f93ce12": "{start} 至 {end}",
-  "324eb1b534f4dd49": "Voice transcription does not support this language.",
-  "55d10b17c262bf53": "Dictation language",
-  "2bc9b4068b479b4f": "Device language",
-  "af8339c1f8150347": "Voice input transcribes on this device. The first use of a language downloads it."
+  "324eb1b534f4dd49": "语音转写不支持此语言。",
+  "55d10b17c262bf53": "听写语言",
+  "2bc9b4068b479b4f": "设备语言",
+  "af8339c1f8150347": "语音输入在此设备上转写。首次使用某种语言时会下载该语言。"
 }

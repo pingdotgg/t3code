@@ -5721,8 +5721,8 @@
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
   "15e5597f8f93ce12": "{start} à {end}",
-  "324eb1b534f4dd49": "Voice transcription does not support this language.",
-  "55d10b17c262bf53": "Dictation language",
-  "2bc9b4068b479b4f": "Device language",
-  "af8339c1f8150347": "Voice input transcribes on this device. The first use of a language downloads it."
+  "324eb1b534f4dd49": "La transcription vocale ne prend pas en charge cette langue.",
+  "55d10b17c262bf53": "Langue de dictée",
+  "2bc9b4068b479b4f": "Langue de l’appareil",
+  "af8339c1f8150347": "La saisie vocale transcrit sur cet appareil. La première utilisation d’une langue la télécharge."
 }
