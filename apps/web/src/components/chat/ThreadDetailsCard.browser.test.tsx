@@ -66,13 +66,13 @@ function Card({
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
-  /** Rows of 100px shown at full density. Compact always takes 50px. */
+  /** Rows of 100px that no squeeze cuts. */
   rows?: number;
-  /** Rows of 100px in an automations list shown at full density. */
+  /** Rows of 100px in an automations list. */
   automationRows?: number;
-  /** Rows of 100px that expanded server lists add, which density ignores. */
+  /** Rows of 100px that expanded server lists add. */
   serverOverflowRows?: number;
-  /** Rows of 100px that expanded linked issues add, which density ignores. */
+  /** Rows of 100px that expanded linked issues add. */
   issueListRows?: number;
 }) {
   return (
@@ -91,15 +91,13 @@ function Card({
         }}
       >
         <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>
-          {(density) => (
+          {() => (
             <>
-              <p style={{ height: density === "full" ? rows * 100 : 50 }}>
-                Details for {threadRef.threadId}
-              </p>
-              {density === "full" && automationRows > 0 ? (
+              <p style={{ height: rows * 100 }}>Details for {threadRef.threadId}</p>
+              {automationRows > 0 ? (
                 <section data-thread-automations-panel style={{ height: automationRows * 100 }} />
               ) : null}
-              {density === "full" && serverOverflowRows > 0 ? (
+              {serverOverflowRows > 0 ? (
                 <div
                   data-thread-details-server-overflow
                   style={{ height: serverOverflowRows * 100 }}
@@ -182,35 +180,24 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
 });
 
-it("keeps every section at full density when the card needs to scroll", async () => {
+it("scrolls content that has no section to cut", async () => {
   using fixture = setup();
   useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
   const card = page.getByRole("region", { name: "Thread details" });
-  await expect.element(card).toHaveAttribute("data-density", "full");
   const viewport = card.element().querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
   expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
   viewport.scrollTop = viewport.scrollHeight;
   expect(viewport.scrollTop).toBeGreaterThan(0);
+  await expect
+    .element(page.getByRole("button", { name: "Show all details" }))
+    .not.toBeInTheDocument();
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
-  await expect.element(card).toHaveAttribute("data-density", "full");
-  await vi.waitFor(() => {
-    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-start")).toBe(
-      "0px",
-    );
-    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")).toBe("0px");
-  });
-  await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
-  await vi.waitFor(() => {
-    expect(viewport.scrollTop).toBe(0);
-    expect(
-      parseFloat(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")),
-    ).toBe(viewport.scrollHeight - viewport.clientHeight);
-  });
+  await vi.waitFor(() => expect(viewport.scrollHeight).toBe(viewport.clientHeight));
 });
 
-it("keeps full density when many automations make the content tall", async () => {
+it("keeps every row when many automations make the content tall", async () => {
   using fixture = setup();
   useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
@@ -218,19 +205,78 @@ it("keeps full density when many automations make the content tall", async () =>
   );
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
   await expect
-    .element(page.getByRole("region", { name: "Thread details" }))
-    .toHaveAttribute("data-density", "full");
+    .element(page.getByRole("button", { name: "Show all details" }))
+    .not.toBeInTheDocument();
 });
 
-it("stays full while expanded server rows overflow", async () => {
+it("keeps every row while expanded server rows overflow", async () => {
   using fixture = setup();
   useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} serverOverflowRows={4} />,
   );
+  await expect.element(page.getByText("Details for thread-b")).toBeVisible();
   await expect
-    .element(page.getByRole("region", { name: "Thread details" }))
-    .toHaveAttribute("data-density", "full");
+    .element(page.getByRole("button", { name: "Show all details" }))
+    .not.toBeInTheDocument();
+});
+
+it("cuts whole sections when squeezed and shows them again from the reveal row", async () => {
+  using fixture = setup();
+  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
+  await using _screen = await render(
+    <StrictMode>
+      <ChatCanvasContext
+        value={{
+          container,
+          lane: { padding: 48, minChatWidth: 640 },
+          layout: resolveChatCanvasLayout({ container, preview: null }),
+          previewKey: null,
+          measureDetailsCard: () => {},
+          detailsCardTopInset: 0,
+          preferredDetailsCard: placement,
+          detailsCardPlacement: placement,
+        }}
+      >
+        <ThreadDetailsCard threadRef={threadB} anchor={fixture.anchor} handle={fixture.handle}>
+          {({ cut, reveal }) => (
+            <section>
+              <p style={{ height: 150 }}>Details for thread-b</p>
+              <div data-thread-details-unit="usage" hidden={cut.has("usage")}>
+                <p style={{ height: 150 }}>Limits</p>
+              </div>
+              <div data-thread-details-unit="cards" hidden={cut.has("cards")}>
+                <ThreadDetailsControl style={{ height: 150 }}>Lineage</ThreadDetailsControl>
+              </div>
+              {reveal}
+            </section>
+          )}
+        </ThreadDetailsCard>
+      </ChatCanvasContext>
+    </StrictMode>,
+  );
+  const card = page.getByRole("region", { name: "Thread details" });
+  const viewport = card.element().querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+  const lineage = page.getByRole("button", { name: "Lineage" });
+  const more = page.getByRole("button", { name: "Show all details" });
+  // 450px of sections in 400px: the last section goes whole, the rest fits with the reveal row.
+  await expect.element(more).toBeVisible();
+  await expect.element(lineage).not.toBeInTheDocument();
+  await expect.element(page.getByText("Limits")).toBeVisible();
+  expect(viewport.scrollHeight).toBe(viewport.clientHeight);
+
+  await more.click();
+  await expect.element(lineage).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Show fewer" }))
+    .toHaveAttribute("aria-expanded", "true");
+
+  await lineage.click();
+  await act(() =>
+    lineage.element().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
+  await expect.element(lineage).not.toBeInTheDocument();
+  await expect.element(more).toHaveFocus();
 });
 
 it("focuses the requested branch row when opening the details popover", async () => {
@@ -253,15 +299,16 @@ it("focuses the requested branch row when opening the details popover", async ()
   await expect.element(page.getByRole("button", { name: "feature/current" })).toHaveFocus();
 });
 
-it("stays full while expanded issue rows overflow", async () => {
+it("keeps every row while expanded issue rows overflow", async () => {
   using fixture = setup();
   useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} issueListRows={6} />,
   );
+  await expect.element(page.getByText("Details for thread-b")).toBeVisible();
   await expect
-    .element(page.getByRole("region", { name: "Thread details" }))
-    .toHaveAttribute("data-density", "full");
+    .element(page.getByRole("button", { name: "Show all details" }))
+    .not.toBeInTheDocument();
 });
 
 it("keeps the repository list reachable after Show more expands it", async () => {
@@ -287,23 +334,20 @@ it("keeps the repository list reachable after Show more expands it", async () =>
         }}
       >
         <ThreadDetailsCard threadRef={threadB} anchor={fixture.anchor} handle={fixture.handle}>
-          {(density) =>
-            // As ThreadDetailsPanel does, essential density drops the repository section.
-            density === "essential" ? null : (
-              <ThreadRepositorySections
-                environmentId={threadB.environmentId}
-                threadId={threadB.threadId}
-                projectId={ProjectId.make("project")}
-                isServerThread={false}
-                threadCwd="/repos"
-                taskFolder={null}
-                reachesTracked
-                onTaskFolderChange={() => {}}
-                explainsEmpty={false}
-                showActions={false}
-              />
-            )
-          }
+          {() => (
+            <ThreadRepositorySections
+              environmentId={threadB.environmentId}
+              threadId={threadB.threadId}
+              projectId={ProjectId.make("project")}
+              isServerThread={false}
+              threadCwd="/repos"
+              taskFolder={null}
+              reachesTracked
+              onTaskFolderChange={() => {}}
+              explainsEmpty={false}
+              showActions={false}
+            />
+          )}
         </ThreadDetailsCard>
       </ChatCanvasContext>
     </StrictMode>,
@@ -311,7 +355,4 @@ it("keeps the repository list reachable after Show more expands it", async () =>
   await page.getByRole("button", { name: "Show 26 more" }).click();
 
   await expect.element(page.getByRole("button", { name: "Show fewer" })).toBeVisible();
-  await expect
-    .element(page.getByRole("region", { name: "Thread details" }))
-    .not.toHaveAttribute("data-density", "essential");
 });
