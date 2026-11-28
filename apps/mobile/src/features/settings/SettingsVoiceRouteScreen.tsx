@@ -1,3 +1,4 @@
+import { ReadAloudSection } from "./ReadAloudSection";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -406,6 +407,7 @@ export function SettingsVoiceRouteScreen() {
                 "Voice input uses the first connected microphone in this list. A wired or Bluetooth microphone is added by name the first time you dictate with it connected; until then it falls under Other. Swipe left on a named microphone to forget it.",
               )}
         </Text>
+        <ReadAloudSection />
       </ScrollView>
     </SettingsScreen>
   );

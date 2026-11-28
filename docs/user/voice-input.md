@@ -7,7 +7,7 @@ Dictate into the composer, citation comments, diff/file annotations, PR comments
 - **Web and desktop**: Nothing is recorded or sent until you choose a destination in **Settings → Voice → Transcribe with**:
   - **On this Mac (Apple Speech)** (macOS 26+ desktop): Transcribes locally on your Mac (silence filtering and filler removal unavailable; dictionary applies only with cleanup enabled).
   - **A connected environment**: Sends audio over your authenticated connection to transcribe locally on that host and discards the audio. Never silently fails over to another host.
-  - **Cloud providers (OpenAI, Grok Voice Transcribe, OpenRouter)**: Configure an API key (or [secret reference](./secrets.md)) on an environment to forward recordings to that provider. OpenRouter lets each user pick a model from its live STT catalog and requests zero data retention.
+  - **Cloud providers (OpenAI, Grok Voice Transcribe, OpenRouter, ElevenLabs)**: Configure an API key (or [secret reference](./secrets.md)) on an environment to forward recordings to that provider. For OpenRouter you can choose **Sign in with OpenRouter** instead of pasting a key. Dictation starts on a default OpenRouter model; each user can pick another from its live STT catalog in **Settings → Voice**, and T3 Code requests zero data retention.
 - **Mobile (iOS and Android)**: Transcribes on-device by default (iOS 26+ or Android 12+ with compatible Google speech services; first use may download a speech model, then works offline). To transcribe on a paired environment or cloud provider instead, configure **Settings → Voice → Transcribe on**. Keep T3 Code open while dictating on Android.
 
 ## Set up a local transcription model

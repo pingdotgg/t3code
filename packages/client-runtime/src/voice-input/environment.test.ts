@@ -3,8 +3,13 @@ import { EnvironmentId, type EnvironmentSpeechModel } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { BearerConnectionTarget, type PreparedConnection } from "../connection/model.ts";
-import { installEnvironmentSpeechModel } from "./environment.ts";
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+} from "../connection/model.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import { installEnvironmentSpeechModel, startSpeechSynthesis } from "./environment.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PREPARED: PreparedConnection = {
@@ -99,6 +104,57 @@ describe("installEnvironmentSpeechModel", () => {
         Effect.provideService(HttpClient.HttpClient, client),
       );
       expect(models).toEqual([downloaded]);
+    }),
+  );
+});
+
+const SPEECH_TARGET = new PrimaryConnectionTarget({
+  environmentId: "environment-speech" as never,
+  label: "Speech",
+  httpBaseUrl: "https://environment.example.test",
+  wsBaseUrl: "wss://environment.example.test",
+});
+
+const SPEECH_PREPARED: PreparedConnection = {
+  environmentId: SPEECH_TARGET.environmentId,
+  label: SPEECH_TARGET.label,
+  httpBaseUrl: SPEECH_TARGET.httpBaseUrl,
+  socketUrl: SPEECH_TARGET.wsBaseUrl,
+  httpAuthorization: null,
+  target: SPEECH_TARGET,
+};
+
+const start = (response: Response) =>
+  startSpeechSynthesis(SPEECH_PREPARED, "local", {
+    text: "Hello",
+    model: "",
+    voice: "",
+    speed: 1,
+    language: "en",
+  }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(() => Promise.resolve(response))));
+
+describe("startSpeechSynthesis", () => {
+  it.effect("returns the environment's stream URL and token for the started synthesis", () =>
+    Effect.gen(function* () {
+      expect(yield* start(Response.json({ token: "stream-token" }))).toEqual({
+        url: "https://environment.example.test/api/voice/synthesis/audio?token=stream-token",
+        token: "stream-token",
+      });
+    }),
+  );
+
+  it.effect("fails with the environment's speech error instead of a fetch failure", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        start(
+          Response.json(
+            { _tag: "SpeechSynthesisError", provider: "local", reason: "missing-model" },
+            { status: 422 },
+          ),
+        ),
+      );
+      expect(error._tag).toBe("SpeechSynthesisError");
+      expect(error.message).toBe("Download a local speech model in Settings → Voice.");
     }),
   );
 });

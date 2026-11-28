@@ -219,6 +219,7 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
+import { ReadAloudBar } from "../read-aloud/ReadAloudBar";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
@@ -1829,6 +1830,10 @@ function ThreadDetailBody(
                         />
                       </Animated.View>
                     ) : null}
+                    <ReadAloudBar
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                    />
                     {props.activePendingApproval || props.activePendingUserInput ? (
                       <Animated.View
                         className="shrink-0 gap-3 px-4 pb-3"

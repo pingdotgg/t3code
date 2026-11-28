@@ -200,7 +200,7 @@ export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
   );
 });
 
-const VoiceWaveform = memo(function VoiceWaveform(props: {
+export const VoiceWaveform = memo(function VoiceWaveform(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
 }) {
   const [barCount, setBarCount] = useState(0);

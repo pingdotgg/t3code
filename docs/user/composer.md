@@ -110,6 +110,48 @@ On web and desktop, press `Cmd+S` (macOS) or `Ctrl+S` (Windows/Linux) to stash t
 - Holds up to 100 prompts in browser storage; stashes are never auto-deleted.
 - Stashes with uploaded files must be restored in their original environment. Uploads expire after 24 hours; use **Attach again** or remove expired files before sending.
 
+## Read replies aloud
+
+Choose a speech provider in **Settings → Voice → Read aloud**, then use **Read aloud**
+beside a completed assistant reply. Select it again to stop playback. Leaving the
+thread stops it; on mobile, screens opened over the thread, such as a file preview, keep it
+reading. Code blocks are skipped by default.
+
+The paragraph and the word being read are highlighted, and the thread scrolls along until
+you scroll away. ElevenLabs reports when each word is spoken. For Grok TTS, OpenRouter and local
+models, the highlighted word is an estimate unless you download **Word timing** (about 200 MB) in
+**Settings → Voice → Read aloud**. With it, your environment lines the reply's words up with the
+audio, and reading picked up at a word starts right on it rather than at its sentence. Words not
+written in the Latin alphabet are still estimated.
+
+While a reply is read, a small player above the composer pauses, stops, and changes the speed,
+and brings you back to the word being read after you scroll away. Click or tap any word in the
+reply to continue reading from it. You can also select text in a reply and choose **Read from
+here**.
+
+System voices run on your device. Grok TTS, OpenRouter, and ElevenLabs send the reply text
+through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
+voice, then use the preview to try it. For OpenRouter, you can choose **Sign in with OpenRouter**
+instead of pasting a key: OpenRouter creates a key for your environment after you approve it. If
+your environment isn't reachable over HTTPS or on this computer, OpenRouter shows a code to paste
+back into T3 Code instead.
+
+**Local model** reads replies on your selected environment, so the text never leaves it.
+Download a model once from the same settings page, where you can search models and filter them by
+language. The list starts filtered to your language, so clear the filter to see every model.
+Kokoro (about 220 MB) is the default, with natural English voices plus Spanish, French, Hindi,
+Italian, and Portuguese. Qwen3-TTS 1.7B (about 2.8 GB) sounds the most natural and reads numbers
+and units best in ten languages, but needs a GPU and about 7 GB of memory; Qwen3-TTS 0.6B (about
+2 GB) is close behind and lighter. Tiny models such as Kale TTS, Piper, Kitten TTS Mini, and
+Pocket TTS stay fast without a GPU, while the largest need a GPU and several gigabytes of memory.
+Models with recorded voices imitate speakers from LibriTTS-R audiobook recordings. A few models
+are licensed for non-commercial use only, and their descriptions say so. Like dictation models,
+they reuse a copy already in the Hugging Face cache, and on web or desktop you can paste the path
+of a copy elsewhere and choose **Use existing**. Local models use the GPU through Metal on Apple silicon Macs and Vulkan on Windows
+and Linux, and run on macOS, Windows, and Linux with glibc 2.28 or newer.
+
+On mobile, **Background playback** allows speech to continue while the app is in the background.
+
 ## Voice input
 
 Dictate into the composer with the microphone button or `mod+shift+d` (web and desktop). Audio stays on-device or goes only to an environment/provider you explicitly choose in **Settings → Voice**. See [Voice input](./voice-input.md) for setup, mobile dictation, and microphone priority.

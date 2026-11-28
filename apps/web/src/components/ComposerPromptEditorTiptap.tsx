@@ -1205,8 +1205,10 @@ function ComposerPromptEditorTiptapInner(
   };
 
   const editorAttributes = {
+    // Two relaxed lines are a fractional height; rounded up so the composer, and the banners
+    // stacked above it, sit on whole pixels where icons and text render crisp and aligned.
     class: cn(
-      "composer-tiptap -m-1 block max-h-52 min-h-[calc(2lh+--spacing(2))] overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+      "composer-tiptap -m-1 block max-h-52 min-h-[round(up,calc(2lh+--spacing(2)),1px)] overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
       className,
     ),
     "data-testid": "composer-editor",

@@ -16,7 +16,9 @@ describe("SecretInput", () => {
   it("preserves a configured secret on empty edits and commits a replacement", async () => {
     const onCommit = vi.fn();
     await using screen = await render(<SecretInput configured value="" onCommit={onCommit} />);
-    expect(input(screen).type).toBe("password");
+    // A masked text field, so browsers and password managers do not offer to save it.
+    expect(input(screen).type).toBe("text");
+    expect(input(screen).autocomplete).toBe("off");
 
     await userEvent.click(input(screen));
     await userEvent.click(document.body);

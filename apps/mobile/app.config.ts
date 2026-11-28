@@ -413,7 +413,7 @@ const config: ExpoConfig = {
       {
         microphonePermission: "Allow T3 Code to use your microphone for voice input.",
         recordAudioAndroid: true,
-        enableBackgroundPlayback: false,
+        enableBackgroundPlayback: true,
         enableBackgroundRecording: false,
       },
     ],

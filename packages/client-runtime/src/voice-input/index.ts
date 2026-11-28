@@ -19,6 +19,9 @@ export {
   getCloudSpeechModels,
   requireCloudSpeechKey,
   setCloudSpeechKey,
+  startOpenRouterSignIn,
+  finishOpenRouterSignIn,
+  getOpenRouterSignInStatus,
   transcribeCloudPcm,
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
@@ -42,3 +45,15 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+
+export {
+  cancelSpeechSynthesisModelDownload,
+  downloadSpeechSynthesisModel,
+  getSpeechSynthesisModels,
+  getSpeechSynthesisTimings,
+  speakSpeechMath,
+  linkSpeechSynthesisModels,
+  prepareSpeechSynthesis,
+  removeSpeechSynthesisModel,
+  startSpeechSynthesis,
+} from "./environment.ts";

@@ -1,3 +1,4 @@
+import { ReadAloudSettingsSection } from "./ReadAloudSettingsSection";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
@@ -12,18 +13,17 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   CLOUD_SPEECH_LABELS,
   CloudSpeechProvider,
+  DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentId,
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
   type ProjectId,
-  ProviderDriverKind,
   type SpeechAcceleration,
   type SpeechBenchmarkTier,
   type SpeechCustomWords,
@@ -39,7 +39,6 @@ import {
   type SpeechRecommendationRole,
 } from "@t3tools/shared/speech";
 import {
-  ArrowDownUpIcon,
   AudioLinesIcon,
   CheckIcon,
   DownloadIcon,
@@ -51,10 +50,9 @@ import {
   MicIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon,
   StarIcon,
   Trash2Icon,
-  UnlinkIcon,
+  UnplugIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -96,28 +94,13 @@ import {
 } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
+import { SpeechProviderIcon as CloudSpeechLogo } from "./SpeechProviderIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Input } from "../ui/input";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRadioItemIndicator,
-  MenuSearchInput,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
 import {
   Select,
   SelectGroup,
@@ -132,11 +115,12 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneOrderList } from "./MicrophoneOrderList";
 import { MicrophoneTest } from "./MicrophoneTest";
-import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
+import { CloudVoiceConfiguration, OpenRouterDictationModel } from "./CloudVoiceConfiguration";
 import { ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { ModelCatalogToolbar } from "./ModelCatalogToolbar";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingsPageContainer,
@@ -152,17 +136,6 @@ import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const OFF = "off";
 const DEVICE = "device";
-function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
-  if (provider === "openrouter")
-    return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
-  return (
-    <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
-      displayName={CLOUD_SPEECH_LABELS[provider]}
-      iconClassName="size-4"
-    />
-  );
-}
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODES: Record<VoiceShortcutMode, { label: string; hint: string }> = {
   auto: {
@@ -226,6 +199,9 @@ function ModelCard(props: ModelCardProps) {
   const locale = useLocale();
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
+  const removeLabel = model.linkedFrom
+    ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
+    : gt("Delete {name}", { name: model.name });
   const percent = speechModelDownloadPercent(model.downloaded ?? 0, model.size);
   return (
     <div className="@container/model px-3 py-3">
@@ -361,19 +337,20 @@ function ModelCard(props: ModelCardProps) {
             </Button>
           )}
           {model.state === "installed" ? (
-            <Button
-              size="icon-sm"
-              variant="outline"
-              disabled={props.busy}
-              aria-label={
-                model.linkedFrom
-                  ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
-                  : gt("Delete {name}", { name: model.name })
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={props.busy}
+                  aria-label={removeLabel}
+                  onClick={props.onDelete}
+                />
               }
-              onClick={props.onDelete}
+              label={removeLabel}
             >
-              {model.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
-            </Button>
+              {model.linkedFrom ? <UnplugIcon /> : <Trash2Icon />}
+            </SharedTooltipTrigger>
           ) : null}
         </div>
       </div>
@@ -933,20 +910,12 @@ function SpeechModelBrowser(props: {
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [existingPath, setExistingPath] = useState("");
   const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
-  const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);
   const supportedLanguages = [...new Set(models.flatMap((model) => model.languages))];
   const defaultLanguage = preferred.find((code) => supportedLanguages.includes(code));
   const selectedLanguages = selection ?? (defaultLanguage ? [defaultLanguage] : []);
   const languages = orderSpeechLanguages(supportedLanguages, preferred, locale);
-  const needle = languageSearch.trim().toLocaleLowerCase();
-  const visibleLanguages = languages.filter(
-    (code) =>
-      !needle ||
-      code.includes(needle) ||
-      languageLabel(code, locale).toLocaleLowerCase().includes(needle),
-  );
   const accuracyLanguage = selectedLanguages[0] ?? "en";
   const sortLabels: Record<SpeechModelSort, string> = {
     recommended: gt("Recommended"),
@@ -954,10 +923,6 @@ function SpeechModelBrowser(props: {
     accuracy: gt("Most accurate"),
     speed: gt("Fastest"),
   };
-  const languagesLabel =
-    selectedLanguages.length === 0
-      ? gt("All languages")
-      : selectedLanguages.map((code) => languageLabel(code, locale)).join(", ");
   const benchmarkTier = status?.supported ? status.benchmarkTier : undefined;
   const recommendations = recommendSpeechModels(models, selectedLanguages, benchmarkTier);
   const sortedModels = filterSpeechModels(
@@ -999,127 +964,26 @@ function SpeechModelBrowser(props: {
       )}
       className="@container/voice-models"
     >
-      <div className="mt-3 flex min-w-0 gap-2">
-        <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
-          <InputGroupAddon>
-            <SearchIcon aria-hidden />
-          </InputGroupAddon>
-          {/* Native search inputs clear on Escape even during IME composition. */}
-          <InputGroupInput
-            type="text"
-            role="searchbox"
-            aria-label={gt("Search transcription models")}
-            placeholder={gt("Search models")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || event.defaultPrevented) return;
-              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-              const composing = event.nativeEvent.isComposing || event.keyCode === 229;
-              if (!composing && !search && !event.repeat) return;
-              event.stopPropagation();
-              if (composing) return;
-              event.preventDefault();
-              setSearch("");
-            }}
-          />
-        </InputGroup>
-        <Menu onOpenChange={(open) => (open ? undefined : setLanguageSearch(""))}>
-          <MenuTrigger
-            render={<Button variant="outline" className="max-w-56" />}
-            aria-label={gt("Filter by language: {languagesLabel}", { languagesLabel })}
-          >
-            <LanguagesIcon />
-            <span className="hidden truncate @min-[34rem]/voice-models:inline">
-              {languagesLabel}
-            </span>
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuSearchInput
-              autoFocus
-              aria-label={gt("Search languages")}
-              placeholder={gt("Search languages")}
-              value={languageSearch}
-              onChange={(e) => setLanguageSearch(e.target.value)}
-            />
-            <div
-              role="group"
-              aria-label={gt("Browse models by language")}
-              className="max-h-72 overflow-y-auto"
-            >
-              {needle ? null : (
-                <MenuCheckboxItem
-                  checked={selectedLanguages.length === 0}
-                  onCheckedChange={() => setSelection([])}
-                >
-                  <T>All languages</T>
-                </MenuCheckboxItem>
-              )}
-              {visibleLanguages.map((code) => (
-                <MenuCheckboxItem
-                  key={code}
-                  checked={selectedLanguages.includes(code)}
-                  onCheckedChange={() =>
-                    setSelection(
-                      selectedLanguages.includes(code)
-                        ? selectedLanguages.filter((language) => language !== code)
-                        : [...selectedLanguages, code],
-                    )
-                  }
-                >
-                  {languageLabel(code, locale)}
-                </MenuCheckboxItem>
-              ))}
-              {visibleLanguages.length === 0 && (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                  <T>No languages match.</T>
-                </p>
-              )}
-            </div>
-          </MenuPopup>
-        </Menu>
-        <Menu>
-          <MenuTrigger
-            render={<Button variant="outline" />}
-            aria-label={
-              downloadedOnly
-                ? gt("Sort and filter models: {sort}, downloaded only", { sort: sortLabels[sort] })
-                : gt("Sort and filter models: {sort}", { sort: sortLabels[sort] })
-            }
-          >
-            <ArrowDownUpIcon />
-            <span className="hidden @min-[34rem]/voice-models:inline">{sortLabels[sort]}</span>
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuGroup>
-              <MenuGroupLabel>
-                <T>Sort by</T>
-              </MenuGroupLabel>
-              <MenuRadioGroup
-                value={sort}
-                onValueChange={(value) => setSort(value as SpeechModelSort)}
-              >
-                {(Object.keys(sortLabels) as SpeechModelSort[]).map((value) => (
-                  <MenuRadioItem key={value} value={value} closeOnClick>
-                    <span className="flex items-center justify-between gap-3">
-                      {value === "accuracy"
-                        ? gt("Most accurate in {language}", {
-                            language: languageLabel(accuracyLanguage, locale),
-                          })
-                        : sortLabels[value]}
-                      <MenuRadioItemIndicator />
-                    </span>
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
-            </MenuGroup>
-            <MenuSeparator />
-            <MenuCheckboxItem checked={downloadedOnly} onCheckedChange={setDownloadedOnly}>
-              <T>Downloaded only</T>
-            </MenuCheckboxItem>
-          </MenuPopup>
-        </Menu>
-      </div>
+      <ModelCatalogToolbar
+        searchLabel={gt("Search transcription models")}
+        search={search}
+        onSearch={setSearch}
+        languages={languages}
+        selectedLanguages={selectedLanguages}
+        onSelectLanguages={setSelection}
+        sort={sort}
+        sortLabels={sortLabels}
+        sortMenuLabel={(value) =>
+          value === "accuracy"
+            ? gt("Most accurate in {language}", {
+                language: languageLabel(accuracyLanguage, locale),
+              })
+            : sortLabels[value]
+        }
+        onSort={setSort}
+        downloadedOnly={downloadedOnly}
+        onDownloadedOnly={setDownloadedOnly}
+      />
       <div
         className="mt-2 mb-2 max-h-96 divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60"
         role="region"
@@ -1422,9 +1286,7 @@ export function VoiceSettingsPanel() {
   const cloudEnvironment = environments.find(
     (env) => env.environmentId === pendingCloud?.environmentId,
   );
-  // OpenRouter users without settings access still manage their own model choice.
-  const manageLabel =
-    destination.cloudProvider === "openrouter" ? gt("Manage OpenRouter") : gt("Manage key");
+  const manageLabel = gt("Manage key");
   const chosenEnvironment = environments.find(
     (environment) => environment.environmentId === destination.environmentId,
   );
@@ -1659,30 +1521,28 @@ export function VoiceSettingsPanel() {
                   ) : null}
                 </SelectPopup>
               </Select>
-              {destination.cloudProvider &&
-                chosenEnvironment &&
-                (canManageKey || destination.cloudProvider === "openrouter") && (
-                  <SharedTooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                        aria-label={manageLabel}
-                        onClick={() => {
-                          if (destination.cloudProvider)
-                            setPendingCloud({
-                              provider: destination.cloudProvider,
-                              environmentId: chosenEnvironment.environmentId,
-                            });
-                        }}
-                      >
-                        <KeyRoundIcon aria-hidden className="size-4" />
-                      </Button>
-                    }
-                    label={manageLabel}
-                  />
-                )}
+              {destination.cloudProvider && chosenEnvironment && canManageKey && (
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                      aria-label={manageLabel}
+                      onClick={() => {
+                        if (destination.cloudProvider)
+                          setPendingCloud({
+                            provider: destination.cloudProvider,
+                            environmentId: chosenEnvironment.environmentId,
+                          });
+                      }}
+                    >
+                      <KeyRoundIcon aria-hidden className="size-4" />
+                    </Button>
+                  }
+                  label={manageLabel}
+                />
+              )}
             </div>
           }
         />
@@ -1696,6 +1556,20 @@ export function VoiceSettingsPanel() {
               destination.cloudProvider === pendingCloud.provider
             }
             close={() => setPendingCloud(null)}
+          />
+        )}
+        {destination.cloudProvider === "openrouter" && destination.environmentId && (
+          <SettingsRow
+            title={gt("Model", { $context: "speech-to-text model setting" })}
+            description={gt("The OpenRouter model that transcribes your dictation.")}
+            control={
+              <div className="w-64 max-w-full">
+                <OpenRouterDictationModel
+                  environmentId={destination.environmentId}
+                  model={destination.cloudModel ?? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL}
+                />
+              </div>
+            }
           />
         )}
         {!destination.cloudProvider && !destination.device && catalog.loading ? (
@@ -1927,6 +1801,7 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
+      <ReadAloudSettingsSection />
     </SettingsPageContainer>
   );
 }

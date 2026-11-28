@@ -76,6 +76,8 @@
         "@effect/platform-node-shared",
         "@t3tools/web",
         "ffi-rs",
+        "koffi",
+        "speech-rule-engine",
         "transcribe-cpp",
       ],
     },

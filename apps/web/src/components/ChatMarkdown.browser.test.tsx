@@ -1,5 +1,6 @@
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { readAloudText } from "@t3tools/shared/read-aloud";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -157,12 +158,52 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
   return { ...actual, useClientSettings };
 });
 
+// Read aloud speaks through a playback that reports the words the test names.
+const readAloudWords = vi.hoisted(() => ({
+  emit: (_word: { start: number; end: number } | null) => {},
+}));
+// Words for formulas, as Speech Rule Engine says them, when a test renders math.
+const readAloudMath = vi.hoisted(() => ({
+  words: undefined as ((tex: string) => string | undefined) | undefined,
+}));
+vi.mock(import("../speech/readAloud"), async () => {
+  const { createReadAloudController } = await import("@t3tools/client-runtime/read-aloud");
+  return {
+    warmReadAloud: () => {},
+    readAloudController: createReadAloudController(
+      async () => {
+        const finished = Promise.withResolvers<void>();
+        return {
+          play: async () => {},
+          pause: () => {},
+          stop: () => finished.resolve(),
+          finished: finished.promise,
+          words: (listener) => {
+            readAloudWords.emit = listener;
+            return () => {
+              readAloudWords.emit = () => {};
+            };
+          },
+        };
+      },
+      undefined,
+      () => readAloudMath.words,
+    ),
+  };
+});
+
 import ChatMarkdown from "./ChatMarkdown";
 import {
   chatMarkdownClipboardPayload,
   serializeRenderedMarkdownFragment,
 } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
+import { readAloudController } from "../speech/readAloud";
+import {
+  jumpReadAloudOnClick,
+  readAloudHighlightRoot,
+  readAloudSourceAt,
+} from "../speech/readAloudHighlight";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -184,6 +225,177 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
   await screen.rerender(preview(renewed, "clip-v2"));
   expect(screen.container.querySelector("audio")).not.toBe(audio);
   expect(screen.container.querySelector("audio")?.getAttribute("src")).toBe(renewed);
+});
+
+it("paints the block and the repeated word being read aloud, and clears them on stop", async () => {
+  const markdown = "Intro.\n\n- The cat saw the **cat** nap.\n  - nested cat";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true);
+  const second = spoken.indexOf("cat nap");
+  await act(() => readAloudWords.emit({ start: second, end: second + 3 }));
+  const painted = (name: string) => [...(CSS.highlights.get(name) ?? [])].map(String);
+  expect(painted("t3-read-aloud-word")).toEqual(["cat"]);
+  expect(
+    [...(CSS.highlights.get("t3-read-aloud-word") ?? [])][0]?.startContainer.parentElement?.tagName,
+  ).toBe("STRONG");
+  expect(painted("t3-read-aloud-block")).toEqual(["The cat saw the cat nap."]);
+  readAloudController.stop();
+  await reading;
+  expect(painted("t3-read-aloud-word")).toEqual([]);
+  expect(painted("t3-read-aloud-block")).toEqual([]);
+});
+
+it("reads from a clicked block or a selected point only while that reply is read", async () => {
+  const markdown =
+    "Intro.\n\nSecond **part** here.\n\n- First item\n- Second item\n\n```sh\nls\n```\n\n| Step | Result |\n| --- | --- |\n| Read | 1 file |\n| Edit | 12 passed |";
+  await using screen = await render(
+    <div
+      ref={readAloudHighlightRoot("reply")}
+      onClick={(event) => void jumpReadAloudOnClick("reply", markdown, event.nativeEvent)}
+    >
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" as const };
+  const blockRead = async () => {
+    await act(() => readAloudWords.emit({ start: 0, end: 1 }));
+    return readAloudController.getHighlight()?.block.start;
+  };
+  const paragraph = screen.getByText("here.", { exact: false });
+  await paragraph.click();
+  expect(readAloudController.isReading("reply")).toBe(false);
+
+  const reading = readAloudController.start("reply", markdown, settings);
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  // Words gives paragraphs no source range, so their words find the block.
+  await paragraph.click();
+  await vi.waitFor(async () => expect(await blockRead()).toBe(markdown.indexOf("Second")));
+  await screen.getByText("Second item").click();
+  await vi.waitFor(async () => expect(await blockRead()).toBe(markdown.indexOf("Second item")));
+  // Code blocks keep their clicks.
+  await screen.getByText("ls").click();
+  expect(await blockRead()).toBe(markdown.indexOf("Second item"));
+
+  const part = screen.getByText("part").element().firstChild;
+  expect(part && readAloudSourceAt("reply", markdown, part, 2)).toBe(markdown.indexOf("part"));
+  // Cells hold no whitespace between them; a cell's word must not run into its neighbors.
+  const cell = screen.getByText("Edit", { exact: true }).element().firstChild;
+  expect(cell && readAloudSourceAt("reply", markdown, cell, 0)).toBe(markdown.indexOf("Edit"));
+  expect(readAloudSourceAt("other", markdown, document.body, 0)).toBeNull();
+  readAloudController.stop();
+  await reading;
+});
+
+it("highlights the words of a block whose last word renders as a chip or with a footnote mark", async () => {
+  const markdown =
+    "Run the tests and open `apps/server/src/speech/SpeechAligner.ts:120`\n\nThis is cited[^1]\n\n[^1]: The spec.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd="/tmp/project" text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true);
+  const painted = async (word: string) => {
+    const at = spoken.indexOf(word);
+    await act(() => readAloudWords.emit({ start: at, end: at + word.length }));
+    return [...(CSS.highlights.get("t3-read-aloud-word") ?? [])].map(String);
+  };
+  expect(await painted("tests")).toEqual(["tests"]);
+  expect(await painted("This")).toEqual(["This"]);
+  readAloudController.stop();
+  await reading;
+});
+
+it("finds a paragraph whose last word is a rendered formula, not an earlier heading that starts alike", async () => {
+  settingsOverrides.mathRenderingEnabled = true;
+  const spokenMath: Record<string, string> = {
+    "L = \\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2":
+      "L equals the sum from i equals 1 to n of open paren y sub i minus y hat sub i close paren squared",
+    n: "n",
+    "\\hat{y}_i": "y hat sub i",
+    i: "i",
+  };
+  readAloudMath.words = (tex) => spokenMath[tex];
+  const markdown =
+    "## The math behind the alignment\n\nThe aligner minimizes the squared error $L = \\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2$ over $n$ samples, where $\\hat{y}_i$ is the predicted start of word $i$.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true, { math: readAloudMath.words });
+  const at = spoken.indexOf("The aligner");
+  await act(() => readAloudWords.emit({ start: at, end: at + 3 }));
+  const word = [...(CSS.highlights.get("t3-read-aloud-word") ?? [])][0];
+  expect(String(word)).toBe("The");
+  expect(word?.startContainer.parentElement?.tagName).toBe("P");
+
+  // A formula's words tint it whole; no text highlight runs through math, whose glyphs it covers.
+  const hat = spoken.lastIndexOf("y hat sub i");
+  await act(() => readAloudWords.emit({ start: hat, end: hat + 1 }));
+  const tinted = (level: string) =>
+    [...document.querySelectorAll(`[data-read-aloud="${level}"]`)].map((element) =>
+      element.querySelector("svg")?.getAttribute("aria-label"),
+    );
+  expect(tinted("word")).toEqual(["\\hat{y}_i"]);
+  expect(tinted("block")).toHaveLength(3);
+  expect([...(CSS.highlights.get("t3-read-aloud-word") ?? [])]).toEqual([]);
+  const svgs = [...document.querySelectorAll("svg")];
+  for (const painted of CSS.highlights.get("t3-read-aloud-block") ?? [])
+    expect(svgs.some((svg) => (painted as Range).intersectsNode(svg))).toBe(false);
+  readAloudController.stop();
+  await reading;
+  expect(document.querySelector("[data-read-aloud]")).toBeNull();
+  readAloudMath.words = undefined;
+});
+
+it("tints a block formula while its words are spoken", async () => {
+  settingsOverrides.mathRenderingEnabled = true;
+  readAloudMath.words = (tex) =>
+    tex.includes("\\pi") ? "e to the i pi plus one equals zero" : undefined;
+  const markdown = "Euler wrote:\n\n$$\ne^{i\\pi} + 1 = 0\n$$\n\nAnd that was that.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true, { math: readAloudMath.words });
+  const plus = spoken.indexOf("plus");
+  await act(() => readAloudWords.emit({ start: plus, end: plus + 4 }));
+  const tinted = document.querySelector<HTMLElement>('[data-read-aloud="word"]');
+  expect(tinted?.dataset.markdownMath).toBe("display");
+  // The next paragraph is read as text again.
+  const after = spoken.indexOf("that.");
+  await act(() => readAloudWords.emit({ start: after, end: after + 4 }));
+  expect(document.querySelector('[data-read-aloud="word"]')).toBeNull();
+  expect([...(CSS.highlights.get("t3-read-aloud-word") ?? [])].map(String)).toEqual(["that"]);
+  readAloudController.stop();
+  await reading;
+  readAloudMath.words = undefined;
 });
 
 function setup() {

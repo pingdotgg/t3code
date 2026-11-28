@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./read-aloud": "./src/readAloud.ts",
     "./pull-request-diff-fold": {
       "types": "./src/pullRequestDiffFold.ts",
       "default": "./src/pullRequestDiffFold.ts"
@@ -695,6 +696,7 @@
     "@t3tools/source-control-definitions": "workspace:*",
     "@zip.js/zip.js": "2.25.0",
     "effect": "catalog:",
+    "emojibase-data": "18.0.0",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
     "three": "0.180.0",

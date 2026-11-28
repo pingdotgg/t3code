@@ -3,6 +3,14 @@ import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
+import { readAloudController } from "../read-aloud/playback";
+import { ReadAloudButton } from "../read-aloud/ReadAloudButton";
+import { ReadAloudMarkdownText } from "../read-aloud/ReadAloudMarkdownText";
+import {
+  markReadAloudUserScroll,
+  readAloudFeedScrolled,
+  registerReadAloudFeed,
+} from "../read-aloud/readAloudFollow";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Sheet } from "../../components/ui/Sheet";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -158,6 +166,7 @@ import {
   type ColorValue,
   useWindowDimensions,
   View,
+  type ViewInstance,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
@@ -1357,6 +1366,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  /** The read-aloud button's id for this reply; its text is `markdown`. */
+  readonly readAloudId?: string | undefined;
+  /** The reply is finished, so a selection in it can be read from. */
+  readonly readAloudReadable?: boolean;
 }) {
   const gt = useGT();
   const liveMarkdown = useLiveThreadLinkLabels(
@@ -1433,6 +1446,15 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         renderImage={props.renderImage}
         skills={props.skills}
         models={models}
+        readAloud={
+          props.readAloudId
+            ? {
+                id: props.readAloudId,
+                markdown: props.markdown,
+                readable: props.readAloudReadable ?? false,
+              }
+            : undefined
+        }
       />
       {quoteChoices.length > 0 && props.onCiteAssistantText ? (
         <Sheet title={gt("Choose quote source")} onClose={() => setQuoteSelection(null)}>
@@ -1475,6 +1497,9 @@ function AssistantMarkdownBlocks(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
+  readonly readAloud?:
+    | { readonly id: string; readonly markdown: string; readonly readable: boolean }
+    | undefined;
 }) {
   const m = useMessages();
   const { blocks, definitions } = useMemo(() => {
@@ -1520,27 +1545,28 @@ function AssistantMarkdownBlocks(props: {
         );
       }
       if (segment.markdown.trim().length === 0) return null;
-      return (
-        <SelectableMarkdownText
+      const markdownProps = {
+        markdown: renderCodexInlineDirectivesAsMarkdown(
+          withReferenceDefinitions(segment.markdown, definitions),
+        ),
+        skills: props.skills,
+        models: props.models,
+        textStyle: props.markdownStyles.nativeTextStyle,
+        onCiteText: props.onCiteText
+          ? (text: string) =>
+              props.onCiteText?.(text, `${props.citationPath ?? ""}${blockIndex}:${segmentIndex}`)
+          : undefined,
+        ...props.linkHandlers,
+        renderImage: props.renderImage,
+      };
+      return props.readAloud ? (
+        <ReadAloudMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(
-            withReferenceDefinitions(segment.markdown, definitions),
-          )}
-          skills={props.skills}
-          models={props.models}
-          textStyle={props.markdownStyles.nativeTextStyle}
-          onCiteText={
-            props.onCiteText
-              ? (text) =>
-                  props.onCiteText?.(
-                    text,
-                    `${props.citationPath ?? ""}${blockIndex}:${segmentIndex}`,
-                  )
-              : undefined
-          }
-          {...props.linkHandlers}
-          renderImage={props.renderImage}
+          {...markdownProps}
+          readAloud={props.readAloud}
         />
+      ) : (
+        <SelectableMarkdownText key={`markdown:${offset}`} {...markdownProps} />
       );
     });
   });
@@ -2709,6 +2735,7 @@ function renderFeedEntry(
       return null;
     }
 
+    const readAloudId = `${props.environmentId}:${props.threadId}:${message.id}`;
     const enterAnimated = isFreshTimestamp(message.createdAt);
     return (
       <Animated.View
@@ -2733,6 +2760,8 @@ function renderFeedEntry(
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              readAloudId={readAloudId}
+              readAloudReadable={showAssistantMeta}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -2767,6 +2796,12 @@ function renderFeedEntry(
                 sourceTitle={props.threadTitle}
               />
             ) : null}
+            <ReadAloudButton
+              id={readAloudId}
+              text={renderedText}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {timestampLabel}
             </Text>
@@ -3165,6 +3200,27 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const gt = useGT();
   const m = useMessages();
   const formatMessageTime = useMessageTimeFormatter();
+  // Reading stops on leaving the thread: when another thread shows, or this one closes. Screens
+  // opened over it, such as a file preview, keep it reading.
+  const readsHere = useCallback(
+    () =>
+      readAloudController
+        .getSnapshot()
+        .id?.startsWith(`${props.environmentId}:${props.threadId}:`) === true,
+    [props.environmentId, props.threadId],
+  );
+  useFocusEffect(
+    useCallback(() => {
+      if (readAloudController.getSnapshot().id && !readsHere()) readAloudController.stop();
+    }, [readsHere]),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Closing the thread stops its reading, which outlives the screen otherwise.
+  useEffect(
+    () => () => {
+      if (readsHere()) readAloudController.stop();
+    },
+    [readsHere],
+  );
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
@@ -3862,6 +3918,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
     );
     handleMetricsChange();
+    readAloudFeedScrolled();
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the list's end state to report it to the parent
   useLayoutEffect(() => {
@@ -3969,6 +4026,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (jumpIndex !== null) return landJump(jumpIndex);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
+
+  const viewportRef = useRef<ViewInstance>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this feed so read aloud can scroll the word it reads into view
+  useEffect(
+    () =>
+      registerReadAloudFeed({
+        measure: (callback) =>
+          viewportRef.current?.measureInWindow((_x, top, _width, height) =>
+            callback({ top, height }),
+          ),
+        offset: () => listRef.current?.getState().scroll ?? 0,
+        scrollBy: (delta) => {
+          const list = listRef.current;
+          if (list)
+            void list.scrollToOffset({
+              offset: Math.max(0, list.getState().scroll + delta),
+              animated: true,
+            });
+        },
+      }),
+    [listRef],
+  );
 
   const handleViewportLayout = (event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
@@ -4363,7 +4442,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      <View className="flex-1" onLayout={handleViewportLayout}>
+      <View ref={viewportRef} className="flex-1" onLayout={handleViewportLayout}>
         {/* In a split, rows only re-wrap in the render that hands the list its new width. A native
             column resize would re-wrap them first, and the list would place the taller or shorter
             rows at their old offsets until their measurements came back. */}
@@ -4440,6 +4519,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onLayout={handleMetricsChange}
             onItemSizeChanged={handleItemSizeChanged}
             onScroll={handleScroll}
+            onScrollBeginDrag={markReadAloudUserScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
               <>

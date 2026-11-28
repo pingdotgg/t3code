@@ -1,8 +1,14 @@
+import type { SpeechSynthesisProvider, SpeechSynthesisRequest } from "@t3tools/contracts";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import {
+  CloudSpeechError,
+  SPEECH_STREAM_PATH,
+  SPEECH_SYNTHESIS_AUDIO_PATH,
+  SpeechSynthesisError,
+} from "@t3tools/contracts";
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
@@ -26,6 +32,7 @@ import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const isCloudSpeechError = Schema.is(CloudSpeechError);
+const isSpeechSynthesisError = Schema.is(SpeechSynthesisError);
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -123,6 +130,51 @@ export const setCloudSpeechKey = (
         params: { provider },
         payload: { key: typeof key === "string" ? Redacted.make(key) : key },
       }),
+  });
+
+/**
+ * Starts signing in with OpenRouter on the environment, which creates and saves its key. OpenRouter
+ * returns to the environment when it can reach it (https, or this machine); otherwise it shows a
+ * code to finish with `finishOpenRouterSignIn`, and `pasteCode` is set.
+ */
+export const startOpenRouterSignIn = (prepared: PreparedConnection) => {
+  let callbackUrl: string | null = null;
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => {
+      const callback = new URL(urls.openRouterCallback());
+      callbackUrl =
+        callback.protocol === "https:" || callback.hostname === "localhost"
+          ? callback.toString()
+          : null;
+      return urls.startOpenRouterSignIn();
+    },
+    run: ({ client, headers }) =>
+      client.startOpenRouterSignIn({ headers, payload: { callbackUrl } }),
+  }).pipe(Effect.map((signIn) => ({ ...signIn, pasteCode: callbackUrl === null })));
+};
+
+/** Finishes an OpenRouter sign-in with the code OpenRouter showed. */
+export const finishOpenRouterSignIn = (prepared: PreparedConnection, state: string, code: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.finishOpenRouterSignIn(),
+    run: ({ client, headers }) =>
+      client.finishOpenRouterSignIn({ headers, payload: { state, code } }),
+  });
+
+/** Where a started OpenRouter sign-in stands, such as signed in or expired. */
+export const getOpenRouterSignInStatus = (prepared: PreparedConnection, state: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.openRouterSignInStatus(),
+    run: ({ client, headers }) => client.openRouterSignInStatus({ headers, payload: { state } }),
   });
 
 export const transcribeCloudPcm = (
@@ -330,4 +382,135 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const getSpeechSynthesisModels = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.synthesisModels({ params: { provider } }),
+    run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider } }),
+  });
+
+/** Starts synthesis and resolves, once audio exists, with the URL of its live MP3 stream and its token. */
+export const startSpeechSynthesis = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+  payload: SpeechSynthesisRequest,
+) => {
+  let endpoint = prepared.httpBaseUrl;
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: 130_000,
+    path: (urls) => {
+      endpoint = urls.startSynthesis({ params: { provider } });
+      return endpoint;
+    },
+    run: ({ client, headers }) => client.startSynthesis({ headers, params: { provider }, payload }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)
+        ? error.cause
+        : error,
+    ),
+    Effect.map(({ token }) => {
+      const url = new URL(SPEECH_SYNTHESIS_AUDIO_PATH, endpoint);
+      url.searchParams.set("token", token);
+      return { url: url.toString(), token };
+    }),
+  );
+};
+
+/**
+ * Word timings of a started synthesis after the first `after`, and its loudness after the first
+ * `levelsAfter` levels when given; the environment holds the request until there are some.
+ */
+export const getSpeechSynthesisTimings = (
+  prepared: PreparedConnection,
+  token: string,
+  after: number,
+  levelsAfter?: number,
+) => {
+  const payload = levelsAfter === undefined ? { token, after } : { token, after, levelsAfter };
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.synthesisTimings(),
+    run: ({ client, headers }) => client.synthesisTimings({ headers, payload }),
+  });
+};
+
+/** Words for formulas, read by the environment for clients that cannot run Speech Rule Engine. */
+export const speakSpeechMath = (
+  prepared: PreparedConnection,
+  formulas: ReadonlyArray<{ readonly tex: string; readonly display: boolean }>,
+  language: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.speakMath(),
+    run: ({ client, headers }) =>
+      client.speakMath({
+        headers,
+        payload: { formulas: formulas.map(({ tex, display }) => ({ tex, display })), language },
+      }),
+  });
+
+/** Loads the environment's local model ahead of playback; an empty model is its default. */
+export const prepareSpeechSynthesis = (prepared: PreparedConnection, model: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.prepareSynthesisModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.prepareSynthesisModel({ headers, payload: { model } }),
+  });
+
+export const downloadSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadSynthesisModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.downloadSynthesisModel({ headers, payload: { modelId } }),
+  });
+
+export const cancelSpeechSynthesisModelDownload = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelSynthesisModel(),
+    run: ({ client, headers }) => client.cancelSynthesisModel({ headers, payload: { modelId } }),
+  });
+
+export const linkSpeechSynthesisModels = (prepared: PreparedConnection, path: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.linkSynthesisModels(),
+    // Hashing the model, then fetching the runtime, takes longer than an ordinary request.
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.linkSynthesisModels({ headers, payload: { path } }),
+  });
+
+export const removeSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeSynthesisModel(),
+    run: ({ client, headers }) => client.removeSynthesisModel({ headers, payload: { modelId } }),
   });

@@ -16,7 +16,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   CloudSpeechApiKey,
-  CloudSpeechModelId,
+  DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
   CLOUD_SPEECH_LABELS,
   CLOUD_SPEECH_PROVIDER_NAMES,
   isSecretReference,
@@ -45,15 +45,7 @@ import {
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  useComboboxFilter,
-} from "../ui/combobox";
+import { CatalogCombobox } from "./CatalogCombobox";
 import {
   Dialog,
   DialogDescription,
@@ -65,11 +57,12 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { SecretInput } from "./SecretInput";
 import { SecretSourceSelect } from "./SecretSourceInput";
 
 // Per dialog instance, not an Atom.family: key presence must be read fresh each time it opens.
-function useCloudRead<A, E>(
+export function useCloudRead<A, E>(
   prepared: PreparedConnection | null,
   read: (prepared: PreparedConnection) => Effect.Effect<A, E, HttpClient.HttpClient>,
 ) {
@@ -84,9 +77,9 @@ function useCloudRead<A, E>(
   return [useAtomValue(current.atom), useAtomRefresh(current.atom)] as const;
 }
 const isApiKey = Schema.is(CloudSpeechApiKey);
-const isModelId = Schema.is(CloudSpeechModelId);
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 
+/** Chooses the OpenRouter model dictation transcribes with. */
 function ModelPicker({
   models,
   value,
@@ -102,46 +95,20 @@ function ModelPicker({
   current: string | undefined;
 }) {
   const gt = useGT();
-  const { contains } = useComboboxFilter();
   const selected = models.find((model) => model.id === value) ?? null;
   const delisted = current !== undefined && !models.some((model) => model.id === current);
   return (
     <div className="grid gap-1">
-      <Combobox
+      <CatalogCombobox
         items={models}
-        itemToStringLabel={(model: CloudSpeechModel) => model.name}
-        itemToStringValue={(model: CloudSpeechModel) => model.id}
-        filter={(model: CloudSpeechModel, query) =>
-          contains(model.name, query) || contains(model.id, query)
-        }
-        value={selected}
-        onValueChange={(model) => onChange(model?.id ?? "")}
-        autoHighlight
+        value={value}
+        onChange={onChange}
         disabled={disabled}
-      >
-        <ComboboxInput
-          id="voice-cloud-model"
-          aria-label={gt("OpenRouter model")}
-          placeholder={gt("Search transcription models")}
-          autoFocus
-          size="sm"
-        />
-        <ComboboxPopup>
-          <ComboboxEmpty>
-            <T>No transcription model matches.</T>
-          </ComboboxEmpty>
-          <ComboboxList scrollAreaClassName="max-h-64">
-            {(model: CloudSpeechModel) => (
-              <ComboboxItem key={model.id} value={model}>
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{model.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{model.id}</span>
-                </span>
-              </ComboboxItem>
-            )}
-          </ComboboxList>
-        </ComboboxPopup>
-      </Combobox>
+        id="voice-cloud-model"
+        label={gt("OpenRouter model")}
+        placeholder={gt("Search transcription models")}
+        empty={<T>No transcription model matches.</T>}
+      />
       {delisted ? (
         <p className="text-sm text-destructive" role="alert">
           <T>
@@ -153,6 +120,47 @@ function ModelPicker({
         <p className="truncate text-xs text-muted-foreground">{selected.id}</p>
       ) : null}
     </div>
+  );
+}
+
+/** The OpenRouter model dictation uses, chosen once OpenRouter is set up on the environment. */
+export function OpenRouterDictationModel({
+  environmentId,
+  model,
+}: {
+  environmentId: EnvironmentPresentation["environmentId"];
+  model: string;
+}) {
+  const prepared = Option.getOrNull(usePreparedConnection(environmentId));
+  const canUse = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const [models, reload] = useCloudRead(canUse ? prepared : null, getCloudSpeechModels);
+  const listed = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
+  if (listed)
+    return (
+      <ModelPicker
+        models={listed}
+        value={model}
+        current={model}
+        disabled={false}
+        onChange={(next) => {
+          if (next && next !== model)
+            chooseAudioDestination({
+              kind: "cloud",
+              provider: "openrouter",
+              environmentId,
+              model: next,
+            });
+        }}
+      />
+    );
+  return AsyncResult.isFailure(models) ? (
+    <Button size="sm" variant="outline" type="button" onClick={reload}>
+      <T>Retry loading models</T>
+    </Button>
+  ) : (
+    <p role="status" className="text-sm text-muted-foreground">
+      <T>Loading transcription models…</T>
+    </p>
   );
 }
 
@@ -179,10 +187,6 @@ export function CloudVoiceConfiguration({
   const canManage = useEnvironmentScope(id, AuthSettingsWriteScope);
   const canUseReferences = useEnvironmentScope(id, AuthProvidersManageScope);
   const [presence, refresh] = useCloudRead(canUse ? prepared : null, getCloudSpeechKeys);
-  const [models, refreshModels] = useCloudRead(
-    routed && canUse ? prepared : null,
-    getCloudSpeechModels,
-  );
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
   const currentModel =
@@ -192,7 +196,6 @@ export function CloudVoiceConfiguration({
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [model, setModel] = useState(currentModel ?? "");
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
   const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
   const sources =
@@ -224,18 +227,19 @@ export function CloudVoiceConfiguration({
   const connected = canUse && prepared !== null;
   // Fixed providers edit the key only when nothing is saved or the device already uses them.
   const editingKey = canManage && saved !== undefined && (routed || active || !saved);
-  const listedModels = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
-  const modelChosen = isModelId(model) && (listedModels?.some((m) => m.id === model) ?? false);
   const keyReady = draft.trim() ? credential !== undefined : Boolean(saved);
-  const modelChanged = model !== (currentModel ?? "");
+  // The model is chosen in voice settings once OpenRouter is set up; it starts at the default.
   const destination = (): CloudDestination =>
-    routed && isModelId(model)
-      ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
+    routed
+      ? {
+          kind: "cloud",
+          provider: "openrouter",
+          environmentId: id,
+          model: currentModel ?? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
+        }
       : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
-  const canSubmit = routed
-    ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
-    : credential !== undefined;
+  const canSubmit = routed ? keyReady && (!active || keyChanged) : credential !== undefined;
 
   const saveKey = async (value: SettingsSecretValue | null, thenEnable: boolean) => {
     if (!connected || !canManage || busy) return;
@@ -254,19 +258,27 @@ export function CloudVoiceConfiguration({
   };
   const submit = () => {
     if (!canSubmit || busy) return;
-    const grantChanges = !active || modelChanged;
     if (credential !== undefined && (!routed || keyChanged))
-      return void saveKey(credential, grantChanges);
-    // Model-only changes never write to the environment.
-    if (grantChanges) enable();
+      return void saveKey(credential, !active);
+    if (!active) enable();
     close();
   };
 
   const keyField = (
     <>
-      <Label htmlFor="voice-cloud-key">
-        {routed && saved ? gt("Replace API key") : gt("API key")}
-      </Label>
+      {routed && connected && (
+        <OpenRouterSignIn
+          prepared={prepared}
+          disabled={busy}
+          onSignedIn={() => {
+            refresh();
+            if (!active) enable();
+            close();
+          }}
+        />
+      )}
+      {/* OpenRouter's sign-in divider names the key field instead. */}
+      {!routed && <Label htmlFor="voice-cloud-key">{gt("API key")}</Label>}
       <div className="flex min-w-0 items-start gap-2">
         {sources.length > 0 && (
           <SecretSourceSelect
@@ -312,18 +324,18 @@ export function CloudVoiceConfiguration({
           )}
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        {draft.trim() && !credential
-          ? (source?.invalidReferenceMessage ??
-            gt("Enter an API key, not a URL or secret reference."))
-          : active && !routed
-            ? gt("Updating the key keeps dictation enabled.")
-            : routed && saved
-              ? gt("Leave blank to keep the saved key.")
-              : gt("Anyone with dictation access to {environment} can bill this key.", {
-                  environment: environment.label,
-                })}
-      </p>
+      {draft.trim() && !credential ? (
+        <p className="text-sm text-muted-foreground">
+          {source?.invalidReferenceMessage ??
+            gt("Enter an API key, not a URL or secret reference.")}
+        </p>
+      ) : active && !routed ? (
+        <p className="text-sm text-muted-foreground">
+          {gt("Updating the key keeps dictation enabled.")}
+        </p>
+      ) : routed && saved ? (
+        <p className="text-sm text-muted-foreground">{gt("Leave blank to keep the saved key.")}</p>
+      ) : null}
     </>
   );
 
@@ -340,9 +352,7 @@ export function CloudVoiceConfiguration({
             {remove
               ? gt("Remove the {company} key?", { company })
               : active
-                ? routed
-                  ? gt("Manage OpenRouter dictation")
-                  : gt("Manage {company} key", { company })
+                ? gt("Manage {company} key", { company })
                 : gt("Use {name} for dictation?", { name })}
           </DialogTitle>
           <DialogDescription>
@@ -392,28 +402,6 @@ export function CloudVoiceConfiguration({
                   submit();
                 }}
               >
-                <div className="grid gap-2">
-                  <Label htmlFor="voice-cloud-model">
-                    <T>Model</T>
-                  </Label>
-                  {listedModels ? (
-                    <ModelPicker
-                      models={listedModels}
-                      value={model}
-                      onChange={setModel}
-                      disabled={busy}
-                      current={currentModel}
-                    />
-                  ) : AsyncResult.isFailure(models) ? (
-                    <Button size="sm" variant="outline" type="button" onClick={refreshModels}>
-                      <T>Retry loading models</T>
-                    </Button>
-                  ) : (
-                    <p role="status" className="text-sm text-muted-foreground">
-                      <T>Loading transcription models…</T>
-                    </p>
-                  )}
-                </div>
                 {editingKey ? (
                   <div className="grid gap-2">{keyField}</div>
                 ) : !saved ? (

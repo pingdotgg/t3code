@@ -1,3 +1,16 @@
+import {
+  SpeechSynthesisProvider,
+  SpeechSynthesisRequest,
+  SpeechSynthesisCatalog,
+  SpeechSynthesisError,
+  SpeechSynthesisModelRequest,
+  SpeechSynthesisPrepareRequest,
+  SpeechSynthesisStream,
+  SpeechMath,
+  SpeechMathRequest,
+  SpeechSynthesisTimings,
+  SpeechSynthesisTimingsRequest,
+} from "./readAloud.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -60,6 +73,12 @@ import {
   CloudSpeechModelId,
   CloudSpeechModels,
   CloudSpeechProvider,
+  OpenRouterSignIn,
+  OpenRouterSignInCode,
+  OpenRouterSignInError,
+  OpenRouterSignInRequest,
+  OpenRouterSignInStatus,
+  OpenRouterSignInStatusRequest,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
@@ -853,6 +872,84 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   .add(
+    HttpApiEndpoint.get("synthesisModels", "/api/voice/synthesis/:provider/models", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, SpeechSynthesisError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("startSynthesis", "/api/voice/synthesis/:provider/stream", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      payload: SpeechSynthesisRequest,
+      success: SpeechSynthesisStream,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        SpeechSynthesisError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // A token that expired or never existed reads as finished with no words.
+    HttpApiEndpoint.post("synthesisTimings", "/api/voice/synthesis/timings", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisTimingsRequest,
+      success: SpeechSynthesisTimings,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // For clients that cannot run Speech Rule Engine, such as React Native.
+    HttpApiEndpoint.post("speakMath", "/api/voice/synthesis/math", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechMathRequest,
+      success: SpeechMath,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareSynthesisModel", "/api/voice/synthesis/local/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisPrepareRequest,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadSynthesisModel", "/api/voice/synthesis/local/models/download", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelSynthesisModel", "/api/voice/synthesis/local/models/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("linkSynthesisModels", "/api/voice/synthesis/local/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisModel", "/api/voice/synthesis/local/models/remove", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
       headers: OptionalBearerHeaders,
       success: CloudSpeechKeys,
@@ -872,6 +969,32 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  .add(
+    HttpApiEndpoint.post("startOpenRouterSignIn", "/api/voice/cloud/openrouter/sign-in", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInRequest,
+      success: OpenRouterSignIn,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("finishOpenRouterSignIn", "/api/voice/cloud/openrouter/sign-in/code", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInCode,
+      success: HttpApiSchema.NoContent,
+      error: [...EnvironmentScopedOperationErrors, OpenRouterSignInError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("openRouterSignInStatus", "/api/voice/cloud/openrouter/sign-in/status", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInStatusRequest,
+      success: OpenRouterSignInStatus,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  // OpenRouter's redirect carries no credential; the one-time state of a started sign-in is the proof.
+  .add(HttpApiEndpoint.get("openRouterCallback", "/api/voice/cloud/openrouter/callback"))
   .add(
     // Public catalog; carries no credential and no audio.
     HttpApiEndpoint.get("cloudModels", "/api/voice/cloud/openrouter/models", {

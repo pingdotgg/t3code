@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -5,101 +6,216 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 
-it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved key", (provider) =>
+// ElevenLabs takes its key in its own header; the others take a bearer token.
+const sentKey = (init: RequestInit | undefined) => {
+  const headers = new Headers(init?.headers);
+  return headers.get("xi-api-key") ?? headers.get("authorization")?.replace(/^Bearer /, "");
+};
+
+it.effect.each(["openai", "xai", "elevenlabs"] as const)(
+  "sends only to %s using its own saved key",
+  (provider) =>
+    Effect.gen(function* () {
+      const reference = {
+        provider: SecretProviderId.make("work"),
+        reference: "op://Work/Voice/key",
+      };
+      let resolved: string | undefined;
+      let cached: string | undefined;
+      const read = vi.fn(() => Effect.sync(() => [(cached ??= resolved)]));
+      const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(NodeServices.layer),
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+            Layer.provide(
+              Layer.mock(SecretResolver.SecretResolver)({
+                read,
+                label: () => Effect.succeed("Work"),
+                invalidate: () =>
+                  Effect.sync(() => {
+                    cached = undefined;
+                  }),
+              }),
+            ),
+          ),
+        ),
+      );
+      // A full dictionary plus a hint still stays within xAI's 100-term limit.
+      const words = Array.from({ length: 99 }, (_, index) => `word${index}`);
+      const transcribe = (pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer)) =>
+        service
+          .transcribe(provider, pcm, {
+            ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+            speechLanguage: "en",
+            speechCustomWords: ["T3 Code", ...words].map((term) => ({ term, aliases: [] })),
+            speechHints: ["Server"],
+          })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
+      expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
+      yield* service.setKey(provider, Redacted.make("chosen"));
+      expect(yield* service.configured).toEqual({
+        openai: true,
+        xai: provider !== "elevenlabs",
+        openrouter: false,
+        elevenlabs: provider === "elevenlabs",
+      });
+      yield* Effect.flip(transcribe(new Uint8Array(3)));
+      expect(upstream).not.toHaveBeenCalled();
+      expect(yield* transcribe()).toBe("hello");
+      const [url, init] = upstream.mock.calls[0]!;
+      expect(String(url)).toBe(
+        {
+          openai: "https://api.openai.com/v1/audio/transcriptions",
+          xai: "https://api.x.ai/v1/stt",
+          elevenlabs: "https://api.elevenlabs.io/v1/speech-to-text",
+        }[provider],
+      );
+      expect(init?.redirect).toBe("error");
+      expect(sentKey(init)).toBe("chosen");
+      if (provider === "elevenlabs")
+        expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      const form = init?.body as FormData;
+      const fields = {
+        openai: { model: "model", keyterms: "keywords[]", language: "languages[]" },
+        xai: { model: "model", keyterms: "keyterm", language: "language" },
+        elevenlabs: { model: "model_id", keyterms: "keyterms", language: "language_code" },
+      }[provider];
+      expect(form.get(fields.model)).toBe(
+        { openai: "gpt-transcribe", xai: "grok-voice-transcribe-2.0", elevenlabs: "scribe_v3" }[
+          provider
+        ],
+      );
+      expect(form.getAll(fields.keyterms)).toEqual(["Server", "T3 Code", ...words.slice(0, 98)]);
+      expect(form.get(fields.language)).toBe("en");
+      expect([...form.keys()].at(-1)).toBe("file");
+      const wav = new DataView(
+        yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()),
+      );
+      expect(wav.getUint32(24, true)).toBe(16_000);
+      expect(wav.getInt16(46, true)).toBe(16384);
+      upstream.mockResolvedValueOnce(
+        new Response("sensitive upstream diagnostic", { status: 401 }),
+      );
+      expect(yield* Effect.flip(transcribe())).toMatchObject({ provider, reason: "rejected-key" });
+      yield* service.setKey(provider, null);
+      expect((yield* service.configured)[provider]).toBe(false);
+      yield* Effect.flip(transcribe());
+      expect(upstream).toHaveBeenCalledTimes(2);
+      yield* service.setKey(provider, reference);
+      expect((yield* service.configured)[provider]).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      resolved = "resolved-fixture";
+      expect(yield* transcribe()).toBe("hello");
+      expect(read).toHaveBeenCalledWith([reference]);
+      expect(sentKey(upstream.mock.calls[2]?.[1])).toBe("resolved-fixture");
+      resolved = undefined;
+      expect(yield* Effect.flip(transcribe())).toMatchObject({
+        provider,
+        reason: "unreadable-key",
+      });
+      expect(upstream).toHaveBeenCalledTimes(3);
+    }),
+);
+
+it.effect.each([
+  {
+    provider: "xai",
+    window: "between pieces",
+    text: "Read this sentence aloud. ".repeat(200),
+    model: "",
+    uploads: 1,
+  },
+  // An empty voice makes OpenRouter's request builder fetch the catalog for a default.
+  {
+    provider: "openrouter",
+    window: "while the request is built",
+    text: "Read this reply.",
+    model: "acme/voice",
+    uploads: 0,
+  },
+] as const)(
+  "stops a reply when its vault-backed key locks $window",
+  ({ provider, text, model, uploads }) =>
+    Effect.gen(function* () {
+      const reference = {
+        provider: SecretProviderId.make("work"),
+        reference: "op://Work/Voice/key",
+      };
+      let secret: string | undefined = "vault-key";
+      const upstream = vi.fn<typeof fetch>(async (input) => {
+        secret = undefined;
+        return new URL(String(input)).pathname.endsWith("/models")
+          ? Response.json({ data: [{ id: "acme/voice", supported_voices: ["reader"] }] })
+          : new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } });
+      });
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(NodeServices.layer),
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+            Layer.provide(
+              Layer.mock(SecretResolver.SecretResolver)({
+                read: () => Effect.sync(() => [secret]),
+                label: () => Effect.succeed("Work"),
+                invalidate: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      );
+      yield* service.setKey(provider, reference);
+      const failure = yield* service
+        .stream(provider, { text, model, voice: "", speed: 1, language: "en" })
+        .pipe(Stream.runDrain, Effect.flip, Effect.provideService(FetchHttpClient.Fetch, upstream));
+      expect(failure).toMatchObject({ reason: "unreadable-key" });
+      expect(
+        upstream.mock.calls.filter(([url]) => !new URL(String(url)).pathname.endsWith("/models")),
+      ).toHaveLength(uploads);
+    }),
+);
+
+it.effect("splits CJK replies into pieces of at most 1,000 characters", () =>
   Effect.gen(function* () {
-    const reference = {
-      provider: SecretProviderId.make("work"),
-      reference: "op://Work/Voice/key",
-    };
-    let resolved: string | undefined;
-    let cached: string | undefined;
-    const read = vi.fn(() => Effect.sync(() => [(cached ??= resolved)]));
-    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } }),
+    );
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
-          Layer.provide(
-            Layer.mock(SecretResolver.SecretResolver)({
-              read,
-              label: () => Effect.succeed("Work"),
-              invalidate: () =>
-                Effect.sync(() => {
-                  cached = undefined;
-                }),
-            }),
-          ),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
         ),
       ),
     );
-    // A full dictionary plus a hint still stays within xAI's 100-term limit.
-    const words = Array.from({ length: 99 }, (_, index) => `word${index}`);
-    const transcribe = (pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer)) =>
-      service
-        .transcribe(provider, pcm, {
-          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-          speechLanguage: "en",
-          speechCustomWords: ["T3 Code", ...words].map((term) => ({ term, aliases: [] })),
-          speechHints: ["Server"],
-        })
-        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-    yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
-    expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
-    yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
-    yield* Effect.flip(transcribe(new Uint8Array(3)));
-    expect(upstream).not.toHaveBeenCalled();
-    expect(yield* transcribe()).toBe("hello");
-    const [url, init] = upstream.mock.calls[0]!;
-    expect(String(url)).toBe(
-      {
-        openai: "https://api.openai.com/v1/audio/transcriptions",
-        xai: "https://api.x.ai/v1/stt",
-      }[provider],
+    yield* service.setKey("xai", Redacted.make("speech-key"));
+    yield* service
+      .stream("xai", {
+        text: "読み上げのテストです。".repeat(250),
+        model: "grok-tts",
+        voice: "",
+        speed: 1,
+        language: "ja",
+      })
+      .pipe(Stream.runDrain, Effect.provideService(FetchHttpClient.Fetch, upstream));
+    const inputs = upstream.mock.calls.map(
+      ([, init]) => (JSON.parse(String(init?.body)) as { text: string }).text,
     );
-    expect(init?.redirect).toBe("error");
-    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer chosen");
-    const form = init?.body as FormData;
-    expect(form.get("model")).toBe(
-      provider === "openai" ? "gpt-transcribe" : "grok-voice-transcribe-2.0",
-    );
-    expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual([
-      "Server",
-      "T3 Code",
-      ...words.slice(0, 98),
-    ]);
-    expect(form.get(provider === "openai" ? "languages[]" : "language")).toBe("en");
-    expect([...form.keys()].at(-1)).toBe("file");
-    const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));
-    expect(wav.getUint32(24, true)).toBe(16_000);
-    expect(wav.getInt16(46, true)).toBe(16384);
-    upstream.mockResolvedValueOnce(new Response("sensitive upstream diagnostic", { status: 401 }));
-    expect(yield* Effect.flip(transcribe())).toMatchObject({ provider, reason: "rejected-key" });
-    yield* service.setKey(provider, null);
-    expect((yield* service.configured)[provider]).toBe(false);
-    yield* Effect.flip(transcribe());
-    expect(upstream).toHaveBeenCalledTimes(2);
-    yield* service.setKey(provider, reference);
-    expect((yield* service.configured)[provider]).toBe(true);
-    expect(read).not.toHaveBeenCalled();
-    resolved = "resolved-fixture";
-    expect(yield* transcribe()).toBe("hello");
-    expect(read).toHaveBeenCalledWith([reference]);
-    expect(new Headers(upstream.mock.calls[2]?.[1]?.headers).get("authorization")).toBe(
-      "Bearer resolved-fixture",
-    );
-    resolved = undefined;
-    expect(yield* Effect.flip(transcribe())).toMatchObject({
-      provider,
-      reason: "unreadable-key",
-    });
-    expect(upstream).toHaveBeenCalledTimes(3);
+    expect(inputs.length).toBeGreaterThan(1);
+    expect(inputs.every((input) => input.length <= 1000)).toBe(true);
   }),
 );
 
@@ -113,6 +229,7 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
@@ -171,6 +288,7 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),

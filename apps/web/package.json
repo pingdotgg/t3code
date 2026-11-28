@@ -83,6 +83,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "saxes": "6.0.0",
+    "speech-rule-engine": "4.1.5",
     "sql.js": "1.15.0",
     "tailwind-merge": "^3.4.0",
     "tiff": "7.1.3",

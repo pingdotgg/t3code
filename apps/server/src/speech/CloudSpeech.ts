@@ -1,4 +1,12 @@
 import {
+  SpeechSynthesisError,
+  type CloudSpeechSynthesisProvider,
+  type SpeechSynthesisProvider,
+  type SpeechSynthesisRequest,
+  type SpeechSynthesisCatalog,
+  type SpeechSynthesisWord,
+} from "@t3tools/contracts";
+import {
   CloudSpeechApiKey,
   CloudSpeechError,
   CloudSpeechModel,
@@ -13,25 +21,130 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { splitReadAloudSpans } from "@t3tools/shared/read-aloud";
 import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import * as Context from "effect/Context";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
+import { isEncodableFormat, MAX_SYNTHESIS_BYTES, streamingMp3Encoder } from "./synthesisAudio.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
+import { alignedWords, mp3Duration, type CharacterAlignment } from "./synthesisTimings.ts";
+
+const isSynthesisError = Schema.is(SpeechSynthesisError);
+
+const readSynthesisBody = Effect.fn("CloudSpeech.readSynthesisBody")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+  provider: SpeechSynthesisProvider,
+  limit: number,
+) {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const unavailable = (cause?: unknown) =>
+    isSynthesisError(cause)
+      ? cause
+      : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+  yield* response.stream.pipe(
+    Stream.runForEach((chunk) => {
+      size += chunk.byteLength;
+      if (size > limit) return Effect.fail(unavailable());
+      chunks.push(chunk);
+      return Effect.void;
+    }),
+    Effect.mapError(unavailable),
+  );
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+});
+
+const decodeXaiSynthesisCatalog = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ voices: Schema.Array(Schema.Struct({ voice_id: Schema.String })) }),
+  ),
+);
+
+const decodeOpenRouterSynthesisCatalog = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          name: Schema.optionalKey(Schema.String),
+          supported_voices: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+        }),
+      ),
+    }),
+  ),
+);
+
+const decodeElevenLabsModels = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        model_id: Schema.String,
+        name: Schema.optionalKey(Schema.String),
+        can_do_text_to_speech: Schema.optionalKey(Schema.Boolean),
+      }),
+    ),
+  ),
+);
+
+// `alignment` follows the request text; `normalized_alignment` follows ElevenLabs' rewrite of it.
+const decodeElevenLabsTimedChunk = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      audio_base64: Schema.NullOr(Schema.String),
+      alignment: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Struct({
+            characters: Schema.Array(Schema.String),
+            character_start_times_seconds: Schema.Array(Schema.Finite),
+            character_end_times_seconds: Schema.Array(Schema.Finite),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
+
+const decodeElevenLabsVoices = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      voices: Schema.Array(Schema.Struct({ voice_id: Schema.String, name: Schema.String })),
+    }),
+  ),
+);
 
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
+  elevenlabs: { url: "https://api.elevenlabs.io/v1/speech-to-text", model: "scribe_v3" },
 };
+const ELEVENLABS_API = "https://api.elevenlabs.io";
+const ELEVENLABS_DEFAULT_MODEL = "eleven_multilingual_v2";
+// George, a premade voice every account has, as in ElevenLabs' own examples.
+const ELEVENLABS_DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb";
+// ElevenLabs authenticates with its own header rather than a bearer token.
+const authorize = (provider: CloudSpeechProvider, key: string) =>
+  provider === "elevenlabs"
+    ? HttpClientRequest.setHeader("xi-api-key", key)
+    : HttpClientRequest.bearerToken(Redacted.make(key));
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
 const isApiKey = Schema.is(CloudSpeechApiKey);
@@ -40,6 +153,64 @@ const sameCredential = Schema.toEquivalence(SettingsSecretValue);
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
+
+const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "qwen/qwen-audio-3.0-tts-flash";
+
+function synthesisErrorReason(status: number): SpeechSynthesisError["reason"] {
+  return status === 401 || status === 403
+    ? "rejected-key"
+    : status === 429
+      ? "rate-limit"
+      : "unavailable";
+}
+
+type SynthesisBackend = {
+  catalog: Omit<SpeechSynthesisCatalog, "models" | "error">;
+  models: Effect.Effect<
+    { models: SpeechSynthesisCatalog["models"] },
+    SpeechSynthesisError | ServerSettingsError
+  >;
+  request: (
+    input: SpeechSynthesisRequest,
+  ) => Effect.Effect<
+    HttpClientRequest.HttpClientRequest,
+    SpeechSynthesisError | ServerSettingsError
+  >;
+  /** Raw PCM responses are encoded to MP3 here; MP3 responses stream through unchanged. */
+  pcmFormat?: (
+    response: HttpClientResponse.HttpClientResponse,
+    input: SpeechSynthesisRequest,
+  ) => { readonly rate: number; readonly channels: number } | undefined;
+  errorReason: (status: number) => SpeechSynthesisError["reason"];
+  /** Responses that interleave audio with timings for each character of the request text. */
+  alignedAudio?: (
+    response: HttpClientResponse.HttpClientResponse,
+  ) => Stream.Stream<
+    { readonly audio: Uint8Array; readonly alignment: CharacterAlignment | null },
+    unknown
+  >;
+};
+
+/**
+ * MP3 audio, the words of the request text that the audio so far speaks, or the mono PCM that
+ * MP3 was encoded from, starting `startSeconds` into the stream, for timing words it lacks.
+ */
+export type SpeechSynthesisPart =
+  | Uint8Array
+  | { readonly words: ReadonlyArray<SpeechSynthesisWord> }
+  | {
+      readonly pcm: Int16Array;
+      readonly rate: number;
+      readonly startSeconds: number;
+      /** The request text this audio speaks, which word timing aligns it to. */
+      readonly span: { readonly start: number; readonly end: number };
+    };
+
+// gpt-4o-mini-tts accepts 2,000 tokens, which Chinese or Japanese reaches near 2,000 characters,
+// and OpenRouter's Seed Audio accepts 3,000 characters. Pieces stream back to back, so small is cheap.
+const CLOUD_SYNTHESIS_TEXT_LIMIT = 1000;
+const XAI_SPEECH_RATE = 24_000;
+const SYNTHESIS_STALL_TIMEOUT = "30 seconds";
 
 function wave(samples: Float32Array) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -64,6 +235,26 @@ function wave(samples: Float32Array) {
     view.setInt16(44 + index * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
   }
   return buffer;
+}
+
+function elevenLabsAudioBody(
+  audio: ArrayBuffer,
+  language: string,
+  options: SpeechTranscriptionOptions,
+) {
+  const form = new FormData();
+  form.set("model_id", endpoints.elevenlabs.model);
+  if (language !== "auto") form.set("language_code", language);
+  // Scribe accepts key terms of up to 50 characters and five words.
+  for (const term of speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  )) {
+    if (term.length <= 50 && term.split(/\s+/).length <= 5) form.append("keyterms", term);
+  }
+  form.set("tag_audio_events", "false");
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
 }
 
 function audioBody(
@@ -107,6 +298,14 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
+    readonly synthesisModels: (
+      provider: CloudSpeechSynthesisProvider,
+    ) => Effect.Effect<SpeechSynthesisCatalog, SpeechSynthesisError | ServerSettingsError>;
+    /** MP3 that streams through as the provider produces it, with word timings where it has them. */
+    readonly stream: (
+      provider: CloudSpeechSynthesisProvider,
+      request: SpeechSynthesisRequest,
+    ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError | ServerSettingsError>;
     readonly configured: Effect.Effect<CloudSpeechKeys, ServerSettingsError>;
     /** OpenRouter's public transcription catalog, cached briefly on this server. */
     readonly models: Effect.Effect<ReadonlyArray<CloudSpeechModel>, CloudSpeechError>;
@@ -132,11 +331,24 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
+    const resolveKey = Effect.fn("CloudSpeech.resolveKey")(function* <E>(
+      source: SettingsSecretValue | undefined,
+      failure: (reason: "missing-key" | "unreadable-key", cause?: unknown) => E,
+    ) {
+      if (!source) return yield* Effect.fail(failure("missing-key"));
+      if (isSecretReference(source)) yield* resolver.invalidate([source]);
+      const key = yield* requireSettingsSecret(resolver, source).pipe(
+        Effect.mapError((cause) => failure("unreadable-key", cause)),
+      );
+      if (!isApiKey(key)) return yield* Effect.fail(failure("unreadable-key"));
+      return key;
+    });
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, elevenlabs }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        elevenlabs: Boolean(elevenlabs),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -171,6 +383,412 @@ export const layer = Layer.effect(
       ),
       (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
     );
+    const loadSynthesisModels = Effect.fn("CloudSpeech.synthesisModels")(
+      function* (provider: CloudSpeechSynthesisProvider) {
+        if (provider === "xai" || provider === "elevenlabs") {
+          const source = (yield* credentials)[provider];
+          const key = yield* resolveKey(
+            source,
+            (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
+          );
+          const current = (yield* credentials)[provider];
+          if (!source || !current || !sameCredential(source, current))
+            return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
+          const unavailable = (cause?: unknown) =>
+            isSynthesisError(cause)
+              ? cause
+              : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+          const get = Effect.fn("CloudSpeech.catalogRequest")(function* (url: string) {
+            const response = yield* execute(
+              HttpClientRequest.get(url).pipe(authorize(provider, key)),
+            ).pipe(Effect.mapError(unavailable));
+            if (response.status !== 200)
+              return yield* new SpeechSynthesisError({
+                provider,
+                reason: synthesisErrorReason(response.status),
+              });
+            return new TextDecoder().decode(
+              yield* readSynthesisBody(response, provider, 1024 * 1024),
+            );
+          });
+          if (provider === "elevenlabs") {
+            const [models, { voices }] = yield* Effect.all([
+              get(`${ELEVENLABS_API}/v1/models`).pipe(
+                Effect.flatMap(decodeElevenLabsModels),
+                Effect.mapError(unavailable),
+              ),
+              get(`${ELEVENLABS_API}/v2/voices?page_size=100`).pipe(
+                Effect.flatMap(decodeElevenLabsVoices),
+                Effect.mapError(unavailable),
+              ),
+            ]);
+            const voiceIds = voices.map((voice) => voice.voice_id);
+            const voiceNames = Object.fromEntries(
+              voices.map((voice) => [voice.voice_id, voice.name]),
+            );
+            return {
+              models: models
+                .filter((model) => model.can_do_text_to_speech !== false)
+                .map((model) => ({
+                  id: model.model_id,
+                  name: model.name || model.model_id,
+                  voices: voiceIds,
+                  voiceNames,
+                })),
+            };
+          }
+          const response = yield* execute(
+            HttpClientRequest.get("https://api.x.ai/v1/tts/voices").pipe(
+              HttpClientRequest.bearerToken(Redacted.make(key)),
+            ),
+          ).pipe(Effect.mapError(unavailable));
+          if (response.status !== 200) return yield* unavailable();
+          const catalog = yield* decodeXaiSynthesisCatalog(
+            new TextDecoder().decode(yield* readSynthesisBody(response, provider, 1024 * 1024)),
+          ).pipe(Effect.mapError(unavailable));
+          return {
+            models: [
+              {
+                id: "grok-tts",
+                name: "Grok TTS",
+                voices: catalog.voices.map((voice) => voice.voice_id),
+              },
+            ],
+          };
+        }
+        const unavailable = (cause?: unknown) =>
+          isSynthesisError(cause)
+            ? cause
+            : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+        const response = yield* execute(
+          HttpClientRequest.get("https://openrouter.ai/api/v1/models?output_modalities=speech"),
+        ).pipe(Effect.mapError(unavailable));
+        if (response.status !== 200) return yield* unavailable();
+        const catalog = yield* decodeOpenRouterSynthesisCatalog(
+          new TextDecoder().decode(yield* readSynthesisBody(response, provider, 1024 * 1024)),
+        ).pipe(Effect.mapError(unavailable));
+        return {
+          models: catalog.data.map((model) => ({
+            id: model.id,
+            name: model.name || model.id,
+            voices: model.supported_voices ?? [],
+          })),
+        };
+      },
+      (effect, provider) =>
+        effect.pipe(
+          Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(1024 * 1024)),
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.fail(new SpeechSynthesisError({ provider, reason: "unavailable" })),
+          }),
+        ),
+    );
+    const openRouterSpeechModels = yield* Effect.cachedWithTTL(
+      loadSynthesisModels("openrouter"),
+      (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
+    );
+    const synthesisBackends = {
+      xai: {
+        catalog: {
+          defaultModel: "grok-tts",
+          apiKeyProvider: "xai",
+          supportsModelSelection: true,
+          supportsVoiceSelection: true,
+          speedAppliedByProvider: true,
+        },
+        models: loadSynthesisModels("xai"),
+        request: (input) =>
+          Effect.succeed(
+            HttpClientRequest.post("https://api.x.ai/v1/tts").pipe(
+              HttpClientRequest.bodyJsonUnsafe({
+                text: input.text,
+                voice_id: input.voice || "eve",
+                language: input.language,
+                speed: input.speed,
+                // PCM, so the words can be timed from it; encoded to MP3 here.
+                output_format: { codec: "pcm", sample_rate: XAI_SPEECH_RATE },
+              }),
+            ),
+          ),
+        pcmFormat: () => ({ rate: XAI_SPEECH_RATE, channels: 1 }),
+        errorReason: synthesisErrorReason,
+      },
+      openrouter: {
+        catalog: {
+          defaultModel: "",
+          apiKeyProvider: "openrouter",
+          supportsModelSelection: true,
+          supportsVoiceSelection: true,
+          speedAppliedByProvider: false,
+        },
+        models: openRouterSpeechModels,
+        request: Effect.fn("CloudSpeech.openRouterSpeechRequest")(function* (
+          input: SpeechSynthesisRequest,
+        ) {
+          if (!input.model)
+            return yield* new SpeechSynthesisError({
+              provider: "openrouter",
+              reason: "model-unavailable",
+            });
+          const voice =
+            input.voice ||
+            (yield* openRouterSpeechModels).models.find((model) => model.id === input.model)
+              ?.voices[0];
+          return HttpClientRequest.post("https://openrouter.ai/api/v1/audio/speech").pipe(
+            HttpClientRequest.bodyJsonUnsafe({
+              input: input.text,
+              model: input.model,
+              ...(voice ? { voice } : {}),
+              // Raw audio for every model, so the environment can time each word; the
+              // response's content type names its rate.
+              response_format: "pcm",
+            }),
+          );
+        }),
+        pcmFormat: (response) => {
+          const contentType = response.headers["content-type"] ?? "";
+          // A model that answers with encoded audio anyway plays as it is, without word timings.
+          if (!/^audio\/(?:pcm|l16)\b/i.test(contentType)) return undefined;
+          const rate = Number(/(?:^|;)\s*rate\s*=([^;]*)/i.exec(contentType)?.[1] ?? "24000");
+          const channels = Number(/(?:^|;)\s*channels\s*=([^;]*)/i.exec(contentType)?.[1] ?? "1");
+          return { rate, channels };
+        },
+        errorReason: synthesisErrorReason,
+      },
+      elevenlabs: {
+        catalog: {
+          defaultModel: ELEVENLABS_DEFAULT_MODEL,
+          apiKeyProvider: "elevenlabs",
+          supportsModelSelection: true,
+          supportsVoiceSelection: true,
+          // Eleven v4 has no speed setting, so players speed up every model alike.
+          speedAppliedByProvider: false,
+          wordTimings: "provider",
+        },
+        models: loadSynthesisModels("elevenlabs"),
+        request: (input) =>
+          Effect.succeed(
+            HttpClientRequest.post(
+              `${ELEVENLABS_API}/v1/text-to-speech/${encodeURIComponent(
+                input.voice || ELEVENLABS_DEFAULT_VOICE,
+              )}/stream/with-timestamps?output_format=mp3_44100_64`,
+            ).pipe(
+              HttpClientRequest.bodyJsonUnsafe({
+                text: input.text,
+                model_id: input.model || ELEVENLABS_DEFAULT_MODEL,
+              }),
+            ),
+          ),
+        errorReason: synthesisErrorReason,
+        // One JSON object per line; the alignment of a chunk arrives with or before its audio.
+        alignedAudio: (response) =>
+          response.stream.pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.filter((line) => line.trim() !== ""),
+            Stream.mapEffect((line) => decodeElevenLabsTimedChunk(line)),
+            Stream.map((chunk) => ({
+              audio: chunk.audio_base64
+                ? Uint8Array.from(Buffer.from(chunk.audio_base64, "base64"))
+                : new Uint8Array(0),
+              alignment: chunk.alignment ?? null,
+            })),
+          ),
+      },
+    } satisfies Record<CloudSpeechSynthesisProvider, SynthesisBackend>;
+    const synthesisModels = Effect.fn("CloudSpeech.synthesisCatalog")(function* (
+      provider: CloudSpeechSynthesisProvider,
+    ) {
+      const backend = synthesisBackends[provider];
+      return yield* backend.models.pipe(
+        Effect.map(({ models }) => ({
+          ...backend.catalog,
+          defaultModel:
+            provider === "openrouter" &&
+            models.some((model) => model.id === OPENROUTER_DEFAULT_SYNTHESIS_MODEL)
+              ? OPENROUTER_DEFAULT_SYNTHESIS_MODEL
+              : backend.catalog.defaultModel || models[0]?.id || "",
+          models,
+        })),
+        Effect.catchTags({
+          SpeechSynthesisError: (error) =>
+            Effect.succeed({ ...backend.catalog, models: [], error: error.message }),
+        }),
+      );
+    });
+    const synthesizePiece = Effect.fn("CloudSpeech.synthesizePiece")(
+      function* (provider: CloudSpeechSynthesisProvider, input: SpeechSynthesisRequest) {
+        const unavailable = (cause?: unknown) =>
+          isSynthesisError(cause)
+            ? cause
+            : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+        const source = (yield* credentials)[provider];
+        const backend: SynthesisBackend = synthesisBackends[provider];
+        const synthesisRequest = yield* backend.request(input);
+        // Resolved per piece and after building, which may fetch a catalog, so the key sent is
+        // never older than the vault's state at send time.
+        const key = yield* resolveKey(
+          source,
+          (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
+        );
+        const current = (yield* credentials)[provider];
+        if (!current || !source || !sameCredential(source, current))
+          return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
+        const response = yield* execute(synthesisRequest.pipe(authorize(provider, key))).pipe(
+          Effect.mapError(unavailable),
+        );
+        if (response.status < 200 || response.status >= 300)
+          return yield* new SpeechSynthesisError({
+            provider,
+            reason: backend.errorReason(response.status),
+          });
+        const format = backend.pcmFormat?.(response, input);
+        let size = 0;
+        const limited = <A extends Uint8Array>(chunks: Stream.Stream<A, unknown>) =>
+          chunks.pipe(
+            Stream.mapError(unavailable),
+            Stream.mapEffect((chunk) =>
+              (size += chunk.byteLength) > MAX_SYNTHESIS_BYTES
+                ? Effect.fail(unavailable())
+                : Effect.succeed(chunk),
+            ),
+            // The request timeout ends at the headers; a body that stalls must fail too.
+            Stream.timeoutOrElse({
+              duration: SYNTHESIS_STALL_TIMEOUT,
+              orElse: () => Stream.fail(unavailable()),
+            }),
+          );
+        if (format) {
+          if (!isEncodableFormat(format.rate, format.channels)) return yield* unavailable();
+          // Encoded as it arrives, so reading starts with the first chunk, not the whole reply.
+          const encoder = yield* Effect.promise(() =>
+            streamingMp3Encoder(format.rate, format.channels),
+          );
+          let seconds = 0;
+          return limited(response.stream).pipe(
+            Stream.flatMap((chunk) => {
+              const { pcm, mp3 } = encoder.push(chunk);
+              const parts: SpeechSynthesisPart[] = [];
+              if (pcm.length) {
+                parts.push({
+                  pcm,
+                  rate: format.rate,
+                  startSeconds: seconds,
+                  span: { start: 0, end: input.text.length },
+                });
+                seconds += pcm.length / format.rate;
+              }
+              if (mp3.length) parts.push(mp3);
+              return Stream.fromIterable(parts);
+            }),
+            Stream.concat(
+              Stream.suspend(() => {
+                const tail = encoder.flush();
+                return Stream.fromIterable<SpeechSynthesisPart>(tail.length ? [tail] : []);
+              }),
+            ),
+          );
+        }
+        const words = alignedWords(input.text);
+        const parts: Stream.Stream<SpeechSynthesisPart, unknown> = backend.alignedAudio
+          ? backend.alignedAudio(response).pipe(
+              Stream.flatMap(({ audio, alignment }) => {
+                const spoken = alignment ? words.push(alignment) : [];
+                return Stream.fromIterable<SpeechSynthesisPart>(
+                  spoken.length ? [{ words: spoken }, audio] : [audio],
+                );
+              }),
+              Stream.concat(
+                Stream.suspend(() => {
+                  const last = words.end();
+                  return Stream.fromIterable<SpeechSynthesisPart>(
+                    last.length ? [{ words: last }] : [],
+                  );
+                }),
+              ),
+            )
+          : response.stream;
+        return parts.pipe(
+          Stream.mapError(unavailable),
+          Stream.mapEffect((part) =>
+            part instanceof Uint8Array && (size += part.byteLength) > MAX_SYNTHESIS_BYTES
+              ? Effect.fail(unavailable())
+              : Effect.succeed(part),
+          ),
+          // The request timeout ends at the headers; a body that stalls must fail too.
+          Stream.timeoutOrElse({
+            duration: SYNTHESIS_STALL_TIMEOUT,
+            orElse: () => Stream.fail(unavailable()),
+          }),
+        );
+      },
+      (effect, provider) =>
+        effect.pipe(
+          Effect.timeoutOrElse({
+            duration: "2 minutes",
+            orElse: () =>
+              Effect.fail(new SpeechSynthesisError({ provider, reason: "unavailable" })),
+          }),
+        ),
+    );
+    // Pieces play back to back as one stream; each is requested once the last one ends. A piece's
+    // words move to its place in the request text and to where its audio starts.
+    const stream = (provider: CloudSpeechSynthesisProvider, request: SpeechSynthesisRequest) =>
+      Stream.suspend(() => {
+        let elapsed = 0;
+        return Stream.fromIterable(
+          splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
+        ).pipe(
+          // Some providers return audio only once a whole piece is spoken, so the next piece is
+          // requested while this one plays.
+          Stream.mapEffect(
+            (span) =>
+              synthesizePiece(provider, { ...request, text: span.text }).pipe(
+                Effect.map((parts) => ({ span, parts })),
+              ),
+            { concurrency: 2 },
+          ),
+          Stream.flatMap(({ span, parts }) =>
+            Stream.suspend(() => {
+              const offset = elapsed;
+              const duration = mp3Duration();
+              return parts.pipe(
+                Stream.map((part): SpeechSynthesisPart => {
+                  if (part instanceof Uint8Array) {
+                    duration.push(part);
+                    return part;
+                  }
+                  if ("pcm" in part)
+                    return {
+                      ...part,
+                      startSeconds: part.startSeconds + offset,
+                      span: {
+                        start: part.span.start + span.start,
+                        end: part.span.end + span.start,
+                      },
+                    };
+                  return {
+                    words: part.words.map((word) => ({
+                      start: word.start + span.start,
+                      end: word.end + span.start,
+                      startSeconds: word.startSeconds + offset,
+                      endSeconds: word.endSeconds + offset,
+                    })),
+                  };
+                }),
+                Stream.onEnd(
+                  Effect.sync(() => {
+                    elapsed = offset + duration.seconds;
+                  }),
+                ),
+              );
+            }),
+          ),
+          Stream.withSpan("CloudSpeech.stream"),
+        );
+      });
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
@@ -203,24 +821,23 @@ export const layer = Layer.effect(
         const language = effectiveSpeechLanguage(cloudSpeechLanguages, options.speechLanguage);
         if (provider === "openrouter" && !(yield* models).some((entry) => entry.id === model))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
-        // A vault that locked since the last recording must not authorize a new upload.
-        if (isSecretReference(source)) yield* resolver.invalidate([source]);
-        const unreadable = () => new CloudSpeechError({ provider, reason: "unreadable-key" });
-        const key = yield* requireSettingsSecret(resolver, source).pipe(
-          Effect.mapError(unreadable),
+        const key = yield* resolveKey(
+          source,
+          (reason) => new CloudSpeechError({ provider, reason }),
         );
-        if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
-          HttpClientRequest.bearerToken(Redacted.make(key)),
+          authorize(provider, key),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "elevenlabs"
+              ? elevenLabsAudioBody(audio, language, options)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
         const current = (yield* credentials)[provider];
-        if (!current || !sameCredential(source, current))
+        if (!source || !current || !sameCredential(source, current))
           return yield* new CloudSpeechError({
             provider,
             reason: current ? "key-changed" : "missing-key",
@@ -256,6 +873,6 @@ export const layer = Layer.effect(
           }),
         ),
     );
-    return CloudSpeech.of({ configured, models, setKey, transcribe });
+    return CloudSpeech.of({ configured, models, setKey, transcribe, synthesisModels, stream });
   }),
 );

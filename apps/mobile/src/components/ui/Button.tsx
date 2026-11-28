@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { Pressable } from "react-native";
 import { AppActivityIndicator } from "./AppActivityIndicator";
@@ -8,6 +9,8 @@ export interface ButtonProps {
   readonly label: string;
   readonly accessibilityLabel?: string;
   readonly icon?: AppSymbolName;
+  /** A mark that is not a system symbol, such as a provider's logo; shown in place of `icon`. */
+  readonly leading?: ReactNode;
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly accessibilityHint?: string;
@@ -45,6 +48,8 @@ export function Button(props: ButtonProps) {
     >
       {props.loading ? (
         <AppActivityIndicator colorClassName="accent-foreground-muted" />
+      ) : props.leading ? (
+        props.leading
       ) : props.icon ? (
         <SymbolView
           name={props.icon}

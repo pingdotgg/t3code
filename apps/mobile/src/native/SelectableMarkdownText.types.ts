@@ -79,6 +79,11 @@ export interface SelectableMarkdownTextProps {
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly onCiteText?: (text: string) => void;
+  /** Adds Read from here to the selection menu; `start` is where it starts in its block. */
+  readonly onReadFromSelection?: (selection: {
+    readonly text: string;
+    readonly start: number;
+  }) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
@@ -96,6 +101,16 @@ export interface SelectableMarkdownTextProps {
     readonly checked: boolean;
     readonly text: string;
   }) => void;
+  /** A tap on plain text; links, images, checkboxes, and table cells keep their taps. */
+  readonly onTextPress?: (event: import("react-native-enriched-markdown").TextPressEvent) => void;
+  /** Ranges of the text the view shows, painted behind it; see `onRenderedTextChange`. */
+  readonly highlights?: ReadonlyArray<import("react-native-enriched-markdown").TextHighlight>;
+  readonly onRenderedTextChange?: (
+    event: import("react-native-enriched-markdown").RenderedTextChangeEvent,
+  ) => void;
+  readonly onHighlightLayout?: (
+    event: import("react-native-enriched-markdown").HighlightLayoutEvent,
+  ) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly writingDirection?: "ltr" | "rtl";

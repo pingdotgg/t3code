@@ -11,6 +11,11 @@ export function setActiveLocale(locale: string): void {
   activeLocale = locale;
 }
 
+/** The UI language outside React; components use GT's `useLocale()`. */
+export function getActiveLocale(): string {
+  return activeLocale;
+}
+
 function resolve(message: string, variables: Parameters<MessageResolver>[1] = {}): string {
   const decoded = decodeOptions(message);
   const options = typeof decoded?.$_source === "string" ? decoded : variables;
