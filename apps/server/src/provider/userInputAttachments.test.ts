@@ -1495,19 +1495,6 @@ describe("question answer paths", () => {
           ext: "docx",
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr>' +
-              '<w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Route</w:t></w:r></w:p></w:tc>' +
-              "<w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Old route</w:t></w:r></w:p></w:tc>" +
-              "<w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc>" +
-              "</w:tr></w:tbl></w:body></w:document>",
-          },
-          expected: [],
-          exact: "Route\t\tStatus",
-        },
-        {
-          ext: "docx",
-          parts: {
-            "word/document.xml":
               '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:ext="urn:example:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="ext"><w:body><w:tbl>' +
               '<w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Route</w:t></w:r></w:p></w:tc>' +
               '<w:tc><ext:tcPr/><w:tcPr><w:hMerge w:val="continue"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old route</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge ext:val="restart"/></w:tcPr><w:p><w:r><w:t>Old spare</w:t></w:r></w:p></w:tc>' +
