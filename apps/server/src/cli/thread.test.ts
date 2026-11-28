@@ -262,6 +262,123 @@ it.effect(
     ),
 );
 
+it.effect("show --json includes the canonical message ID", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-show-" });
+    yield* persistServerRuntimeState({
+      path: path.join(baseDir, "userdata", "server-runtime.json"),
+      state: yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      }),
+    });
+    const timestamp = "2026-09-04T12:00:00.000Z";
+    const thread = {
+      threadId,
+      projectId: "project-1",
+      title: "Test thread",
+      createdBy: "user",
+      creationSource: "mcp",
+      status: "idle",
+      latestRunId: runId,
+      activeRunId: null,
+      providerInstanceId: "codex",
+      model: "gpt-5",
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      linkedPullRequest: null,
+      titleRegeneration: null,
+      branch: null,
+      worktreePath: null,
+      parentThreadId: null,
+      relationshipToParent: null,
+      runCount: 1,
+      itemCount: 2,
+      pendingRequestCount: 0,
+      archived: false,
+      settled: false,
+      settledAt: null,
+      snoozed: false,
+      snoozedUntil: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const item = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: threadId,
+      itemId: "timeline-item-1",
+      messageId: "message-1",
+      runId,
+      createdBy: "user",
+      creationSource: "mcp",
+      type: "user_message",
+      status: "completed",
+      title: null,
+      text: "Hello",
+      textTruncated: false,
+      updatedAt: timestamp,
+    };
+    using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+      Effect.succeed({
+        call: (tool) =>
+          tool === "t3_thread_read"
+            ? Effect.succeed({
+                structuredContent: {
+                  thread,
+                  recentRuns: [],
+                  items: [
+                    item,
+                    {
+                      ...item,
+                      position: 1,
+                      itemId: "timeline-item-2",
+                      messageId: "message-2",
+                      createdBy: "system",
+                      text: "/compact",
+                    },
+                  ],
+                  nextPosition: 1,
+                  hasMore: false,
+                },
+              })
+            : Effect.die(`unexpected ${tool} call`),
+      }),
+    );
+
+    yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+      "show",
+      threadId,
+      "--json",
+      "--base-dir",
+      baseDir,
+    ]);
+
+    const output = (yield* TestConsole.logLines).at(-1);
+    assert.ok(typeof output === "string");
+    assert.deepStrictEqual(JSON.parse(output), {
+      thread,
+      messages: [
+        { messageId: "message-1", role: "user", runId, text: "Hello" },
+        { messageId: "message-2", role: "system", runId, text: "/compact" },
+      ],
+      error: null,
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
 it.effect("does not sign in to whatever took over a dead server's port", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
