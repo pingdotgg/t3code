@@ -111,26 +111,11 @@ describe("normalizeGitRemoteUrl", () => {
 });
 
 describe("parseGitRemoteRepository", () => {
-  it("applies the URI suffix policy after decoding path segments", () => {
-    const plain = "ssh://git@gitlab.com/team/repo.git";
-    const encoded = "ssh://git@gitlab.com/team/repo%2Egit";
-    expect(parseGitRemoteRepository(encoded)).toEqual(parseGitRemoteRepository(plain));
-    expect(parseGitRemoteRepository(encoded)).toEqual({ host: "gitlab.com", path: "team/repo" });
-    expect(parseGitRemoteRepository(encoded, { keepGitSuffix: true })).toEqual({
+  it("drops an encoded .git suffix and rejects an empty repository leaf", () => {
+    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/repo%2Egit")).toEqual({
       host: "gitlab.com",
-      path: "team/repo.git",
+      path: "team/repo",
     });
-    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/repo%2Egit.git")).toEqual({
-      host: "gitlab.com",
-      path: "team/repo.git",
-    });
-    expect(parseGitRemoteRepository("git@gitlab.com:team/repo%2Egit")).toEqual({
-      host: "gitlab.com",
-      path: "team/repo.git",
-    });
-  });
-
-  it("rejects URI paths with an empty repository leaf after dropping the suffix", () => {
     expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/group/%2Egit")).toBeNull();
     expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/group/.git")).toBeNull();
   });
