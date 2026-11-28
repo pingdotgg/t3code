@@ -575,7 +575,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     });
     completedLength += html.length;
     html = notes = "";
+    nestedRowEnd = -1;
   };
+  let nestedRowEnd = -1;
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
@@ -799,12 +801,16 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         html += `<sup>${noteDepth === undefined ? ++noteCount : noteCount}</sup>`;
       else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (
-        (!state.skip && word === "row") ||
-        (word === "nestrow" && (!state.skip || state.nestedTableProperties))
-      )
+      else if (word === "nestrow" && (!state.skip || state.nestedTableProperties)) {
         html += "<br>";
-      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
+        nestedRowEnd = html.length;
+      } else if (!state.skip && word === "row") {
+        // A cell holding only a nested table ends after the nested row's break; skip its empty line.
+        if (nestedRowEnd >= 0 && /^\t*$/.test(html.slice(nestedRowEnd)))
+          html = html.slice(0, nestedRowEnd);
+        else html += "<br>";
+        nestedRowEnd = -1;
+      } else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";
