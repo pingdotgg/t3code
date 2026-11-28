@@ -112,6 +112,7 @@ describe("HtmlRender", () => {
         "<style-guide style='height:100vh'><p>hi</p></style-guide>",
         "<script>box.innerHTML = \"<div style='height:100vh'></div>\";</script>",
         '<script type="text/plain" style="display:block;height:100vh">example</script>',
+        `<div title=it's style="height:100vh">hi</div>`,
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);

@@ -104,10 +104,11 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
 // Check stylesheets, style attributes, and scripts (which may write either); skip comments whole.
 // Consume unclosed comments, tags, or quotes through EOF to keep every pattern linear.
 const HTML_CSS_SOURCE =
-  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])((?:[^>"']|"[^"]*(?:"|$)|'[^']*(?:'|$))*)(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:[^>"']|"[^"]*(?:"|$)|'[^']*(?:'|$))*)/gi;
+  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$))|[^>])*)(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$))|[^>])*)/gi;
 // Inside a tag, skip other attributes' quoted values, such as a title that mentions style=.
+// A quote opens a value only right after `=`; an unquoted value like `it's` stays plain text.
 const TAG_STYLE =
-  /"[^"]*(?:"|$)|'[^']*(?:'|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
+  /\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))|=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$))/gi;
 // A script is not markup, so take any style block or attribute it spells out.
 const SCRIPT_STYLE =
   /<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
