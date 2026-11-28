@@ -6,6 +6,8 @@ import {
   SourceControlProviderKind,
   type PullRequestDetailView,
 } from "@t3tools/contracts";
+import { getReactI18nCache } from "gt-react";
+import { setActiveLocale } from "~/i18n/messages";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
@@ -172,18 +174,35 @@ it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
   },
 );
 
-it("can still add conflict resolution to an existing composer without checkout scopes", async () => {
-  setup();
-  permissions.checkout = false;
-  permissions.operate = false;
-  await using screen = await render(panel(true));
-  const resolve = screen.getByRole("button", { name: "Resolve conflicts" });
-  await expect.element(resolve).toBeEnabled();
-  await act(() => resolve.click());
-  const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
-  expect(draft?.prompt).toContain("conflicts");
-  expect(draft?.prompt).toContain(detail.url);
-});
+it.each([
+  ["en", "conflicts with its base branch"],
+  ["de", "hat einen Konflikt mit dem Zielbranch"],
+])(
+  "adds a %s conflict draft to an existing composer without checkout scopes",
+  async (locale, expected) => {
+    setup();
+    permissions.checkout = false;
+    permissions.operate = false;
+    getReactI18nCache().updateTranslations({
+      de: {
+        d1c0e1ae4c8f4b8e:
+          "{label} #{number} ({url}) hat einen Konflikt mit dem Zielbranch `{baseBranch}`.",
+      },
+    });
+    setActiveLocale(locale);
+    try {
+      await using screen = await render(panel(true));
+      const resolve = screen.getByRole("button", { name: "Resolve conflicts" });
+      await expect.element(resolve).toBeEnabled();
+      await act(() => resolve.click());
+      const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
+      expect(draft?.prompt).toContain(expected);
+      expect(draft?.prompt).toContain(detail.url);
+    } finally {
+      setActiveLocale("en");
+    }
+  },
+);
 
 it("keeps a merge and a review on the head the reader was shown until they load new commits", async () => {
   setup();

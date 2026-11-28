@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  appendCodexArtifactTemplateUsePrompt,
   resolveCodexArtifactTemplate,
   type CodexArtifactTemplate,
 } from "./codexArtifactTemplates.ts";
+import { appendCodexArtifactTemplateUsePrompt } from "./codexArtifactTemplatesCopy.ts";
 
 const HELLO_WORLD_TEMPLATE: CodexArtifactTemplate = {
   artifactKind: "document",

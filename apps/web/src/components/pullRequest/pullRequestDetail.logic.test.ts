@@ -1,3 +1,5 @@
+import { getReactI18nCache, initializeGT } from "gt-react";
+import { setActiveLocale } from "~/i18n/messages";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   GitCommandError,
@@ -1188,6 +1190,28 @@ describe("asking about a change rather than working on it", () => {
       expect.stringContaining(otherUrl),
       expect.stringContaining(base.url),
     ]);
+  });
+
+  it("prefills localized drafts while preserving the attached review context", () => {
+    initializeGT({ defaultLocale: "en", locales: ["en", "de"] });
+    getReactI18nCache().updateTranslations({
+      de: {
+        "5b486d0c6d69c6d9":
+          "Erkläre {term, select, mr {diesen MR} cr {diesen CR} other {diesen PR}}.",
+      },
+    });
+    setActiveLocale("de");
+    try {
+      expect(buildExplainPullRequestHandoff(base).prompt).toBe("Erkläre diesen PR.");
+      const mergeRequest = buildExplainPullRequestHandoff({
+        ...base,
+        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+      });
+      expect(mergeRequest.prompt).toBe("Erkläre diesen MR.");
+      expect(mergeRequest.reviewComments[0]?.text).toContain("The merge request is #42");
+    } finally {
+      setActiveLocale("en");
+    }
   });
 
   it("explains a GitLab merge request in its own term", () => {

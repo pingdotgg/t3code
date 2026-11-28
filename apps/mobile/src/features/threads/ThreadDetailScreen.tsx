@@ -53,10 +53,8 @@ import type {
   UsageLimitsReport,
   RunId,
 } from "@t3tools/contracts";
-import {
-  appendCodexArtifactTemplateUsePrompt,
-  type CodexArtifactTemplate,
-} from "@t3tools/shared/codexArtifactTemplates";
+import { appendCodexArtifactTemplateUsePrompt } from "@t3tools/shared/codexArtifactTemplatesCopy";
+import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -1464,7 +1462,7 @@ function ThreadDetailBody(
   const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
     const draftMessage =
       props.composerDraftKey === null ? "" : getComposerDraftSnapshot(props.composerDraftKey).text;
-    const nextDraft = appendCodexArtifactTemplateUsePrompt(draftMessage, template);
+    const nextDraft = appendCodexArtifactTemplateUsePrompt(draftMessage, template, m);
     if (nextDraft !== draftMessage) props.onChangeDraftMessage(nextDraft);
     requestAnimationFrame(() => {
       composerEditorRef.current?.focus();

@@ -63,17 +63,33 @@ export function pullRequestAgentPrompt(
     case "ask":
       return "";
     case "explain":
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Explain this ${singular}. Read the diff and walk through its purpose, the changes, the risks, and what I should read closely before approving. Do not change any code.`;
+      return m(
+        msg(
+          "Explain this {term}. Read the diff and walk through its purpose, the changes, the risks, and what I should read closely before approving. Do not change any code.",
+          { term: singular },
+        ),
+      );
     case "feedback":
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Address the actionable feedback and failing checks on this ${singular}. Fetch the latest review threads and check results, skip resolved feedback, and verify each finding before changing code. First confirm this thread is on the ${shortLabel}'s branch; if it isn't, prepare the ${shortLabel} in its own worktree. Keep the fixes focused and run the relevant checks.`;
+      return m(
+        msg(
+          "Address the actionable feedback and failing checks on this {term}. Fetch the latest review threads and check results, skip resolved feedback, and verify each finding before changing code. First confirm this thread is on the {shortLabel}'s branch; if it isn't, prepare the {shortLabel} in its own worktree. Keep the fixes focused and run the relevant checks.",
+          { term: singular, shortLabel },
+        ),
+      );
     case "conflicts":
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Resolve this ${singular}'s conflicts with its base branch. First confirm this thread is on the ${shortLabel}'s branch; if it isn't, prepare the ${shortLabel} in its own worktree. Bring it up to date using this repository's convention, preserve the intent of both sides, and run the relevant checks before pushing.`;
+      return m(
+        msg(
+          "Resolve this {term}'s conflicts with its base branch. First confirm this thread is on the {shortLabel}'s branch; if it isn't, prepare the {shortLabel} in its own worktree. Bring it up to date using this repository's convention, preserve the intent of both sides, and run the relevant checks before pushing.",
+          { term: singular, shortLabel },
+        ),
+      );
     case "watch":
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Watch this ${singular} for check results, new feedback, and conflicts using T3's pull request watch. End the turn once the watch is armed. When it wakes you, assess what changed and report what needs attention.`;
+      return m(
+        msg(
+          "Watch this {term} for check results, new feedback, and conflicts using T3's pull request watch. End the turn once the watch is armed. When it wakes you, assess what changed and report what needs attention.",
+          { term: singular },
+        ),
+      );
   }
 }
 
