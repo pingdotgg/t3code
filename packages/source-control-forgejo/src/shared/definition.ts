@@ -119,6 +119,8 @@ export const definition = defineSourceControl({
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`
       : null,
+  // fj pr create prints no URL to link to the thread.
+  changeRequestCreateCommand: /\bgt\s+pr\s+(?:create|new)\b/u,
   // The archived tea also took `pull` for `pulls` and `m` for `merge`.
   changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls?)|(?:fj|gt)\s+pr)\s+(?:merge|m|close)\b/u,
   authorProfileUrl: () => null,

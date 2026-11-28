@@ -89,7 +89,7 @@ const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 const COMMAND_SEPARATORS = new RegExp(COMMAND_SEPARATOR, "gu");
 // Commands that print other change requests' URLs, so output beside them proves nothing.
 const LISTS_CHANGE_REQUESTS =
-  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|gt\s+(?:pr\s+(?:list|status)|api)|glab\s+(?:mr\s+list|api))\b/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
 /** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
