@@ -1,7 +1,9 @@
 import { pipe } from "effect/Function";
 import {
+  EMPTY_SECRET_REQUEST_DRAFT,
   secretRequestAnswerInput,
   secretRequestDisplay,
+  secretRequestDraftAtom,
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestLink,
@@ -22,9 +24,8 @@ import {
   AuthProvidersManageScope,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
-  type SecretProviderId,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -36,7 +37,7 @@ import {
   MinusIcon,
   ShieldCheckIcon,
 } from "lucide-react";
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 
 import { serverEnvironment } from "../../state/server";
@@ -56,6 +57,13 @@ export function SecretRequestCard(props: {
   const { item } = props;
   const messages = useMessages();
   const display = secretRequestDisplay(item, props.visibility, messages);
+  // Not on "pending-elsewhere": a fork's inherited row shares the original's key.
+  const resolved = display.kind === "answered";
+  const setDraft = useAtomSet(secretRequestDraftAtom(props.environmentId, item));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drop the typed values once the server resolves the request, wherever it was answered
+  useEffect(() => {
+    if (resolved) setDraft(EMPTY_SECRET_REQUEST_DRAFT);
+  }, [resolved, setDraft]);
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -109,10 +117,12 @@ function PendingSecretRequestForm(props: {
   // A reference answers one value, so a card with fields is always typed.
   const configuredSources = useSecretRequestSources(props.environmentId);
   const sources = multiple ? NO_SOURCES : configuredSources;
-  const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
+  const [{ sourceId, values, reference }, setDraft] = useAtom(
+    secretRequestDraftAtom(props.environmentId, item),
+  );
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
-  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
-  const [reference, setReference] = useState("");
+  const setValues = (next: Readonly<Record<string, string>>) =>
+    setDraft((current) => ({ ...current, values: next }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
@@ -140,7 +150,7 @@ function PendingSecretRequestForm(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      setReference("");
+      setDraft(EMPTY_SECRET_REQUEST_DRAFT);
       return;
     }
     setValues(typed);
@@ -176,7 +186,9 @@ function PendingSecretRequestForm(props: {
       disabled={submitting}
       invalid={error !== null}
       describedBy={describedBy}
-      onChange={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
+      onChange={(value) =>
+        setDraft((current) => ({ ...current, values: { ...current.values, [input.key]: value } }))
+      }
     />
   );
   const saveButton = (
@@ -243,7 +255,7 @@ function PendingSecretRequestForm(props: {
               label={item.label}
               disabled={submitting}
               onValueChange={(next) => {
-                setSourceId(next);
+                setDraft((current) => ({ ...current, sourceId: next }));
                 setError(null);
               }}
             />
@@ -265,7 +277,8 @@ function PendingSecretRequestForm(props: {
                 aria-invalid={error !== null || undefined}
                 aria-describedby={describedBy}
                 onChange={(event) => {
-                  setReference(event.currentTarget.value);
+                  const reference = event.currentTarget.value;
+                  setDraft((current) => ({ ...current, reference }));
                   setError(null);
                 }}
               />

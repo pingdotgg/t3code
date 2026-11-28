@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
+  type EnvironmentId,
   SecretReference,
   secretRequestPageUrl,
   type OrchestrationV2TurnItem,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -307,3 +309,29 @@ export function secretRequestFailureMessage(
   }
   return resolve(msg("Could not answer the request. Try again."));
 }
+
+/** What a pending card holds, so it survives the card unmounting (a thread switch). */
+export interface SecretRequestDraft {
+  readonly sourceId: SecretProviderId | null;
+  readonly values: Readonly<Record<string, string>>;
+  readonly reference: string;
+}
+
+export const EMPTY_SECRET_REQUEST_DRAFT: SecretRequestDraft = {
+  sourceId: null,
+  values: {},
+  reference: "",
+};
+
+const secretRequestDraftFamily = Atom.family((key: string) =>
+  Atom.make(EMPTY_SECRET_REQUEST_DRAFT).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`secret-request-draft:${key}`),
+  ),
+);
+
+/** Memory only, never persisted; reset it to `EMPTY_SECRET_REQUEST_DRAFT` once the request is answered. */
+export const secretRequestDraftAtom = (
+  environmentId: EnvironmentId,
+  item: Pick<SecretRequestItem, "threadId" | "id">,
+) => secretRequestDraftFamily(JSON.stringify([environmentId, item.threadId, item.id]));
