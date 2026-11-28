@@ -715,6 +715,62 @@ function readableBody(raw: string): string | null {
 }
 
 /**
+ * A body too long for the bound, with collapsed `<details>` sections moved after the text a
+ * reader sees so the bound keeps that text. Details shown inside code are source and stay put.
+ */
+function visibleTextFirst(body: string): string {
+  if (body.length <= FINDING_BODY_MAX_LENGTH) return body;
+  const lines = body.split("\n");
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  const codeLines = new Set<number>();
+  const visit = (node: Nodes) => {
+    // Words' source positions carry offsets only; their line numbers are not source lines.
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type === "element" && node.tagName === "pre" && start != null && end != null) {
+      lineStarts.forEach((lineStart, index) => {
+        if (lineStart < end && lineStart + lines[index]!.length >= start) codeLines.add(index);
+      });
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(markdownTree(body, { skipHtml: true }));
+  const shown: string[] = [];
+  const folded: string[] = [];
+  // Whether each open section starts collapsed; `<details open>` reads as visible text.
+  const sections: boolean[] = [];
+  for (const [index, line] of lines.entries()) {
+    const inCode = codeLines.has(index);
+    // Only a line that starts as a details block opens sections; a tag named in prose does not.
+    const opens = !inCode && /^\s*<details(?=[\s>])/iu.test(line);
+    let from = 0;
+    for (const tag of inCode ? [] : line.matchAll(/<details(?=[\s>])([^>]*)>?|<\/details>/giu)) {
+      if (tag[0].startsWith("</")) {
+        if (sections.length === 0) continue;
+        // Text after a closing tag is outside the section, so it goes with what follows.
+        const end = tag.index + tag[0].length;
+        const segment = line.slice(from, end);
+        (sections.includes(true) ? folded : shown).push(from === 0 ? segment : segment.trim());
+        sections.pop();
+        from = end;
+      } else if (opens) {
+        // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
+        const attributes = (tag[1] ?? "").replace(/"[^"]*"|'[^']*'/gu, "");
+        sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
+      }
+    }
+    const rest = from === 0 ? line : line.slice(from).trim();
+    if (from === 0 || rest !== "") (sections.includes(true) ? folded : shown).push(rest);
+  }
+  return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
+}
+
+/**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
  */
@@ -1301,8 +1357,34 @@ export function buildPullRequestContext(input: PullRequestContextMetadata): Revi
   return pullRequestContextComment(input, []);
 }
 
-/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
-export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+/**
+ * A conversation's lines within what the composer sends. Earlier replies give way first, since a
+ * reader reaches for the latest one, and the agent is told what it is not seeing.
+ */
+function threadText(lines: ReadonlyArray<string>, moreOnHost: boolean): string {
+  const tail = moreOnHost ? ["(More replies are on the host and not included here.)"] : [];
+  let kept = lines;
+  let omitted = 0;
+  const join = () =>
+    [
+      ...kept.slice(0, 1),
+      ...(omitted > 0
+        ? [`(${omitted} earlier ${omitted === 1 ? "reply" : "replies"} omitted.)`]
+        : []),
+      ...kept.slice(1),
+      ...tail,
+    ].join("\n");
+  while (kept.length > 2 && join().length > COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS) {
+    kept = [kept[0]!, ...kept.slice(2)];
+    omitted += 1;
+  }
+  return join();
+}
+
+/** A remark the reader can bring into the chat: a whole conversation, or one comment. */
+export type PullRequestChatSubject =
+  | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
+  | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
 /**
  * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
@@ -1318,36 +1400,65 @@ export function buildPullRequestCommentContext(
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
-  // Unlike a batch fix, one remark brought in to talk about travels whole.
-  if (subject.kind === "thread") {
-    const text = reviewThreadText(subject.thread);
-    return text === ""
-      ? null
-      : {
-          ...reviewThreadContext(subject.thread, pullRequestNumber),
-          id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
-          text,
-        };
+  if (subject.kind === "comment") {
+    const comment = subject.comment;
+    const body = readableBody(comment.body);
+    if (body === null) return null;
+    const author = comment.author?.login ?? "ghost";
+    return {
+      id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+      sectionId: `pull-request:${pullRequestNumber}`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
+      sectionTitle: `PR #${pullRequestNumber} conversation`,
+      // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
+      filePath: comment.path ?? `@${author}`,
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "comment",
+      text: remarkText(
+        `${author}: ${visibleTextFirst(body)}`.trim(),
+        reviewLineComments(comment, pullRequest),
+      ),
+      diff: "",
+      ...(comment.path === null
+        ? {}
+        : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+    };
   }
-  const comment = subject.comment;
-  const body = readableBody(comment.body);
-  if (body === null) return null;
-  const author = comment.author?.login ?? "ghost";
+  const comments = subject.thread.comments;
+  // Bounded per comment so a long bot report cannot crowd the replies out of the thread.
+  const lines = comments.flatMap((comment) => {
+    const body = readableBody(comment.body);
+    return body === null
+      ? []
+      : [bounded(`${comment.author?.login ?? "ghost"}: ${visibleTextFirst(body)}`)];
+  });
+  const first = comments[0];
+  if (lines.length === 0 || first === undefined) return null;
+  const text = threadText(
+    lines,
+    (subject.thread.commentCount ?? 0) > comments.length ||
+      subject.thread.nextCommentsCursor !== undefined,
+  );
+  if (subject.thread.path !== null) {
+    return {
+      ...reviewThreadContext(subject.thread, pullRequestNumber),
+      id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+      text,
+    };
+  }
   return {
-    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+    id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
     // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} conversation`,
-    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
-    filePath: comment.path ?? `@${author}`,
+    // The chip wears `filePath rangeLabel`: who opened a thread that names no file.
+    filePath: `@${first.author?.login ?? "ghost"}`,
     startIndex: 0,
     endIndex: 0,
-    rangeLabel: "comment",
-    text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
+    rangeLabel: "thread",
+    text,
     diff: "",
-    ...(comment.path === null
-      ? {}
-      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
   };
 }
 
