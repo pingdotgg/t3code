@@ -463,16 +463,33 @@ describe("hosted thread links", () => {
     const thread = ref("env.1", "thread:delegated/mcp%3A1.");
     const link = hostedThreadLink(thread);
     expect(link).toBe("https://app.t3.codes/threads/env%2E1/thread%3Adelegated%2Fmcp%253A1%2E");
-    expect(parseThreadLinkHref(link)).toEqual(thread);
+    expect(parseThreadLinkHref(link)).toEqual({ ...thread, hosted: true });
     expect(hostedThreadLink(thread, "https://preview.t3.codes/")).toMatch(
       /^https:\/\/preview\.t3\.codes\/threads\//,
     );
+
+    const literal = ref("local", "task%3A1");
+    const literalUrl = hostedThreadLink(literal);
+    expect(literalUrl).toBe("https://app.t3.codes/threads/local/task%253A1");
+    expect(threadLinkCandidates(parseThreadLinkHref(literalUrl)!, local)).toEqual([literal]);
+    expect(threadLinkRefs(literalUrl, local)).toEqual([literal]);
+    expect(relabelThreadLinks(literalUrl, local, titlesIn({ local: { "task:1": "Other" } }))).toBe(
+      "Thread no longer available",
+    );
+    expect(
+      relabelThreadLinks(
+        literalUrl,
+        local,
+        titlesIn({ local: { "task%3A1": "Literal", "task:1": "Other" } }),
+      ),
+    ).toBe("[Literal](t3-thread://v2/local/task%3A1)");
   });
 
   it("reads only a bare thread path on the hosted app", () => {
-    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1")).toEqual(
-      ref("env-1", "thread-1"),
-    );
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1")).toEqual({
+      ...ref("env-1", "thread-1"),
+      hosted: true,
+    });
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
@@ -543,6 +560,33 @@ describe("hosted thread links", () => {
     }
   });
 
+  it("keeps Markdown reference link definitions intact when relabeling", () => {
+    const hosted = "https://app.t3.codes/threads/local/demo";
+    for (const markdown of [
+      `[Review][thread]\n\n[thread]: ${hosted}`,
+      `[Review][thread]\n\n[thread]:${hosted}`,
+      `[Review][thread]\n\n[thread]: <${hosted}>`,
+      `[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`,
+      `[Review][thread]\n\n[thread]:\n  ${hosted}`,
+      `[Review][thread]\n\n  [thread]: ${hosted} "Demo"`,
+      `> [Review][thread]\n>\n> [thread]: ${hosted}`,
+    ]) {
+      for (const title of [() => "Demo", () => undefined]) {
+        expect(relabelThreadLinks(markdown, local, title)).toBe(markdown);
+      }
+    }
+
+    const withLiveAfter = `[Review][thread]\n\n[thread]: ${hosted}\n\nSee ${hosted}`;
+    expect(relabelThreadLinks(withLiveAfter, local, () => "Demo")).toBe(
+      `[Review][thread]\n\n[thread]: ${hosted}\n\nSee [Demo](t3-thread://v2/local/demo)`,
+    );
+
+    const paragraphContinuation = `Intro\n[thread]: ${hosted}`;
+    expect(relabelThreadLinks(paragraphContinuation, local, () => "Demo")).toBe(
+      `Intro\n[thread]: [Demo](t3-thread://v2/local/demo)`,
+    );
+  });
+
   it("keeps relabeled links navigable when the thread id contains a space", () => {
     const linkUrl = (markdown: string) => {
       const paragraph = unified().use(remarkParse).parse(markdown).children[0];
@@ -553,7 +597,7 @@ describe("hosted thread links", () => {
     const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
 
     const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
-    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual(thread);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual({ ...thread, hosted: true });
     expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
 
     const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
