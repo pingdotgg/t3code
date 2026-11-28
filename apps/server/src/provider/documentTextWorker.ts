@@ -425,21 +425,18 @@ function xml(
             name.endsWith(":val") &&
             WORDPROCESSINGML_NAMESPACES.has(namespaceOf(name, scope) ?? ""),
         )?.[1];
-        node.wordHorizontalMerge = value?.trim() ?? "continue";
+        parent.wordHorizontalMerge ??= value?.trim() ?? "continue";
       }
     }
-    if (extension === ".docx" && node.name === "tcPr" && parent.name === "tc") {
-      const horizontalMerge = children(node).find(
-        (child) => child.wordHorizontalMerge !== undefined,
-      )?.wordHorizontalMerge;
-      if (
-        horizontalMerge !== undefined &&
-        WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
-      ) {
-        parent.wordHorizontalMerge ??= horizontalMerge;
-        const table = stack.findLast((ancestor) => ancestor.name === "tbl");
-        if (table) wordMergeTables.add(table);
-      }
+    if (
+      extension === ".docx" &&
+      node.wordHorizontalMerge !== undefined &&
+      parent.name === "tc" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      parent.wordHorizontalMerge ??= node.wordHorizontalMerge;
+      const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+      if (table) wordMergeTables.add(table);
     }
     if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
       const table = stack.findLast((ancestor) => ancestor.name === "tbl");
