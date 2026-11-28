@@ -5729,5 +5729,12 @@
   "f6cf1627f4acc5ef": "Sichtbarkeit des Kommentars",
   "eb1fd384ad5919dd": "Interne Notiz",
   "b45f0b467e9406d0": "Dem Kunden antworten",
-  "15e5597f8f93ce12": "{start} bis {end}"
+  "15e5597f8f93ce12": "{start} bis {end}",
+  "872bf68b2e05f055": "{count, plural, one {{count} angesehene Datei ausgeblendet} other {{count} angesehene Dateien ausgeblendet}}",
+  "f538b8016f5ca2f3": "Angesehene Dateien ausblenden",
+  "be348514e8486295": "Noch keine nicht angesehenen Dateien geladen",
+  "6b7765835778dc77": "Alle Dateien sind ausgeblendet",
+  "bd2cfcb7be24cd38": "Angesehene Dateien sind in diesem Review ausgeblendet.",
+  "6ae1484aa5bd2bc8": "Angesehene Dateien anzeigen",
+  "15db3431c35d4927": "{count, plural, one {{count} angesehene ausgeblendet} other {{count} angesehene ausgeblendet}}"
 }

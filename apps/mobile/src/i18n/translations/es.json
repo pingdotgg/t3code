@@ -5723,5 +5723,12 @@
   "f6cf1627f4acc5ef": "Visibilidad del comentario",
   "eb1fd384ad5919dd": "Nota interna",
   "b45f0b467e9406d0": "Responder al cliente",
-  "15e5597f8f93ce12": "{start} a {end}"
+  "15e5597f8f93ce12": "{start} a {end}",
+  "872bf68b2e05f055": "{count, plural, one {{count} archivo visto oculto} other {{count} archivos vistos ocultos}}",
+  "f538b8016f5ca2f3": "Ocultar archivos vistos",
+  "be348514e8486295": "Aún no se han cargado archivos sin ver",
+  "6b7765835778dc77": "Todos los archivos están ocultos",
+  "bd2cfcb7be24cd38": "Los archivos vistos están ocultos en esta revisión.",
+  "6ae1484aa5bd2bc8": "Mostrar archivos vistos",
+  "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}"
 }
