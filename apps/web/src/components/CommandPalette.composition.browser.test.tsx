@@ -411,7 +411,12 @@ it.each([
     await act(() => {
       for (const name of row.selection) moveDraftToProject(draftId, project(name));
     });
-    await act(() => screen.router!.navigate({ to: "/local/another-thread" }));
+    await act(() =>
+      screen.router!.navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: "another-thread" },
+      }),
+    );
     await finish();
 
     expect(screen.router!.state.location.pathname).toBe("/local/another-thread");
