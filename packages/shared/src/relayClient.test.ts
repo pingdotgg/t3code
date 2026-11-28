@@ -779,13 +779,15 @@ describe("RelayClient", () => {
     });
 
     it.effect.skipIf(windowsHost)(
-      "finds a PATH binary through an empty entry by its absolute path",
+      "finds a PATH binary through empty and relative entries by its absolute path",
       () =>
         run((baseDir) =>
           Effect.gen(function* () {
             const cwd = `${baseDir}/work`;
             const inCwd = `${cwd}/cloudflared`;
+            const inBin = `${cwd}/bin/cloudflared`;
             yield* writeExecutable(inCwd);
+            yield* writeExecutable(inBin);
             const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
             const resolveWith = (searchPath: string) => {
               const env = { PATH: searchPath };
@@ -804,9 +806,18 @@ describe("RelayClient", () => {
               source: "path",
               version: RelayClient.CLOUDFLARED_VERSION,
             };
+            const foundInBin = {
+              status: "available",
+              executablePath: inBin,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            };
 
             expect(yield* resolveWith(`:${baseDir}/missing`)).toEqual(found);
             expect(yield* resolveWith(`${baseDir}/missing:`)).toEqual(found);
+            expect(yield* resolveWith(`.:${baseDir}/missing`)).toEqual(found);
+            expect(yield* resolveWith(`./:${baseDir}/missing`)).toEqual(found);
+            expect(yield* resolveWith(`bin:${baseDir}/missing`)).toEqual(foundInBin);
             const missing = { status: "missing", version: RelayClient.CLOUDFLARED_VERSION };
             // An empty PATH searches nothing, not even the working directory.
             expect(yield* resolveWith("")).toEqual(missing);
