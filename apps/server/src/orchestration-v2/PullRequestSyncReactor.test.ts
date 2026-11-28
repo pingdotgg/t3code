@@ -2290,6 +2290,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create command after a parameter expansion holding a parenthesis",
+      input: "printf '%s\\n' ${x:-)} gh pr create \"$PR\"",
+      output: ")\ngh\npr\ncreate\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
       name: "a create command after an escaped separator",
       input: "echo example\\;gh pr create; gh pr view --json url --jq .url",
       output: "example;gh pr create\nhttps://github.com/owner/repository/pull/124",

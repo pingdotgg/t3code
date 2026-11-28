@@ -81,6 +81,13 @@ const PUSH_COMMAND = new RegExp(
 // Reserved words the shell reads where a command may start, and after which one still may.
 const COMMAND_KEYWORDS = new Set("if then elif else fi while until do done esac ! { }".split(" "));
 const SHELL_TOKEN = /[^\s;&|()<>`]+|[\n;&|()`]/gu;
+const PARAMETER_EXPANSION = /\$\{[^{}]*\}/gu;
+
+/** Shell code with each `${...}` filled in: it is part of a word, so `${x:-)}` closes nothing. */
+function withoutParameterExpansions(code: string): string {
+  const filled = code.replace(PARAMETER_EXPANSION, (expansion) => "_".repeat(expansion.length));
+  return filled === code ? code : withoutParameterExpansions(filled);
+}
 
 /**
  * Where each command in shell code starts. A create command anywhere else, as in
@@ -92,8 +99,9 @@ function commandStarts(code: string): ReadonlyArray<number> {
   const starts: Array<number> = [];
   const open: Array<"$(" | "(" | "`" | "[["> = [];
   let expectsCommand = true;
-  for (const { 0: token, index } of code.matchAll(SHELL_TOKEN)) {
-    const before = code[index - 1] ?? "";
+  const words = withoutParameterExpansions(code);
+  for (const { 0: token, index } of words.matchAll(SHELL_TOKEN)) {
+    const before = words[index - 1] ?? "";
     if (token === "(") {
       const substitution = /[$<>]/u.test(before);
       open.push(substitution ? "$(" : "(");
@@ -108,7 +116,7 @@ function commandStarts(code: string): ReadonlyArray<number> {
       else open.pop();
     } else if (token === "&") {
       // `2>&1` and `&>file` redirect; they do not end the command.
-      if (!/[<>]/u.test(before) && code[index + 1] !== ">") expectsCommand = true;
+      if (!/[<>]/u.test(before) && words[index + 1] !== ">") expectsCommand = true;
     } else if (token === "\n" || token === ";" || token === "|") expectsCommand = true;
     else if (token === "]]" && open.at(-1) === "[[") {
       open.pop();
