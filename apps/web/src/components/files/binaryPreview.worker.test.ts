@@ -191,3 +191,41 @@ it("formats singular and plural byte labels for SQLite BLOB cells", async () => 
     vi.unstubAllGlobals();
   }
 });
+
+it("reads GNU base-256 TAR modification dates, including ones before 1970", async () => {
+  const encode = (value: string) => new TextEncoder().encode(value);
+  const entries = [
+    { path: "before-epoch.txt", mtime: new Uint8Array(12).fill(0xff) },
+    { path: "far-future.txt", mtime: Uint8Array.of(0x80, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0) },
+    { path: "out-of-range.txt", mtime: Uint8Array.of(0x80, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0) },
+  ];
+  const bytes = new Uint8Array(entries.length * 512 + 1024);
+  entries.forEach((entry, index) => {
+    const offset = index * 512;
+    bytes.set(encode(entry.path), offset);
+    bytes.set(encode("00000000000\0"), offset + 124);
+    bytes.set(entry.mtime, offset + 136);
+    bytes.fill(32, offset + 148, offset + 156);
+    bytes.set(encode("0"), offset + 156);
+    const sum = bytes.subarray(offset, offset + 512).reduce((acc, byte) => acc + byte, 0);
+    bytes.set(encode(sum.toString(8).padStart(6, "0") + "\0 "), offset + 148);
+  });
+
+  try {
+    const request = await startWorker();
+    const result = await request({
+      type: "open",
+      kind: "archive",
+      name: "gnu.tar",
+      bytes: bytes.buffer,
+    });
+    if (result.type !== "archive") throw new Error(`Expected archive, got ${result.type}`);
+    expect(result.entries.map(({ modified }) => modified)).toEqual([
+      "1969-12-31T23:59:59.000Z",
+      "2242-03-16T12:56:32.000Z",
+      null,
+    ]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -34,7 +35,7 @@ import * as ThreadSearch from "./ThreadSearch.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
-  ProjectionStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
   ProjectStore.layer,
 ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
@@ -1419,6 +1420,37 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
     }),
   );
 
+  it.effect("keeps a better title match over a weaker one found by its messages", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:heron");
+      yield* createProject(project);
+      // Six titled threads that each also name the word in a message.
+      yield* Effect.forEach(
+        Array.from({ length: 6 }, (_, index) => {
+          const id = ThreadId.make(`thread:heron-${index + 1}`);
+          return [
+            thread(id, project, { title: `Heron ${index + 1}` }),
+            message(id, `heron-${index + 1}`, "user", "a heron sighting", { minute: 2 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const byTitle = (yield* search.searchThreads({ query: "heron", limit: 6 })).matches;
+      assert.deepStrictEqual(
+        byTitle.map((match) => match.source),
+        Array.from({ length: 6 }, () => "title"),
+      );
+      const { matches } = yield* search.searchThreads({ query: "heron", limit: 5 });
+      assert.deepStrictEqual(
+        matches.map((match) => match.threadId),
+        byTitle.slice(0, 5).map((match) => match.threadId),
+      );
+    }),
+  );
+
   it.effect("leaves titled threads out before the hit limit", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1552,7 +1584,7 @@ it.effect("searches on the reader worker while the writer is busy", () =>
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-search-" });
     const layerFile = Layer.mergeAll(
       ThreadSearch.layer,
-      ProjectionStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
       ProjectStore.layer,
     ).pipe(
       Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),

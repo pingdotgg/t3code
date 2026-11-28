@@ -56,7 +56,7 @@
     "check": "tsc -b tsconfig.json"
   },
   "dependencies": {
-    "@oxlint/plugins": "^1.93.0"
+    "@oxlint/plugins": "^1.94.0"
   },
   "peerDependencies": {
     "typescript": ">=5.0.0 <7.0.0"
