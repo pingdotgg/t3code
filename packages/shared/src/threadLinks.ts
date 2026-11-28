@@ -246,10 +246,16 @@ export function guessThreadLinkRef(
   return null;
 }
 
+const UNSAFE_CUSTOM_HREF = /[\s<>\\\p{Cc}]/u;
+
 function threadLinkHref(link: ThreadLink): string {
-  return link.environmentId === null
-    ? `${V1_PREFIX}${link.threadId}`
-    : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
+  if (link.environmentId === null) {
+    return `${V1_PREFIX}${UNSAFE_CUSTOM_HREF.test(link.threadId) ? encodeURIComponent(link.threadId) : link.threadId}`;
+  }
+  const href = `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
+  return link.environmentId.includes("/") || UNSAFE_CUSTOM_HREF.test(href)
+    ? hostedThreadLink({ environmentId: link.environmentId, threadId: link.threadId })
+    : href;
 }
 
 const linkLabel = (label: string | undefined) =>

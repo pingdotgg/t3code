@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   formatHostedThreadLink,
@@ -539,5 +541,40 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+
+  it("keeps a relabeled link navigable and unambiguous when the id contains a space", () => {
+    const thread = ref("local", "work item");
+    const url = hostedThreadLink(thread);
+    const titles = titlesIn({
+      local: { "work item": "Review", "work%20item": "Encoded" },
+    });
+    const relabeled = relabelThreadLinks(url, local, titles);
+    const tree = unified().use(remarkParse).parse(relabeled);
+    const paragraph = tree.children[0];
+    expect(paragraph?.type).toBe("paragraph");
+    const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+    expect(link?.type).toBe("link");
+    if (link?.type === "link") {
+      expect(parseThreadLinkHref(link.url)).toEqual(thread);
+    }
+    expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
+    expect(relabelThreadLinks(relabeled, local, titles)).toBe(relabeled);
+
+    const autolink = formatThreadLink(thread);
+    expect(threadLinkRefs(autolink, local)).toEqual([thread]);
+
+    const v1Titles = titlesIn({ local: { "work item": "Review" } });
+    const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, v1Titles);
+    expect(v1Relabeled).toBe("[Review](t3-thread://v1/work%20item)");
+    const v1Tree = unified().use(remarkParse).parse(v1Relabeled);
+    const v1Paragraph = v1Tree.children[0];
+    const v1Node = v1Paragraph?.type === "paragraph" ? v1Paragraph.children[0] : undefined;
+    expect(v1Node?.type).toBe("link");
+    expect(threadLinkRefs(v1Relabeled, local)).toContainEqual(thread);
+
+    const v1Autolink = formatThreadLink(v1("work item"));
+    expect(v1Autolink).toBe("<t3-thread://v1/work%20item>");
+    expect(threadLinkRefs(v1Autolink, local)).toContainEqual(thread);
   });
 });
