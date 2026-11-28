@@ -89,3 +89,19 @@ export const codexExecLaunchArgs = (launchArgs?: string) =>
 
 export const codexMcpListLaunchArgs = (launchArgs?: string) =>
   omitFeatureEnables(filterLaunchArgs(launchArgs, MCP_LIST_FILTER), MCP_LIST_DISABLED_FEATURES);
+
+const SQLITE_HOME_OVERRIDE = /^\s*sqlite_home\s*=\s*(.*?)\s*$/u;
+
+/** The last `-c sqlite_home=...` override; Codex reads a value that is not valid TOML as a raw string. */
+export const codexSqliteHomeOverride = (launchArgs?: string) => {
+  const args = codexLaunchArgv(launchArgs);
+  let value: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index] ?? "";
+    const inline = /^(?:--config|-c)=?(.+)$/u.exec(arg)?.[1];
+    const override = arg === "-c" || arg === "--config" ? args[++index] : inline;
+    const raw = override === undefined ? undefined : SQLITE_HOME_OVERRIDE.exec(override)?.[1];
+    if (raw) value = raw.replace(/^(["'])(.*)\1$/u, "$2");
+  }
+  return value;
+};

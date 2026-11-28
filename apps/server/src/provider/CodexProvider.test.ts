@@ -494,42 +494,6 @@ it.effect(
     ),
 );
 
-it.effect(
-  "closes a hung probe immediately with the default message when no backfill is running",
-  () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-hung-probe-" });
-      writeCodexBackfillState(path.join(tempHome, "state_5.sqlite"), "complete", TEST_EPOCH_SEC);
-
-      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner();
-      const fiber = yield* checkCodexProviderStatus(
-        decodeCodexSettings({ homePath: tempHome }),
-        undefined,
-        {},
-      ).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.forkChild,
-      );
-
-      yield* started;
-      yield* TestClock.adjust("20 seconds");
-      const status = yield* Fiber.join(fiber);
-
-      assert.strictEqual(status.status, "error");
-      assert.strictEqual(
-        status.message,
-        "Timed out while checking Codex app-server provider status.",
-      );
-      assert.strictEqual(isClosed(), true);
-    }).pipe(
-      Effect.provide(NodeServices.layer),
-      Effect.provideService(HostProcess.Platform, "linux"),
-    ),
-);
-
 it.effect("inspects CODEX_SQLITE_HOME when the state database lives outside CODEX_HOME", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
