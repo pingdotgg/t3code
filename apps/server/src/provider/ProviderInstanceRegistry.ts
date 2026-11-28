@@ -245,7 +245,7 @@ const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown
 
 type BlockedReason = (driver: ProviderDriverKind) => string | undefined;
 
-// The enabled state `buildEntry` decodes, so a disabled instance never reads its secrets.
+// The enabled state `prepareEntry` decodes, so a disabled instance never reads its secrets.
 const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(function* <R>(
   driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
   entry: ProviderInstanceConfig,
@@ -257,7 +257,15 @@ const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(func
   return Option.isSome(decoded) && resolveEntryEnabled(entry, decoded.value);
 });
 
-const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R>(input: {
+type BuildResult =
+  | { readonly kind: "live"; readonly live: LiveEntry }
+  | {
+      readonly kind: "unavailable";
+      readonly snapshot: ServerProvider;
+      readonly secretsUnreadable?: true;
+    };
+
+const prepareEntry = Effect.fn("ProviderInstanceRegistry.prepareEntry")(function* <R>(input: {
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly blockedReason: BlockedReason;
   readonly parentScope: Scope.Scope;
@@ -267,12 +275,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   readonly deferSecrets: boolean;
   readonly carriedSecrets?: InstanceSecrets | undefined;
 }): Effect.fn.Return<
-  | { readonly kind: "live"; readonly live: LiveEntry }
-  | {
-      readonly kind: "unavailable";
-      readonly snapshot: ServerProvider;
-      readonly secretsUnreadable?: true;
-    },
+  Effect.Effect<BuildResult, never, R>,
   never,
   R | SecretResolver.SecretResolver
 > {
@@ -287,7 +290,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   } = input;
   const blocked = input.blockedReason(entry.driver);
   if (blocked !== undefined) {
-    return {
+    return Effect.succeed({
       kind: "unavailable" as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
         driverKind: entry.driver,
@@ -296,11 +299,11 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         accentColor: entry.accentColor,
         reason: blocked,
       }),
-    };
+    });
   }
   const driver = driversById.get(entry.driver);
   if (!driver) {
-    return {
+    return Effect.succeed({
       kind: "unavailable" as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
         driverKind: entry.driver,
@@ -309,7 +312,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         accentColor: entry.accentColor,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
       }),
-    };
+    });
   }
 
   const decoder = Schema.decodeUnknownEffect(driver.configSchema);
@@ -322,7 +325,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       driver: entry.driver,
       detail,
     });
-    return {
+    return Effect.succeed({
       kind: "unavailable" as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
         driverKind: entry.driver,
@@ -331,13 +334,13 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         accentColor: entry.accentColor,
         reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
       }),
-    };
+    });
   }
 
   const typedConfig = decodeResult.success;
   const enabled = resolveEntryEnabled(entry, typedConfig);
   if (deferSecrets && enabled && secretReferencesOf(driversById, entry).length > 0) {
-    return {
+    return Effect.succeed({
       kind: "unavailable" as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
         driverKind: entry.driver,
@@ -346,7 +349,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         accentColor: entry.accentColor,
         reason: "Reading secrets…",
       }),
-    };
+    });
   }
   const { secrets, unreadable } = carriedSecrets
     ? { secrets: carriedSecrets, unreadable: [] }
@@ -359,7 +362,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   // Starting with a blank credential would fail later with a less useful error, or fall back to
   // whatever the server inherited.
   if (unreadable.length > 0) {
-    return {
+    return Effect.succeed({
       kind: "unavailable" as const,
       secretsUnreadable: true as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
@@ -369,58 +372,60 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         accentColor: entry.accentColor,
         reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
       }),
-    };
+    });
   }
 
-  const childScope = yield* Scope.fork(parentScope);
-  let usageAccess = entry.usageAccess === "allowed";
+  return Effect.gen(function* () {
+    const childScope = yield* Scope.fork(parentScope);
+    let usageAccess = entry.usageAccess === "allowed";
 
-  const createResult = yield* driver
-    .create({
-      instanceId,
-      displayName: entry.displayName,
-      accentColor: entry.accentColor,
-      environment: secrets.environment,
-      enabled,
-      usageAccess: Effect.sync(() => usageAccess),
-      config:
-        secrets.config.length === 0
-          ? typedConfig
-          : withSettingsSecrets(typedConfig, secrets.config),
-    })
-    .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
-  if (createResult._tag === "Failure") {
-    yield* Effect.logError("Failed to create provider instance", {
-      instanceId: rawInstanceId,
-      driver: entry.driver,
-      detail: createResult.failure.detail,
-    });
-    yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
-    return {
-      kind: "unavailable" as const,
-      snapshot: yield* buildUnavailableProviderSnapshot({
-        driverKind: entry.driver,
+    const createResult = yield* driver
+      .create({
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
-        reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
-      }),
-    };
-  }
+        environment: secrets.environment,
+        enabled,
+        usageAccess: Effect.sync(() => usageAccess),
+        config:
+          secrets.config.length === 0
+            ? typedConfig
+            : withSettingsSecrets(typedConfig, secrets.config),
+      })
+      .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
+    if (createResult._tag === "Failure") {
+      yield* Effect.logError("Failed to create provider instance", {
+        instanceId: rawInstanceId,
+        driver: entry.driver,
+        detail: createResult.failure.detail,
+      });
+      yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: entry.displayName,
+          accentColor: entry.accentColor,
+          reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
+        }),
+      };
+    }
 
-  const { instance, setPresentation } = withLivePresentation(
-    createResult.success,
-    entry,
-    driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
-  );
-  const setLiveEntry = (next: ProviderInstanceConfig) => {
-    setPresentation(next);
-    usageAccess = next.usageAccess === "allowed";
-  };
-  return {
-    kind: "live" as const,
-    live: { instance, scope: childScope, entry, secrets, setPresentation: setLiveEntry },
-  };
+    const { instance, setPresentation } = withLivePresentation(
+      createResult.success,
+      entry,
+      driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
+    );
+    const setLiveEntry = (next: ProviderInstanceConfig) => {
+      setPresentation(next);
+      usageAccess = next.usageAccess === "allowed";
+    };
+    return {
+      kind: "live" as const,
+      live: { instance, scope: childScope, entry, secrets, setPresentation: setLiveEntry },
+    };
+  });
 });
 
 const makeReconcile = <R>(input: {
@@ -436,156 +441,183 @@ const makeReconcile = <R>(input: {
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
   const { state, driversById, blockedReason, parentScope } = input;
   return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
-    Effect.gen(function* () {
-      const previousEntries = yield* Ref.get(state.entries);
-      const previousUnavailable = yield* Ref.get(state.unavailable);
-      const previousSecretsUnreadable = yield* Ref.get(state.secretsUnreadable);
-      const nextRaw = Object.entries(configMap);
-      const nextKeys = new Set<ProviderInstanceId>(
-        nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
-      );
+    Effect.uninterruptibleMask(
+      Effect.fnUntraced(function* (restore) {
+        const previousEntries = yield* Ref.get(state.entries);
+        const previousUnavailable = yield* Ref.get(state.unavailable);
+        const previousSecretsUnreadable = yield* Ref.get(state.secretsUnreadable);
+        const nextRaw = Object.entries(configMap);
+        const nextKeys = new Set<ProviderInstanceId>(
+          nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
+        );
 
-      // Close changed/removed scopes before replacements to preserve one live scope per id.
-      const removedIds: Array<ProviderInstanceId> = [];
-      const replacedIds = new Set<ProviderInstanceId>();
-      for (const [instanceId, live] of previousEntries) {
-        if (!nextKeys.has(instanceId)) {
-          removedIds.push(instanceId);
-          continue;
+        // Close changed/removed scopes before replacements to preserve one live scope per id.
+        const removedIds: Array<ProviderInstanceId> = [];
+        const replacedIds = new Set<ProviderInstanceId>();
+        for (const [instanceId, live] of previousEntries) {
+          if (!nextKeys.has(instanceId)) {
+            removedIds.push(instanceId);
+            continue;
+          }
+          const nextEntry = configMap[instanceId];
+          if (
+            rebuild.has(instanceId) ||
+            (nextEntry !== undefined && !runtimeEqual(live.entry, nextEntry))
+          ) {
+            replacedIds.add(instanceId);
+          }
         }
-        const nextEntry = configMap[instanceId];
-        if (
-          rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !runtimeEqual(live.entry, nextEntry))
-        ) {
-          replacedIds.add(instanceId);
-        }
-      }
-      const retiredIds = [...removedIds, ...replacedIds];
-      if (retiredIds.length > 0) {
-        const remaining = new Map(previousEntries);
-        for (const id of retiredIds) remaining.delete(id);
-        yield* Ref.set(state.entries, remaining);
-      }
-      for (const id of retiredIds) {
-        const live = previousEntries.get(id);
-        if (live) {
-          yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
-        }
-      }
+        const parkedSnapshot = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) => {
+          const parked = previousSecretsUnreadable.get(instanceId);
+          return !rebuild.has(instanceId) && parked !== undefined && entryEqual(parked, entry)
+            ? previousUnavailable.get(instanceId)
+            : undefined;
+        };
 
-      const parkedSnapshot = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) => {
-        const parked = previousSecretsUnreadable.get(instanceId);
-        return !rebuild.has(instanceId) && parked !== undefined && entryEqual(parked, entry)
-          ? previousUnavailable.get(instanceId)
-          : undefined;
-      };
-
-      // Read every secret the builds below need in one go, so a vault unlocks once.
-      const references = yield* Effect.forEach(nextRaw, ([rawInstanceId, entry]) =>
-        Effect.gen(function* () {
+        const toBuild = nextRaw.filter(([rawInstanceId, entry]) => {
           const instanceId = ProviderInstanceId.make(rawInstanceId);
-          const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
-          return kept ||
-            carried.has(instanceId) ||
-            parkedSnapshot(instanceId, entry) !== undefined ||
-            !(yield* isEntryEnabled(driversById, entry))
-            ? []
-            : secretReferencesOf(driversById, entry);
-        }),
-      ).pipe(Effect.map((perEntry) => perEntry.flat()));
-      if (references.length > 0 && !deferSecrets) {
-        yield* (yield* SecretResolver.SecretResolver).read(references);
-      }
+          return (
+            (!previousEntries.has(instanceId) || replacedIds.has(instanceId)) &&
+            parkedSnapshot(instanceId, entry) === undefined
+          );
+        });
+        const retire = Effect.fnUntraced(function* (ids: ReadonlyArray<ProviderInstanceId>) {
+          if (ids.length === 0) return;
+          const remaining = new Map(yield* Ref.get(state.entries));
+          for (const id of ids) remaining.delete(id);
+          yield* Ref.set(state.entries, remaining);
+          for (const id of ids) {
+            const live = previousEntries.get(id);
+            if (live) yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
+          }
+        });
+        // Removed ids have no replacement to wait for, so they stop routing before a vault prompt.
+        yield* retire(removedIds);
 
-      const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
-      const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
-      const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
-      let orderChanged = false;
-      let presentationChanged = false;
-      const previousOrder = [...previousEntries.keys()];
-      const nextOrder: Array<ProviderInstanceId> = [];
+        const builds = yield* restore(
+          Effect.gen(function* () {
+            // Read every secret the builds below need in one go, so a vault unlocks once.
+            const references = yield* Effect.forEach(toBuild, ([rawInstanceId, entry]) =>
+              Effect.gen(function* () {
+                const instanceId = ProviderInstanceId.make(rawInstanceId);
+                return carried.has(instanceId) || !(yield* isEntryEnabled(driversById, entry))
+                  ? []
+                  : secretReferencesOf(driversById, entry);
+              }),
+            ).pipe(Effect.map((perEntry) => perEntry.flat()));
+            if (references.length > 0 && !deferSecrets) {
+              yield* (yield* SecretResolver.SecretResolver).read(references);
+            }
 
-      for (const [rawInstanceId, entry] of nextRaw) {
-        const instanceId = ProviderInstanceId.make(rawInstanceId);
-        nextOrder.push(instanceId);
+            const prepared = yield* Effect.forEach(toBuild, ([rawInstanceId, entry]) =>
+              Effect.gen(function* () {
+                const instanceId = ProviderInstanceId.make(rawInstanceId);
+                const build = yield* prepareEntry({
+                  driversById,
+                  blockedReason,
+                  parentScope,
+                  instanceId,
+                  rawInstanceId,
+                  entry,
+                  deferSecrets,
+                  carriedSecrets: carried.get(instanceId),
+                });
+                return [instanceId, build] as const;
+              }),
+            );
+            return new Map(prepared);
+          }),
+        ).pipe(
+          Effect.onInterrupt(() =>
+            removedIds.length > 0 ? PubSub.publish(state.changes, undefined) : Effect.void,
+          ),
+        );
 
-        const existing = previousEntries.get(instanceId);
-        if (existing !== undefined && !replacedIds.has(instanceId)) {
-          if (entryEqual(existing.entry, entry)) {
-            builtEntries.set(instanceId, existing);
+        // Once replaced scopes retire, finish publishing replacements even if the caller disconnects.
+        yield* retire([...replacedIds]);
+
+        const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
+        const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
+        const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
+        let orderChanged = false;
+        let presentationChanged = false;
+        const previousOrder = [...previousEntries.keys()];
+        const nextOrder: Array<ProviderInstanceId> = [];
+
+        for (const [rawInstanceId, entry] of nextRaw) {
+          const instanceId = ProviderInstanceId.make(rawInstanceId);
+          nextOrder.push(instanceId);
+
+          const existing = previousEntries.get(instanceId);
+          if (existing !== undefined && !replacedIds.has(instanceId)) {
+            if (entryEqual(existing.entry, entry)) {
+              builtEntries.set(instanceId, existing);
+            } else {
+              existing.setPresentation(entry);
+              builtEntries.set(instanceId, { ...existing, entry });
+              presentationChanged = true;
+              if (existing.entry.usageAccess !== entry.usageAccess) {
+                const { snapshot } = existing.instance;
+                yield* (snapshot.refreshUsage ?? snapshot.refresh).pipe(
+                  Effect.ignore,
+                  Effect.forkIn(existing.scope),
+                );
+              }
+            }
+            continue;
+          }
+          const parked = parkedSnapshot(instanceId, entry);
+          if (parked !== undefined) {
+            builtUnavailable.set(instanceId, parked);
+            builtSecretsUnreadable.set(instanceId, entry);
+            continue;
+          }
+
+          const build = builds.get(instanceId);
+          if (build === undefined) continue;
+          const result = yield* build;
+          if (result.kind === "live") {
+            builtEntries.set(instanceId, result.live);
           } else {
-            existing.setPresentation(entry);
-            builtEntries.set(instanceId, { ...existing, entry });
-            presentationChanged = true;
-            if (existing.entry.usageAccess !== entry.usageAccess) {
-              const { snapshot } = existing.instance;
-              yield* (snapshot.refreshUsage ?? snapshot.refresh).pipe(
-                Effect.ignore,
-                Effect.forkIn(existing.scope),
-              );
+            builtUnavailable.set(instanceId, result.snapshot);
+            if (result.secretsUnreadable) builtSecretsUnreadable.set(instanceId, entry);
+          }
+        }
+
+        if (previousOrder.length === nextOrder.length) {
+          for (let i = 0; i < previousOrder.length; i++) {
+            if (previousOrder[i] !== nextOrder[i]) {
+              orderChanged = true;
+              break;
             }
           }
-          continue;
-        }
-        const parked = parkedSnapshot(instanceId, entry);
-        if (parked !== undefined) {
-          builtUnavailable.set(instanceId, parked);
-          builtSecretsUnreadable.set(instanceId, entry);
-          continue;
-        }
-
-        const result = yield* buildEntry({
-          driversById,
-          blockedReason,
-          parentScope,
-          instanceId,
-          rawInstanceId,
-          entry,
-          deferSecrets,
-          carriedSecrets: carried.get(instanceId),
-        });
-        if (result.kind === "live") {
-          builtEntries.set(instanceId, result.live);
         } else {
-          builtUnavailable.set(instanceId, result.snapshot);
-          if (result.secretsUnreadable) builtSecretsUnreadable.set(instanceId, entry);
+          orderChanged = true;
         }
-      }
 
-      if (previousOrder.length === nextOrder.length) {
-        for (let i = 0; i < previousOrder.length; i++) {
-          if (previousOrder[i] !== nextOrder[i]) {
-            orderChanged = true;
-            break;
-          }
+        const entriesChanged =
+          presentationChanged ||
+          orderChanged ||
+          removedIds.length > 0 ||
+          replacedIds.size > 0 ||
+          builtEntries.size !== previousEntries.size;
+        const unavailableChanged =
+          builtUnavailable.size !== previousUnavailable.size ||
+          [...builtUnavailable].some(([id, snapshot]) => {
+            const prev = previousUnavailable.get(id);
+            return prev === undefined || !Equal.equals(prev, snapshot);
+          }) ||
+          [...previousUnavailable].some(([id]) => !builtUnavailable.has(id));
+
+        yield* Ref.set(state.entries, builtEntries);
+        yield* Ref.set(state.unavailable, builtUnavailable);
+        yield* Ref.set(state.secretsUnreadable, builtSecretsUnreadable);
+
+        if (entriesChanged || unavailableChanged) {
+          yield* PubSub.publish(state.changes, undefined);
         }
-      } else {
-        orderChanged = true;
-      }
-
-      const entriesChanged =
-        presentationChanged ||
-        orderChanged ||
-        removedIds.length > 0 ||
-        replacedIds.size > 0 ||
-        builtEntries.size !== previousEntries.size;
-      const unavailableChanged =
-        builtUnavailable.size !== previousUnavailable.size ||
-        [...builtUnavailable].some(([id, snapshot]) => {
-          const prev = previousUnavailable.get(id);
-          return prev === undefined || !Equal.equals(prev, snapshot);
-        }) ||
-        [...previousUnavailable].some(([id]) => !builtUnavailable.has(id));
-
-      yield* Ref.set(state.entries, builtEntries);
-      yield* Ref.set(state.unavailable, builtUnavailable);
-      yield* Ref.set(state.secretsUnreadable, builtSecretsUnreadable);
-
-      if (entriesChanged || unavailableChanged) {
-        yield* PubSub.publish(state.changes, undefined);
-      }
-    });
+      }),
+    );
 };
 
 export const makeProviderInstanceRegistry = Effect.fn(
@@ -668,7 +700,8 @@ export const makeProviderInstanceRegistry = Effect.fn(
       for (const [rawInstanceId, entry] of targets) {
         const instanceId = ProviderInstanceId.make(rawInstanceId);
         const current = live.get(instanceId);
-        if (current === undefined) {
+        // An interrupted save can leave the old instance live; its environment is not this entry's.
+        if (current === undefined || !runtimeEqual(current.entry, entry)) {
           rebuild.add(instanceId);
           if (checked !== undefined) {
             const { secrets, unreadable } = yield* readInstanceSecrets(
@@ -700,6 +733,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
         // A failed re-read keeps the working instance and the value it already holds.
         if (unreadable.length === 0 && !Equal.equals(secrets, current.secrets)) {
           rebuild.add(current.instance.instanceId);
+          carried.set(current.instance.instanceId, secrets);
         }
       }
       yield* reconcileWithR(configMap, rebuild, false, carried);

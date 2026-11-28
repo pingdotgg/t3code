@@ -1200,6 +1200,182 @@ describe("ProviderInstanceRegistry secret environment", () => {
     });
   });
 
+  it.effect.each(["rebuild", "reloadSecrets"] as const)(
+    "%s publishes live providers with rotated credentials after interruption",
+    (operation) =>
+      Effect.gen(function* () {
+        const first = ProviderInstanceId.make("first");
+        const second = ProviderInstanceId.make("second");
+        const rebuilding = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        let revision = "original";
+        // Closing an instance built with the old credential drops it from the resolver's cache,
+        // so a secret read after retirement would come back empty.
+        let cacheInvalidated = false;
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "Fake" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const continuationKey = input.environment[0]?.value ?? "missing";
+              let open = true;
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  open = false;
+                  if (continuationKey === "original") cacheInvalidated = true;
+                }),
+              );
+              if (input.instanceId === second && revision === "rotated") {
+                yield* Deferred.succeed(rebuilding, undefined);
+                yield* Deferred.await(finish);
+              }
+              const instance: Partial<ProviderInstance> = {
+                instanceId: input.instanceId,
+                enabled: input.enabled,
+                continuationIdentity: { driverKind, continuationKey },
+                refreshModels: () => Effect.sync(() => expect(open).toBe(true)),
+              };
+              return instance as ProviderInstance;
+            }),
+        };
+        const entry = {
+          driver: driverKind,
+          config: {},
+          environment: [{ name: "API_KEY", value: secret, sensitive: true }],
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [first]: entry, [second]: entry },
+        }).pipe(
+          Effect.provideService(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            invalidate: () => Effect.void,
+            read: (references) =>
+              Effect.sync(() => references.map(() => (cacheInvalidated ? undefined : revision))),
+          }),
+        );
+        yield* mutator.reloadSecrets();
+        revision = "rotated";
+        const update =
+          operation === "rebuild" ? mutator.rebuild([first, second]) : mutator.reloadSecrets();
+        const updateFiber = yield* update.pipe(Effect.forkChild);
+        const started = yield* Effect.raceFirst(
+          Deferred.await(rebuilding).pipe(Effect.as(true)),
+          Fiber.await(updateFiber).pipe(Effect.as(false)),
+        );
+        expect(started).toBe(true);
+        yield* Fiber.interrupt(updateFiber).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.await(updateFiber);
+
+        const instances = yield* registry.listInstances;
+        expect(
+          instances.map(({ instanceId, continuationIdentity }) => [
+            instanceId,
+            continuationIdentity.continuationKey,
+          ]),
+        ).toEqual([
+          [first, "rotated"],
+          [second, "rotated"],
+        ]);
+        for (const instance of instances) {
+          yield* instance.refreshModels?.() ?? Effect.void;
+        }
+      }),
+  );
+
+  // A save whose secret read waits on a vault prompt, interrupted while it waits.
+  const interruptedSave = Effect.fn(function* (initial: ProviderInstanceConfigMap) {
+    const created: Array<ResolvedProviderInstanceEnvironment> = [];
+    const started = yield* Deferred.make<void>();
+    const reading = yield* Deferred.make<void>();
+    let blockReads = false;
+    const driver: AnyProviderDriver = {
+      driverKind,
+      metadata: { displayName: "Fake" },
+      configSchema: Schema.Unknown,
+      defaultConfig: () => ({}),
+      create: (input) =>
+        Effect.sync(() => {
+          created.push(input.environment);
+          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+        }),
+    };
+    const built = yield* makeProviderInstanceRegistry({
+      drivers: [driver],
+      configMap: initial,
+    }).pipe(
+      Effect.provideService(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        invalidate: () => Effect.void,
+        read: (references) =>
+          blockReads
+            ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Effect.never))
+            : Deferred.await(started).pipe(Effect.as(references.map(() => "sk-live"))),
+      }),
+    );
+    // Secrets are read after startup, so wait for the change that applies them.
+    const changes = yield* built.registry.subscribeChanges;
+    yield* Deferred.succeed(started, undefined);
+    yield* PubSub.take(changes);
+    const save = Effect.fn(function* (next: ProviderInstanceConfigMap) {
+      blockReads = true;
+      const fiber = yield* built.mutator.reconcile(next).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      yield* Fiber.interrupt(fiber);
+      blockReads = false;
+    });
+    return { ...built, created, save };
+  });
+
+  it.effect("retires a removed instance when the save is interrupted at the secret read", () =>
+    Effect.gen(function* () {
+      const removed = ProviderInstanceId.make("removed");
+      const { registry, save } = yield* interruptedSave({
+        [removed]: {
+          driver: driverKind,
+          config: {},
+          environment: [{ name: "OPENAI_API_KEY", value: secret, sensitive: true }],
+        },
+      });
+      expect(yield* registry.getInstance(removed)).toBeDefined();
+
+      yield* save({
+        [instanceId]: {
+          driver: driverKind,
+          config: {},
+          environment: [{ name: "OPENAI_API_KEY", value: secret, sensitive: true }],
+        },
+      });
+      expect(yield* registry.getInstance(removed)).toBeUndefined();
+    }),
+  );
+
+  it.effect("applies a checked secret with the environment of an interrupted save", () =>
+    Effect.gen(function* () {
+      const entry = (baseUrl: string): ProviderInstanceConfig => ({
+        driver: driverKind,
+        config: {},
+        environment: [
+          { name: "OPENAI_API_KEY", value: secret, sensitive: true },
+          { name: "BASE_URL", value: baseUrl, sensitive: false },
+        ],
+      });
+      const { mutator, created, save } = yield* interruptedSave({
+        [instanceId]: entry("https://old.test"),
+      });
+      yield* save({ [instanceId]: entry("https://new.test") });
+
+      yield* mutator.applySecret(secret, "sk-checked");
+      expect(created.at(-1)).toEqual([
+        { name: "OPENAI_API_KEY", value: "sk-checked", sensitive: true },
+        { name: "BASE_URL", value: "https://new.test", sensitive: false },
+      ]);
+    }),
+  );
+
   it.effect("keeps a working instance live when a reload cannot read its secret", () => {
     const fixture = setup({ [secret.reference]: "sk-live" });
     return Effect.gen(function* () {
