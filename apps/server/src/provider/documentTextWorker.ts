@@ -425,13 +425,23 @@ function xml(
             name.endsWith(":val") &&
             WORDPROCESSINGML_NAMESPACES.has(namespaceOf(name, scope) ?? ""),
         )?.[1];
-        parent.wordHorizontalMerge ??= value?.trim() ?? "continue";
+        node.wordHorizontalMerge = value?.trim() ?? "continue";
       }
     }
-    if (
-      extension === ".docx" &&
-      (node.wordHorizontalMerge !== undefined || (node.name === "vMerge" && parent.name === "tcPr"))
-    ) {
+    if (extension === ".docx" && node.name === "tcPr" && parent.name === "tc") {
+      const horizontalMerge = children(node).find(
+        (child) => child.wordHorizontalMerge !== undefined,
+      )?.wordHorizontalMerge;
+      if (
+        horizontalMerge !== undefined &&
+        WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+      ) {
+        parent.wordHorizontalMerge ??= horizontalMerge;
+        const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+        if (table) wordMergeTables.add(table);
+      }
+    }
+    if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
       const table = stack.findLast((ancestor) => ancestor.name === "tbl");
       if (table) wordMergeTables.add(table);
     }
@@ -981,7 +991,7 @@ function markWordMergeContinuations(table: XmlNode) {
         if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
         if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
       }
-      const value = properties?.wordHorizontalMerge;
+      const value = cell.wordHorizontalMerge;
       if (value === "continue" && horizontalMerge) {
         cell.wordMergeCovered = true;
       } else {
