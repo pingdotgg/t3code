@@ -1,0 +1,13 @@
+diff --git a/index-native.cjs b/index-native.cjs
+index ffa7b618ea54e526a007398393e8ca0fd2e1b77f..2a3f73f2915ef23aed91ce2bc66ab1778657c69c 100644
+--- a/index-native.cjs
++++ b/index-native.cjs
+@@ -1870,7 +1870,7 @@ function setCodecStreams(format, streams) {
+ 
+ async function ensureCodecStreams(format, codecURI) {
+ 	if (!codecStreams.has(format) && codecURI) {
+-		setCodecStreams(format, await import(/* webpackIgnore: true */ /* @vite-ignore */ codecURI));
++		throw new Error(ERR_UNSUPPORTED_COMPRESSION);
+ 	}
+ }
+ 

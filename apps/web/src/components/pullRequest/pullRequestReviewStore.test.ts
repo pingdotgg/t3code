@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ProjectId } from "@t3tools/contracts";
 
 import {
@@ -6,6 +6,7 @@ import {
   pullRequestReviewKey,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import { createMemoryStorage } from "../../lib/storage";
 
 function comment(id: string, body = id): PendingReviewComment {
   return { id, body, path: "src/app.ts", position: { kind: "added", newLine: 1 } };
@@ -61,5 +62,33 @@ describe("pull request review drafts", () => {
     usePullRequestReviewStore.getState().clearSummary("review-a", "Submitted body");
 
     expect(usePullRequestReviewStore.getState().summaries["review-a"]).toBe("Revised body");
+  });
+
+  // regression: #42078 line comments and the summary were lost when the window reloaded
+  it("keeps unsubmitted line comments and the summary across a reload", async () => {
+    vi.stubGlobal("localStorage", createMemoryStorage());
+    vi.useFakeTimers();
+    vi.resetModules();
+    try {
+      const before = await import("./pullRequestReviewStore");
+      before.usePullRequestReviewStore.getState().addComment("review-a", comment("drafted"));
+      before.usePullRequestReviewStore.getState().setSummary("review-a", "Drafted summary");
+      await vi.runAllTimersAsync();
+
+      vi.resetModules();
+      const after = await import("./pullRequestReviewStore");
+      await vi.runAllTimersAsync();
+
+      expect(after.usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([
+        comment("drafted"),
+      ]);
+      expect(after.usePullRequestReviewStore.getState().summaries["review-a"]).toBe(
+        "Drafted summary",
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });

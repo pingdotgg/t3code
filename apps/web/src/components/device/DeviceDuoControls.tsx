@@ -9,7 +9,7 @@ import {
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 const FOLDS = [
   { id: "closed", angle: 0 },
@@ -53,24 +53,24 @@ export function DeviceDuoControls(props: {
     glyph: React.ReactNode,
     waits = false,
   ) => (
-    <Tooltip key={key}>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon"
-            variant={pressed ? "secondary" : "ghost"}
-            disabled={!props.enabled || waits}
-            aria-label={label}
-            aria-pressed={pressed}
-            data-pressed={pressed ? "" : undefined}
-            onClick={onClick}
-          />
-        }
-      >
-        {glyph}
-      </TooltipTrigger>
-      <TooltipPopup side="left">{label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      key={key}
+      render={
+        <Button
+          size="icon"
+          variant={pressed ? "secondary" : "ghost"}
+          disabled={!props.enabled || waits}
+          aria-label={label}
+          aria-pressed={pressed}
+          data-pressed={pressed ? "" : undefined}
+          onClick={onClick}
+        />
+      }
+      label={label}
+      side="left"
+    >
+      {glyph}
+    </SharedTooltipTrigger>
   );
   const group =
     "pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm";
@@ -110,21 +110,20 @@ export function DeviceDuoControls(props: {
         )}
       </div>
       {props.state.error ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                tabIndex={0}
-                role="alert"
-                aria-label={props.state.error}
-                className="pointer-events-auto text-xs text-destructive"
-              >
-                !
-              </span>
-            }
-          />
-          <TooltipPopup side="left">{props.state.error}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <span
+              tabIndex={0}
+              role="alert"
+              aria-label={props.state.error}
+              className="pointer-events-auto text-xs text-destructive"
+            >
+              !
+            </span>
+          }
+          label={props.state.error}
+          side="left"
+        />
       ) : null}
     </div>
   );

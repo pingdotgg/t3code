@@ -7,6 +7,12 @@
 
 /**
  * @stability unstable
+ * @since 4.1.5
+ */
+export * as SharedMemory from "./SharedMemory.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Transferable from "./Transferable.ts"

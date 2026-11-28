@@ -42,6 +42,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   type AtomCommand,
+  awaitAtomResult,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -316,17 +317,20 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
 ): C {
   return {
     ...command,
-    run: async (registry, target) => {
-      const edit = editOf(registry, target);
-      if (edit === null) return command.run(registry, target);
-      const edits = pullRequestPendingEditsAtom(target.environmentId);
-      registry.update(edits, (current) => [...current, edit]);
-      try {
-        return await command.run(registry, target);
-      } finally {
-        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
-      }
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        const edit = editOf(registry, target);
+        if (edit === null) return command.run(registry, target);
+        const edits = pullRequestPendingEditsAtom(target.environmentId);
+        return Effect.acquireUseRelease(
+          Effect.sync(() => registry.update(edits, (current) => [...current, edit])),
+          () => command.run(registry, target),
+          () =>
+            Effect.sync(() =>
+              registry.update(edits, (current) => current.filter((entry) => entry !== edit)),
+            ),
+        );
+      }),
   } satisfies AtomCommand<Target, A, E>;
 }
 
@@ -1129,7 +1133,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
           }),
       });
-      preparedInput = { ...actionInput, mergeMethod };
+      // Without a head the caller showed, pin to the one this read judged mergeable.
+      preparedInput = {
+        ...actionInput,
+        mergeMethod,
+        ...(actionInput.expectedHeadSha === undefined && detail.headSha !== undefined
+          ? { expectedHeadSha: detail.headSha }
+          : {}),
+      };
     }
     return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
       ...preparedInput,
@@ -1363,21 +1374,34 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         execute: runAction,
         onStart: (_target, registry) => readsInFlight(registry),
         // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
-        onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) =>
-          applyActionReply(
+        onSuccess: Effect.fnUntraced(function* (
+          { environmentId, input },
+          registry,
+          reply,
+          readsBeforeSend: ReadonlySet<object> | undefined,
+        ) {
+          const reference = pullRequestReference(input);
+          yield* applyActionReply(
             registry,
             environmentId,
-            pullRequestReference(input),
+            reference,
             reply,
             readsBeforeSend ?? new Set(),
-          ).pipe(
-            // The re-read a bare reply starts would otherwise show the old state until it answers.
-            Effect.andThen(
-              reply === undefined
-                ? acceptEdit(registry, environmentId, actionEdit(input), true)
-                : Effect.void,
-            ),
-          ),
+          );
+          // The re-read a bare reply starts would otherwise show the old state until it answers.
+          if (reply === undefined)
+            yield* acceptEdit(registry, environmentId, actionEdit(input), true);
+          if (input.action !== "approve-workflows") return;
+          const query = checks({ environmentId, input: reference });
+          if (!registry.getNodes().get(query)?.listeners.size) return;
+          if (
+            Option.getOrUndefined(loadedValue<PullRequestChecks | null>(registry, query)) === null
+          )
+            return;
+          // A pending read may have started before GitHub applied the approval.
+          if (registry.get(query).waiting) registry.refresh(query);
+          yield* awaitAtomResult(registry, query, { refresh: true }).pipe(Effect.ignore);
+        }),
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),

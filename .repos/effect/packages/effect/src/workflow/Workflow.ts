@@ -31,6 +31,8 @@ import * as SchemaParser from "../SchemaParser.ts"
 import * as Tranformation from "../SchemaTransformation.ts"
 import * as Scope from "../Scope.ts"
 import { makeHashDigest } from "./internal/crypto.ts"
+import { RetryingExecution } from "./internal/retry.ts"
+import { isScopeAbandoned, markScopeAbandoned } from "./internal/scope.ts"
 import type { WorkflowEngine, WorkflowInstance } from "./WorkflowEngine.ts"
 
 const TypeId = "~effect/workflow/Workflow"
@@ -84,18 +86,14 @@ export interface Workflow<
    * `discard: true` returns the execution ID without waiting for the result.
    * The child remains linked to its parent for completion wakes and interruption.
    *
-   * With `discard: true, detached: true`, the child neither wakes its parent
-   * nor gets interrupted with it. The cluster engine retains the parent for
-   * observability.
+   * With `discard: true, detached: true`, that call does not register the caller
+   * for completion wakes or interruption linkage. A later non-detached call for
+   * the same execution still registers its caller for a completion wake. The
+   * cluster engine retains the parent for observability.
    *
    * Inside a workflow, an awaited child that is interrupted fails the parent
    * with a defect rather than an interrupt, so the parent can recover with
    * `Effect.catchDefect` or `Effect.exit`.
-   *
-   * **Gotchas**
-   *
-   * Do not await a detached execution later. Executing the same payload joins
-   * it, but its completion will not wake the awaiting workflow.
    */
   readonly execute: <const Discard extends boolean = false>(
     payload: Payload["~type.make.in"],
@@ -375,7 +373,9 @@ const Proto = {
   ) {
     return Effect.suspend(() => {
       const payload = this.payloadSchema.make(fields)
-      const run = Effect.flatMap(
+      // Register with the parent before the execution id is computed, so a
+      // sibling that suspends first waits for this child to be dispatched.
+      return withPendingActivity(Effect.flatMap(
         EngineTag,
         (engine) =>
           Effect.flatMap(makeExecutionIdFromPayload(this, payload), (executionId) =>
@@ -389,10 +389,7 @@ const Proto = {
                 suspendedRetrySchedule: this.suspendedRetrySchedule
               })
             ))
-      )
-      // Register with the parent before the execution id is computed, so a
-      // sibling that suspends first waits for this child to be dispatched.
-      return opts?.discard ? run : withPendingActivity(run)
+      ))
     }).pipe(
       Effect.withSpan(
         `${this._tag}.execute`,
@@ -715,12 +712,16 @@ export const intoResult = <A, E, R>(
   Effect.contextWith((context: Context.Context<WorkflowInstance>) => {
     const instance = Context.get(context, InstanceTag)
     const captureDefects = Context.get(instance.workflow.annotations, CaptureDefects)
-    const suspendOnFailure = Context.get(instance.workflow.annotations, SuspendOnFailure)
+    // Inside `Activity.retry` a failure goes to the retry policy instead.
+    const suspendOnFailure = Context.get(instance.workflow.annotations, SuspendOnFailure) &&
+      Context.get(context, RetryingExecution) !== instance.executionId
     return effect.pipe(
-      // so we can use external interruption to suspend the workflow
       Effect.forkChild({ startImmediately: true }),
-      Effect.flatMap((fiber) => Effect.onInterrupt(Fiber.join(fiber), () => Fiber.interrupt(fiber))),
-      Effect.interruptible,
+      // The outer uninterruptible region protects the fork and cancellation hook.
+      // Only the join is interruptible, so suspension waits for handler cleanup.
+      Effect.flatMap((fiber) =>
+        Effect.onInterrupt(Effect.interruptible(Fiber.join(fiber)), () => Fiber.interrupt(fiber))
+      ),
       suspendOnFailure
         ? Effect.catchCause((cause) => {
           if (instance.abandoned || instance.interrupted) {
@@ -747,6 +748,11 @@ export const intoResult = <A, E, R>(
           const filtered = reasons.length === 0 ? cause : Cause.fromReasons(reasons)
           const abandoned = instance.abandoned && !instance.interrupted && hasInterruptsOnly
           instance.abandoned = abandoned
+          if (abandoned) {
+            // Superseded instances can share this scope, which closes before
+            // the engine marks its parent.
+            markScopeAbandoned(instance.scope)
+          }
           if (instance.suspended && hasInterruptsOnly && !abandoned) {
             return Effect.succeed(
               new Suspended(instance.failed ? { cause: instance.cause, failed: true } : { cause: instance.cause })
@@ -765,14 +771,27 @@ export const intoResult = <A, E, R>(
         }
       }),
       (eff) =>
-        Effect.onExitPrimitive(eff, (exit) => {
-          if (Exit.isFailure(exit)) {
-            return Scope.close(instance.scope, exit)
-          } else if (exit.value._tag === "Complete") {
-            return Scope.close(instance.scope, exit.value.exit)
-          }
-          return Effect.void
-        }, true),
+        Effect.onExitPrimitive(
+          eff,
+          (exit) => Exit.isFailure(exit) ? Scope.close(instance.scope, exit) : undefined,
+          true
+        ),
+      Effect.flatMap((result): Effect.Effect<Result<A, E>> => {
+        if (result._tag !== "Complete") {
+          return Effect.succeed(result)
+        }
+        const close = Effect.as(Scope.close(instance.scope, result.exit), result)
+        return captureDefects
+          ? Effect.catchCauseIf(close, Cause.hasDies, (closeCause) =>
+            Effect.succeed(
+              new Complete({
+                exit: Exit.failCause(
+                  Exit.isFailure(result.exit) ? Cause.combine(result.exit.cause, closeCause) : closeCause
+                )
+              })
+            ))
+          : close
+      }),
       Effect.uninterruptible
     )
   })
@@ -794,23 +813,22 @@ export const wrapActivityResult = <A, E, R>(
     return Effect.acquireUseRelease(
       Effect.sync(() => adoptActivityUnsafe(context, instance) ?? registerActivityUnsafe(instance)),
       () => effect,
-      (registration, exit) => {
-        releaseActivityUnsafe(registration)
-        const isSuspended = Exit.isSuccess(exit) && isSuspend(exit.value)
-        if (
-          Exit.isSuccess(exit) &&
-          isResult(exit.value) &&
-          exit.value._tag === "Suspended" &&
-          exit.value.cause
-        ) {
-          instance.cause = instance.cause
-            ? Cause.combine(instance.cause, exit.value.cause)
-            : exit.value.cause
-        }
-        return isSuspended && instance.activityState.count > 0
-          ? waitForZero(instance)
-          : Effect.void
-      }
+      (registration, exit) =>
+        Effect.sync(() => {
+          releaseActivityUnsafe(registration)
+          if (
+            Exit.isSuccess(exit) &&
+            isResult(exit.value) &&
+            exit.value._tag === "Suspended" &&
+            exit.value.cause
+          ) {
+            instance.cause = instance.cause
+              ? Cause.combine(instance.cause, exit.value.cause)
+              : exit.value.cause
+          }
+        })
+    ).pipe(
+      Effect.tap((value) => isSuspend(value) ? waitForZero(instance) : Effect.void)
     )
   })
 
@@ -854,9 +872,9 @@ const releaseActivityUnsafe = (registration: ActivityRegistration) => {
 }
 
 /**
- * Registers a pending child workflow execution with the current workflow
- * instance before any asynchronous work runs. `wrapActivityResult` adopts the
- * registration once the execution is dispatched.
+ * Registers a pending child workflow with the current instance before async
+ * work runs. Awaited starts are adopted by `wrapActivityResult`; discarded
+ * starts release when dispatch returns.
  */
 const withPendingActivity = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.contextWith((context: Context.Context<never>) => {
@@ -939,7 +957,10 @@ export const addFinalizer: <R>(
   const services = yield* Effect.context<R>()
   yield* Scope.addFinalizerExit(
     instance.scope,
-    (exit) => instance.abandoned ? Effect.void : Effect.provideContext(f(exit), services)
+    (exit) =>
+      instance.abandoned || isScopeAbandoned(instance.scope)
+        ? Effect.void
+        : Effect.provideContext(f(exit), services)
   )
 })
 
@@ -1022,7 +1043,12 @@ export const CaptureDefects = Context.Reference<boolean>(
  *
  * **Details**
  *
- * The suspended execution can later be resumed with the workflow's `resume` method, for example `MyWorkflow.resume(executionId)`.
+ * The suspended execution can later be resumed with the workflow's `resume`
+ * method, for example `MyWorkflow.resume(executionId)`.
+ *
+ * Inside `Activity.retry`, failed attempts reach the retry policy instead of
+ * suspending immediately; if the policy is exhausted and the error escapes,
+ * the workflow suspends and `resume` replays the stored failures.
  *
  * @stability unstable
  * @category services

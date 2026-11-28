@@ -7,12 +7,14 @@ import {
   questionAttachmentDraftPrefix,
   questionAttachmentPreparationAtom,
 } from "./question-attachments";
+import {
+  appendUnsentQuestionAttachments,
+  resolveQuestionImagePreparations,
+} from "./question-attachment-preparation";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import {
-  appendComposerDraftAttachments,
   clearComposerDraft,
   composerDraftsAtom,
-  getComposerDraftSnapshot,
   questionAttachmentDraftsAtom,
 } from "./use-composer-drafts";
 import {
@@ -111,6 +113,7 @@ function pruneResolvedRequestDrafts(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   pendingRequestIds: ReadonlyArray<RuntimeRequestId>,
+  unansweredRequestIds: ReadonlyArray<RuntimeRequestId> = [],
 ): void {
   const drafts = appAtomRegistry.get(userInputDraftsByRequestKeyAtom);
   const prunedDrafts = pruneResolvedUserInputDrafts(
@@ -125,11 +128,15 @@ function pruneResolvedRequestDrafts(
   const attachmentDrafts = appAtomRegistry.get(questionAttachmentDraftsAtom(prefix));
   const counts = { ...appAtomRegistry.get(questionAttachmentPreparationAtom) };
   let changed = false;
-  for (const key of resolvedQuestionDraftKeys(
+  const resolved = resolvedQuestionDraftKeys(
     new Set([...Object.keys(attachmentDrafts), ...Object.keys(counts)]),
     prefix,
     pendingRequestIds,
-  )) {
+  );
+  const discard = new Set(resolvedQuestionDraftKeys(resolved, prefix, unansweredRequestIds));
+  const threadKey = scopedThreadKey(environmentId, threadId);
+  for (const key of resolved) {
+    resolveQuestionImagePreparations(key, discard.has(key) ? null : threadKey);
     if (attachmentDrafts[key]) clearComposerDraft(key);
     if (key in counts) {
       delete counts[key];
@@ -157,20 +164,14 @@ function returnUnsentAttachmentsToThreadDraft(
   const attachments = Object.entries(drafts).flatMap(([key, draft]) =>
     otherRequestKeys.has(key) ? [] : draft.attachments,
   );
-  const threadKey = scopedThreadKey(environmentId, threadId);
-  const { text } = getComposerDraftSnapshot(threadKey);
-  // Chips go after the draft's text, never over a selection the user left in it.
-  appendComposerDraftAttachments(threadKey, attachments, {
-    appendReference: true,
-    insertion: { text, start: text.length, end: text.length },
-  });
+  appendUnsentQuestionAttachments(scopedThreadKey(environmentId, threadId), attachments);
 }
 
 // Resolution can come from anywhere: another device, an interrupt, the turn
 // ending, or a reload over drafts for requests that resolved meanwhile.
 onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds, unansweredRequestIds }) => {
   returnUnsentAttachmentsToThreadDraft(environmentId, threadId, unansweredRequestIds);
-  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds);
+  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds, unansweredRequestIds);
 });
 
 /**

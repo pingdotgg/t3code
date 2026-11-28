@@ -296,7 +296,7 @@ export function applyOrchestrationV2ProjectionEvent(
   switch (event.type) {
     case "thread.pull-request-link-updated":
       return {
-        ...base,
+        ...projection,
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
     case "thread.created":
@@ -311,16 +311,18 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
-    case "thread.active-reordered":
     case "thread.metadata-updated":
-    case "thread.pull-request-synced":
-    case "thread.issue-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "thread.guest-share-updated":
       return { ...base, thread: event.payload };
+    // Reordering and PR refreshes keep the orchestrator's activity time, as the server does.
+    case "thread.active-reordered":
+    case "thread.pull-request-synced":
+    case "thread.issue-synced":
+      return { ...base, thread: event.payload, updatedAt: event.payload.updatedAt };
     // Visited tracking and tags are not activity: skip the updatedAt bump.
     case "thread.visited":
     case "thread.tags-updated":
@@ -333,11 +335,16 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "run.created":
     case "run.updated": {
-      const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
+      // Lifecycle updates carry the run as it was when the turn started. What the run returned
+      // is written by its own event, and an update without it must not take it away.
+      const known = base.runs.find((run) => run.id === event.payload.id);
+      const run =
+        event.payload.output === undefined && known?.output !== undefined
+          ? { ...event.payload, output: known.output }
+          : event.payload;
+      const next = { ...base, runs: upsertEntity(base.runs, run) };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
-      const wasQueued = base.runs.some(
-        (run) => run.id === event.payload.id && run.status === "queued",
-      );
+      const wasQueued = known?.status === "queued";
       return wasQueued && event.payload.status !== "queued"
         ? { ...visible, visibleTurnItems: restoreQueuedUserItems(visible, event.payload.id) }
         : visible;
@@ -352,6 +359,13 @@ export function applyOrchestrationV2ProjectionEvent(
                 restartCancelledBackgroundWork: event.payload.restartCancelledBackgroundWork,
               }
             : run,
+        ),
+      };
+    case "run.output-submitted":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId ? { ...run, output: event.payload.output } : run,
         ),
       };
     case "run-attempt.created":

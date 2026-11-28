@@ -7,6 +7,7 @@ import {
   type ContextChipIconRef,
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
+import type { MessageResolver } from "../i18n/messages";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import type {
   SelectableMarkdownModel,
@@ -22,6 +23,7 @@ import { EXTENSIONLESS_FILE_NAMES } from "@t3tools/shared/markdownLinks";
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+  resolve?: MessageResolver,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
@@ -30,7 +32,7 @@ export function enrichedContextLinkPresentation(
     records && !record
       ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
       : contextChipPresentation(reference.kind, record);
-  const size = composerChipSizeSuffix(record);
+  const size = composerChipSizeSuffix(record, resolve);
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
@@ -96,8 +98,9 @@ const EXTENSIONLESS_FILE_NAME_PATTERN = [...EXTENSIONLESS_FILE_NAMES]
   .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|");
 
+// Folder and file names take the shared parser's routing punctuation (`(group)/[id]/+page.svelte`).
 export const ENRICHED_INLINE_FILE_LINK_REGEX = new RegExp(
-  String.raw`^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s\x60]+|(?:[\p{L}\p{M}\p{N}._-]+[\\/])+(?:[\p{L}\p{M}\p{N}._-]+\.[A-Za-z0-9_-]+|(?:${EXTENSIONLESS_FILE_NAME_PATTERN}))(?::\d+(?::\d+|-\d+)?)?|[\p{L}\p{M}\p{N}._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$`,
+  String.raw`^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s\x60]+|(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+[\\/])+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+\.[A-Za-z0-9_-]+|(?:${EXTENSIONLESS_FILE_NAME_PATTERN}))(?::\d+(?::\d+|-\d+)?)?|[\p{L}\p{M}\p{N}._$+()[\]-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$`,
   "u",
 );
 
@@ -174,8 +177,9 @@ export function enrichedModelLinkRegex(models?: ReadonlyArray<SelectableMarkdown
     .map((model) => model.source)
     .sort((a, b) => b.length - a.length)
     .map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  // LRM and RLM can open a paragraph whose first word runs against the text direction.
   return new RegExp(
-    `(?<![^\\s,(\\["'])(?:${alternatives.join("|")})(?=$|[\\s,"']|[.;:!?\\)\\]]+(?=$|[\\s,"']))`,
+    `(?<![^\\s,(\\["'\\u200E\\u200F])(?:${alternatives.join("|")})(?=$|[\\s,"']|[.;:!?\\)\\]]+(?=$|[\\s,"']))`,
     "u",
   );
 }

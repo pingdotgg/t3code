@@ -360,6 +360,9 @@ export const toString = <E = Cause.UnknownError>(
  * stream on interruption or failure.
  * Set `destroyOnOverflow` to `false` to drain the remaining data instead of
  * destroying the stream when the byte limit is exceeded.
+ * String chunks are encoded with the stream's declared encoding, or UTF-8 when
+ * none is set, and `maxBytes` counts those encoded bytes, which can differ from
+ * the bytes originally read.
  *
  * @stability unstable
  * @category converting
@@ -394,9 +397,10 @@ export const toArrayBuffer = <E = Cause.UnknownError>(
         Effect.succeed(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer)
       )
     })
-    function onData(chunk: Uint8Array) {
-      buffers.push(chunk)
-      bytes += chunk.length
+    function onData(chunk: string | Uint8Array) {
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk, stream.readableEncoding ?? "utf8") : chunk
+      buffers.push(buffer)
+      bytes += buffer.byteLength
       if (maxBytesNumber !== undefined && bytes > maxBytesNumber) {
         stream.off("data", onData)
         if (options?.destroyOnOverflow === false) {
@@ -417,7 +421,7 @@ export const toArrayBuffer = <E = Cause.UnknownError>(
 
 /**
  * Consumes a Node readable stream into a `Uint8Array`, using the same error
- * mapping and `maxBytes` handling as `toArrayBuffer`.
+ * mapping, string chunk encoding, and `maxBytes` handling as `toArrayBuffer`.
  *
  * @stability unstable
  * @category converting

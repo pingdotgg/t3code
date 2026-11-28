@@ -271,6 +271,17 @@ gifEditor.onPasteImages = { urls in
   exit(0)
 }
 
+// A provider that finishes on a later main-queue turn, like a full-size photo still loading.
+private let deferredPNG = image.pngData()!
+private let deferredProvider = NSItemProvider()
+deferredProvider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+  DispatchQueue.main.async { completion(deferredPNG, nil) }
+  return nil
+}
+private var pendingDeltas: [Int] = []
+private let deferredEditor = ComposerTextView()
+deferredEditor.onPasteImagesPending = { pendingDeltas.append($0) }
+
 // Inline provider completion places the attachment callback before this main-queue check.
 DispatchQueue.main.async {
   check(pastedImages.count == 1, "An accepted provider-based paste must emit exactly one attachment batch")
@@ -287,7 +298,16 @@ DispatchQueue.main.async {
         "The attachment must contain the pasted image's pixels")
   check(pasteEditor.text == "Keep this draft", "Image paste must preserve the draft text")
   print("Composer provider-paste checks passed")
-  check(gifProvider.canLoadObject(ofClass: UIImage.self), "A GIF provider must take the image paste path")
-  gifEditor.paste(itemProviders: [gifProvider, ImmediateImageProvider(image: image)])
+  deferredEditor.onPasteImages = { urls in
+    urls.compactMap(URL.init(string:)).forEach { try? FileManager.default.removeItem(at: $0) }
+    DispatchQueue.main.async {
+      check(pendingDeltas == [1, -1], "A finished paste must settle its preparation: \(pendingDeltas)")
+      print("Composer paste-preparation checks passed")
+      check(gifProvider.canLoadObject(ofClass: UIImage.self), "A GIF provider must take the image paste path")
+      gifEditor.paste(itemProviders: [gifProvider, ImmediateImageProvider(image: image)])
+    }
+  }
+  deferredEditor.paste(itemProviders: [deferredProvider])
+  check(pendingDeltas == [1], "Preparation must be reported before the provider finishes: \(pendingDeltas)")
 }
 dispatchMain()

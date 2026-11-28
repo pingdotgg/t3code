@@ -19,6 +19,11 @@ import { Command } from "effect/cli";
 import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+} from "../cloud/config.ts";
+import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
@@ -104,6 +109,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         readonly portFreed?: boolean;
         readonly command?: "unlink" | "status";
         readonly linkMode?: "managed" | "publish_only";
+        /** Linked from desktop, web, or mobile: no CLI-desired link is stored. */
+        readonly linkedByApp?: boolean;
       },
     ) =>
       Effect.gen(function* () {
@@ -143,10 +150,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         if (options?.command === "status") {
           // Status asks the server for reachability only for a managed link.
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
-          yield* fs.writeFileString(
-            `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
-            options.linkMode ?? "managed",
-          );
+          yield* options.linkedByApp
+            ? Effect.all([
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${CLOUD_LINKED_USER_ID}.bin`,
+                  "user_app_linked",
+                ),
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${CLOUD_ENDPOINT_RUNTIME_CONFIG}.bin`,
+                  "{}",
+                ),
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${RELAY_ENVIRONMENT_CREDENTIAL_SECRET}.bin`,
+                  "relay_credential",
+                ),
+              ])
+            : fs.writeFileString(
+                `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
+                options.linkMode ?? "managed",
+              );
         }
 
         yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
@@ -219,6 +241,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       }),
     );
 
+    it.effect("status checks reachability for an environment linked from the app", () =>
+      Effect.gen(function* () {
+        const { requests, printed } = yield* runConnect(process.pid, {
+          command: "status",
+          linkedByApp: true,
+        });
+
+        assert.deepEqual(requests, ["POST /api/connect/reachability"]);
+        assert.notInclude(printed, "Exposure: disabled");
+        assert.notInclude(printed, "Authorization: missing");
+        assert.notInclude(printed, "Next:");
+      }),
+    );
+
     it.effect("status does not report a publish-only link as exposed", () =>
       Effect.gen(function* () {
         const { printed } = yield* runConnect(process.pid, {
@@ -239,6 +275,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         assert.include(printed, "T3 Connect is disabled locally.");
         assert.notInclude(warnings.join("\n"), "cloudflared process");
       }),
+    );
+  },
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect link next step",
+  (it) => {
+    it.effect("tells the user to restart a server that is already running, not to start one", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-link-test-" });
+        const relayClientPath = `${baseDir}/bin/cloudflared`;
+        yield* fs.makeDirectory(`${baseDir}/bin`, { recursive: true });
+        yield* fs.writeFileString(
+          relayClientPath,
+          `#!/bin/sh\necho "cloudflared version ${RelayClient.CLOUDFLARED_VERSION}"\n`,
+        );
+        yield* fs.chmod(relayClientPath, 0o755);
+        yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/secrets/cloud-cli-oauth-token.bin`,
+          JSON.stringify({
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAtEpochMs: 4_102_444_800_000,
+            identity: "user@example.com",
+          }),
+        );
+        const state = yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3773,
+        });
+        yield* persistServerRuntimeState({
+          path: `${baseDir}/userdata/server-runtime.json`,
+          state: { ...state, pid: process.pid },
+        });
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          "link",
+          "--headless",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_CLOUDFLARED_PATH: relayClientPath } }),
+            ),
+          ),
+        );
+
+        const printed = (yield* TestConsole.logLines).join("\n");
+        const restart = yield* resolveHostCliCommand("service restart", ["--base-dir", baseDir]);
+        const serve = yield* resolveHostCliCommand("serve", ["--base-dir", baseDir]);
+        assert.include(printed, "✓ Authorized as user@example.com");
+        assert.include(printed, `\`${restart.command}\``);
+        assert.notInclude(printed, `\`${serve.command}\``);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(Layer.fresh(TestConsole.layer)),
+      ),
     );
   },
 );

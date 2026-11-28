@@ -36,6 +36,7 @@ const state = vi.hoisted(() => ({
   createProject: vi.fn(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
+  mutateProviderInstance: vi.fn(),
   completeOnboarding: vi.fn(),
   onDone: vi.fn(),
   scan: vi.fn(),
@@ -112,6 +113,7 @@ vi.mock(import("../../state/server"), async (original) => {
       providersValueAtom: (() => state.providers) as never,
       configValueAtom: (() => state.config) as never,
       refreshProviders: "refreshProviders" as never,
+      mutateProviderInstance: "mutateProviderInstance" as never,
     },
   };
 });
@@ -184,6 +186,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       | "createProject"
       | "importThreads"
       | "refreshProviders"
+      | "mutateProviderInstance"
       | "openTerminal"
       | "writeTerminal"
       | "closeTerminal",
@@ -316,12 +319,19 @@ async function click(label: string) {
   await act(async () => target.click());
 }
 
-async function mountWelcome() {
-  return render(
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <WelcomePage environmentId={primaryId} onDone={state.onDone} />
-    </RegistryContext.Provider>,
+// Agent history is read only after "Find my projects", so most cases press it right away.
+async function mountWelcome({ findProjects = true } = {}) {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <WelcomePage environmentId={primaryId} onDone={state.onDone} />
+      </RegistryContext.Provider>,
+    ),
   );
+  if (findProjects && pageText().includes("Find my projects")) await click("Find my projects");
+  const owned = stack.move();
+  return Object.assign(screen, { [Symbol.asyncDispose]: () => owned.disposeAsync() });
 }
 
 // The mocked modules read `state`, so every test starts by replacing all of it.
@@ -351,6 +361,7 @@ function setup() {
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ importedCount: 1, skippedCount: 0 }));
   state.refreshProviders.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.completeOnboarding.mockReset().mockResolvedValue(undefined);
   state.onDone.mockReset();
   state.scan.mockReset();
@@ -370,6 +381,31 @@ function setup() {
   localStorage.removeItem(welcomeImportSelectionKey(primaryId));
   return now;
 }
+
+it("reads no agent history until Find my projects is pressed, which can also allow usage stats", async () => {
+  using _now = setup();
+  appAtomRegistry.set(state.config as Atom.Writable<unknown>, {
+    settings: { providerInstances: {} },
+  });
+  await using _screen = await mountWelcome({ findProjects: false });
+  expect(pageText()).toContain("Bring in your projects");
+  expect(state.scan).not.toHaveBeenCalled();
+
+  await click("Find my projects");
+  expect(state.scan).toHaveBeenCalledWith({ environmentId: primaryId });
+  expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+    environmentId: primaryId,
+    input: {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "upsert",
+        instanceId: readyClaude.instanceId,
+        instance: { driver: readyClaude.driver, usageAccess: "allowed" },
+      },
+    },
+  });
+  await vi.waitFor(() => button("Import 2 projects and start"));
+});
 
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();
@@ -450,11 +486,21 @@ it("waits for a ready agent to start, and Start without an agent still finishes 
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
   await using _screen = await mountWelcome();
-  expect(button("Import 2 projects and start").disabled).toBe(true);
+  expect(button("Start").disabled).toBe(true);
+  // With no agent turned on there is no history to look through.
+  expect(pageText()).not.toContain("Find my projects");
+  expect(state.scan).not.toHaveBeenCalled();
 
   await click("Start without an agent");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
-  expect(state.createProject).toHaveBeenCalledTimes(2);
+  expect(state.createProject).not.toHaveBeenCalled();
+});
+
+it("names only the agents that are turned on", async () => {
+  using _now = setup();
+  await using _screen = await mountWelcome({ findProjects: false });
+  expect(pageText()).toContain("read your Claude Code session history");
+  expect(pageText()).not.toContain("Pi");
 });
 
 it("blocks leaving the page until the imported projects have landed", async () => {

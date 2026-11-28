@@ -1,0 +1,493 @@
+import { WorkflowHook, WorkflowRunStatus } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { Argument, Command, Flag } from "effect/cli";
+
+import * as Workflows from "../workflows/Workflows.ts";
+import { WorkflowRun, WorkflowStep } from "../workflows/WorkflowStore.ts";
+import { projectLocationFlags } from "./config.ts";
+import {
+  jsonFlag,
+  printJson,
+  reportThreadErrors,
+  type ThreadTools,
+  ThreadUsageError,
+  withThreadTools,
+} from "./thread.ts";
+
+const RunResult = Schema.Struct({ run: WorkflowRun, steps: Schema.Array(WorkflowStep) });
+const RunsResult = Schema.Struct({ runs: Schema.Array(WorkflowRun) });
+const QuestionsResult = Schema.Struct({ questions: Schema.Array(Workflows.WorkflowQuestion) });
+const HooksResult = Schema.Struct({ hooks: Schema.Array(WorkflowHook) });
+const WithdrawResult = Schema.Struct({
+  ...RunResult.fields,
+  withdrawal: Schema.Literals(["withdrawn", "not_open"]),
+});
+const ThreadTitleResult = Schema.Struct({ thread: Schema.Struct({ title: Schema.String }) });
+const SignalResult = Schema.Struct({ delivery: Schema.Literals(["delivered", "buffered"]) });
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
+const jsonArgument = (text: string, what: string) =>
+  decodeJson(text).pipe(
+    Effect.mapError(() => new ThreadUsageError({ detail: `${what} is not valid JSON.` })),
+  );
+
+const runLine = (run: WorkflowRun) =>
+  [run.runId, run.status.padEnd(9), run.workflow, run.title, run.detail ?? ""].join("  ").trimEnd();
+
+const printRun = Effect.fn("cli.workflow.printRun")(function* (
+  result: typeof RunResult.Type,
+  json: boolean,
+) {
+  if (json) return yield* printJson(result);
+  yield* Console.log(runLine(result.run));
+  for (const step of result.steps) {
+    yield* Console.log(
+      `  ${step.status.padEnd(9)}  ${step.kind.padEnd(5)}  ${step.name}${
+        step.attempts > 1 ? `  (${step.attempts} tries)` : ""
+      }${step.environmentId === null ? "" : `  in ${step.environmentId}`}${
+        step.detail === null ? "" : `  ${step.detail}`
+      }`,
+    );
+  }
+  if (result.run.result !== null) yield* printJson(result.run.result);
+});
+
+const runArgument = Argument.String("run").pipe(Argument.withDescription("Run id."));
+const readRun = (tools: ThreadTools, runId: string) =>
+  tools.call("t3_workflow", { action: "read", runId }, RunResult);
+
+const startCommand = Command.make("start", {
+  ...projectLocationFlags,
+  workflow: Argument.String("workflow").pipe(Argument.withDescription("Workflow name.")),
+  input: Flag.String("input").pipe(
+    Flag.withDescription("The run's payload, as JSON. Defaults to {}."),
+    Flag.withDefault("{}"),
+  ),
+  key: Flag.String("key").pipe(
+    Flag.withDescription(
+      "Required. Names this run: starting again with the same key is the same run, not a second one.",
+    ),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Start a workflow run and print it."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const input = yield* jsonArgument(flags.input, "--input");
+      if (flags.key.trim() === "") {
+        return yield* new ThreadUsageError({ detail: "--key cannot be blank." });
+      }
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.workflow.start")(function* (tools) {
+          const started = yield* tools.call(
+            "t3_workflow",
+            { action: "start", workflow: flags.workflow, input, idempotencyKey: flags.key },
+            RunResult,
+          );
+          yield* printRun(started, flags.json);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const listCommand = Command.make("list", {
+  ...projectLocationFlags,
+  status: Flag.Literals("status", WorkflowRunStatus.literals).pipe(
+    Flag.withDescription(
+      "Only runs in this state. A skipped run is listed only with `skipped`, unless another run invoked it.",
+    ),
+    Flag.optional,
+  ),
+  tag: Flag.String("tag").pipe(
+    Flag.withDescription("Only runs their workflow tagged with this."),
+    Flag.optional,
+  ),
+  subject: Flag.String("subject").pipe(
+    Flag.withDescription("Only runs about this: the web address of their subject, or a thread id."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List workflow runs, newest first."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.list")(function* (tools) {
+        const { runs } = yield* tools.call(
+          "t3_workflow",
+          {
+            action: "list",
+            ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
+            ...(Option.isSome(flags.tag) ? { tag: flags.tag.value } : {}),
+            ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
+          },
+          RunsResult,
+        );
+        // A workflow skips what was never its to do, and that is most of what a trigger brings.
+        const listed = Option.isSome(flags.status)
+          ? runs
+          : runs.filter((run) => run.status !== "skipped" || run.parentRunId !== null);
+        if (flags.json) return yield* printJson(listed);
+        for (const run of listed) yield* Console.log(runLine(run));
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const showCommand = Command.make("show", {
+  ...projectLocationFlags,
+  run: runArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Show a run and its steps."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.show")(function* (tools) {
+        yield* printRun(yield* readRun(tools, flags.run), flags.json);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+/** Why `action` would leave the run as it is, or undefined when it would act. */
+const noOpReason = (action: "resume" | "cancel", run: WorkflowRun) => {
+  if (action === "cancel") {
+    return run.endedAt === null
+      ? undefined
+      : `Run ${run.runId} is ${run.status}; nothing to cancel.`;
+  }
+  return run.status === "paused"
+    ? undefined
+    : `Run ${run.runId} is ${run.status}; nothing to resume.`;
+};
+
+const steer = Effect.fn("cli.workflow.steer")(function* (
+  tools: ThreadTools,
+  action: "resume" | "cancel",
+  flags: { readonly run: string; readonly json: boolean; readonly reason: Option.Option<string> },
+) {
+  const before = yield* readRun(tools, flags.run);
+  const skipped = noOpReason(action, before.run);
+  if (skipped !== undefined) {
+    // Stderr, so --json output stays the run alone.
+    yield* Console.error(skipped);
+    return yield* printRun(before, flags.json);
+  }
+  const after = yield* tools.call(
+    "t3_workflow",
+    {
+      action,
+      runId: flags.run,
+      ...(Option.isSome(flags.reason) ? { reason: flags.reason.value } : {}),
+    },
+    RunResult,
+  );
+  yield* printRun(after, flags.json);
+});
+
+const resumeCommand = Command.make("resume", {
+  ...projectLocationFlags,
+  run: runArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Run a paused run's failed step again."),
+  Command.withHandler((flags) =>
+    withThreadTools(flags, (tools) =>
+      steer(tools, "resume", { ...flags, reason: Option.none() }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const cancelCommand = Command.make("cancel", {
+  ...projectLocationFlags,
+  run: runArgument,
+  reason: Flag.String("reason").pipe(
+    Flag.withDescription("Why, kept as the run's detail."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Cancel a run."),
+  Command.withHandler((flags) =>
+    withThreadTools(flags, (tools) => steer(tools, "cancel", flags)).pipe(reportThreadErrors),
+  ),
+);
+
+const signalCommand = Command.make("signal", {
+  ...projectLocationFlags,
+  value: Argument.String("value").pipe(
+    Argument.withDescription('What the wait receives, as JSON. A question takes {"choice": ...}.'),
+  ),
+  run: Flag.String("run").pipe(
+    Flag.withDescription("Run id. Pass with --wait, not with --workflow and --channel."),
+    Flag.optional,
+  ),
+  wait: Flag.String("wait").pipe(
+    Flag.withDescription("The wait's or question's name in that run."),
+    Flag.optional,
+  ),
+  workflow: Flag.String("workflow").pipe(
+    Flag.withDescription("Workflow name. Pass with --channel when the run is not known."),
+    Flag.optional,
+  ),
+  channel: Flag.String("channel").pipe(
+    Flag.withDescription("The channel the wait opened with."),
+    Flag.optional,
+  ),
+  id: Flag.String("id").pipe(
+    Flag.withDescription(
+      "Names this signal: sending it again with the same id is the same signal.",
+    ),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription("Wake a waiting run, or answer its question."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const value = yield* jsonArgument(flags.value, "The value");
+      const byRun = Option.isSome(flags.run) || Option.isSome(flags.wait);
+      const byChannel = Option.isSome(flags.workflow) || Option.isSome(flags.channel);
+      if (byRun && byChannel) {
+        return yield* new ThreadUsageError({
+          detail:
+            "Address a signal with --run and --wait, or with --workflow and --channel, not both.",
+        });
+      }
+      const completeRun = Option.isSome(flags.run) && Option.isSome(flags.wait);
+      const completeChannel = Option.isSome(flags.workflow) && Option.isSome(flags.channel);
+      if (!completeRun && !completeChannel) {
+        return yield* new ThreadUsageError({
+          detail: "Address a signal with --run and --wait, or with --workflow and --channel.",
+        });
+      }
+      // An agent answers through this command, so its answer is named after its thread.
+      const callingThread = (yield* HostProcess.Environment).T3CODE_THREAD_ID?.trim();
+      const threadTitle =
+        callingThread === undefined || callingThread === ""
+          ? undefined
+          : yield* withThreadTools({ ...flags, json: false }, (tools) =>
+              tools.call(
+                "t3_thread_read",
+                { threadId: callingThread, limit: 1, runLimit: 1 },
+                ThreadTitleResult,
+              ),
+            ).pipe(
+              Effect.map(({ thread }) => thread.title.trim()),
+              Effect.orElseSucceed(() => undefined),
+            );
+      yield* withThreadTools(
+        // Named on the answer to a question it sends.
+        { ...flags, json: false, clientLabel: threadTitle || "t3 workflow signal" },
+        Effect.fn("cli.workflow.signal")(function* (tools) {
+          const { delivery } = yield* tools.call(
+            "t3_workflow",
+            {
+              action: "signal",
+              value,
+              ...(Option.isSome(flags.run) ? { runId: flags.run.value } : {}),
+              ...(Option.isSome(flags.wait) ? { wait: flags.wait.value } : {}),
+              ...(Option.isSome(flags.workflow) ? { workflow: flags.workflow.value } : {}),
+              ...(Option.isSome(flags.channel) ? { channel: flags.channel.value } : {}),
+              ...(Option.isSome(flags.id) ? { signalId: flags.id.value } : {}),
+            },
+            SignalResult,
+          );
+          yield* Console.log(
+            delivery === "delivered" ? "Delivered." : "Kept until a run waits for it.",
+          );
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const withdrawCommand = Command.make("withdraw", {
+  ...projectLocationFlags,
+  run: Flag.String("run").pipe(Flag.withDescription("Run id.")),
+  wait: Flag.String("wait").pipe(Flag.withDescription("The question's name in that run.")),
+  reason: Flag.String("reason").pipe(
+    Flag.withDescription("Why, kept on the question's step."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "End a run's open question unanswered. The run goes on as if the question timed out.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.withdraw")(function* (tools) {
+        const { withdrawal, ...result } = yield* tools.call(
+          "t3_workflow",
+          {
+            action: "withdraw",
+            runId: flags.run,
+            wait: flags.wait,
+            ...(Option.isSome(flags.reason) ? { reason: flags.reason.value } : {}),
+          },
+          WithdrawResult,
+        );
+        if (withdrawal === "not_open") {
+          // Stderr, so --json output stays the run alone.
+          yield* Console.error(
+            `Run ${flags.run} has no open question "${flags.wait}"; nothing to withdraw.`,
+          );
+        }
+        yield* printRun(result, flags.json);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const questionsCommand = Command.make("questions", {
+  ...projectLocationFlags,
+  kind: Flag.String("kind").pipe(
+    Flag.withDescription("Only questions of this kind, as their workflow's `asks` names it."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List the questions runs are waiting on a person to answer."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.questions")(function* (tools) {
+        const { questions } = yield* tools.call(
+          "t3_workflow",
+          { action: "questions", ...(Option.isSome(flags.kind) ? { kind: flags.kind.value } : {}) },
+          QuestionsResult,
+        );
+        if (flags.json) return yield* printJson(questions);
+        for (const question of questions) {
+          yield* Console.log(
+            [question.runId, question.name, question.kind ?? ""].join("  ").trimEnd(),
+          );
+          yield* printJson(question.request);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const hooksCommand = Command.make("hooks", {
+  ...projectLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List the URL paths that start runs. Each holds its hook's secret; add the server's origin.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.hooks")(function* (tools) {
+        const { hooks } = yield* tools.call("t3_workflow", { action: "hooks" }, HooksResult);
+        if (flags.json) return yield* printJson(hooks);
+        for (const hook of hooks) {
+          yield* Console.log(`${hook.workflow}  ${hook.name}  ${hook.path}`);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const StoreResult = Schema.Struct({
+  entries: Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.Json })),
+});
+const keyArgument = Argument.String("key").pipe(Argument.withDescription("The key in the store."));
+
+const storeListCommand = Command.make("list", {
+  ...projectLocationFlags,
+  prefix: Argument.String("prefix").pipe(
+    Argument.withDescription("Only keys that start with this."),
+    Argument.withDefault(""),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List what workflows keep in the store."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.store.list")(function* (tools) {
+        const { entries } = yield* tools.call(
+          "t3_workflow",
+          { action: "store", ...(flags.prefix === "" ? {} : { key: flags.prefix }) },
+          StoreResult,
+        );
+        if (flags.json) return yield* printJson(entries);
+        for (const entry of entries) {
+          yield* Console.log(entry.key);
+          yield* printJson(entry.value);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const storeSetCommand = Command.make("set", {
+  ...projectLocationFlags,
+  key: keyArgument,
+  value: Argument.String("value").pipe(Argument.withDescription("The value, as JSON.")),
+}).pipe(
+  Command.withDescription("Set a key of the store, as a person flipping a switch does."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const value = yield* jsonArgument(flags.value, "The value");
+      yield* withThreadTools(
+        { ...flags, json: false },
+        Effect.fn("cli.workflow.store.set")(function* (tools) {
+          yield* tools.call(
+            "t3_workflow",
+            { action: "store_set", key: flags.key, value },
+            StoreResult,
+          );
+          yield* Console.log(`Set ${flags.key}.`);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const storeDeleteCommand = Command.make("delete", {
+  ...projectLocationFlags,
+  key: keyArgument,
+}).pipe(
+  Command.withDescription("Delete a key of the store."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      { ...flags, json: false },
+      Effect.fn("cli.workflow.store.delete")(function* (tools) {
+        yield* tools.call("t3_workflow", { action: "store_delete", key: flags.key }, StoreResult);
+        yield* Console.log(`Deleted ${flags.key}.`);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const storeCommand = Command.make("store").pipe(
+  Command.withDescription("See and change what workflows keep between runs."),
+  Command.withSubcommands([storeListCommand, storeSetCommand, storeDeleteCommand]),
+);
+
+export const workflowCommand = Command.make("workflow").pipe(
+  Command.withDescription("Start, inspect and steer durable workflow runs on the running server."),
+  Command.withSubcommands([
+    startCommand,
+    listCommand,
+    showCommand,
+    resumeCommand,
+    cancelCommand,
+    signalCommand,
+    withdrawCommand,
+    questionsCommand,
+    hooksCommand,
+    storeCommand,
+  ]),
+);

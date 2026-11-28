@@ -55,16 +55,36 @@ function removeReviewFileId(fileIds: ReadonlyArray<string>, fileId: string): Rea
   return fileIds.includes(fileId) ? fileIds.filter((id) => id !== fileId) : fileIds;
 }
 
+// A repository filter shows part of a section; what is stored for the rest of it stays.
+function withStoredOutsideView(
+  inView: ReadonlyArray<string>,
+  stored: ReadonlyArray<string> | undefined,
+  next: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  if (stored === undefined) return next;
+  const visible = new Set(inView);
+  const outside = stored.filter((entry) => !visible.has(entry));
+  return outside.length === 0 ? next : [...outside, ...next];
+}
+
 export function useReviewFileVisibility(input: {
   readonly threadKey: string | null;
   readonly sectionId: string | null;
   readonly files: ReadonlyArray<ReviewRenderableFile>;
+  /** Every file of the section; `files` is part of it under a repository filter. */
+  readonly sectionFiles: ReadonlyArray<ReviewRenderableFile>;
   readonly cachedExpandedFileIds: ReadonlyArray<string> | undefined;
   readonly cachedViewedFileIds: ReadonlyArray<string> | undefined;
 }) {
-  const { cachedExpandedFileIds, cachedViewedFileIds, files, sectionId, threadKey } = input;
+  const { cachedExpandedFileIds, cachedViewedFileIds, files, sectionFiles, sectionId, threadKey } =
+    input;
 
   const expansionKeys = useMemo(() => getReviewFileExpansionKeys(files), [files]);
+  // Nothing stored means every file is expanded, which the first change has to write down.
+  const sectionExpansionKeys = useMemo(
+    () => getReviewFileExpansionKeys(sectionFiles),
+    [sectionFiles],
+  );
   const expandedFileIds = useMemo(() => {
     const expandedKeys = new Set(getExpandedReviewFileKeys(expansionKeys, cachedExpandedFileIds));
     return files
@@ -95,11 +115,15 @@ export function useReviewFileVisibility(input: {
       if (key === undefined) {
         return;
       }
-      updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+      updateReviewExpandedFileIds(threadKey, sectionId, (existing = sectionExpansionKeys) =>
+        withStoredOutsideView(
+          expansionKeys,
+          existing,
+          toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+        ),
       );
     },
-    [expansionKeys, files, sectionId, threadKey],
+    [expansionKeys, files, sectionExpansionKeys, sectionId, threadKey],
   );
 
   const toggleViewedFile = useCallback(
@@ -110,17 +134,25 @@ export function useReviewFileVisibility(input: {
 
       const shouldCollapse = !viewedFileIds.includes(fileId);
       updateReviewViewedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
+        withStoredOutsideView(
+          files.map((file) => file.id),
+          existing,
+          toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
+        ),
       );
 
       const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
       if (shouldCollapse && key !== undefined) {
-        updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-          removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+        updateReviewExpandedFileIds(threadKey, sectionId, (existing = sectionExpansionKeys) =>
+          withStoredOutsideView(
+            expansionKeys,
+            existing,
+            removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+          ),
         );
       }
     },
-    [expansionKeys, files, sectionId, threadKey, viewedFileIds],
+    [expansionKeys, files, sectionExpansionKeys, sectionId, threadKey, viewedFileIds],
   );
 
   return {

@@ -21,6 +21,7 @@ import type * as Context from "../Context.ts"
 import * as Effect from "../Effect.ts"
 import * as Exit from "../Exit.ts"
 import { pipe } from "../Function.ts"
+import * as InternalRecord from "../internal/record.ts"
 import * as InternalSchemaCause from "../internal/schema/cause.ts"
 import * as Result from "../Result.ts"
 import * as Schema from "../Schema.ts"
@@ -122,14 +123,18 @@ export class Asserts<S extends Schema.Constraint> {
      */
     fields: {
       /**
-       * Asserts that schema fields have equal AST structures.
+       * Asserts that own enumerable string and symbol fields have equal AST structures.
+       *
+       * **Details**
+       *
+       * Non-enumerable and inherited field definitions are ignored in both inputs.
        *
        * @stability unstable
        */
       equals: (a: Schema.Struct.Fields, b: Schema.Struct.Fields) => {
         assert.deepStrictEqual(
-          Object.fromEntries(Reflect.ownKeys(a).map((key) => [key, SchemaAST.getAST(a[key])])),
-          Object.fromEntries(Reflect.ownKeys(b).map((key) => [key, SchemaAST.getAST(b[key])]))
+          Object.fromEntries(InternalRecord.ownEnumerableKeys(a).map((key) => [key, SchemaAST.getAST(a[key])])),
+          Object.fromEntries(InternalRecord.ownEnumerableKeys(b).map((key) => [key, SchemaAST.getAST(b[key])]))
         )
       }
     },

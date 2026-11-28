@@ -930,10 +930,11 @@ export const suite = (
 
         it.effect("should write data to an input fd (fd3)", () =>
           Effect.gen(function*() {
-            // Use a shell script that reads from fd3 and echoes it to stdout
-            // The script reads from file descriptor 3 and outputs to stdout
+            // Delay the write so `cat` reads before data arrives and fails if fd3 is non-blocking
             const inputData = "data from parent"
-            const inputStream = Stream.make(new TextEncoder().encode(inputData))
+            const inputStream = Stream.fromEffect(
+              Effect.as(TestClock.withLive(Effect.sleep("100 millis")), new TextEncoder().encode(inputData))
+            )
 
             const handle = yield* ChildProcess.make("sh", ["-c", "cat <&3"], {
               additionalFds: {
@@ -1299,28 +1300,45 @@ export const suite = (
           }).pipe(Effect.provide(layer)))
 
         it.effect.skipIf(!options.processGroups)(
-          "should cleanup descendants after an unrefed parent exits non-zero",
+          "should not cleanup descendants after an unrefed parent exits non-zero",
           () =>
             Effect.gen(function*() {
-              const path = yield* Path.Path
-              const cwd = yield* path.fromFileUrl(new URL("./fixtures/bash/", import.meta.url))
               const scope = yield* Scope.make()
 
-              const handle = yield* Scope.provide(scope)(Effect.gen(function*() {
-                return yield* ChildProcess.make({ cwd })`./parent-exits-early.sh`
-              })).pipe(Effect.provide(layer))
+              // The parent leaves a descendant behind and exits once stdin
+              // receives a line
+              const handle = yield* Scope.provide(scope)(
+                ChildProcess.make("sh", ["-c", "sleep 30 & read -r _; exit 1"])
+              ).pipe(Effect.provide(layer))
 
-              // @effect-diagnostics-next-line floatingEffect:off
-              yield* Scope.provide(scope)(handle.unref).pipe(Effect.provide(layer))
-              yield* Scope.close(scope, Exit.void)
+              // Live (non-zombie) members of the parent's process group
+              const countLiveGroupMembers = ChildProcess.make("sh", [
+                "-c",
+                `ps -A -o pgid= -o stat= | awk '$1 == ${handle.pid} && $2 !~ /^Z/' | wc -l`
+              ]).pipe(
+                Effect.flatMap((handle) => decodeByteStream(handle.stdout)),
+                Effect.map((output) => Number.parseInt(output))
+              )
 
-              const exitCode = yield* handle.exitCode
-              assert.strictEqual(exitCode, ChildProcessSpawner.ExitCode(1))
+              yield* Effect.gen(function*() {
+                // @effect-diagnostics-next-line floatingEffect:off
+                yield* Scope.provide(scope)(handle.unref).pipe(Effect.provide(layer))
+                yield* Stream.run(Stream.make(new TextEncoder().encode("\n")), handle.stdin)
 
-              yield* TestClock.withLive(Effect.sleep("100 millis"))
+                const exitCode = yield* handle.exitCode
+                assert.strictEqual(exitCode, ChildProcessSpawner.ExitCode(1))
 
-              const remaining = yield* countMatchingProcesses("parent-exits-early-")
-              assert.strictEqual(remaining, 0)
+                yield* TestClock.withLive(Effect.sleep("100 millis"))
+
+                assert.isAbove(yield* countLiveGroupMembers, 0)
+
+                yield* Scope.close(scope, Exit.void)
+
+                assert.isAbove(yield* countLiveGroupMembers, 0)
+              }).pipe(Effect.ensuring(Effect.ignore(handle.kill({ killSignal: "SIGKILL" }))))
+
+              // `handle.kill` still signals the unref'ed group
+              assert.strictEqual(yield* countLiveGroupMembers, 0)
             }).pipe(Effect.provide(layer))
         )
 

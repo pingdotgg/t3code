@@ -782,7 +782,9 @@ export interface ToolResultPart extends BasePart<"tool-result", ToolResultPartOp
    */
   readonly isFailure: boolean
   /**
-   * The result returned by the tool execution.
+   * The result returned by the tool execution. Results of locally handled
+   * tools hold their JSON encoding; provider-executed tools keep the
+   * provider's payload.
    */
   readonly result: unknown
   /**
@@ -816,7 +818,9 @@ export interface ToolResultPartEncoded extends BasePartEncoded<"tool-result", To
    */
   readonly isFailure: boolean
   /**
-   * The result returned by the tool execution.
+   * The result returned by the tool execution. Results of locally handled
+   * tools hold their JSON encoding; provider-executed tools keep the
+   * provider's payload.
    */
   readonly result: unknown
   /**
@@ -2194,7 +2198,9 @@ const mergeOptions = (left: ProviderOptions, right: ProviderOptions): ProviderOp
  * reasoning streams into assistant parts, preserving provider metadata as
  * prompt options, placing tool calls and approval requests in an assistant
  * message, and placing non-preliminary tool results in a tool message using
- * their encoded results.
+ * their encoded results. Results for tool calls from an earlier message, such
+ * as resolved approvals, are placed in a tool message before the assistant
+ * message.
  *
  * **Example** (Creating prompts from response parts)
  *
@@ -2238,6 +2244,13 @@ export const fromResponseParts = (parts: ReadonlyArray<Response.AnyPart>): Promp
 
   const assistantParts: Array<AssistantMessagePart | undefined> = []
   const toolParts: Array<ToolMessagePart> = []
+  const priorToolParts: Array<ToolMessagePart> = []
+  const toolCallIds = new Set<string>()
+  for (const part of parts) {
+    if (part.type === "tool-call") {
+      toolCallIds.add(part.id)
+    }
+  }
 
   const activeTextDeltas = new Map<string, { index: number; text: string; options: ProviderOptions }>()
   const activeReasoningDeltas = new Map<string, { index: number; text: string; options: ProviderOptions }>()
@@ -2329,7 +2342,11 @@ export const fromResponseParts = (parts: ReadonlyArray<Response.AnyPart>): Promp
       // Tool Result Parts (skip preliminary results)
       case "tool-result": {
         if (part.preliminary !== true) {
-          const target = part.providerExecuted === true ? assistantParts : toolParts
+          const target = part.providerExecuted === true
+            ? assistantParts
+            : toolCallIds.has(part.id)
+            ? toolParts
+            : priorToolParts
           target.push(makePart("tool-result", {
             id: part.id,
             name: part.name,
@@ -2364,11 +2381,15 @@ export const fromResponseParts = (parts: ReadonlyArray<Response.AnyPart>): Promp
 
   const assistantContent = assistantParts.filter((part) => part !== undefined)
 
-  if (assistantContent.length === 0 && toolParts.length === 0) {
+  if (assistantContent.length === 0 && toolParts.length === 0 && priorToolParts.length === 0) {
     return empty
   }
 
   const messages: Array<Message> = []
+
+  if (priorToolParts.length > 0) {
+    messages.push(makeMessage("tool", { content: priorToolParts }))
+  }
 
   if (assistantContent.length > 0) {
     messages.push(makeMessage("assistant", { content: assistantContent }))

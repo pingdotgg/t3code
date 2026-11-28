@@ -2,18 +2,27 @@ import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
+  IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderThreadId,
+  ProviderUploadFeedbackError,
   RunId,
   ThreadId,
   WS_METHODS,
+  type IssueDetail,
+  type IssueRef,
+  type OrchestrationV2ProviderThread,
+  type ProviderUploadFeedbackInput,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import {
-  compileResolvedKeybindingsConfig,
-  mergeWithDefaultKeybindings,
-} from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
@@ -24,6 +33,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
@@ -80,7 +90,12 @@ function acceptAttachmentUploads(): Disposable {
   };
 }
 
+// One input event, where typing a key at a time takes seconds on a loaded CI runner.
+const insertText = (text: string) => cdp().send("Input.insertText", { text });
+
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
+class LaunchRefused extends Schema.TaggedError<LaunchRefused>()("LaunchRefused", {}) {}
+
 function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   let release = () => {};
   const held = new Promise<void>((resolve) => {
@@ -94,7 +109,7 @@ function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   return { calls, release, [Symbol.dispose]: () => answer[Symbol.dispose]() };
 }
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
@@ -104,10 +119,209 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
+// Null runs the real compression; a test sets it to hold an image in preparation.
+const compression = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+vi.mock(import("~/lib/imageCompression"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    prepareImageForAttachment: async (...args) => {
+      await compression.gate;
+      return actual.prepareImageForAttachment(...args);
+    },
+  };
+});
+
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+
+it("opens a linked Linear issue from an inactive thread's sidebar badge", async () => {
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const first = threadWithHistory("issue-first", 1);
+  const linked = threadWithHistory("issue-linked", 1);
+  const issueRef = {
+    projectId: PROJECT_ID,
+    tracker: IssueTrackerKind.make("linear"),
+    host: "linear.app",
+    scope: "WEB",
+    key: "WEB-123",
+  } satisfies IssueRef;
+  const issue: ThreadIssueLink = {
+    ...issueRef,
+    url: "https://linear.app/example/issue/WEB-123/add-keyboard-support",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    displayKey: "#123",
+    title: "Add keyboard support",
+  };
+  const completed = {
+    ...issue,
+    key: "WEB-124",
+    displayKey: "WEB-124",
+    url: "https://linear.app/example/issue/WEB-124/keep-tabs-visible",
+    title: "Keep tabs visible",
+  };
+  const grouped = threadWithHistory("issue-grouped", 1);
+  using _environment = installFakeEnvironment([
+    first,
+    {
+      ...linked,
+      issues: [issue],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 124,
+          url: "https://github.com/pingdotgg/t3code/pull/124",
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    },
+    { ...grouped, issues: [completed, issue] },
+  ]);
+  const liveTitle = "Add keyboard shortcuts to the sidebar";
+  using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
+    const isCompleted = input.key === completed.key;
+    expect(input).toEqual({ ...issueRef, key: isCompleted ? completed.key : issue.key });
+    return Effect.succeed({
+      ...(isCompleted ? completed : issue),
+      title: isCompleted ? completed.title : liveTitle,
+      author: { login: "sam", name: null, avatarUrl: null },
+      state: isCompleted
+        ? { category: "closed", closeReason: "completed", name: "Done" }
+        : { category: "open", name: "Open" },
+      createdAt: issue.linkedAt,
+      updatedAt: issue.linkedAt,
+      closedAt: null,
+      assignees: [],
+      labels: [],
+      commentCount: 3,
+      projectTitle: "render",
+      writable: false,
+      capabilities: {
+        create: false,
+        edit: false,
+        comment: false,
+        labels: false,
+        assignees: false,
+        reactions: false,
+        templates: false,
+        linkedPullRequests: !isCompleted,
+        events: false,
+        search: false,
+      },
+      viewerPermissions: {
+        setState: false,
+        comment: false,
+        edit: false,
+        labels: false,
+        assignees: false,
+      },
+      states: [],
+      viewer: null,
+      body: isCompleted
+        ? ""
+        : Array.from({ length: 40 }, (_, index) => `Reproduction step ${index + 1}`).join("\n\n"),
+      comments: [],
+      commentsCursor: null,
+      events: [],
+      linkedPullRequests: isCompleted
+        ? []
+        : [
+            {
+              repository: "pingdotgg/t3code",
+              number: 124,
+              url: "https://github.com/pingdotgg/t3code/pull/124",
+              title: "Fix keyboard shortcuts",
+              state: "open",
+              isDraft: false,
+              closesIssue: false,
+            },
+          ],
+    } satisfies IssueDetail);
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const badge = page.getByRole("button", {
+    name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
+  });
+  await expect.element(badge).toBeVisible();
+  expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
+  expect(badge.element()).toHaveTextContent("123");
+  expect(badge.element()).not.toHaveTextContent("#");
+  const prBadge = page.getByRole("link", { name: "PR #124, status pending" });
+  await expect.element(prBadge).toHaveTextContent("124");
+  for (const control of [badge, prBadge]) {
+    expect(control.element().querySelector("span")).toHaveClass(
+      "contents",
+      "text-xs",
+      "tabular-nums",
+    );
+  }
+  const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
+  await vi.waitFor(() =>
+    expect(groupedBadge.element().querySelector("span")).toHaveClass(/text-emerald-600/),
+  );
+  await userEvent.hover(badge);
+  const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
+  const previewLink = page.getByRole("link", { name: issueName });
+  await userEvent.hover(previewLink.getByText("sam", { exact: true }));
+  await expect.element(previewLink).toBeVisible();
+  const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(() => previewLink.element().dispatchEvent(contextMenu));
+  expect(contextMenu.defaultPrevented).toBe(false);
+  await userEvent.click(badge);
+  const issueRow = page
+    .getByRole("region", { name: "Linked issues" })
+    .getByRole("link", { name: issueName });
+  await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "Linear" })).toBeVisible();
+  await expect.element(issueRow.getByText(issue.scope, { exact: true })).toBeVisible();
+  await userEvent.click(issueRow);
+  expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
+  await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+  const linkedPr = page.getByRole("button", { name: /Fix keyboard shortcuts/ });
+  const issueScroller = () =>
+    linkedPr.element().closest<HTMLElement>("[data-pull-request-summary-scroll]")!;
+  const prRow = await linkedPr.findElement();
+  await expect.element(page.getByText("Reproduction step 40", { exact: true })).toBeVisible();
+  prRow.scrollIntoView({ block: "center" });
+  const issueScrollTop = issueScroller().scrollTop;
+  expect(issueScrollTop).toBeGreaterThan(0);
+  await userEvent.click(linkedPr);
+  await expect.element(linkedPr).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: issue.key, exact: true }));
+  await vi.waitFor(() => expect(issueScroller().scrollTop).toBe(issueScrollTop));
+  await act(() => useRightPanelStore.getState().close(scopeThreadRef(ENVIRONMENT_ID, linked.id)));
+  await expect
+    .element(
+      page.getByRole("region", { name: "Thread details" }).getByRole("link", {
+        name: issueName,
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+});
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
   const other = threadWithHistory("thread-stash-restore", 1);
@@ -251,7 +465,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+it("a failed image-only first send of a new thread keeps the new draft", async () => {
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -263,8 +477,11 @@ it("an interrupted image-only first send of a new thread says it may not have be
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
       threadId: ThreadId.make("thread-image-only-interrupted"),
     });
-  // A dropped connection interrupts a new thread's launch, which is not resent.
-  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  // A refusal fails at once; an interrupted launch would wait for a reconnect and be resent.
+  using launch = holdRpc(
+    ORCHESTRATION_V2_WS_METHODS.launchThread,
+    Effect.fail(new LaunchRefused()),
+  );
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
@@ -290,10 +507,137 @@ it("an interrupted image-only first send of a new thread says it may not have be
   await expect.element(editor).toHaveTextContent("next draft");
   launch.release();
 
-  await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
+  await expect.element(page.getByText("Message not sent")).toBeVisible();
   await expect.element(editor).toHaveTextContent("next draft");
   // With no text there is nothing to copy.
   expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
+});
+
+it.each(["new", "existing"] as const)(
+  "Enter while an image compresses shows a cancellable banner, cancels on edit or Esc, and still sends after leaving a %s thread",
+  async (kind) => {
+    const thread = threadWithHistory(`upload-wait-${kind}`, 1);
+    const other = threadWithHistory(`upload-wait-other-${kind}`, 1);
+    using _environment = installFakeEnvironment(kind === "existing" ? [thread, other] : [other], {
+      acceptCommands: true,
+    });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const draftId = DraftId.make(`draft-upload-wait-${kind}`);
+    if (kind === "new") {
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+          threadId: thread.id,
+        });
+    }
+    using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+    const router = getRouter(
+      createMemoryHistory({
+        initialEntries: [kind === "new" ? `/draft/${draftId}` : `/${ENVIRONMENT_ID}/${thread.id}`],
+      }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    const compressed = Promise.withResolvers<void>();
+    compression.gate = compressed.promise;
+    using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+    using _uploads = acceptAttachmentUploads();
+    const editor = page.getByTestId("composer-editor");
+    await expect.element(editor).toBeVisible();
+    await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+    await userEvent.click(editor);
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+
+    // Enter arms the send and shows the banner plus a disabled spinner button.
+    await userEvent.keyboard("check image{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    const waitingButton = page.getByRole("button", { name: "Sending when ready", exact: true });
+    await expect.element(waitingButton).toBeDisabled();
+    await expect.element(waitingButton).toHaveAttribute("aria-busy", "true");
+
+    // Typing disarms the queued send and keeps the edit.
+    await userEvent.keyboard(" now");
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
+    await expect.element(editor).toHaveTextContent("check image now");
+
+    // Enter arms again; Esc cancels cleanly.
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
+
+    // Enter arms again; leaving the thread still sends once the image is ready.
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
+    await expect.element(page.getByText(`Answer 0 for upload-wait-other-${kind}.`)).toBeVisible();
+
+    compressed.resolve();
+    await vi.waitFor(() => {
+      if (kind === "new") {
+        expect(launch.calls).toHaveLength(1);
+      } else {
+        expect(dispatchedCommands()).toContainEqual(
+          expect.objectContaining({
+            type: "message.dispatch",
+            threadId: thread.id,
+            attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+          }),
+        );
+      }
+    });
+    launch.release();
+  },
+);
+
+it("a file picked after the phone composer collapses still attaches", async () => {
+  const thread = threadWithHistory("thread-40993", 1);
+  using _environment = installFakeEnvironment([thread]);
+  await page.viewport(390, 844);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  await userEvent.click(editor);
+  await expect.element(page.getByRole("button", { name: "Attach files" })).toBeVisible();
+  const input = document.querySelector<HTMLInputElement>(
+    'form[data-chat-composer-form] input[type="file"]',
+  );
+  expect(input).not.toBeNull();
+
+  // Opening the native picker blurs the editor, which collapses the phone composer.
+  (editor.element() as HTMLElement).blur();
+  await expect.element(page.getByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
+  const files = new DataTransfer();
+  files.items.add(new File([PNG], "picked.png", { type: "image/png" }));
+  input!.files = files.files;
+  input!.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await expect.element(page.getByRole("img", { name: "picked.png" })).toBeVisible();
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
@@ -584,14 +928,8 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
   await page.viewport(1280, 800);
   const thread = threadWithHistory("thread-panel-shortcut", 1);
-  using _environment = installFakeEnvironment([thread], {
-    keybindings: mergeWithDefaultKeybindings(
-      compileResolvedKeybindingsConfig([
-        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
-        { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
-      ]),
-    ),
-  });
+  using _environment = installFakeEnvironment([thread]);
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -610,9 +948,44 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   await toggle.click();
   await page.getByRole("button", { name: /^Files/ }).click();
   await composer.click();
-  await userEvent.keyboard("{Control>}t{/Control}");
+  await userEvent.keyboard("{Meta>}t{/Meta}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+it("Cmd+W closes the selected right-panel tabs together", async () => {
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("thread-close-selected-tabs", 1);
+  using _environment = installFakeEnvironment([thread]);
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const panels = useRightPanelStore.getState();
+  panels.open(threadRef, "diff");
+  panels.openFile(threadRef, "notes.md");
+  panels.openFile(threadRef, "routes.ts");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+
+  const tab = (name: string) => page.getByRole("button", { name, exact: true });
+  await userEvent.click(tab("notes.md"), { modifiers: ["Shift"] });
+  await expect.element(tab("notes.md")).toHaveAttribute("aria-pressed", "true");
+  await userEvent.keyboard("{Meta>}w{/Meta}");
+  await expect.element(tab("notes.md")).not.toBeInTheDocument();
+  await expect.element(tab("routes.ts")).not.toBeInTheDocument();
+  await expect.element(tab("Diff")).toHaveAttribute("aria-pressed", "true");
+
+  await userEvent.keyboard("{Meta>}w{/Meta}");
+  await expect.element(tab("Diff")).not.toBeInTheDocument();
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
@@ -632,8 +1005,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+  useRightPanelStore.getState().openThread(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -661,4 +1034,359 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
+});
+
+it("a subagent tab shows its read-only bar under no header of its own", async () => {
+  const parent = threadWithHistory("subagent-parent", 1);
+  const subagent = {
+    ...threadWithHistory("subagent-child", 1),
+    providerSubagentOf: parent.id,
+    olderSettled: true as const,
+  };
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, subagent]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openThread(parentRef, subagent.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const pane = screen.getByTestId("side-thread-pane");
+  // No header of its own: the tab names it, and only a side chat has actions to put in one.
+  await expect.element(pane.getByRole("heading", { name: subagent.title })).not.toBeInTheDocument();
+  await expect.element(pane.getByText("Runs on its own")).toBeVisible();
+  await expect.element(pane.getByRole("button", { name: "Add to chat" })).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${subagent.title}`, exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
+    .toBeVisible();
+});
+
+it("/feedback with a pending reply runs as feedback and keeps the reply when the upload fails", async () => {
+  const history = threadWithHistory("feedback-reply", 1);
+  const at = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
+  // Without an active provider thread, `/feedback` asks for a first message instead.
+  const providerThread: OrchestrationV2ProviderThread = {
+    id: ProviderThreadId.make("provider-thread-feedback"),
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerSessionId: null,
+    appThreadId: history.id,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: [],
+    contextUsage: null,
+    nativeMetadata: null,
+    goal: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+  const thread = { ...history, providerThreads: [providerThread] };
+  // The upload queues behind the thread's visit command, which must be answered.
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  const uploads: ProviderUploadFeedbackInput[] = [];
+  using _upload = answerRpc(
+    WS_METHODS.providerUploadFeedback,
+    (input: ProviderUploadFeedbackInput) => {
+      uploads.push(input);
+      return Effect.fail(new ProviderUploadFeedbackError({ threadId: input.threadId }));
+    },
+  );
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  const replyBar = page.getByText("Replying to", { exact: true });
+  await expect.element(replyBar).toBeVisible();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await insertText("/feedback slow");
+  // Pressing it runs feedback, so it does not offer to steer the running turn.
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+
+  await vi.waitFor(() => expect(uploads).toEqual([{ threadId: thread.id, reason: "slow" }]));
+  await expect
+    .element(page.getByText("Could not send feedback to OpenAI", { exact: false }).first())
+    .toBeVisible();
+  await expect.element(replyBar).toBeVisible();
+  expect(editor.element().textContent).toBe("");
+});
+
+it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("side-attachments", 1);
+  let holdFork = false;
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => holdFork && command.type === "thread.fork",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+  const image = page.getByRole("img", { name: "shot.png" });
+  const sendImageToSideChat = async () => {
+    await userEvent.click(editor);
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    await expect.element(image).toBeVisible();
+    await insertText("/side what is this?");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(image).not.toBeInTheDocument();
+  };
+  // The tab opens once the start finished; until then `/side` refuses another side chat.
+  const sideChatTabs = page.getByRole("button", { name: "Side chat", exact: true });
+  const sentMessage = async (fields: Record<string, unknown>, openTabs: number) => {
+    await vi.waitFor(() =>
+      expect(dispatchedCommands()).toContainEqual(
+        expect.objectContaining({ type: "message.dispatch", ...fields }),
+      ),
+    );
+    await expect.element(sideChatTabs).toHaveLength(openTabs);
+  };
+
+  await sendImageToSideChat();
+  await sentMessage(
+    {
+      text: "what is this?",
+      attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+      context: {
+        version: 1,
+        records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+      },
+    },
+    1,
+  );
+
+  // A reply alone is enough to send.
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  await userEvent.click(editor);
+  await insertText("/side ");
+  await userEvent.keyboard("{Enter}");
+  await sentMessage(
+    {
+      context: expect.objectContaining({
+        records: [expect.objectContaining({ kind: "response" })],
+      }),
+    },
+    2,
+  );
+
+  // A failed start puts the message back after the draft typed meanwhile.
+  holdFork = true;
+  await sendImageToSideChat();
+  await insertText("next draft");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
+      3,
+    ),
+  );
+  await rejectPendingCommand("Side chats are paused.");
+  await expect.element(image).toBeVisible();
+  await vi.waitFor(() =>
+    expect((editor.element() as HTMLElement).innerText.split("\n").filter(Boolean)).toEqual([
+      "next draft",
+      "/side what is this?",
+    ]),
+  );
+});
+
+it("opening Settings without a page event closes the composer model picker and permissions menu", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-29219");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-29219"),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  const trigger = document.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
+  if (!trigger) throw new Error("composer model picker trigger missing");
+  await userEvent.click(trigger);
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toBeVisible();
+
+  // The desktop menu's open-settings accelerator navigates with no key or pointer event in the page.
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(search).not.toBeInTheDocument();
+
+  await act(() => router.navigate({ to: "/draft/$draftId", params: { draftId } }));
+  await page.getByRole("button", { name: /^Permissions: / }).click();
+  // The modal Settings dialog aria-hides everything outside it, so match text, not role.
+  const permissions = page.getByText("Allow commands and edits without prompts.").last();
+  await expect.element(permissions).toBeVisible();
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(permissions).not.toBeInTheDocument();
+});
+
+it("a new thread on a branch with changes opens them from thread details", async () => {
+  using _environment = installFakeEnvironment([]);
+  using _status = answerRpc(WS_METHODS.subscribeVcsStatus, () =>
+    Stream.concat(
+      Stream.make({
+        _tag: "snapshot" as const,
+        local: {
+          isRepo: true,
+          hasPrimaryRemote: false,
+          isDefaultRef: false,
+          refName: "feature",
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+          branchChanges: { baseRef: "main", insertions: 150, deletions: 97 },
+        },
+        remote: null,
+      }),
+      Stream.never,
+    ),
+  );
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-43905");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-43905"),
+      // Its own checkout, so the status subscription is this test's and not an earlier one's.
+      worktreePath: "/workspace/render-43905",
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const changesRow = page.getByRole("button", { name: /^Changes\s*vs main\s*\+150/ });
+  // The row already shows the branch's totals, so it has to open them.
+  await expect.element(changesRow).toBeEnabled();
+
+  await changesRow.click();
+  // The panel reads the draft's checkout; without one it asks for a thread instead.
+  await expect.element(page.getByText("Loading changes...")).toBeVisible();
+});
+
+async function renderRunningThread(name: string) {
+  const thread = threadWithHistory(name, 1);
+  const environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  return {
+    editor: page.getByTestId("composer-editor"),
+    [Symbol.asyncDispose]: async () => {
+      await app[Symbol.asyncDispose]();
+      environment[Symbol.dispose]();
+    },
+  };
+}
+
+it("/clear after an unresolved context reference shows plain send during a running turn", async () => {
+  await using view = await renderRunningThread("clear-dangling-reference");
+  await userEvent.click(view.editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "[Reply](t3-context://v1/response/response_gone) ");
+  view.editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await insertText("/clear ");
+
+  // Enter strips the reference and runs `/clear` locally, so it must not offer to steer.
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("Your next message starts a fresh session")).toBeVisible();
+});
+
+it("/clear with a still-compressing image offers to steer or queue during a running turn", async () => {
+  await using view = await renderRunningThread("clear-compressing-image");
+  const compressed = Promise.withResolvers<void>();
+  compression.gate = compressed.promise;
+  using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+  using _uploads = acceptAttachmentUploads();
+  await userEvent.click(view.editor);
+  await insertText("/clear ");
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  view.editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+
+  // Enter waits for the image and sends `/clear` with it to the agent, not as a local command.
+  await expect.element(page.getByRole("button", { name: /^(Steer|Queue) message$/ })).toBeVisible();
+  compressed.resolve();
 });

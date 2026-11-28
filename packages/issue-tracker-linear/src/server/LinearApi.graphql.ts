@@ -147,8 +147,6 @@ export const LinearIssue = Schema.Struct({
   title: Schema.String,
   /** Issue URL. */
   url: Schema.String,
-  /** The issue's description in markdown format. */
-  description: Schema.NullOr(Schema.String),
   /** The time at which the entity was created. */
   createdAt: Shared.DateTime,
   /**
@@ -184,6 +182,13 @@ export const LinearPageInfo = Schema.Struct({
 })
 export interface LinearPageInfo extends Schema.Struct.Type<typeof LinearPageInfo.fields> {}
 
+/** A workspace (referred to as Organization in the API). Workspaces are the root-level container for all teams, users, projects, issues, and settings. Every user belongs to at least one workspace, and all data is scoped within a workspace boundary. */
+export const Organization = Schema.Struct({
+  /** The workspace's unique URL key, used in URLs to identify the workspace. */
+  urlKey: Schema.String
+})
+export interface Organization extends Schema.Struct.Type<typeof Organization.fields> {}
+
 /** A team is the primary organizational unit in Linear. Issues belong to teams, and each team has its own workflow states, cycles, labels, and settings. Teams can be public (visible to all workspace members), private (visible only to team members), or restricted (visible only within an enclosing private-team boundary). Teams can also have sub-teams that inherit settings from their parent. */
 export const T3ViewerTeamsNodesTeam = Schema.Struct({
   /** The unique identifier of the entity. */
@@ -206,6 +211,7 @@ export const T3Viewer = GraphQL.query("T3Viewer", {
     variables: [],
     selections: [
       { name: "viewer", body: ["{...LinearUser}"] },
+      { name: "organization", body: ["{urlKey}"] },
       { name: "teams", body: ["(first:250){nodes{id key name}}"] }
     ],
     fragments: [
@@ -215,6 +221,8 @@ export const T3Viewer = GraphQL.query("T3Viewer", {
   result: Schema.Struct({
     /** The currently authenticated user making the API request. */
     viewer: LinearUser,
+    /** The authenticated user's workspace. */
+    organization: Organization,
     /** All teams whose issues the user can access. This includes public teams and private teams the user is a member of. This may differ from `administrableTeams`, which returns teams whose settings the user can change but whose issues they don't necessarily have access to. */
     teams: T3ViewerTeamsTeamConnection
   })
@@ -243,7 +251,7 @@ export const T3Issues = GraphQL.query("T3Issues", {
       { name: "issues", body: ["(first:$", "first", " after:$", "after", " filter:$", "filter", " orderBy:$", "orderBy", "){nodes{...LinearIssue}pageInfo{...LinearPageInfo}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
@@ -351,8 +359,6 @@ export const T3IssueIssueIssue = Schema.Struct({
   title: Schema.String,
   /** Issue URL. */
   url: Schema.String,
-  /** The issue's description in markdown format. */
-  description: Schema.NullOr(Schema.String),
   /** The time at which the entity was created. */
   createdAt: Shared.DateTime,
   /**
@@ -376,6 +382,8 @@ export const T3IssueIssueIssue = Schema.Struct({
   assignee: Schema.NullOr(LinearUser),
   /** Labels associated with this issue. */
   labels: LinearIssueLabelsIssueLabelConnection,
+  /** The issue's description in markdown format. */
+  description: Schema.NullOr(Schema.String),
   /** Comments associated with the issue, including inline comments on the issue's description. */
   comments: CommentConnection,
   /** Reactions associated with the issue. */
@@ -395,10 +403,10 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },

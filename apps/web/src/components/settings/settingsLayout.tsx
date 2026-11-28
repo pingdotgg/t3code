@@ -22,6 +22,7 @@ import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
@@ -424,24 +425,22 @@ export function SettingsRow({
       resetAction
     );
   const inertControl = (message: string) => (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
-          />
-        }
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
+        />
+      }
+      label={message}
+    >
+      <div
+        inert
+        className="flex w-full items-center gap-2 opacity-50 @min-[32rem]/settings-row:w-auto"
       >
-        <div
-          inert
-          className="flex w-full items-center gap-2 opacity-50 @min-[32rem]/settings-row:w-auto"
-        >
-          {control}
-        </div>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{message}</TooltipPopup>
-    </Tooltip>
+        {control}
+      </div>
+    </SharedTooltipTrigger>
   );
   const lackingPermissionMessage = () => {
     const environments = context
@@ -527,7 +526,7 @@ export function SettingsRow({
     <div
       {...rowProps}
       ref={targetRef}
-      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
+      tabIndex={rowProps.tabIndex ?? -1}
       data-slot="settings-row"
       className={cn(
         "group/settings-row @container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
@@ -605,6 +604,11 @@ export function SettingResetButton({
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
+              // A reset usually unmounts this button. Keep focus beside the setting, or focus
+              // recovery sends it to the area's default control and scrolls that into view.
+              event.currentTarget.parentElement
+                ?.closest<HTMLElement>("[tabindex]")
+                ?.focus({ preventScroll: true });
               onClick();
             }}
           >

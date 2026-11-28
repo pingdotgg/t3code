@@ -44,6 +44,10 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
+/** Null when the path cannot be resolved. */
+export const realPathWithoutNativeResolver = (filePath: string) =>
+  Effect.promise(() => realpathLikeFileSystem(filePath).catch(() => null));
+
 export const openMediaFile = Effect.fn("openMediaFile")(function* (
   filePath: string,
   identity?: { readonly device: string; readonly inode: string },
@@ -92,6 +96,16 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
     (file) => (file ? Effect.promise(() => file.handle.close()) : Effect.void),
   );
 });
+
+/** Identity, size and nanosecond times, so it moves whenever the file is edited or replaced. */
+export const mediaFileRevision = (info: NodeFS.BigIntStats) =>
+  `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+
+/** Follows links, as serving the path does. Null when nothing can be read there. */
+export const readFileRevision = (filePath: string) =>
+  Effect.promise(() =>
+    NodeFSP.stat(filePath, { bigint: true }).then(mediaFileRevision, () => null),
+  );
 
 export const readMediaFileHeader = (filePath: string, file: OpenMediaFile, byteCount: number) =>
   Effect.tryPromise({

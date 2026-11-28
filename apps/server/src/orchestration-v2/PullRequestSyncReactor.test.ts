@@ -32,14 +32,18 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import { ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
@@ -1293,6 +1297,73 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
+  it.effect("leaves a forge CLI slot for reads outside the sweep", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const asked = yield* Queue.unbounded<void>();
+      const started = yield* Queue.unbounded<string>();
+      const release = yield* Deferred.make<void>();
+      const vcs = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Queue.offer(started, input.args.at(-1)!).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as({
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                }),
+              ),
+          }),
+        ),
+      );
+      const glab = (number: string) =>
+        vcs.run({
+          operation: "synthetic.glab.view",
+          command: "glab",
+          args: ["mr", "view", number],
+          cwd: "/workspace",
+        });
+      const numbers = Array.from({ length: 6 }, (_, index) => index + 1);
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot(
+          numbers.map((number) =>
+            makeThread(`thread-${number}`, {
+              pullRequests: [makeLink(number, null, { host: "gitlab.example.com" })],
+            }),
+          ),
+        ),
+        batchesReads: () => false,
+        summary: (input) =>
+          Queue.offer(asked, undefined).pipe(
+            Effect.andThen(glab(String(input.number))),
+            Effect.orDie,
+            Effect.as(makeSummary(input)),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+        yield* reactor.start();
+        yield* Deferred.succeed(fixture.activation, undefined);
+        yield* Queue.takeN(asked, numbers.length);
+        yield* Queue.takeN(started, 3);
+        const panel = yield* glab("panel").pipe(Effect.forkChild({ startImmediately: true }));
+        assert.strictEqual(yield* Queue.take(started), "panel");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(panel);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, numbers.length);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("reads a member a sibling flags while the sweep is full", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
@@ -2194,6 +2265,38 @@ describe("PullRequestSyncReactor", () => {
       linked: [124],
     },
     {
+      name: "a create after quoted heredoc text",
+      input: "echo '<<EOF'; gh pr create --fill\ntrue",
+      output: "<<EOF\nhttps://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create after a comment mentioning a heredoc",
+      input: "# <<EOF\ngh pr create --fill\ntrue",
+      output: "https://github.com/owner/repository/pull/32",
+      linked: [32],
+    },
+    {
+      name: "a create whose quoted heredoc body has a lone quote and mentions a listing command",
+      input:
+        'gh pr create --title "x" --body "$(cat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
+      name: "a create whose multiline quoted heredoc body has a lone quote and mentions a listing command",
+      input:
+        'gh pr create --title "x" --body "$(\ncat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
+      name: "a create whose body quote never closes around repeated heredoc substitutions",
+      input: `gh pr create --body "${"$(<<A\nA\n".repeat(200)}`,
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
@@ -2223,6 +2326,39 @@ describe("PullRequestSyncReactor", () => {
       input:
         "cat > notes.md <<'EOF'\nOpen it with gh pr create.\nEOF\ngh pr list --json url --jq '.[].url'",
       output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text beside escaped quotes",
+      input: "echo \\' <<EOF \\'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: "' '\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an ANSI-C quote",
+      input:
+        "printf '%s\\n' $'it\\'s'; cat <<EOF\n'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: "it's\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an escaped space before #",
+      input: "echo \\ # <<EOF\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: " #\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create beside a named read after a comment with an apostrophe",
+      input:
+        "# don't treat <<EOF as code\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create beside a named read after heredoc text with an apostrophe",
+      input:
+        "echo '<<FAKE'; cat <<EOF\n'\nEOF\ngh pr create --fill >/dev/null\ngh pr view 31 --json url --jq .url",
+      output: "<<FAKE\n'\nhttps://github.com/owner/repository/pull/31",
       linked: [],
     },
     {

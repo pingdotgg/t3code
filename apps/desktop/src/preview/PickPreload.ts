@@ -1,6 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
-import { getElementContext } from "react-grab/primitives";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindingMatching";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -28,6 +27,8 @@ import {
   type StrokeGeometry,
 } from "./AnnotationStroke.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { pageWorld } from "./PageWorldBridge.ts";
+import { pickElementAtPoint } from "./PickTarget.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
@@ -320,13 +321,16 @@ function isAnnotationNode(element: Element): boolean {
 }
 
 function pickFromPoint(clientX: number, clientY: number): Element | null {
-  for (const candidate of document.elementsFromPoint(clientX, clientY)) {
-    if (!(candidate instanceof Element)) continue;
-    if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
-    if (candidate === document.documentElement || candidate === document.body) continue;
-    return candidate;
-  }
-  return null;
+  return pickElementAtPoint(
+    document,
+    clientX,
+    clientY,
+    (element) =>
+      isAnnotationNode(element) ||
+      element.hasAttribute(INPUT_LAYER_ATTRIBUTE) ||
+      element === document.documentElement ||
+      element === document.body,
+  );
 }
 
 function describeRawElement(element: Element): string {
@@ -431,19 +435,24 @@ function updateSelectedVisual(target: SelectedElement): void {
   target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
-function toStackFrame(frame: {
-  functionName?: string;
-  fileName?: string;
-  lineNumber?: number;
-  columnNumber?: number;
-}): PickedElementStackFrame {
-  return {
-    functionName: frame.functionName ?? null,
-    fileName: frame.fileName ?? null,
-    lineNumber: frame.lineNumber ?? null,
-    columnNumber: frame.columnNumber ?? null,
-  };
-}
+// Everything the page's world returns is page-controlled, so each field is checked, not trusted.
+const pageField = (source: unknown, key: string): unknown =>
+  typeof source === "object" && source !== null ? Reflect.get(source, key) : undefined;
+const pageString = (source: unknown, key: string): string | null => {
+  const value = pageField(source, key);
+  return typeof value === "string" ? value : null;
+};
+const pageNumber = (source: unknown, key: string): number | null => {
+  const value = pageField(source, key);
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+
+const toStackFrame = (frame: unknown): PickedElementStackFrame => ({
+  functionName: pageString(frame, "functionName"),
+  fileName: pageString(frame, "fileName"),
+  lineNumber: pageNumber(frame, "lineNumber"),
+  columnNumber: pageNumber(frame, "columnNumber"),
+});
 
 /** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
@@ -467,27 +476,32 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
     pickedAt: new Date().toISOString(),
   };
   try {
-    const context = await withCaptureTimeout(
-      Promise.resolve(getElementContext(element)),
+    const context: unknown = await withCaptureTimeout(
+      Promise.resolve(pageWorld.elementContext(element)),
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
-    if (context) {
-      const stack = (context.stack ?? []).map(toStackFrame);
+    if (typeof context === "object" && context !== null) {
+      const frames = pageField(context, "stack");
+      const stack = Array.isArray(frames) ? frames.map(toStackFrame) : [];
       return {
         ...base,
-        selector: context.selector,
-        htmlPreview: context.htmlPreview ?? "",
-        componentName: context.componentName,
+        selector: pageString(context, "selector"),
+        htmlPreview: pageString(context, "htmlPreview") ?? "",
+        componentName: pageString(context, "componentName"),
         source: stack[0] ?? null,
         stack,
-        styles: context.styles ?? "",
+        styles: pageString(context, "styles") ?? "",
       };
     }
   } catch {}
+  const html = element.outerHTML;
+  const before = html.charCodeAt(HTML_PREVIEW_MAX_CHARS - 1);
+  const after = html.charCodeAt(HTML_PREVIEW_MAX_CHARS);
+  const splitPair = before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
   return {
     ...base,
     selector: null,
-    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    htmlPreview: html.slice(0, splitPair ? HTML_PREVIEW_MAX_CHARS - 1 : HTML_PREVIEW_MAX_CHARS),
     componentName: null,
     source: null,
     stack: [],
@@ -563,22 +577,26 @@ function startAnnotation(
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.setAttribute("dir", "ltr");
-  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  host.popover = "manual";
+  // Resets the UA popover box (fit-content size, auto margin, border, padding, Canvas background).
+  host.style.cssText = `position:fixed;inset:0;width:auto;height:auto;margin:0;border:0;padding:0;overflow:visible;background:transparent;color:inherit;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
-  const themeStyle = document.createElement("style");
-  themeStyle.textContent = previewAnnotationStyles;
-  shadowRoot.appendChild(themeStyle);
+  // Constructed sheets are exempt from the page's CSP style-src; <style> elements are not.
+  const themeSheet = new CSSStyleSheet();
+  themeSheet.replaceSync(previewAnnotationStyles);
+  shadowRoot.adoptedStyleSheets = [themeSheet];
 
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
   root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none";
-  const cursorStyle = document.createElement("style");
-  cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
-  document.documentElement.appendChild(cursorStyle);
+  const cursorSheet = new CSSStyleSheet();
+  cursorSheet.replaceSync(
+    `[${OVERLAY_ATTRIBUTE}]::backdrop { display:none !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`,
+  );
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, cursorSheet];
   shadowRoot.appendChild(root);
 
   const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
@@ -1600,6 +1618,38 @@ function startAnnotation(
       event.stopPropagation();
   };
 
+  // Page popovers and modal dialogs sit in the top layer above any z-index, and a modal makes
+  // everything outside it inert, so the overlay is shown last and lives inside the topmost modal.
+  // Modals in the order they opened, since DOM order does not say which one blocks the rest.
+  const openedModals: Element[] = [];
+  const raiseOverlay = (): void => {
+    const focused = shadowRoot.activeElement;
+    const parent =
+      document.activeElement?.closest("dialog:modal") ??
+      openedModals.findLast((dialog) => dialog.matches(":modal")) ??
+      Array.from(document.querySelectorAll("dialog:modal")).at(-1) ??
+      document.documentElement;
+    if (host.parentElement !== parent) parent.appendChild(host);
+    if (host.matches(":popover-open")) host.hidePopover();
+    host.showPopover();
+    if (focused instanceof HTMLElement && !focused.matches(":focus"))
+      focused.focus({ preventScroll: true });
+  };
+  const onPageToggle = (event: Event): void => {
+    const target = event.target;
+    if (target === host) return;
+    if (target instanceof HTMLDialogElement) {
+      const index = openedModals.indexOf(target);
+      if (index !== -1) openedModals.splice(index, 1);
+      if (target.matches(":modal")) openedModals.push(target);
+    }
+    raiseOverlay();
+  };
+  // Removing an open dialog hides the overlay inside it without a toggle event.
+  const detachObserver = new MutationObserver(() => {
+    if (!host.isConnected || !host.matches(":popover-open")) raiseOverlay();
+  });
+
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
   };
@@ -1644,6 +1694,8 @@ function startAnnotation(
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
     for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    window.removeEventListener("toggle", onPageToggle, true);
+    detachObserver.disconnect();
     document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
@@ -1651,7 +1703,9 @@ function startAnnotation(
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
     if (elapsedTimer !== null) clearInterval(elapsedTimer);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
-    cursorStyle.remove();
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet !== cursorSheet,
+    );
     inputLayer?.remove();
     host.remove();
     activeSession = null;
@@ -1776,7 +1830,9 @@ function startAnnotation(
         teardown(true);
       });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
+  submit.addEventListener("click", (event) => {
+    if (event.isTrusted) submitAnnotation("attach");
+  });
   const handleOverlayKey = (event: KeyboardEvent): void => {
     if (event.type === "keyup") onVoiceKeyUp(event);
     if (event.type !== "keydown") return;
@@ -1811,7 +1867,9 @@ function startAnnotation(
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
   }
-  document.documentElement.appendChild(host);
+  raiseOverlay();
+  window.addEventListener("toggle", onPageToggle, true);
+  detachObserver.observe(document.documentElement, { childList: true, subtree: true });
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();

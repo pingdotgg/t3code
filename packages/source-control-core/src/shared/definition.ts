@@ -39,6 +39,8 @@ export interface ChangeRequestLink {
 export interface IssueLink {
   readonly host: string;
   readonly scope: string;
+  /** An equivalent binding scope when the provider allows another spelling in URLs. */
+  readonly scopeAlias?: string;
   readonly key: string;
 }
 
@@ -94,6 +96,16 @@ export type RepositorySelectorIdentity = Pick<
   "provider" | "displayName" | "owner" | "name"
 >;
 
+export type IssueScopeIdentity = RepositorySelectorIdentity &
+  Partial<Pick<RepositoryIdentity, "canonicalKey">>;
+
+/** A git-host tracker a project's issues are read from and filed in. */
+export interface IssueBinding {
+  readonly tracker: SourceControlProviderKind;
+  readonly host: string;
+  readonly scope: string;
+}
+
 /** A git remote's host, as `recognizeRemote` reads it. */
 export interface GitRemoteHost {
   /** Trimmed. */
@@ -117,8 +129,8 @@ export interface SourceControlMediaUrl {
   readonly fetchUrl: string;
   /** A file name for the media, safe to put in a path or a download. */
   readonly fileName: string;
-  /** Set when the URL alone says what the media is, as an extensionless upload can. */
-  readonly kind?: "image" | "video";
+  /** How to preview a link to this URL. An opaque upload needs a content type check. */
+  readonly kind?: "image" | "video" | "unknown";
   /** Set when the bytes behind `fetchUrl` can never change, so a client may cache them by it. */
   readonly immutable?: true;
 }
@@ -362,7 +374,7 @@ export interface SourceControlDefinition {
    * The container the project's issues live in, where that is not its repository: Azure DevOps
    * keeps work items per project. Null when the repository cannot be placed.
    */
-  readonly issueScope?: (identity: RepositorySelectorIdentity) => string | null;
+  readonly issueScope?: (identity: IssueScopeIdentity) => string | null;
   /**
    * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
    * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
@@ -555,14 +567,32 @@ export function isChangeRequestInProjectRepository(
   );
 }
 
-const SCP_REMOTE = /^[a-zA-Z0-9._-]+@([^:/]+):/;
+function hasBracketedHost(text: string): boolean {
+  const atBracket = text.indexOf("@[");
+  const hostStart = atBracket >= 0 ? atBracket + 1 : 0;
+  return text.startsWith("[", hostStart) && text.includes("]", hostStart + 1);
+}
+
+// Follows Git's connect.c split (brackets on remote and host part) and ssh's last-"@" split.
+function scpRemoteHost(remote: string): string | null {
+  const colon = remote.indexOf(":");
+  if (colon < 0 || remote.includes("://")) return null;
+  const slash = remote.indexOf("/");
+  if (slash >= 0 && slash < colon) return null;
+  const userHost = remote.slice(0, colon);
+  if (hasBracketedHost(remote) || hasBracketedHost(userHost)) return null;
+  if (userHost.startsWith("-") || remote.startsWith("-", colon + 1)) return null;
+  const at = userHost.lastIndexOf("@");
+  const host = at > 0 ? userHost.slice(at + 1) : "";
+  return host.trim().length > 0 ? host : null;
+}
 
 /** Null when the remote names no host, such as a local path. */
 export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) return null;
   let host: string;
-  const scpHost = SCP_REMOTE.exec(trimmed)?.[1] ?? userlessScpRemoteHost(trimmed);
+  const scpHost = scpRemoteHost(trimmed) ?? userlessScpRemoteHost(trimmed);
   if (scpHost) {
     host = scpHost.toLowerCase();
   } else {
@@ -699,7 +729,14 @@ export interface SourceControlDefinitionRegistry {
     identity: RepositorySelectorIdentity | null | undefined,
   ) => string | null;
   /** Where the project's issues live: the host's `issueScope`, else its repository. */
-  readonly issueScope: (identity: RepositorySelectorIdentity | null | undefined) => string | null;
+  readonly issueScope: (identity: IssueScopeIdentity | null | undefined) => string | null;
+  /**
+   * Every repository whose issues are the project's own: its primary one, then the fork its
+   * `origin` remote names when that is on the same host. Empty for a project with no host.
+   */
+  readonly issueBindings: (
+    identity: RepositoryIdentity | null | undefined,
+  ) => ReadonlyArray<IssueBinding>;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,
@@ -777,6 +814,50 @@ export function makeSourceControlDefinitionRegistry(
       if (link !== null) return { definition, link };
     }
     return null;
+  };
+  const issueScope = (identity: IssueScopeIdentity | null | undefined) => {
+    const scopeOf =
+      identity?.provider === undefined ? undefined : byKind.get(identity.provider)?.issueScope;
+    return scopeOf === undefined || identity == null
+      ? repositorySelector(identity)
+      : scopeOf(identity);
+  };
+  const changeRequestHost = <const Kind extends string | undefined>(
+    identity: ChangeRequestHostIdentity,
+    kind: Kind,
+  ): string | Kind =>
+    (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
+    projectChangeRequestHost(identity, kind);
+  const issueBindings = (identity: RepositoryIdentity | null | undefined) => {
+    const tracker = identity?.provider;
+    if (!identity || tracker === undefined || tracker === "unknown") return [];
+    const scope = issueScope(identity);
+    if (scope === null) return [];
+    const host = changeRequestHost(identity, tracker);
+    const primary = { tracker, host, scope };
+    const origin = identity.origin;
+    // The origin keeps no provider or web URL, so it is read only on the primary's server. Keys
+    // drop schemes and ports, so an HTTP origin must match the primary's remote, its web address
+    // when the remote is SSH, else the issue host.
+    const originUrl = origin?.remoteUrl === undefined ? null : httpUrl(origin.remoteUrl);
+    const primaryUrl =
+      (identity.locator?.remoteUrl === undefined ? null : httpUrl(identity.locator.remoteUrl)) ??
+      (identity.webUrl === undefined ? null : httpUrl(identity.webUrl));
+    if (
+      origin === undefined ||
+      projectChangeRequestHost(origin, undefined) !==
+        projectChangeRequestHost(identity, undefined) ||
+      (originUrl !== null &&
+        (primaryUrl === null ? originUrl.host !== host : originUrl.origin !== primaryUrl.origin))
+    )
+      return [primary];
+    const originScope = issueScope({
+      provider: tracker,
+      canonicalKey: origin.canonicalKey,
+      displayName: origin.displayName ?? origin.canonicalKey.split("/").slice(1).join("/"),
+    });
+    if (originScope === null || originScope.toLowerCase() === scope.toLowerCase()) return [primary];
+    return [primary, { tracker, host, scope: originScope }];
   };
   return {
     definitions,
@@ -880,16 +961,9 @@ export function makeSourceControlDefinitionRegistry(
     canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? canonicalKeyPath(key),
     findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
     repositorySelector,
-    issueScope: (identity) => {
-      const issueScope =
-        identity?.provider === undefined ? undefined : byKind.get(identity.provider)?.issueScope;
-      return issueScope === undefined || identity == null
-        ? repositorySelector(identity)
-        : issueScope(identity);
-    },
-    changeRequestHost: (identity, kind) =>
-      (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
-      projectChangeRequestHost(identity, kind),
+    issueScope,
+    issueBindings,
+    changeRequestHost,
     mediaUrl: (value) => {
       const url = httpUrl(value);
       if (url === null) return null;

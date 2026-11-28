@@ -1,13 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off
 // Launches a packaged desktop app against a seeded T3 home, opens a thread, and checks its
 // messages render. Release jobs run it so a build whose backend or bundle cannot start fails
 // before it is published.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
-import { _electron, type ElectronApplication } from "playwright-core";
+import { chromium, type Browser } from "playwright-core";
 
 // A snapshot from an older build on purpose: the packaged server must migrate it forward, as it
 // does for every upgrading user. It holds one project and two threads, nothing else.
@@ -36,29 +37,68 @@ const t3Home = NodePath.join(home, "t3");
 NodeFS.mkdirSync(NodePath.join(t3Home, "userdata"), { recursive: true });
 NodeFS.copyFileSync(FIXTURE_DB, NodePath.join(t3Home, "userdata/statev2.sqlite"));
 
-let step = "launching the app";
-let app: ElectronApplication | undefined;
-try {
-  app = await _electron.launch({
-    executablePath: executable,
-    // Linux CI runners do not allow the Chromium sandbox's user namespaces.
-    args: [...(values.app ? [NodePath.resolve(values.app)] : []), "--no-sandbox"],
-    // HOME stays real: on macOS a fake HOME has no login keychain, and safeStorage blocks the
-    // main process on a keychain dialog. macOS keeps its Electron profile in the runner's HOME.
-    env: {
-      ...process.env,
-      XDG_CONFIG_HOME: NodePath.join(home, ".config"),
-      XDG_DATA_HOME: NodePath.join(home, ".local/share"),
-      T3CODE_HOME: t3Home,
-      T3CODE_TELEMETRY_ENABLED: "false",
-      T3CODE_DISABLE_AUTO_UPDATE: "true",
-    },
-    timeout: STEP_TIMEOUT_MS,
+// Packaged builds turn off Electron's Node inspector fuse, so Playwright's `_electron.launch`
+// (which attaches through `--inspect`) never connects. Chromium's DevTools port still works.
+const waitForDevToolsEndpoint = (child: NodeChildProcess.ChildProcess) =>
+  new Promise<string>((resolve, reject) => {
+    let output = "";
+    const onData = (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      output += chunk.toString();
+      const match = /DevTools listening on (ws:\/\/\S+)/.exec(output);
+      if (match?.[1]) {
+        clearTimeout(timer);
+        child.off("exit", onExit);
+        resolve(match[1]);
+      }
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timer);
+      reject(new Error(`The app exited (code ${code}, signal ${signal}) before DevTools opened.`));
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      reject(new Error(`DevTools did not open within ${STEP_TIMEOUT_MS}ms.`));
+    }, STEP_TIMEOUT_MS);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
   });
+
+let step = "launching the app";
+let child: NodeChildProcess.ChildProcess | undefined;
+let browser: Browser | undefined;
+try {
+  child = NodeChildProcess.spawn(
+    executable,
+    [
+      ...(values.app ? [NodePath.resolve(values.app)] : []),
+      // Linux CI runners do not allow the Chromium sandbox's user namespaces.
+      "--no-sandbox",
+      "--remote-debugging-port=0",
+    ],
+    {
+      stdio: ["ignore", "inherit", "pipe"],
+      // HOME stays real: on macOS a fake HOME has no login keychain, and safeStorage blocks the
+      // main process on a keychain dialog. macOS keeps its Electron profile in the runner's HOME.
+      env: {
+        ...process.env,
+        XDG_CONFIG_HOME: NodePath.join(home, ".config"),
+        XDG_DATA_HOME: NodePath.join(home, ".local/share"),
+        T3CODE_HOME: t3Home,
+        T3CODE_TELEMETRY_ENABLED: "false",
+        T3CODE_DISABLE_AUTO_UPDATE: "true",
+      },
+    },
+  );
+  const endpoint = await waitForDevToolsEndpoint(child);
+  browser = await chromium.connectOverCDP(endpoint, { timeout: STEP_TIMEOUT_MS });
   // A backend that never starts leaves no window, or only the "could not start" window, so the
   // thread wait below fails either way and its screenshot shows the startup error.
   step = "waiting for the first window";
-  const page = await app.firstWindow({ timeout: STEP_TIMEOUT_MS });
+  const context = browser.contexts()[0];
+  if (!context) throw new Error("The app exposed no browser context over DevTools.");
+  const page =
+    context.pages()[0] ?? (await context.waitForEvent("page", { timeout: STEP_TIMEOUT_MS }));
   try {
     step = `finding "${THREAD_TITLE}" in the sidebar`;
     const thread = page.locator("li[data-thread-item]", { hasText: THREAD_TITLE });
@@ -89,12 +129,12 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  if (app) {
-    // A hung app never finishes closing; kill it so the job does not wait for its timeout.
-    // Playwright drops the process handle once the app closes, so read it first.
-    const child = app.process();
-    const closed = app.close().catch(() => {});
-    await Promise.race([closed, NodeTimersPromises.setTimeout(10_000, undefined, { ref: false })]);
+  await browser?.close().catch(() => {});
+  if (child && child.exitCode === null && child.signalCode === null) {
+    // Let the app quit cleanly, but a hung app never does; kill it so the job does not wait.
+    const exited = new Promise((resolve) => child?.once("exit", resolve));
+    child.kill("SIGTERM");
+    await Promise.race([exited, NodeTimersPromises.setTimeout(10_000, undefined, { ref: false })]);
     child.kill("SIGKILL");
   }
   NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });

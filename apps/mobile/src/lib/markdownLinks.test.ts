@@ -70,6 +70,13 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
+  it("shows CommonJS sources with the JavaScript icon", () => {
+    expect(resolveMarkdownLinkPresentation("scripts/build.cjs")).toMatchObject({
+      kind: "file",
+      icon: "javascript",
+    });
+  });
+
   // regression: #8098 open agent file links in the file viewer
   it("recognizes spaced relative paths", () => {
     expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({

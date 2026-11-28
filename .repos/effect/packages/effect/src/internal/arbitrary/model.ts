@@ -1,3 +1,4 @@
+import type { GenerationDiagnostic } from "../../Arbitrary.ts"
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
@@ -64,6 +65,8 @@ export interface GenerationState {
   readonly biasFactor: number
   readonly nullPrototype: boolean
   readonly random: GenerationRandom
+  readonly diagnostics: Array<GenerationDiagnostic> | undefined
+  readonly diagnosticPath: ReadonlyArray<PropertyKey>
   readonly budget: {
     remaining: number
   }
@@ -236,15 +239,6 @@ export function fromRetained<A>(self: Retained<A>): Sample<A> {
 /** @internal */
 export function mapAttempt<A, B>(self: Attempt<A>, f: (sample: Sample<A>) => Sample<B>): Attempt<B> {
   return self._tag === "Discarded" ? self : f(self)
-}
-
-/** @internal */
-export function sampleFromShrink<A>(value: A, shrink: (value: A) => ReadonlyArray<A>): Sample<A> {
-  const values = shrink(value)
-  return makeSample(
-    value,
-    values.length === 0 ? undefined : Effect.map(pullFromArray(values), (value) => sampleFromShrink(value, shrink))
-  )
 }
 
 /** @internal */
