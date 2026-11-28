@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
+  ProviderTurnId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -23,6 +24,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -102,18 +105,31 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          environment: { HOME: workspace },
+          environment: {
+            HOME: workspace,
+            T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
+              process.execPath,
+              "-e",
+              `process.stdout.write(JSON.stringify({mcpServers:{ditto:{type:'http',url:'https://example.test/ditto'},'ditto-backroom':{type:'http',url:'https://example.test/backroom'}}}))`,
+            ]),
+          },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
-            open: () =>
-              Effect.succeed({
+            open: (input) => {
+              assert.isUndefined(input.options.mcpServers);
+              return Effect.succeed({
                 agentId: "native-cursor-lifecycle",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    assert.deepEqual(Object.keys(input.options?.mcpServers ?? {}).sort(), [
+                      "ditto",
+                      "ditto-backroom",
+                      "t3-code",
+                    ]);
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -206,7 +222,8 @@ describe("CursorAdapterV2", () => {
                       cancel: Effect.void,
                     };
                   }).pipe(Effect.orDie),
-              }),
+              });
+            },
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
         );
@@ -965,6 +982,8 @@ describe("CursorAdapterV2", () => {
       let createdAgents = 0;
       const sentServers: Array<Record<string, unknown> | undefined> = [];
       let teamBlocksT3 = false;
+      let teamBlocksCommand = false;
+      const environment: NodeJS.ProcessEnv = { HOME: workspace };
       let outage = false;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
@@ -988,7 +1007,7 @@ describe("CursorAdapterV2", () => {
       });
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        environment: { HOME: workspace },
+        environment,
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
@@ -1016,10 +1035,14 @@ describe("CursorAdapterV2", () => {
                   // Like the SDK, team policy covers the agent's own servers as well as the turn's,
                   // and wraps its InlineMcpServersBlockedError in an UnknownAgentError.
                   const servers = [openInput.options.mcpServers, input.options?.mcpServers];
-                  if (teamBlocksT3 && servers.some((set) => set?.["t3-code"])) {
+                  const blockedNames = [
+                    ...(teamBlocksT3 && servers.some((set) => set?.["t3-code"]) ? ["t3-code"] : []),
+                    ...(teamBlocksCommand && servers.some((set) => set?.ditto) ? ["ditto"] : []),
+                  ];
+                  if (blockedNames.length > 0) {
                     const blocked = Object.assign(new Error("Blocked by team policy"), {
                       name: "InlineMcpServersBlockedError",
-                      servers: [{ name: "t3-code", reason: "teamPolicy" }],
+                      servers: blockedNames.map((name) => ({ name, reason: "teamPolicy" })),
                     });
                     return Effect.fail(
                       new CursorAgentSdk.CursorAgentSdkRunnerError({
@@ -1312,6 +1335,31 @@ describe("CursorAdapterV2", () => {
       assert.deepEqual(yield* send(), told(false, false, false));
       assert.isUndefined(sentServers.at(-1));
       assert.equal(notices, 0, "later turns skip the blocked server without another notice");
+
+      const commandServers = {
+        ditto: { type: "http", url: "https://example.test/ditto" },
+        "ditto-backroom": { type: "http", url: "https://example.test/backroom" },
+      };
+      environment.T3CODE_CURSOR_MCP_CONFIG_COMMAND = JSON.stringify([
+        process.execPath,
+        "-e",
+        `process.stdout.write(${JSON.stringify(JSON.stringify({ mcpServers: commandServers }))})`,
+      ]);
+      teamBlocksCommand = true;
+      assert.deepEqual(yield* send(), told(false, false, false));
+      assert.deepEqual(sentServers.at(-2), commandServers);
+      assert.deepEqual(sentServers.at(-1), { "ditto-backroom": commandServers["ditto-backroom"] });
+      assert.equal(notices, 1);
+      yield* send();
+      assert.deepEqual(sentServers.at(-1), { "ditto-backroom": commandServers["ditto-backroom"] });
+      assert.equal(notices, 0);
+      environment.T3CODE_CURSOR_MCP_CONFIG_COMMAND = JSON.stringify([
+        process.execPath,
+        "-e",
+        "process.stdout.write(JSON.stringify({ mcpServers: {} }))",
+      ]);
+      yield* send();
+      assert.deepEqual(sentServers.at(-1), {});
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -3278,6 +3326,15 @@ describe("CursorAdapterV2", () => {
       threadId,
       platform: "linux",
     });
+    const additional = {
+      ditto: { type: "http" as const, url: "https://example.test/ditto" },
+      "ditto-backroom": { type: "http" as const, url: "https://example.test/backroom" },
+      "t3-code": { type: "http" as const, url: "https://wrong.test" },
+    };
+    assert.deepEqual(cursorMcpServers(mcpSession, additional), {
+      ...additional,
+      "t3-code": cursorMcpServers(mcpSession)!["t3-code"]!,
+    });
     assert.notInclude(
       JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options)),
       "secret-cursor-api-key",
@@ -3420,7 +3477,15 @@ describe("CursorAdapterV2", () => {
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: false,
         });
-        const t3Servers = cursorMcpServers(yield* mcpSessions.read(threadId));
+        const commandServers = {
+          ditto: { type: "http" as const, url: "https://example.test/ditto" },
+        };
+        const commandConfig = path.join(scratch, "command-mcp.json");
+        yield* fileSystem.writeFileString(
+          commandConfig,
+          JSON.stringify({ mcpServers: commandServers }),
+        );
+        const inlineServers = cursorMcpServers(yield* mcpSessions.read(threadId), commandServers);
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -3429,6 +3494,10 @@ describe("CursorAdapterV2", () => {
         });
         let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
         const sentWith: Array<Record<string, unknown> | undefined> = [];
+        const commandLoading = yield* Deferred.make<void>();
+        const releaseCommand = yield* Deferred.make<void>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let pauseCommand = false;
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           environment: {
@@ -3436,6 +3505,12 @@ describe("CursorAdapterV2", () => {
             CURSOR_DATA_DIR: path.join(scratch, "override"),
             DOCS_TOKEN: "docs-token",
             MCP_TYPE: "stdio",
+            T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
+              process.execPath,
+              "-e",
+              "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+              commandConfig,
+            ]),
           },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -3452,6 +3527,17 @@ describe("CursorAdapterV2", () => {
                     return Effect.die("sent");
                   },
                 };
+              }),
+          }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+            ...spawner,
+            spawn: (command) =>
+              Effect.gen(function* () {
+                if (pauseCommand) {
+                  yield* Deferred.succeed(commandLoading, undefined);
+                  yield* Deferred.await(releaseCommand);
+                }
+                return yield* spawner.spawn(command);
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd })),
@@ -3534,7 +3620,7 @@ describe("CursorAdapterV2", () => {
         // Cursor checks an agent's own servers against team policy, so every server goes with each turn.
         assert.isUndefined(openedWith?.mcpServers);
         yield* sendTurn(1);
-        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        assert.deepEqual(sentWith[0], { ...expectedServers, ...inlineServers });
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
@@ -3542,14 +3628,14 @@ describe("CursorAdapterV2", () => {
         );
         yield* sendTurn(2);
         const { repro: _disabled, ...stillEnabled } = expectedServers;
-        assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
+        assert.deepEqual(sentWith[1], { ...stillEnabled, ...inlineServers });
         // Unreadable disabled state starts none of the overrides, and the turn still goes out.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           "[",
         );
         yield* sendTurn(3);
-        assert.deepEqual(sentWith[2], t3Servers);
+        assert.deepEqual(sentWith[2], inlineServers);
         // A restricted turn starts no command the checkout names; the user's own file still applies.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
@@ -3561,7 +3647,7 @@ describe("CursorAdapterV2", () => {
           yield* sendTurn(4 + index, { ...runtimePolicy, runtimeMode });
           assert.deepEqual(sentWith[3 + index], {
             repro: { command: "node", args: [`${home}/shadowed.mjs`], cwd: projectRoot },
-            ...t3Servers,
+            ...inlineServers,
           });
         }
         yield* fileSystem.writeFileString(
@@ -3570,6 +3656,30 @@ describe("CursorAdapterV2", () => {
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
         assert.deepEqual(yield* loadServers(), {});
+        yield* mcpSessions.clear(threadId);
+        yield* fileSystem.writeFileString(commandConfig, JSON.stringify({ mcpServers: {} }));
+        yield* sendTurn(7);
+        assert.deepEqual(sentWith[6], {});
+
+        pauseCommand = true;
+        const starting = yield* sendTurn(8).pipe(Effect.forkChild);
+        yield* Deferred.await(commandLoading);
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: ProviderTurnId.make("cursor-mcp-starting-turn"),
+          requestRuntimeRestart: true,
+        });
+        yield* Deferred.succeed(releaseCommand, undefined);
+        const stopped = yield* Fiber.join(starting);
+        assert.lengthOf(sentWith, 7, "Stop during command loading must not send the prompt");
+        assert.ok(Exit.isFailure(stopped));
+        const error = Cause.squash(stopped.cause);
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+        assert.isTrue(error.refusedBeforePrompt);
+        assert.equal(error.runId, RunId.make("cursor-mcp-run-8"));
+        pauseCommand = false;
+        yield* sendTurn(9);
+        assert.lengthOf(sentWith, 8, "a later turn can start after Stop");
       }).pipe(
         Effect.scoped,
         Effect.provide(

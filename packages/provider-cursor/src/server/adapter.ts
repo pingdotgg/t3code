@@ -52,6 +52,7 @@ import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresen
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
+import { loadMcpConfigCommand } from "./mcpConfigCommand.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import {
   appendCursorInvokedSkills,
@@ -81,6 +82,7 @@ import { isCursorSdkError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
+const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
 
 export const CursorProviderCapabilitiesV2 = {
@@ -218,11 +220,14 @@ const T3_MCP_SERVER = "t3-code";
 
 export function cursorMcpServers(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
+  additional: Record<string, McpServerConfig> = {},
 ): Record<string, McpServerConfig> | undefined {
   if (session === undefined) {
-    return undefined;
+    const { "t3-code": _reserved, ...servers } = additional;
+    return Object.keys(servers).length === 0 ? undefined : servers;
   }
   return {
+    ...additional,
     [T3_MCP_SERVER]: {
       type: "http",
       url: session.endpoint,
@@ -1067,6 +1072,7 @@ interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  commandMcpServersWereActive: boolean;
 }
 
 export interface CursorAdapterV2Options {
@@ -1150,7 +1156,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         // Runs a Stop ended; a shell they started that is reported only afterwards is stopped too.
         const stoppedRuns = new Set<ProviderAdapter.ProviderAdapterV2TurnInput["runId"]>();
         let latestRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | undefined;
-        // A Stop or rollback bumps this, which drops wakes still queued behind another run.
+        // Stop, rollback, or close invalidates queued wakes and turns still starting.
         let wakeGeneration = 0;
         const publishedProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
@@ -2810,6 +2816,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
+        const loadAdditionalMcpServers = (threadId: ThreadId, cwd: string | null) =>
+          loadMcpConfigCommand({ environment: adapterOptions.environment, cwd, threadId }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              () =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor MCP configuration command failed.",
+                }),
+            ),
+          );
         const resolveWorkspaceMcpServers = (
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) => {
@@ -2903,6 +2920,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeThreadId: sdkSession.agentId,
             storeCwd,
             session: sdkSession,
+            commandMcpServersWereActive: false,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           if (sdkSession.ended !== undefined) {
@@ -3040,6 +3058,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
         const startTurn = Effect.fn("CursorAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            const startupGeneration = wakeGeneration;
             const current = yield* Ref.get(activeTurn);
             if (current !== null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -3049,6 +3068,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
             }
             const agentId = nativeThreadId(turnInput.providerThread);
+            const additionalMcpServers = yield* loadAdditionalMcpServers(
+              turnInput.threadId,
+              turnInput.runtimePolicy.cwd,
+            );
             const agent = yield* openAgent({
               operation: "resume",
               agentId,
@@ -3058,6 +3081,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               reportLaunch: true,
             });
+            if (Object.keys(additionalMcpServers).length > 0)
+              agent.commandMcpServersWereActive = true;
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
@@ -3135,9 +3160,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               // servers against team MCP policy on every run, even when a send replaces them.
               const turnMcpServers: Record<string, McpServerConfig> = {
                 ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy)),
-                ...mcpServers,
+                ...cursorMcpServers(mcpSession, additionalMcpServers),
               };
               for (const name of blocked) delete turnMcpServers[name];
+              if (startupGeneration !== wakeGeneration) {
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  refusedBeforePrompt: true,
+                  cause: "Cursor turn stopped during startup.",
+                });
+              }
               const sdkRun = yield* agent.session
                 .send({
                   message,
@@ -3150,7 +3185,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       adapterOptions.getSdkModels?.() ?? [],
                     ),
                     mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                    ...(Object.keys(turnMcpServers).length === 0
+                    ...(Object.keys(turnMcpServers).length === 0 &&
+                    !agent.commandMcpServersWereActive
                       ? {}
                       : { mcpServers: turnMcpServers }),
                   },
@@ -3386,15 +3422,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.ensuring(Effect.suspend(() => emitStartupPhase(undefined))),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isTurnStartError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );
@@ -3891,8 +3928,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 });
 
 export type CursorAdapterV2DriverEnv =
-  | CursorAgentSdk.CursorAgentSdkRunner
   | ChildProcessSpawner.ChildProcessSpawner
+  | CursorAgentSdk.CursorAgentSdkRunner
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
