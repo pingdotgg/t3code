@@ -805,12 +805,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
-        const stderr = isAcpProcessExitedError(cause) ? (cause.stderr ?? "") : "";
+        const generic = "The downloaded Antigravity runtime could not start in this environment";
+        if (!isAcpProcessExitedError(cause)) {
+          return installationError("verify", `${generic}.`, cause);
+        }
+        const stderr = cause.stderr ?? "";
         const detail = /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(stderr)
           ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."
           : /page-size\.cc|Compile-time page size does not match/.test(stderr)
             ? LARGE_PAGE_KERNEL_MESSAGE
-            : "The downloaded Antigravity runtime could not start in this environment.";
+            : cause.signal !== undefined
+              ? `${generic}: it exited after signal ${cause.signal}.`
+              : cause.code !== undefined
+                ? `${generic}: it exited with code ${cause.code}.`
+                : `${generic}.`;
         return installationError("verify", detail, cause);
       }),
     );
