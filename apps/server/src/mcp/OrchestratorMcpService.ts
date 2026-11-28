@@ -1171,8 +1171,33 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return [item.explanation, ...item.steps.map((step) => `[${step.status}] ${step.text}`)]
         .filter((line): line is string => line !== undefined)
         .join("\n");
-    case "user_input_request":
-      return jsonText(item.questions);
+    case "user_input_request": {
+      if (item.questionAnswer === undefined) return jsonText(item.questions);
+      const attachmentsByQuestionId = Object.fromEntries(
+        Object.entries(item.questionAnswer.attachmentsByQuestionId).flatMap(
+          ([questionId, attachments]) =>
+            attachments === undefined || attachments.length === 0
+              ? []
+              : [
+                  [
+                    questionId,
+                    attachments.map(({ type, id, name, mimeType, sizeBytes }) => ({
+                      type,
+                      id,
+                      name,
+                      mimeType,
+                      sizeBytes,
+                    })),
+                  ],
+                ],
+        ),
+      );
+      return jsonText({
+        answers: item.questionAnswer.answers,
+        ...(Object.keys(attachmentsByQuestionId).length === 0 ? {} : { attachmentsByQuestionId }),
+        questions: item.questions,
+      });
+    }
     case "file_change":
       return [
         item.fileName,
