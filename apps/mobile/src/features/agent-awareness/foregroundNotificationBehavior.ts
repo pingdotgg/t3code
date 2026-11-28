@@ -16,12 +16,17 @@ const SUPPRESS: NotificationBehavior = {
   shouldSetBadge: false,
 };
 
+/**
+ * A notification for the thread on screen stays silent once its feed is live. While that thread
+ * is cached, reconnecting or still catching up, the screen may not have the event yet.
+ */
 export function foregroundNotificationBehavior(
   notification: Notification,
   deepLinkOnScreen: string | null,
+  hasLiveFeed: (deepLink: string) => boolean,
 ): NotificationBehavior {
   const target = extractAgentNotificationDeepLink({ notification });
-  if (target !== null && target === deepLinkOnScreen) {
+  if (target !== null && target === deepLinkOnScreen && hasLiveFeed(target)) {
     return SUPPRESS;
   }
   return SHOW;
