@@ -4123,28 +4123,53 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("records the model Codex reports on the root provider turn", () =>
+  it.effect.each([
+    ["does not report the thread's configured model as the executed model", null],
+    ["records the model Codex reports when it reroutes the turn", "gpt-5.6-sol"],
+  ] as const)("%s", ([_name, reroutedModel]) =>
     Effect.gen(function* () {
       const nativeThreadId = "reported-model-thread";
       const nativeTurnId = "reported-model-turn";
+      const modelSettings: CodexReplay.CodexAppServerReplayEntry = {
+        type: "emit_inbound",
+        label: "thread-settings",
+        frame: {
+          method: "thread/settings/updated",
+          params: {
+            threadId: nativeThreadId,
+            threadSettings: {
+              model: "gpt-6-astra",
+              effort: "low",
+              modelProvider: "openai",
+              cwd: "/workspace",
+              approvalPolicy: "never",
+              approvalsReviewer: "auto_review",
+              collaborationMode: { mode: "default", settings: { model: "gpt-6-astra" } },
+              sandboxPolicy: { type: "dangerFullAccess" },
+            },
+          },
+        },
+      };
+      const reroute: CodexReplay.CodexAppServerReplayEntry = {
+        type: "emit_inbound",
+        label: "rerouted",
+        frame: {
+          method: "model/rerouted",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            fromModel: "gpt-6-astra",
+            toModel: "gpt-5.6-sol",
+            reason: "highRiskCyberActivity",
+          },
+        },
+      };
       const transcript = makeCodexReplayTranscript({
         scenario: "codex-reported-model",
         entries: [
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "say hi" }),
-          {
-            type: "emit_inbound",
-            label: "rerouted",
-            frame: {
-              method: "model/rerouted",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                fromModel: "gpt-6-astra",
-                toModel: "gpt-5.6-sol",
-                reason: "highRiskCyberActivity",
-              },
-            },
-          },
+          modelSettings,
+          ...(reroutedModel === null ? [] : [reroute]),
           {
             type: "emit_inbound",
             label: "complete",
@@ -4175,8 +4200,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       assert.equal(completed?.type, "provider_turn.updated");
       if (completed?.type !== "provider_turn.updated") return;
-      assert.deepEqual(completed.providerTurn.turnTokenUsage?.models, ["gpt-5.6-sol"]);
-      assert.equal(completed.providerTurn.model, "gpt-5.6-sol");
+      assert.deepEqual(completed.providerTurn.turnTokenUsage?.models, [
+        reroutedModel ?? "gpt-6-astra",
+      ]);
+      assert.equal(completed.providerTurn.model, reroutedModel ?? undefined);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

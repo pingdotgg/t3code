@@ -2411,13 +2411,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // A reroute names one turn; until new settings arrive, the thread's model is unknown.
         const reroutedTurnModels = new Map<string, string>();
         const reroutedThreads = new Set<string>();
-        const reportedTurnModel = (nativeThreadId: string, nativeTurnId: string) => {
-          const rerouted = reroutedTurnModels.get(nativeTurnId);
+        const takeCompletedTurnModels = (nativeThreadId: string, nativeTurnId: string) => {
+          // Only a reroute notification identifies the model for this individual turn.
+          const executedModel = reroutedTurnModels.get(nativeTurnId);
           reroutedTurnModels.delete(nativeTurnId);
-          if (rerouted !== undefined) return rerouted;
-          return reroutedThreads.has(nativeThreadId)
-            ? undefined
-            : subagentSelections.get(nativeThreadId)?.model;
+          const usageModel =
+            executedModel ??
+            (reroutedThreads.has(nativeThreadId)
+              ? undefined
+              : subagentSelections.get(nativeThreadId)?.model);
+          return { executedModel, usageModel };
         };
         const pendingSubagentTurns = yield* Ref.make(
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
@@ -7423,7 +7426,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeThreadId != null &&
                 (goalsByNativeThread.get(nativeThreadId)?.status === "active" ||
                   (activation !== undefined && !activation.stopped));
-              const executedModel = reportedTurnModel(nativeThreadId ?? "", input.nativeTurnId);
+              const { executedModel, usageModel } = takeCompletedTurnModels(
+                nativeThreadId ?? "",
+                input.nativeTurnId,
+              );
               const completedTurn: OrchestrationV2ProviderTurn = {
                 id: input.context.providerTurnId,
                 providerThreadId: input.context.providerThread.id,
@@ -7447,7 +7453,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                   input.nativeTurnId,
                   input.status === "completed",
-                  executedModel,
+                  usageModel,
                 ),
                 ...(executedModel === undefined ? {} : { model: executedModel }),
               };
