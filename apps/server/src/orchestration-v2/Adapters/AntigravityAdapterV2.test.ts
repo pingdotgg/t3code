@@ -3992,6 +3992,61 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),
   );
+
+  // agy 1.5.17+ classifies any session with a non-empty systemPrompt.append as a custom agent
+  // (agentScript=true), which Google meters at a higher quota rate.
+  it.effect("does not ask agy to append to the session system prompt for an ordinary thread", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const appends: Array<string | undefined> = [];
+      const instanceId = ProviderInstanceId.make("antigravity-default-agent-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) => {
+          appends.push(input.sessionSystemPromptAppend);
+          return makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_AGENT_VERSION: "1.5.19" },
+            },
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
+        },
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-da-" });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const threadId = ThreadId.make("thread-antigravity-default-agent");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-default-agent"),
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+      assert.isNotEmpty(appends);
+      assert.deepEqual(
+        appends.filter((append) => append !== undefined && append !== ""),
+        [],
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 update_steps checklist", () => {
