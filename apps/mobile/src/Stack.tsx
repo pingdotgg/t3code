@@ -52,6 +52,7 @@ import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRo
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
+import { fileScreenLinking, THREAD_LINKING_PREFIX } from "./stackLinking";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import {
   HardwareKeyboardCommandOverlay,
@@ -441,9 +442,6 @@ const SETTINGS_SCREENS = {
   }),
 };
 
-// iOS 26 header morphing requires one UINavigationBar; nested stacks make the whole screen slide.
-const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
-
 export function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !isWorkspaceOverlayRoute(route.name));
   const effectiveState =
@@ -494,7 +492,10 @@ function RootStackLayout(props: {
       flowKey={draftRoute === undefined ? undefined : newTaskFlowKey(draftRoute)}
       routeDraftId={routeDraftId}
     >
-      <HardwareKeyboardCommandProvider pathname={pathname}>
+      <HardwareKeyboardCommandProvider
+        pathname={pathname}
+        routeName={props.state.routes[props.state.index]?.name}
+      >
         <ShowcaseReadyMarker />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>
@@ -556,6 +557,7 @@ function NotFoundScreen() {
   );
 }
 
+// iOS 26 header morphing requires one UINavigationBar; nested stacks make the whole screen slide.
 const RootStackConfig = createWorkspaceStackNavigator({
   initialRouteName: "Home",
   UNSTABLE_router: workspaceDetailRouter,
@@ -706,12 +708,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: pageRoute(),
     }),
     NewTaskFiles: createNativeStackScreen({
-      linking: "new/draft/files",
+      linking: fileScreenLinking.NewTaskFiles,
       screen: ThreadFilesTreeScreen,
       options: pageRoute({ header: "solid" }),
     }),
     NewTaskFile: createNativeStackScreen({
-      linking: "new/draft/files/:path*",
+      linking: fileScreenLinking.NewTaskFile,
       screen: ThreadFileScreen,
       options: pageRoute({ header: "solid" }),
     }),
@@ -761,12 +763,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
-      linking: `${THREAD_LINKING_PREFIX}/files`,
+      linking: fileScreenLinking.ThreadFiles,
       options: pageRoute(),
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
-      linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
+      linking: fileScreenLinking.ThreadFile,
       options: pageRoute(),
     }),
     ThreadMcpApp: createNativeStackScreen({

@@ -6,11 +6,11 @@ export const SHOWCASE_THREAD_ID = "remote-command-center";
 
 function sceneFromPathname(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
-  if (routePath === "/settings" || routePath.endsWith("/settings/environments")) {
+  if (routePath === "/settings" || routePath === "/settings/environments") {
     return "environments";
   }
-  if (routePath.endsWith("/terminal")) return "terminal";
-  if (routePath.endsWith("/review")) return "review";
+  if (/^\/threads\/[^/]+\/[^/]+\/terminal$/.test(routePath)) return "terminal";
+  if (/^\/threads\/[^/]+\/[^/]+\/review$/.test(routePath)) return "review";
   if (routePath.startsWith("/threads/")) return "thread";
   if (routePath === "/") return "threads";
   return null;

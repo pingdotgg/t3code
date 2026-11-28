@@ -19,6 +19,7 @@ describe("shouldHandleAppLink", () => {
 
   it.each([
     "t3code://threads/env-1/thread-1",
+    "t3code://threads/env-1/thread-1/files/packages/expo-development-client.ts",
     "t3code://pair?pairingUrl=x",
     "t3code-dev://settings/usage?tab=limits",
     "https://app.t3.codes/threads/env/thread?prompt=Fix%20expo-development-client%20and%20t3code://expo-sharing",

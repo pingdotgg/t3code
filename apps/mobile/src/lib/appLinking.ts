@@ -7,15 +7,20 @@ import type { NavigationState, PartialState } from "@react-navigation/native";
  * to the NotFound wildcard route on every dev launch.
  */
 export function shouldHandleAppLink(url: string, cloudConfigured: boolean): boolean {
-  // Only the route: a thread link's ?prompt= may mention either lifecycle URL.
   const route = url.split(/[?#]/)[0] ?? "";
   return (
-    !route.includes("expo-development-client") &&
-    !route.includes("://expo-sharing") &&
+    !LIFECYCLE_LINK_HOST.test(url) &&
     !/^t3code(-dev|-preview)?:\/*$/.test(url) &&
     (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );
 }
+
+/**
+ * Lifecycle links name the dev client launcher or expo-sharing as their host. A path or query
+ * that only mentions one, such as a file route or a thread link's ?prompt=, is still app navigation.
+ */
+const LIFECYCLE_LINK_HOST =
+  /^[a-z][\w+.-]*:\/\/(?:expo-development-client|expo-sharing)(?:[/?#]|$)/i;
 
 /**
  * Screens that only exist with T3 Connect configured. A build without it has
