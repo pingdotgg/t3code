@@ -2,8 +2,10 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -17,7 +19,7 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
-  discoverPiCommandsForCwd,
+  discoverPiWorkspaceInventory,
   enrichPiSnapshot,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -205,7 +207,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
           ? snapshot.getSnapshot
           : Effect.all([
               snapshot.getSnapshot,
-              discoverPiCommandsForCwd(effectiveConfig, processEnv, workspaceCwd).pipe(
+              discoverPiWorkspaceInventory(effectiveConfig, processEnv, workspaceCwd).pipe(
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.mapError(
                   (cause) =>
@@ -218,11 +220,35 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
                 ),
               ),
             ]).pipe(
-              Effect.map(([machineSnapshot, commands]) => ({
-                ...machineSnapshot,
-                ...commands,
-                slashCommandsPending: false,
-              })),
+              Effect.map(([machineSnapshot, { models, commands }]) => {
+                const machineModels = new Map(
+                  machineSnapshot.models.map((model) => [model.slug, model]),
+                );
+                const workspaceModels = Result.map(models, ({ catalog }) =>
+                  catalog.map((model) =>
+                    machineModels.get(model.slug)?.supportsTextGeneration === false
+                      ? { ...model, supportsTextGeneration: false }
+                      : model,
+                  ),
+                );
+                return {
+                  ...machineSnapshot,
+                  ...(Result.isFailure(workspaceModels)
+                    ? { workspaceModelsPending: true }
+                    : Equal.equals(workspaceModels.success, machineSnapshot.models)
+                      ? {}
+                      : { workspaceModels: workspaceModels.success }),
+                  // Pi lists models only for providers it holds credentials for in this directory.
+                  ...(Result.isSuccess(models) &&
+                  models.success.authenticated &&
+                  machineSnapshot.auth.status === "unauthenticated"
+                    ? { workspaceAuth: { status: "authenticated", type: "pi" } as const }
+                    : {}),
+                  ...(Result.isFailure(commands)
+                    ? { slashCommandsPending: true, workspaceSkillsPending: true }
+                    : { ...commands.success, slashCommandsPending: false }),
+                };
+              }),
             ),
       orchestrationAdapter,
       textGeneration,

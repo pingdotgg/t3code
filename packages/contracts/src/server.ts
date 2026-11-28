@@ -146,6 +146,8 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   // Absent means the provider's machine `models`, which keeps most snapshots small.
   models: Schema.optional(Schema.Array(ServerProviderModel)),
   modelsPending: Schema.optional(Schema.Boolean),
+  // Set when the directory's own config signs the provider in although the machine's does not.
+  auth: Schema.optional(ServerProviderAuth),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 

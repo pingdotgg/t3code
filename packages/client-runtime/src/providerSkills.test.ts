@@ -155,6 +155,35 @@ describe("workspace provider snapshots", () => {
     expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
     expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
   });
+
+  it.each([
+    { name: "the project signs it in", signedIn: true },
+    { name: "the project has no sign-in", workspaceAuth: false, signedIn: false },
+    { name: "it is disabled", enabled: false, signedIn: false },
+    { name: "it is missing", installed: false, signedIn: false },
+    { name: "it is unavailable", availability: "unavailable", signedIn: false },
+  ] as const)("scopes sign-in to the project when $name", ({ signedIn, ...testCase }) => {
+    const signedOut = {
+      ...provider,
+      status: "warning",
+      message: "No usable models.",
+      auth: { status: "unauthenticated" },
+      enabled: "enabled" in testCase ? testCase.enabled : true,
+      installed: "installed" in testCase ? testCase.installed : true,
+      ...("availability" in testCase ? { availability: testCase.availability } : {}),
+      workspaceSnapshots: [
+        {
+          ...provider.workspaceSnapshots[0]!,
+          ...("workspaceAuth" in testCase ? {} : { auth: { status: "authenticated" } }),
+        },
+      ],
+    } satisfies ServerProvider;
+    const scoped = resolveProvidersForCwd([signedOut], "/workspace/project-a")[0];
+    expect(scoped?.auth.status).toBe(signedIn ? "authenticated" : "unauthenticated");
+    expect(scoped?.status).toBe(signedIn ? "ready" : "warning");
+    expect(scoped?.message).toBe(signedIn ? undefined : signedOut.message);
+    expect(resolveProvidersForCwd([signedOut], "/workspace/project-b")[0]).toBe(signedOut);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {

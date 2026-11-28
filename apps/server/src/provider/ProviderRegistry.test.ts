@@ -1166,6 +1166,8 @@ it.layer(
         ...scopedSnapshot,
         slashCommands: [COMPACT_SLASH_COMMAND],
         slashCommandsPending: true,
+        skills: [],
+        workspaceSkillsPending: true,
         workspaceModelsPending: true,
       } satisfies ProviderWorkspaceSnapshot;
       const partial = ProviderRegistry.upsertProviderWorkspaceSnapshot(
@@ -1177,6 +1179,7 @@ it.layer(
       assert.strictEqual(partial.workspaceSnapshots?.[0]?.slashCommandsPending, true);
       assert.deepStrictEqual(partial.workspaceSnapshots?.[0]?.models, projectModels);
       assert.strictEqual(partial.workspaceSnapshots?.[0]?.modelsPending, true);
+      assert.deepStrictEqual(partial.workspaceSnapshots?.[0]?.skills, scopedSnapshot.skills);
       const otherProject = ProviderRegistry.upsertProviderWorkspaceSnapshot(
         partial,
         "/other-project",

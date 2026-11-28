@@ -140,22 +140,33 @@ export function resolveProviderSlashCommandsForCwd(
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }
 
-/** A project's own provider config can add models that only its workspace snapshot lists. */
-function resolveProviderModelsForCwd(
-  provider: ServerProvider,
-  cwd: string | null | undefined,
-): ServerProvider["models"] {
-  return resolveProviderWorkspaceSnapshot(provider, cwd)?.models ?? provider.models;
-}
-
 /** Providers keep their identity unless the cwd has its own catalog. */
 export function resolveProvidersForCwd<P extends ServerProvider>(
   providers: ReadonlyArray<P>,
   cwd: string | null | undefined,
 ): ReadonlyArray<P> {
   const resolved = providers.map((provider) => {
-    const models = resolveProviderModelsForCwd(provider, cwd);
-    return models === provider.models ? provider : { ...provider, models };
+    const workspace = resolveProviderWorkspaceSnapshot(provider, cwd);
+    const models = workspace?.models ?? provider.models;
+    const signedIn =
+      workspace?.auth?.status === "authenticated" &&
+      provider.auth.status === "unauthenticated" &&
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable";
+    if (models === provider.models && !signedIn) return provider;
+    return {
+      ...provider,
+      models,
+      ...(signedIn
+        ? {
+            auth: workspace.auth,
+            ...(provider.status === "warning"
+              ? { status: "ready" as const, message: undefined }
+              : {}),
+          }
+        : {}),
+    };
   });
   return resolved.every((provider, index) => provider === providers[index]) ? providers : resolved;
 }

@@ -1,8 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -44,10 +45,13 @@ const personalSkill = {
   sourceInfo: { scope: "user", path: "/home/.pi/agent/skills/personal/SKILL.md" },
 };
 
-const makePiSpawner = Effect.fnUntraced(function* (
-  discovery: { readonly state?: unknown; readonly models?: ReadonlyArray<unknown> } = {},
-) {
-  const pendingCommand = yield* Deferred.make<void>();
+const makePiSpawner = (
+  discovery: {
+    readonly state?: unknown;
+    readonly models?: ReadonlyArray<unknown>;
+    readonly workspaceModels?: Record<string, ReadonlyArray<unknown>>;
+  } = {},
+) => {
   const launches: Array<ChildProcess.StandardCommand> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -57,6 +61,7 @@ const makePiSpawner = Effect.fnUntraced(function* (
       const version = command.args.includes("--version");
       const stdout = yield* Queue.unbounded<Uint8Array>();
       const cwd = command.options.cwd;
+      if (cwd === "/late-commands" || cwd === "/late-models") yield* Effect.sleep("20 seconds");
       return ChildProcessSpawner.makeHandle({
         // Outside the valid PID range, so transport cleanup cannot signal a real process.
         pid: ChildProcessSpawner.ProcessId(999_999_999),
@@ -66,39 +71,54 @@ const makePiSpawner = Effect.fnUntraced(function* (
         unref: Effect.succeed(Effect.void),
         stdin: Sink.forEach((chunk: Uint8Array) => {
           const request = decodeRequest(new TextDecoder().decode(chunk).trim());
-          if (cwd === "/pending" && request.type === "get_commands") {
-            return Deferred.succeed(pendingCommand, undefined).pipe(Effect.asVoid);
-          }
-          const failed = cwd === "/failed" && request.type === "get_commands";
+          if (
+            (cwd === "/late-commands" && request.type === "get_commands") ||
+            (cwd === "/late-models" && request.type === "get_available_models")
+          )
+            return Effect.void;
+          const failed =
+            (cwd === "/failed-commands" && request.type === "get_commands") ||
+            (cwd === "/failed-state" && request.type === "get_state");
           const data =
             request.type === "get_commands"
-              ? {
-                  commands: [
-                    personalSkill,
-                    ...(cwd?.endsWith("/pi-status-probe")
-                      ? []
-                      : [
-                          {
-                            name: `skill:${cwd?.slice(1)}`,
-                            source: "skill",
-                            sourceInfo: {
-                              scope: "project",
-                              path: `${cwd}/.agents/skills/SKILL.md`,
-                            },
-                          },
-                          { name: `prompt-${cwd?.slice(1)}`, source: "prompt" },
-                        ]),
-                  ],
-                }
+              ? cwd === "/invalid-commands"
+                ? { commands: null }
+                : cwd === "/empty-commands"
+                  ? { commands: [] }
+                  : {
+                      commands: [
+                        personalSkill,
+                        ...(cwd?.endsWith("/pi-status-probe")
+                          ? []
+                          : [
+                              {
+                                name: `skill:${cwd?.slice(1)}`,
+                                source: "skill",
+                                sourceInfo: {
+                                  scope: "project",
+                                  path: `${cwd}/.agents/skills/SKILL.md`,
+                                },
+                              },
+                              { name: `prompt-${cwd?.slice(1)}`, source: "prompt" },
+                            ]),
+                      ],
+                    }
               : request.type === "get_available_models"
-                ? { models: discovery.models ?? [{ provider: "test", id: "model" }] }
+                ? cwd === "/invalid-models"
+                  ? {}
+                  : {
+                      models: [
+                        ...(discovery.models ?? [{ provider: "test", id: "model" }]),
+                        ...(discovery.workspaceModels?.[cwd ?? ""] ?? []),
+                      ],
+                    }
                 : request.type === "get_state"
                   ? (discovery.state ?? {})
                   : {};
           return Queue.offer(
             stdout,
             encoder.encode(
-              `${JSON.stringify({ type: "response", id: request.id, success: !failed, data, ...(failed ? { error: "commands unavailable" } : {}) })}\n`,
+              `${JSON.stringify({ type: "response", id: request.id, success: !failed, data, ...(failed ? { error: "inventory unavailable" } : {}) })}\n`,
             ),
           ).pipe(Effect.asVoid);
         }),
@@ -110,8 +130,8 @@ const makePiSpawner = Effect.fnUntraced(function* (
       });
     }),
   );
-  return { spawner, launches, pendingCommand };
-});
+  return Effect.succeed({ spawner, launches });
+};
 
 const create = (config: Partial<PiSettings> = {}, enabled = true) =>
   PiDriver.create({
@@ -124,9 +144,14 @@ const create = (config: Partial<PiSettings> = {}, enabled = true) =>
   });
 
 it.layer(layerTest)("PiDriver workspace discovery", (it) => {
-  it.effect("keeps each workspace's skills and commands separate from the machine catalog", () =>
+  it.effect("keeps each workspace's inventory separate from the machine catalog", () =>
     Effect.gen(function* () {
-      const { spawner, launches } = yield* makePiSpawner();
+      const { spawner, launches } = yield* makePiSpawner({
+        workspaceModels: {
+          "/first": [{ provider: "test", id: "first" }],
+          "/second": [{ provider: "test", id: "second" }],
+        },
+      });
       const instance = yield* create({ launchArgs: '--approve --skill "extra skill"' }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -161,6 +186,23 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       assert.equal(first.displayName, "My Pi");
       assert.equal(first.accentColor, "#abcdef");
       assert.deepEqual(first.models, machine.models);
+      const plain = yield* instance.snapshotForCwd!("/plain");
+      assert.isUndefined(plain.workspaceModels);
+      assert.isFalse(
+        launches.some(
+          (launch) => launch.options.cwd === "/first" && launch.args.includes("--no-extensions"),
+        ),
+      );
+      assert.deepEqual(
+        [machine.models, first.workspaceModels, second.workspaceModels].map((models) =>
+          models?.map((model) => model.slug),
+        ),
+        [
+          ["default", "test/model"],
+          ["default", "test/model", "test/first"],
+          ["default", "test/model", "test/second"],
+        ],
+      );
       const workspaceLaunch = launches.find((launch) => launch.options.cwd === "/first");
       assert.isDefined(workspaceLaunch);
       assert.equal(workspaceLaunch!.command, "custom-pi");
@@ -241,23 +283,84 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       }),
   );
 
-  it.effect(
-    "fails command discovery instead of returning an empty successful workspace catalog",
-    () =>
-      Effect.gen(function* () {
-        const { spawner } = yield* makePiSpawner();
-        const instance = yield* create().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        yield* instance.snapshot.refresh;
-        assert.isDefined(instance.snapshotForCwd);
-        const error = yield* Effect.flip(instance.snapshotForCwd!("/failed"));
-        assert.equal(error._tag, "ProviderDriverError");
-        assert.equal(error.instanceId, instance.instanceId);
-        assert.deepEqual(
-          (yield* instance.snapshot.getSnapshot).skills.map((skill) => skill.name),
-          ["personal"],
-        );
-      }),
+  it.effect("signs Pi in for a project whose own config lists models", () =>
+    Effect.gen(function* () {
+      const { spawner } = yield* makePiSpawner({
+        models: [],
+        workspaceModels: { "/project": [{ provider: "test", id: "project" }] },
+      });
+      const instance = yield* create().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      yield* instance.snapshot.refresh;
+      assert.equal((yield* instance.snapshot.getSnapshot).auth.status, "unauthenticated");
+      assert.equal(
+        (yield* instance.snapshotForCwd!("/project")).workspaceAuth?.status,
+        "authenticated",
+      );
+      assert.isUndefined((yield* instance.snapshotForCwd!("/empty")).workspaceAuth);
+    }),
+  );
+
+  it.effect.each([
+    { cwd: "/failed-commands", modelsPending: undefined, commandsPending: true },
+    { cwd: "/invalid-commands", modelsPending: undefined, commandsPending: true },
+    { cwd: "/empty-commands", modelsPending: undefined, commandsPending: false },
+    { cwd: "/invalid-models", modelsPending: true, commandsPending: false },
+    { cwd: "/failed-state", modelsPending: undefined, commandsPending: false },
+  ])("publishes the available inventory for $cwd", ({ cwd, modelsPending, commandsPending }) =>
+    Effect.gen(function* () {
+      const { spawner } = yield* makePiSpawner({
+        workspaceModels: { [cwd]: [{ provider: "test", id: "workspace" }] },
+      });
+      const instance = yield* create().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      yield* instance.snapshot.refresh;
+      const workspace = yield* instance.snapshotForCwd!(cwd);
+      assert.equal(workspace.workspaceModelsPending, modelsPending);
+      assert.equal(workspace.slashCommandsPending, commandsPending);
+      assert.equal(workspace.workspaceSkillsPending, commandsPending ? true : undefined);
+      assert.deepEqual(
+        workspace.workspaceModels?.map((model) => model.slug),
+        modelsPending ? undefined : ["default", "test/model", "test/workspace"],
+      );
+      assert.deepEqual(
+        workspace.skills.map((skill) => skill.name),
+        commandsPending
+          ? ["personal"]
+          : cwd === "/empty-commands"
+            ? []
+            : ["personal", cwd.slice(1)],
+      );
+    }),
+  );
+  it.effect.each([
+    { cwd: "/late-commands", modelsPending: false, commandsPending: true },
+    { cwd: "/late-models", modelsPending: true, commandsPending: false },
+  ])("keeps the inventory available by the shared deadline for $cwd", (row) =>
+    Effect.gen(function* () {
+      const { spawner } = yield* makePiSpawner({
+        workspaceModels: { [row.cwd]: [{ provider: "test", id: "workspace" }] },
+      });
+      const instance = yield* create().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      yield* instance.snapshot.refresh;
+      const scan = yield* instance.snapshotForCwd!(row.cwd).pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      assert.isDefined(scan.pollUnsafe());
+      const workspace = yield* Fiber.join(scan);
+      assert.equal(workspace.workspaceModelsPending ?? false, row.modelsPending);
+      assert.equal(workspace.slashCommandsPending, row.commandsPending);
+      assert.deepEqual(
+        workspace.workspaceModels?.map((model) => model.slug),
+        row.modelsPending ? undefined : ["default", "test/model", "test/workspace"],
+      );
+      assert.deepEqual(
+        workspace.skills.map((skill) => skill.name),
+        row.commandsPending ? ["personal"] : ["personal", row.cwd.slice(1)],
+      );
+    }),
   );
 });

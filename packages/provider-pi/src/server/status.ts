@@ -21,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -185,6 +186,23 @@ const PI_LOGGED_RPC_OPERATIONS = new Set([
 
 const PI_PROJECT_TRUST_ARGUMENTS = new Set(["--approve", "-a", "--no-approve", "-na"]);
 
+// RPC starts reading stdin after session_start. If a trust prompt stops startup,
+// retry declining approval unless the user explicitly selected a trust mode.
+function readWithPiProjectTrust<A, R>(
+  launchArgs: ReadonlyArray<string>,
+  read: (args: ReadonlyArray<string>) => Effect.Effect<A, PiRpcError | PiRpcTimeoutError, R>,
+) {
+  return read(launchArgs).pipe(
+    Effect.catchIf(
+      (error) =>
+        error._tag === "PiRpcError" &&
+        (error.operation === "read" || error.operation === "exit") &&
+        !launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg)),
+      () => read([...launchArgs, "--no-approve"]),
+    ),
+  );
+}
+
 const readPiInventory = Effect.fn("PiProviderStatus.readPiInventory")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
@@ -251,24 +269,9 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     }),
     Effect.forkScoped,
   );
-  const { stateData, modelsData, commandsData } = yield* readPiInventory(
-    piSettings,
-    environment,
+  const { stateData, modelsData, commandsData } = yield* readWithPiProjectTrust(
     launchArgs,
-    timeoutMs,
-    cwd,
-  ).pipe(
-    // Pi's RPC mode reads stdin only after session_start, so a startup dialog (an MCP adapter asking
-    // to approve a project server) can never be answered and Pi exits. Retry declining project trust
-    // unless the user chose a trust mode, so trusted projects keep their project-local models.
-    Effect.catchIf(
-      (error) =>
-        error._tag === "PiRpcError" &&
-        (error.operation === "read" || error.operation === "exit") &&
-        !launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg)),
-      () =>
-        readPiInventory(piSettings, environment, [...launchArgs, "--no-approve"], timeoutMs, cwd),
-    ),
+    (args) => readPiInventory(piSettings, environment, args, timeoutMs, cwd),
   );
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
@@ -300,37 +303,82 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
-export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
-  function* (piSettings: PiSettings, environment: NodeJS.ProcessEnv, cwd: string) {
-    const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
-    if (!launchArgs.ok) {
-      return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
-    }
-    const connection = yield* makePiDiscoveryConnection(
-      piSettings,
-      providerProbeEnvironment(environment),
-      launchArgs.args,
-      cwd,
-    );
-    // A failed read must not replace a previously usable workspace catalog with an empty one.
-    const commandsData = yield* connection.request(
-      { type: "get_commands" },
-      resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-    );
-    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
-    return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
-  },
-  Effect.scoped,
-  (effect, _settings, environment) => {
-    const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
-    return effect.pipe(
-      Effect.timeoutOrElse({
-        duration: timeoutMs,
-        orElse: () => Effect.fail(new PiRpcTimeoutError({ operation: "discovery", timeoutMs })),
-      }),
-    );
-  },
-);
+export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInventory")(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+) {
+  const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+  if (!launchArgs.ok) {
+    return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
+  }
+  const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
+  const probeEnvironment = providerProbeEnvironment(environment);
+  const timeout = new PiRpcTimeoutError({ operation: "discovery", timeoutMs });
+  const pending = {
+    state: Option.none<unknown>(),
+    models: Result.fail(timeout),
+    commands: Result.fail(timeout),
+  };
+  type InventoryResult = Result.Result<unknown, PiRpcError | PiRpcTimeoutError>;
+  const partial = yield* Ref.make<{
+    state: Option.Option<unknown>;
+    models: InventoryResult;
+    commands: InventoryResult;
+  }>(pending);
+  const read = yield* readWithPiProjectTrust(launchArgs.args, (args) =>
+    Effect.gen(function* () {
+      yield* Ref.set(partial, pending);
+      const connection = yield* makePiDiscoveryConnection(piSettings, probeEnvironment, args, cwd);
+      const inventory = yield* Effect.all(
+        {
+          state: connection.request({ type: "get_state" }, timeoutMs).pipe(
+            Effect.option,
+            Effect.tap((state) => Ref.update(partial, (current) => ({ ...current, state }))),
+          ),
+          models: connection.request({ type: "get_available_models" }, timeoutMs).pipe(
+            Effect.result,
+            Effect.tap((models) => Ref.update(partial, (current) => ({ ...current, models }))),
+          ),
+          commands: connection.request({ type: "get_commands" }, timeoutMs).pipe(
+            Effect.filterOrFail(
+              (data) => Array.isArray(recordField(data, "commands")),
+              () =>
+                new PiRpcError({
+                  operation: "get_commands",
+                  detail: "Invalid command inventory",
+                }),
+            ),
+            Effect.result,
+            Effect.tap((commands) => Ref.update(partial, (current) => ({ ...current, commands }))),
+          ),
+        },
+        { concurrency: "unbounded" },
+      );
+      if (Result.isFailure(inventory.models) && Result.isFailure(inventory.commands)) {
+        return yield* inventory.models.failure;
+      }
+      return inventory;
+    }).pipe(Effect.scoped),
+  ).pipe(Effect.timeoutOption(timeoutMs));
+  const { state, models, commands } = Option.isSome(read) ? read.value : yield* Ref.get(partial);
+  const catalog = Result.flatMap(models, (data) =>
+    parseDiscoveredModels(data, Option.getOrUndefined(state)),
+  );
+  if (Result.isFailure(catalog) && Result.isFailure(commands)) {
+    return yield* Result.isFailure(models) ? models.failure : commands.failure;
+  }
+  return {
+    models: Result.map(catalog, (discovered) => ({
+      catalog: piModelsFromSettings(piSettings.customModels, discovered),
+      authenticated: discovered.length > 0,
+    })),
+    commands: Result.map(commands, (data) => {
+      const { slashCommands, skills } = parsePiDiscoveredCommands(data);
+      return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+    }),
+  };
+});
 
 export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,
