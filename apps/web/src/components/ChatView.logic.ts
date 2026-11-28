@@ -1454,11 +1454,8 @@ export function planComposerTurn(input: {
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly worktreePath: string | null;
   readonly activeThreadBranch: string | null;
-  /**
-   * False for a plain folder that tracks repositories: each starts from its own default branch.
-   * Undefined while its status loads: the server runs a plain folder's request in the folder.
-   */
-  readonly projectIsGitRepo: boolean | undefined;
+  /** False for a plain folder that tracks repositories: each starts from its own default branch. */
+  readonly projectIsGitRepo: boolean;
   /** For such a plain folder: the branch its repositories start from where they have it. */
   readonly plainProjectBaseBranch?: string | undefined;
   /** The server launches a No project worktree request at its root, so it needs no base. */
@@ -1491,17 +1488,15 @@ export function planComposerTurn(input: {
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch:
       shouldCreateWorktree &&
-      input.projectIsGitRepo === true &&
+      input.projectIsGitRepo &&
       !input.activeThreadBranch &&
       !input.isScratchProject,
     // The launch schema requires a base ref; `HEAD` leaves each repository on its default branch.
     baseBranchForWorktree: !shouldCreateWorktree
       ? null
-      : input.projectIsGitRepo === true
+      : input.projectIsGitRepo
         ? input.activeThreadBranch
-        : input.projectIsGitRepo === false
-          ? input.plainProjectBaseBranch || "HEAD"
-          : (input.activeThreadBranch ?? "HEAD"),
+        : input.plainProjectBaseBranch || "HEAD",
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || (input.sendQueuesBehindSetup && dispatchMode !== "steer")

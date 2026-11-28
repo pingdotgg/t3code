@@ -1690,7 +1690,9 @@ const make = Effect.gen(function* () {
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
               Option.isSome(launchReceipt) &&
-              (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
+              (accepted?.type === "worktree" ||
+                accepted?.type === "existing_worktree" ||
+                (accepted?.type === "root" && boundWorktreePath === null))
                 ? accepted
                 : Option.isSome(launchReceipt) &&
                     workspaceStrategy.type === "root" &&
