@@ -564,6 +564,56 @@ export const setHeader: {
 )
 
 /**
+ * Returns a response with the value added to the specified header, keeping any
+ * existing value.
+ *
+ * **When to use**
+ *
+ * Use when several parts of an application each add to a list-valued header,
+ * such as `Link` or `Vary`.
+ *
+ * **Details**
+ *
+ * An existing value is joined with the new one by `", "`, and an empty value
+ * leaves the response unchanged, so formatting an empty list of links is safe.
+ *
+ * **Gotchas**
+ *
+ * Do not append `Set-Cookie` this way; use the cookie APIs instead.
+ *
+ * **Example** (Adding canonical and alternate links)
+ *
+ * ```ts
+ * import { Headers, HttpServerResponse } from "effect/http"
+ *
+ * const withLinks = HttpServerResponse.appendHeader(
+ *   "Link",
+ *   Headers.formatLink([
+ *     { target: "https://example.com/en", rel: ["canonical"] },
+ *     { target: "https://example.com/de", rel: ["alternate"], params: { hreflang: "de" } }
+ *   ])
+ * )
+ * ```
+ *
+ * @see {@link setHeader} to replace a header value
+ *
+ * @stability unstable
+ * @category combinators
+ * @since 4.1.6
+ */
+export const appendHeader: {
+  (key: string, value: string): (self: HttpServerResponse) => HttpServerResponse
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse
+} = dual(
+  3,
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse => {
+    const headers = Headers.append(self.headers, key, value)
+    // makeResponse mutates the headers map in place, so never pass self.headers
+    return headers === self.headers ? self : makeResponse(self, headers)
+  }
+)
+
+/**
  * Returns a response with the specified header removed.
  *
  * @stability unstable
@@ -575,11 +625,7 @@ export const removeHeader: {
   (self: HttpServerResponse, key: string): HttpServerResponse
 } = dual(
   2,
-  (self: HttpServerResponse, key: string): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      headers: Headers.remove(self.headers, key)
-    })
+  (self: HttpServerResponse, key: string): HttpServerResponse => makeResponse(self, Headers.remove(self.headers, key))
 )
 
 /**
@@ -611,10 +657,7 @@ export const removeCookie: {
 } = dual(
   2,
   (self: HttpServerResponse, name: string): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.remove(self.cookies, name)
-    })
+    replaceCookies(self, Cookies.remove(self.cookies, name))
 )
 
 /**
@@ -629,7 +672,8 @@ export const replaceCookies: {
   (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse
 } = dual(
   2,
-  (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse => makeResponse({ ...self, cookies })
+  (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse =>
+    copyResponse(self, self.status, self.statusText, cookies, self.body)
 )
 
 /**
@@ -668,11 +712,7 @@ export const setCookie: {
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
     Effect.map(
       Effect.fromResult(Cookies.set(self.cookies, name, value, options)),
-      (cookies) =>
-        makeResponse({
-          ...self,
-          cookies
-        })
+      (cookies) => replaceCookies(self, cookies)
     )
 )
 
@@ -709,11 +749,7 @@ export const expireCookie: {
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
     Effect.map(
       Effect.fromResult(Cookies.expireCookie(self.cookies, name, options)),
-      (cookies) =>
-        makeResponse({
-          ...self,
-          cookies
-        })
+      (cookies) => replaceCookies(self, cookies)
     )
 )
 
@@ -749,11 +785,7 @@ export const setCookieUnsafe: {
     name: string,
     value: string,
     options?: Cookies.Cookie["options"]
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.setUnsafe(self.cookies, name, value, options)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.setUnsafe(self.cookies, name, value, options))
 )
 
 /**
@@ -785,11 +817,7 @@ export const expireCookieUnsafe: {
     self: HttpServerResponse,
     name: string,
     options?: Omit<NonNullable<Cookies.Cookie["options"]>, "expires" | "maxAge">
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.expireCookieUnsafe(self.cookies, name, options)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.expireCookieUnsafe(self.cookies, name, options))
 )
 
 /**
@@ -818,11 +846,7 @@ export const updateCookies: {
   (
     self: HttpServerResponse,
     f: (cookies: Cookies.Cookies) => Cookies.Cookies
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: f(self.cookies)
-    })
+  ): HttpServerResponse => replaceCookies(self, f(self.cookies))
 )
 
 /**
@@ -844,7 +868,7 @@ export const mergeCookies: {
 } = dual(
   2,
   (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse =>
-    makeResponse({ ...self, cookies: Cookies.merge(self.cookies, cookies) })
+    replaceCookies(self, Cookies.merge(self.cookies, cookies))
 )
 
 /**
@@ -893,11 +917,7 @@ export const setCookies: {
       ]
     >
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
-    Effect.map(Effect.fromResult(Cookies.setAll(self.cookies, cookies)), (cookies) =>
-      makeResponse({
-        ...self,
-        cookies
-      }))
+    Effect.map(Effect.fromResult(Cookies.setAll(self.cookies, cookies)), (cookies) => replaceCookies(self, cookies))
 )
 
 /**
@@ -944,11 +964,7 @@ export const setCookiesUnsafe: {
         options?: Cookies.Cookie["options"]
       ]
     >
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.setAllUnsafe(self.cookies, cookies)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.setAllUnsafe(self.cookies, cookies))
 )
 
 /**
@@ -977,15 +993,8 @@ export const setBody: {
  *
  * @internal
  */
-export const setBodyKeepHeaders = (self: HttpServerResponse, body: Body.HttpBody): HttpServerResponse => {
-  const response = Object.create(Proto) as Mutable<HttpServerResponse>
-  response.status = self.status
-  response.statusText = self.statusText
-  response.headers = self.headers
-  response.cookies = self.cookies
-  response.body = body
-  return response
-}
+export const setBodyKeepHeaders = (self: HttpServerResponse, body: Body.HttpBody): HttpServerResponse =>
+  copyResponse(self, self.status, self.statusText, self.cookies, body)
 
 /**
  * Sets the HTTP status code of an `HttpServerResponse`.
@@ -1014,12 +1023,7 @@ export const setStatus: {
     self: HttpServerResponse,
     status: number,
     statusText?: string | undefined
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      status,
-      statusText: statusText ?? self.statusText
-    })
+  ): HttpServerResponse => copyResponse(self, status, statusText ?? self.statusText, self.cookies, self.body)
 )
 
 /**
@@ -1497,6 +1501,24 @@ const makeResponse = (options: {
     self.headers = ownedHeaders ?? options.headers ?? Headers.empty
   }
   return self
+}
+
+// Shares the headers of `self`, so explicit content headers are not replaced
+// with the body's.
+const copyResponse = (
+  self: HttpServerResponse,
+  status: number,
+  statusText: string | undefined,
+  cookies: Cookies.Cookies,
+  body: Body.HttpBody
+): HttpServerResponse => {
+  const response = Object.create(Proto) as Mutable<HttpServerResponse>
+  response.status = status
+  response.statusText = statusText
+  response.cookies = cookies
+  response.body = body
+  response.headers = self.headers
+  return response
 }
 
 /**

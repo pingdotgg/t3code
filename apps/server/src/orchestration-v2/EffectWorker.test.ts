@@ -4,6 +4,8 @@ import {
   CheckpointScopeId,
   CommandId,
   NodeId,
+  ProjectId,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -12,6 +14,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   VcsProcessExitError,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +34,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -99,6 +103,7 @@ function layerExecutorFor(input: {
         interrupt: input.interrupt ?? (() => Effect.void),
         steer: () => Effect.void,
         applyModelSelection: () => Effect.void,
+        applyThreadTitle: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -120,6 +125,7 @@ function layerExecutorFor(input: {
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),
         releaseUnlessBusy: () => Effect.succeed(true),
+        forgetLoadedProviderThread: () => Effect.void,
         subscribePromptSuggestion: () => Stream.empty,
       }),
     ),
@@ -171,6 +177,7 @@ function layerExecutorFor(input: {
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -774,6 +781,63 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
       assert.deepEqual(
         yield* Ref.get(events),
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
+      );
+    }),
+);
+
+it.effect.each([3, 4])(
+  "enforces process-loss count %s after 22 minutes through the executor",
+  (processLossCount) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const instanceId = ProviderInstanceId.make("codex");
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layer = layerExecutorFor({
+        events,
+        continueAfterRestart: true,
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: ProjectId.make("project:executor-recovery"),
+                providerInstanceId: instanceId,
+                archivedAt: null,
+                deletedAt: null,
+                lineage: { parentThreadId: null, relationshipToParent: null },
+              },
+              runs: [
+                {
+                  id: runId,
+                  providerInstanceId: instanceId,
+                  status: "cancelled",
+                  requestedAt: DateTime.subtract(now, { minutes: 22 }),
+                  completedAt: now,
+                  ordinal: 1,
+                },
+              ],
+              messages: [],
+              providerTurns: [],
+              runtimeRequests: [],
+              turnItems: [],
+              attempts: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: () =>
+            Ref.update(events, (entries) => [...entries, "dispatch"]).pipe(Effect.as({} as never)),
+          recoverDelegatedTask: () =>
+            Ref.update(events, (entries) => [...entries, "recover-child"]),
+        },
+      });
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute({
+          ...restartEffect(now, { type: "detach" }),
+          request: { type: "provider-runtime.continue", sourceRunId: runId, processLossCount },
+        });
+      }).pipe(Effect.provide(layer));
+      assert.deepEqual(
+        yield* Ref.get(events),
+        processLossCount > 3 ? ["recover-child"] : ["dispatch", "recover-child"],
       );
     }),
 );

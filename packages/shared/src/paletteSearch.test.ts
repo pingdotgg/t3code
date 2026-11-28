@@ -308,6 +308,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
       pullRequests: [{ number: 243, title: "perf: faster cold starts" }],
     });
     expect(scoreThreadSearch("lakebed perf", lakebed, NOW)?.explain?.()).toEqual({
+      field: "pull-request",
       label: "PR",
       text: "#243 perf: faster cold starts",
       ranges: [{ start: 5, end: 9 }],
@@ -321,6 +322,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     });
     for (const query of ["#22889", "pr 22889", "pr22889", "pull request #22889"]) {
       expect(scoreThreadSearch(foldSearchQuery(query), subject, NOW)?.explain?.(), query).toEqual({
+        field: "pull-request",
         label: "PR",
         text: "#22889 Smaller MCP payloads",
         ranges: [{ start: 1, end: 6 }],
@@ -328,6 +330,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     }
     // The app's own worktree prefix is not part of what the branch says.
     expect(scoreThreadSearch("cleanup", subject, NOW)?.explain?.()).toEqual({
+      field: "branch",
       label: "Branch",
       text: "cleanup-payloads",
       ranges: [{ start: 0, end: 7 }],
@@ -387,9 +390,56 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     ).toContain("VS Code remote support");
   });
 
+  it("matches a query in double quotes only as whole words together, as typed", () => {
+    const threads = [
+      thread("Fix sidebar lag"),
+      thread("Sidebar scroll lag"),
+      thread("Fix sidebar lagging"),
+      thread("Lag in the sidebar"),
+    ];
+    expect(rankTitles("sidebar lag", threads)).toHaveLength(4);
+    expect(rankTitles('"sidebar lag"', threads)).toEqual(["Fix sidebar lag"]);
+    expect(rankTitles("“Sidebar  Lag”", threads)).toEqual(["Fix sidebar lag"]);
+    // No typos and no optional filler.
+    expect(rankTitles('"sidebra lag"', threads)).toEqual([]);
+    expect(rankTitles('"fix the sidebar"', threads)).toEqual([]);
+    // Without its closing quote the query is still being typed.
+    expect(rankTitles('"sidebar lag', threads)).toHaveLength(4);
+    // Whitespace runs in a title do not hide the phrase.
+    expect(rankTitles('"sidebar lag"', [thread("Fix sidebar  lag")])).toEqual(["Fix sidebar  lag"]);
+    // A long run of quotes inside a query folds at once, and quotes around nothing match nothing.
+    const quotes = '"'.repeat(34);
+    expect(foldSearchQuery(`a${quotes}x`)).toBe(`a${quotes}x`);
+    expect(scoreThreadSearch(foldSearchQuery('"#"'), thread('Fix "" handling'), NOW)).toBeNull();
+    // A query folded elsewhere may hold stray spaces.
+    expect(scoreThreadSearch('" lag"', thread("Fix sidebar lag"), NOW)).not.toBeNull();
+    const subject = thread("Trim model lists", {
+      branch: "t3/cleanup-payloads",
+      pullRequests: [{ number: 22889, title: "Smaller MCP payloads" }],
+    });
+    expect(
+      scoreThreadSearch(foldSearchQuery('"mcp payloads"'), subject, NOW)?.explain?.(),
+    ).toMatchObject({
+      label: "PR",
+      text: "#22889 Smaller MCP payloads",
+      ranges: [{ start: 15, end: 27 }],
+    });
+    expect(scoreThreadSearch(foldSearchQuery('"payloads mcp"'), subject, NOW)).toBeNull();
+    // A branch or pull request pasted in quotes still finds its thread.
+    for (const query of ['"t3/cleanup-payloads"', '"#22889"', '"pr 22889"']) {
+      expect(scoreThreadSearch(foldSearchQuery(query), subject, NOW), query).not.toBeNull();
+    }
+    expect(scoreSearchTerms(foldSearchQuery('"pull requests"'), ["Open pull requests"])).not.toBe(
+      null,
+    );
+    expect(scoreSearchTerms(foldSearchQuery('"pull request"'), ["Open pull requests"])).toBeNull();
+  });
+
   it("stores picked queries without splitting an emoji", () => {
     expect(pickedQuery(`${"a".repeat(31)}🚀`)).toBe("a".repeat(31));
     expect(pickedQuery("  Upl ")).toBe("upl");
+    // A pick counts for its words, in quotes or not.
+    expect(pickedQuery('"Fix  Sidebar"')).toBe("fix sidebar");
     // Folded before it is cut, as stored and as compared.
     const spaced = "investigate    workspace thread reset bug";
     expect(pickedQuery(spaced)).toBe(pickedQuery(foldSearchQuery(spaced)));
@@ -694,6 +744,47 @@ describe("findSearchTokenRanges", () => {
     expect(findSearchTokenRanges("drafts, enableFTS", "fts")).toEqual([{ start: 14, end: 17 }]);
     expect(findSearchTokenRanges("Open handlers.ts", ".ts")).toEqual([{ start: 13, end: 16 }]);
   });
+
+  it("highlights a query in double quotes only where its words are together", () => {
+    expect(
+      findSearchTokenRanges("files, then the Missing osprey  files", '"missing osprey files"'),
+    ).toEqual([{ start: 16, end: 37 }]);
+    expect(findSearchTokenRanges("models and the model", '"model"')).toEqual([
+      { start: 15, end: 20 },
+    ]);
+    expect(findSearchTokenRanges("日本日本", '"日本"')).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
+  });
+
+  it("highlights a dotted capital I as the message matches it", () => {
+    const text = "İ, then İstanbul guide";
+    expect(findSearchTokenRanges(text, "İstanbul")).toEqual([{ start: 8, end: 16 }]);
+    expect(findSearchTokenRanges(text, "İSTANBUL guide")).toEqual([
+      { start: 8, end: 16 },
+      { start: 17, end: 22 },
+    ]);
+    expect(findSearchTokenRanges(text, '"İstanbul guide"')).toEqual([{ start: 8, end: 22 }]);
+    // Other marks stay: a short word keeps its vowel sign rather than lighting up a lone consonant.
+    expect(findSearchTokenRanges("दिल्ली में मौसम मेरा", "में")).toEqual([{ start: 7, end: 10 }]);
+    // Touching exact matches stay apart; an overlap does not hide the next match.
+    expect(findSearchTokenRanges("Foo BarFoo Bar", '"foo bar"')).toEqual([
+      { start: 0, end: 7 },
+      { start: 7, end: 14 },
+    ]);
+    expect(findSearchTokenRanges("i i\u0307 i i", '"İ i"')).toEqual([
+      { start: 0, end: 3 },
+      { start: 5, end: 8 },
+    ]);
+    // Token order does not matter.
+    for (const query of ["ist İst", "İst ist"]) {
+      expect(findSearchTokenRanges("list and İst", query)).toEqual([
+        { start: 1, end: 4 },
+        { start: 9, end: 12 },
+      ]);
+    }
+  });
 });
 
 describe("scoreMessageMatch", () => {
@@ -723,6 +814,19 @@ describe("scoreMessageMatch", () => {
       ["明天部署部署到生产环境", "部署", { quality: 1, offset: 2 }],
       ["gannet’s gannet's", "gannet's", { quality: 1, offset: 9 }],
       ["gannet's gannet’s", "gannet’s", { quality: 1, offset: 0 }],
+      // In double quotes, only the words together as typed, as whole words.
+      ["the missing osprey files", '"missing osprey files"', { quality: 1.25, offset: 4 }],
+      ["Missing osprey\n  files", "“missing osprey files”", { quality: 1.25, offset: 0 }],
+      ["missing the osprey files", '"missing osprey files"', null],
+      ["osprey files missing", '"missing osprey files"', null],
+      // No further apart than the server's index reads.
+      [`missing${" ".repeat(17)}osprey files`, '"missing osprey files"', null],
+      // Whole words by the rule single words follow.
+      ["quickFix JSONSchema", '"fix JSON"', { quality: 1.25, offset: 5 }],
+      // Past a place where the phrase only starts a longer word, emoji first or not.
+      ["🚀 launching, then 🚀 launch", '"🚀 launch"', { quality: 1.25, offset: 19 }],
+      ["changed file", '"file"', { quality: 1, offset: 8 }],
+      ["changed files", '"file"', null],
     ] as const) {
       expect(scoreMessageMatch(text, query), `${query} in ${text}`).toEqual(expected);
     }

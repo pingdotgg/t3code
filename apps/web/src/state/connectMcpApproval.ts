@@ -2,7 +2,7 @@ import {
   type ConnectMcpApprovalCall,
   createConnectMcpApprovalCommand,
 } from "@t3tools/client-runtime/state/connectMcpApproval";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 
@@ -16,7 +16,12 @@ export async function runConnectMcpApproval(
   environmentId: EnvironmentId,
   call: ConnectMcpApprovalCall,
 ) {
-  const result = await connectMcpApproval.run(appAtomRegistry, { environmentId, call });
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    connectMcpApproval,
+    { environmentId, call },
+    { reportFailure: false },
+  );
   return result._tag === "Success"
     ? Result.succeed(result.value)
     : Result.fail(squashAtomCommandFailure(result));

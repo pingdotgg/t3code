@@ -5,9 +5,11 @@ import type {
 } from "@t3tools/contracts";
 import { appSignInTargetForRemote } from "@t3tools/client-runtime/source-control-clients";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { Linking } from "react-native";
+import { msg } from "gt-react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 
 /**
  * After a clone, suggests installing the forge app on the repository's owner when the server is
@@ -27,13 +29,18 @@ export async function suggestAppAccessForRemote(
   if (result._tag !== "Success" || result.value.status !== "not-covered") return;
   const owner = target.input.repository.split("/")[0] ?? target.input.repository;
   Dialog.alert(
-    `Give ${target.appSignIn.appName} access to ${owner}`,
-    `It isn't installed there, so GitHub requests for ${target.input.repository} use your own login and its lower rate limit.`,
+    m(msg("Give {app} access to {owner}", { app: target.appSignIn.appName, owner })),
+    m(
+      msg(
+        "It isn't installed there, so GitHub requests for {repository} use your own login and its lower rate limit.",
+        { repository: target.input.repository },
+      ),
+    ),
     [
-      { text: "Not now", style: "cancel" },
+      { text: m(msg("Not now")), style: "cancel" },
       {
-        text: "Install",
-        onPress: () => void Linking.openURL(target.appSignIn.installUrl).catch(() => undefined),
+        text: m(msg("Install", { $context: "verb, installs the GitHub app" })),
+        onPress: () => void tryOpenExternalUrl(target.appSignIn.installUrl, "provider-auth"),
       },
     ],
   );

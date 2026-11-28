@@ -7,6 +7,7 @@ import type { GitCommandError } from "@t3tools/contracts";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -59,6 +60,7 @@ it.effect("lists a nested-group fork's merge requests by source branch and names
               },
             }),
           ),
+          Layer.provide(FileSystem.layerNoop({})),
         ),
       ),
     );
@@ -101,6 +103,97 @@ it.effect("lists a nested-group fork's merge requests by source branch and names
         "json",
       ]);
     }
+  }),
+);
+
+// Real `glab mr list --output json` marshals client-go's BasicMergeRequest: a fork MR names its
+// source project only by `source_project_id`, never by a `source_project` path.
+it.effect("names a fork merge request's source project from real glab list output", () =>
+  Effect.gen(function* () {
+    const branch = "feature/fork-work";
+    const mergeRequest = (iid: number, sourceProjectId: number) => ({
+      id: 9000 + iid,
+      iid,
+      project_id: 100,
+      title: `Work ${iid}`,
+      state: "opened",
+      target_branch: "main",
+      source_branch: branch,
+      source_project_id: sourceProjectId,
+      target_project_id: 100,
+      draft: false,
+      sha: "0123456789abcdef0123456789abcdef01234567",
+      updated_at: "2026-04-07T15:00:00.000Z",
+      references: { short: `!${iid}`, relative: `!${iid}`, full: `group/upstream!${iid}` },
+      web_url: `https://gitlab.com/group/upstream/-/merge_requests/${iid}`,
+    });
+    const output = JSON.stringify([
+      mergeRequest(1, 101),
+      mergeRequest(2, 101),
+      mergeRequest(3, 100),
+      mergeRequest(4, 102),
+    ]);
+    const apiCalls: ReadonlyArray<string>[] = [];
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(
+        GitLabCli.layer.pipe(
+          Layer.provideMerge(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) =>
+                  Effect.sync(() => {
+                    if (input.args[0] !== "api") return TestSourceControlHost.processOutput(output);
+                    apiCalls.push(input.args);
+                    return TestSourceControlHost.processOutput(
+                      input.args[1] === "projects/101"
+                        ? JSON.stringify({ id: 101, path_with_namespace: "alice/upstream" })
+                        : "not json",
+                    );
+                  }),
+              },
+            }),
+          ),
+          Layer.provide(FileSystem.layerNoop({})),
+        ),
+      ),
+    );
+
+    const upstreamHead = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: branch,
+      state: "open",
+      limit: 20,
+    });
+    expect(upstreamHead[0]).not.toHaveProperty("headRepositoryNameWithOwner");
+    expect(apiCalls).toEqual([]);
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: `alice:${branch}`,
+      state: "open",
+      limit: 20,
+    });
+    // GitManager drops a cross-repository MR whose head project is unnamed.
+    expect(changeRequests).toMatchObject([
+      {
+        number: 1,
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: "alice/upstream",
+        headRepositoryOwnerLogin: "alice",
+      },
+      { number: 2, isCrossRepository: true, headRepositoryNameWithOwner: "alice/upstream" },
+      { number: 3, isCrossRepository: false },
+      { number: 4, isCrossRepository: true },
+    ]);
+    expect(changeRequests[2]).not.toHaveProperty("headRepositoryNameWithOwner");
+    expect(changeRequests[3]).not.toHaveProperty("headRepositoryNameWithOwner");
+    expect(apiCalls).toHaveLength(2);
+    expect(apiCalls).toEqual(
+      expect.arrayContaining([
+        ["api", "projects/101"],
+        ["api", "projects/102"],
+      ]),
+    );
   }),
 );
 

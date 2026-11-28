@@ -119,6 +119,13 @@ function hasCurrentProviderWorkspaceSnapshot(
   );
 }
 
+// The agent reloads skills on these, but the composer's per-cwd skill list is cached separately.
+const SKILL_RELOAD_COMMANDS = new Set(["/reload-skills", "/reload-plugins"]);
+
+export function isSkillReloadCommand(prompt: string): boolean {
+  return SKILL_RELOAD_COMMANDS.has(prompt.trim().toLowerCase());
+}
+
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
@@ -235,6 +242,7 @@ function failProviderWorkspaceSnapshotRefresh(
   state: ProviderWorkspaceSnapshotRefreshState,
   requestedAt: number,
   now: number,
+  cooldownMs = WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
 ): ProviderWorkspaceSnapshotRefreshState {
   // A newer request, or a snapshot loss, already superseded this one.
   if (state.requestedAt !== requestedAt) return state;
@@ -243,7 +251,7 @@ function failProviderWorkspaceSnapshotRefresh(
   return {
     ...state,
     requestedAt: null,
-    retryNotBefore: now + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+    retryNotBefore: cooldownMs === 0 ? null : now + cooldownMs,
     failedAttempts,
   };
 }
@@ -335,14 +343,15 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         // Outlives this build on purpose: a rebuild must not drop the retry.
         // Once nothing subscribes, the retry state dies with the node; writing
         // would recreate and rebuild it, which scans again with no subscriber.
-        const retryLater = () => {
+        const retry = (cooldownMs?: number) => {
           const node = registry.getNodes().get(refreshAtom);
           if (node === undefined || node.canBeRemoved) return;
           registry.set(refreshAtom, (state) =>
             // @effect-diagnostics-next-line globalDate:off
-            failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
+            failProviderWorkspaceSnapshotRefresh(state, now, Date.now(), cooldownMs),
           );
         };
+        const retryLater = () => retry();
         void runAtomCommand(
           registry,
           input.refreshProviders,
@@ -361,7 +370,11 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
             (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
               snapshot?.checkedAt !==
                 (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
-          if (!refreshed) retryLater();
+          if (!refreshed) return retryLater();
+          // A reply is dropped when the provider changed while it was in flight, such as a
+          // SessionStart rescan; ask again at once for the snapshot that change produced.
+          const held = findProvider(registry.get(input.providers(environmentId)));
+          if (!hasCompleteProviderWorkspaceSnapshot(held, cwd)) retry(0);
         }, retryLater);
         return plan.state;
       },

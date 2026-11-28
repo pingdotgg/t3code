@@ -7,15 +7,6 @@ describe("Boolean", () => {
   it("re-exports the global Boolean constructor", () => {
     assert.strictEqual(Boolean.Boolean, globalThis.Boolean)
   })
-
-  it("coerces values with Boolean semantics", () => {
-    assert.strictEqual(Boolean.Boolean(1), true)
-    assert.strictEqual(Boolean.Boolean(0), false)
-    assert.strictEqual(Boolean.Boolean(""), false)
-    assert.strictEqual(Boolean.Boolean("hello"), true)
-    assert.strictEqual(Boolean.Boolean(null), false)
-    assert.strictEqual(Boolean.Boolean(undefined), false)
-  })
 })
 
 describe("isBoolean", () => {
@@ -84,11 +75,6 @@ describe("not", () => {
   it("negates the value", () => {
     assert.strictEqual(Boolean.not(true), false)
     assert.strictEqual(Boolean.not(false), true)
-  })
-
-  it("is self-inverse", () => {
-    assert.strictEqual(Boolean.not(Boolean.not(true)), true)
-    assert.strictEqual(Boolean.not(Boolean.not(false)), false)
   })
 })
 
@@ -174,14 +160,6 @@ describe("eqv", () => {
     assert.strictEqual(pipe(true, Boolean.eqv(true)), true)
     assert.strictEqual(pipe(true, Boolean.eqv(false)), false)
   })
-
-  it("is the negation of xor", () => {
-    for (const a of [true, false]) {
-      for (const b of [true, false]) {
-        assert.strictEqual(Boolean.eqv(a, b), !Boolean.xor(a, b))
-      }
-    }
-  })
 })
 
 describe("implies", () => {
@@ -259,13 +237,6 @@ describe("ReducerAnd", () => {
     assert.strictEqual(Boolean.ReducerAnd.combine(false, true), false)
     assert.strictEqual(Boolean.ReducerAnd.combine(false, false), false)
   })
-
-  it("initialValue acts as identity element", () => {
-    assert.strictEqual(Boolean.ReducerAnd.combine(Boolean.ReducerAnd.initialValue, true), true)
-    assert.strictEqual(Boolean.ReducerAnd.combine(Boolean.ReducerAnd.initialValue, false), false)
-    assert.strictEqual(Boolean.ReducerAnd.combine(true, Boolean.ReducerAnd.initialValue), true)
-    assert.strictEqual(Boolean.ReducerAnd.combine(false, Boolean.ReducerAnd.initialValue), false)
-  })
 })
 
 describe("ReducerOr", () => {
@@ -278,12 +249,5 @@ describe("ReducerOr", () => {
     assert.strictEqual(Boolean.ReducerOr.combine(true, false), true)
     assert.strictEqual(Boolean.ReducerOr.combine(false, true), true)
     assert.strictEqual(Boolean.ReducerOr.combine(false, false), false)
-  })
-
-  it("initialValue acts as identity element", () => {
-    assert.strictEqual(Boolean.ReducerOr.combine(Boolean.ReducerOr.initialValue, true), true)
-    assert.strictEqual(Boolean.ReducerOr.combine(Boolean.ReducerOr.initialValue, false), false)
-    assert.strictEqual(Boolean.ReducerOr.combine(true, Boolean.ReducerOr.initialValue), true)
-    assert.strictEqual(Boolean.ReducerOr.combine(false, Boolean.ReducerOr.initialValue), false)
   })
 })

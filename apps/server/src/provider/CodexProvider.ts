@@ -3,10 +3,13 @@ import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as RcMap from "effect/RcMap";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
@@ -36,7 +39,11 @@ import {
   formatCodexModelName,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  codexUsesStrictConfig,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -646,7 +653,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   const environment = yield* codexProcessEnvironment(input);
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
+    yield* resolveCodexAppServerArgs(input),
     { env: environment, extendEnv: true },
   );
   const child = yield* spawner
@@ -674,8 +681,30 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   );
   const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
-  return { client, initialize };
+  return { client, initialize, pid: child.pid };
 });
+
+// Codex runs git (ssh for ssh URLs) for plugin marketplaces at launch and exits without waiting
+// for it, so stopping a short probe mid-fetch strands ssh in an SSH-agent request.
+const CODEX_STARTUP_WORK_GRACE = Duration.minutes(1);
+
+const codexProcessGroupIsBusy = Effect.fn("codexProcessGroupIsBusy")(
+  function* (pid: number) {
+    const { stdout } = yield* spawnAndCollect(
+      "pgrep",
+      ChildProcess.make("pgrep", ["-g", `${pid}`]),
+    );
+    return stdout.split("\n").some((line) => line.trim() !== "" && Number(line) !== pid);
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+const stopCodexAfterStartupWork = (pid: number, processScope: Scope.Closeable) =>
+  codexProcessGroupIsBusy(pid).pipe(
+    Effect.repeat({ schedule: Schedule.spaced("500 millis"), while: (busy) => busy }),
+    Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
+    Effect.ensuring(Scope.close(processScope, Exit.void)),
+  );
 
 // Usage is an enrichment: a failure or a slow answer degrades to "no usage this
 // probe" rather than costing the account and models.
@@ -711,7 +740,22 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly skipNativeUsage?: boolean;
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
-  const { client, initialize } = yield* withCodexAppServerClient(input);
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const processScope = yield* Scope.make();
+  let pid: number | undefined;
+  // Returning the snapshot must not wait for Codex's own startup work.
+  yield* Effect.addFinalizer(() =>
+    pid === undefined
+      ? Scope.close(processScope, Exit.void)
+      : stopCodexAfterStartupWork(pid, processScope).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkDetach,
+          Effect.asVoid,
+        ),
+  );
+  const opened = yield* withCodexAppServerClient(input).pipe(Scope.provide(processScope));
+  pid = opened.pid;
+  const { client, initialize } = opened;
 
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
@@ -824,6 +868,19 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   ),
 );
 
+export const resolveCodexAppServerArgs = Effect.fn("resolveCodexAppServerArgs")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string | undefined;
+  readonly launchArgs?: string | undefined;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
+}) {
+  const version = codexUsesStrictConfig(input.launchArgs)
+    ? yield* probeCodexCliVersion(input)
+    : undefined;
+  return codexAppServerArgs(input.launchArgs, version);
+});
+
 export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -837,6 +894,186 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   });
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+});
+
+// Long enough for a burst of workspace switches; short because the helper holds the user's
+// binary open, and Windows refuses to overwrite or delete a running executable.
+const CODEX_SKILLS_HELPER_IDLE_TTL = "30 seconds";
+
+/** Reuses one app-server per launch identity; each read runs on the warm process. */
+export const makeCodexAppServerHelper = Effect.fn("makeCodexAppServerHelper")(function* () {
+  const helpers = yield* RcMap.make({
+    lookup: (launch: {
+      readonly binaryPath: string;
+      readonly homePath?: string | undefined;
+      readonly launchArgs?: string | undefined;
+      readonly environment: NodeJS.ProcessEnv;
+    }) =>
+      withCodexAppServerClient({ ...launch, cwd: process.cwd() }).pipe(
+        Effect.map(({ client }) => client),
+      ),
+    idleTimeToLive: CODEX_SKILLS_HELPER_IDLE_TTL,
+  });
+  const invalidateAll = Effect.gen(function* () {
+    const keys = Array.from(yield* RcMap.keys(helpers));
+    yield* Effect.forEach(keys, (key) => RcMap.invalidate(helpers, key), { discard: true });
+  });
+  const withClient = Effect.fn("CodexAppServerHelper.withClient")(function* <A, E>(
+    input: {
+      readonly binaryPath: string;
+      readonly homePath?: string | undefined;
+      readonly launchArgs?: string | undefined;
+      readonly environment?: NodeJS.ProcessEnv | undefined;
+    },
+    use: (client: CodexClient.CodexAppServerClient["Service"]) => Effect.Effect<A, E>,
+  ) {
+    const launch = {
+      binaryPath: input.binaryPath,
+      ...(input.homePath !== undefined ? { homePath: input.homePath } : {}),
+      ...(input.launchArgs !== undefined ? { launchArgs: input.launchArgs } : {}),
+      environment: providerProbeEnvironment(input.environment ?? process.env),
+    };
+    // Retire helpers for a previous binary, home, credentials, or launch options.
+    const stale = Array.from(yield* RcMap.keys(helpers)).filter(
+      (key) => !Equal.equals(key, launch),
+    );
+    yield* Effect.forEach(stale, (key) => RcMap.invalidate(helpers, key), { discard: true });
+    return yield* RcMap.get(helpers, launch).pipe(
+      Effect.flatMap(use),
+      Effect.scoped,
+      // RcMap keeps a failed spawn, and a dead helper keeps failing; drop it so the retry respawns.
+      Effect.onError(() => RcMap.invalidate(helpers, launch)),
+      Effect.retry({ times: 1 }),
+    );
+  });
+  return { withClient, invalidateAll };
+});
+
+/** Reuses one app-server per launch identity; each read passes its cwd and rescans from disk. */
+export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* (
+  existingHelper?: Effect.Success<ReturnType<typeof makeCodexAppServerHelper>>,
+) {
+  const helper = existingHelper ?? (yield* makeCodexAppServerHelper());
+  return Effect.fn("CodexSkillsProbe.probe")(function* (input: {
+    readonly binaryPath: string;
+    readonly homePath?: string;
+    readonly launchArgs?: string;
+    readonly cwd: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }) {
+    const { cwd, ...rest } = input;
+    const skillsResponse = yield* helper.withClient(rest, (client) =>
+      client.request("skills/list", { cwds: [cwd], forceReload: true }),
+    );
+    return parseCodexSkillsListResponse(skillsResponse, cwd);
+  });
+});
+
+export const probeCodexUsageLimits = Effect.fn("probeCodexUsageLimits")(function* (input: {
+  readonly helper: Effect.Success<ReturnType<typeof makeCodexAppServerHelper>>;
+  readonly codexSettings: CodexSettings;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  if (!input.codexSettings.enabled) return undefined;
+  const resolvedEnvironment = providerProbeEnvironment(input.environment ?? process.env);
+  const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+    "codex",
+    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
+  const startedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+  const deadlineMs = startedAtMs + probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
+  const launch = {
+    binaryPath: input.codexSettings.binaryPath,
+    homePath: input.codexSettings.homePath,
+    launchArgs: resolveCodexLaunchArgs(input.codexSettings.launchArgs, resolvedEnvironment),
+    environment: resolvedEnvironment,
+  };
+  return yield* input.helper
+    .withClient(launch, (client) =>
+      Effect.gen(function* () {
+        const [accountResponse, configResponse] = yield* Effect.all(
+          [
+            client.request("account/read", {}),
+            withCodexDiscoveryDeadline(
+              client.request("config/read", { includeLayers: false }),
+              deadlineMs,
+              CODEX_CONFIG_PROBE_TIMEOUT_MS,
+            ).pipe(Effect.orElseSucceed(() => undefined)),
+          ],
+          { concurrency: 2 },
+        );
+        if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+          return undefined;
+        }
+        const email = codexAccountEmail(accountResponse.account);
+        const baseAuth = email ? { email } : undefined;
+        if (configResponse === undefined) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: "Codex did not answer the config request.",
+            }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        if (!codexRoutesSpendNativeQuota(accountResponse, configResponse.config)) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        const rateLimits = yield* readCodexRateLimits(client, deadlineMs);
+        if ("failure" in rateLimits) {
+          return {
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: rateLimits.failure,
+            }),
+            ...(baseAuth ? { auth: baseAuth } : {}),
+          };
+        }
+        const workspaceId = rateLimits.accountId?.trim() || undefined;
+        const label = codexAccountAuthLabel(accountResponse.account, rateLimits.snapshot.planType);
+        return {
+          usageLimits: codexRateLimitsToLimits({
+            snapshot: rateLimits.snapshot,
+            rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
+            resetCredits: rateLimits.resetCredits,
+            checkedAt,
+          }),
+          auth: {
+            ...(email ? { email } : {}),
+            ...(workspaceId ? { workspaceId } : {}),
+            ...(label ? { label } : {}),
+          },
+        };
+      }),
+    )
+    .pipe(
+      Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
+      Effect.map(
+        Option.getOrElse(() =>
+          makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "Codex did not answer the usage request.",
+          }),
+        ),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(
+          makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: codexRateLimitsFailureMessage(error),
+          }),
+        ),
+      ),
+    );
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>

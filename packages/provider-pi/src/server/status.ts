@@ -1,5 +1,6 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ProviderDriverKind,
   type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
@@ -7,7 +8,12 @@ import {
 import type { PiSettings } from "../settings.ts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -60,8 +66,6 @@ const PI_PRESENTATION = {
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
-// Earlier releases persist background set_thinking_level requests as the user's global default.
-export const MINIMUM_PI_VERSION = "0.84.3";
 
 const decodePiAuthCheck = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
@@ -167,6 +171,36 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+// A failed response echoes Pi's own `command` field as the operation, so log only names we sent.
+const PI_LOGGED_RPC_OPERATIONS = new Set([
+  "spawn",
+  "read",
+  "write",
+  "exit",
+  "terminate",
+  "get_state",
+  "get_available_models",
+  "get_commands",
+]);
+
+const PI_PROJECT_TRUST_ARGUMENTS = new Set(["--approve", "-a", "--no-approve", "-na"]);
+
+const readPiInventory = Effect.fn("PiProviderStatus.readPiInventory")(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  timeoutMs: number,
+  cwd?: string,
+) {
+  const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
+  const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
+  const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
+  const commandsData = yield* connection
+    .request({ type: "get_commands" }, timeoutMs)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  return { stateData, modelsData, commandsData };
+}, Effect.scoped);
+
 // Text generation runs Pi with --no-extensions, so it cannot load models that an
 // extension or package registers. Listing models with that launch tells them apart.
 const discoverPiTextGenerationModelSlugs = Effect.fn(
@@ -217,12 +251,25 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     }),
     Effect.forkScoped,
   );
-  const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
-  const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
-  const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
-  const commandsData = yield* connection
-    .request({ type: "get_commands" }, timeoutMs)
-    .pipe(Effect.orElseSucceed(() => undefined));
+  const { stateData, modelsData, commandsData } = yield* readPiInventory(
+    piSettings,
+    environment,
+    launchArgs,
+    timeoutMs,
+    cwd,
+  ).pipe(
+    // Pi's RPC mode reads stdin only after session_start, so a startup dialog (an MCP adapter asking
+    // to approve a project server) can never be answered and Pi exits. Retry declining project trust
+    // unless the user chose a trust mode, so trusted projects keep their project-local models.
+    Effect.catchIf(
+      (error) =>
+        error._tag === "PiRpcError" &&
+        (error.operation === "read" || error.operation === "exit") &&
+        !launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg)),
+      () =>
+        readPiInventory(piSettings, environment, [...launchArgs, "--no-approve"], timeoutMs, cwd),
+    ),
+  );
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
   const textGenerationModelSlugs = yield* Fiber.join(textGenerationModelSlugsFiber);
@@ -389,6 +436,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = piModelsFromSettings(piSettings.customModels);
@@ -482,12 +530,19 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: `T3 Code could not determine the Pi version. Pi ${MINIMUM_PI_VERSION} or newer is required.`,
+        message: "T3 Code could not determine the Pi version. Update Pi, then refresh its status.",
       },
     });
   }
 
-  if (compareSemverVersions(version, MINIMUM_PI_VERSION) < 0) {
+  // Stop before discovery: releases the policy rates broken persist background
+  // set_thinking_level requests as the user's global default.
+  const broken = brokenVersionDetail({
+    name: "Pi",
+    version,
+    advisory: yield* compatibility(ProviderDriverKind.make("pi"), version),
+  });
+  if (broken !== undefined) {
     return buildServerProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
@@ -498,7 +553,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: `Pi ${version} is unsupported. Update to Pi ${MINIMUM_PI_VERSION} or newer.`,
+        message: broken,
       },
     });
   }
@@ -532,8 +587,12 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     Effect.exit,
   );
   if (Exit.isFailure(discoveryExit)) {
+    const failure = Cause.findErrorOption(discoveryExit.cause);
     yield* Effect.logWarning("Pi RPC discovery failed.", {
       errorTag: causeErrorTag(discoveryExit.cause),
+      ...(Option.isSome(failure) && PI_LOGGED_RPC_OPERATIONS.has(failure.value.operation)
+        ? { operation: failure.value.operation }
+        : {}),
     });
     return buildServerProvider({
       presentation: PI_PRESENTATION,

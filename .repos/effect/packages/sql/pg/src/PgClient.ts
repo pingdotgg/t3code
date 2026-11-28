@@ -21,8 +21,11 @@ import { SqlError, UnknownError } from "effect/sql/SqlError"
 import type { Custom, Fragment } from "effect/sql/Statement"
 import * as Statement from "effect/sql/Statement"
 import * as Stream from "effect/Stream"
+import * as Tracer from "effect/Tracer"
 import type { Duplex } from "node:stream"
 import type { ConnectionOptions } from "node:tls"
+import { resolveConfig } from "./internal/config.ts"
+import { connectionInternals } from "./internal/connection.ts"
 import { validateChannelName } from "./internal/sqlError.ts"
 import * as PgConnection from "./PgConnection.ts"
 import * as PgPool from "./PgPool.ts"
@@ -53,7 +56,7 @@ export type TypeId = "~@effect/sql-pg/PgClient"
  * @category services
  * @since 4.0.0
  */
-export interface PgClient extends Client.SqlClient {
+export interface PgClient extends Client.Base {
   readonly [TypeId]: TypeId
   readonly config: PgClientConfig
   readonly json: (_: unknown) => Fragment
@@ -75,6 +78,36 @@ export interface PgClient extends Client.SqlClient {
    * on it.
    */
   readonly poolStats: Effect.Effect<Pool.Stats>
+  /**
+   * Runs a query and returns field metadata alongside positional rows of raw
+   * PostgreSQL text values (`string | null`), bypassing result codecs
+   * (including `types`), `transformResultNames`, and `Statement.CurrentTransformer`.
+   *
+   * **Details**
+   *
+   * Runs on the active transaction's connection inside `withTransaction`;
+   * otherwise borrows a connection like any statement.
+   *
+   * **Example** (Reading values as text)
+   *
+   * ```ts
+   * import { PgClient } from "@effect/sql-pg"
+   * import { Effect } from "effect"
+   *
+   * const program = Effect.gen(function*() {
+   *   const sql = yield* PgClient.PgClient
+   *   const result = yield* sql.withTransaction(
+   *     sql.queryTextValues("SELECT now() AS at, $1::numeric AS amount", ["1.50"])
+   *   )
+   *   // result.fields: [{ name: "at", dataTypeId: 1184 }, { name: "amount", dataTypeId: 1700 }]
+   *   // result.values: [["2026-11-24 12:00:00.123456+00", "1.50"]]
+   * })
+   * ```
+   */
+  readonly queryTextValues: (
+    sql: string,
+    params?: ReadonlyArray<unknown>
+  ) => Effect.Effect<PgConnection.TextResult, SqlError>
 }
 
 /**
@@ -84,7 +117,7 @@ export interface PgClient extends Client.SqlClient {
  * @category services
  * @since 4.0.0
  */
-export const PgClient = Context.Service<PgClient>("@effect/sql-pg/PgClient")
+export const PgClient = Context.Service<PgClient, PgClient & Client.SqlClient>("@effect/sql-pg/PgClient")
 
 /**
  * Connection and query settings for a PostgreSQL client.
@@ -155,6 +188,14 @@ export interface PgClientConfig<R = never> {
    * Caches prepared statements by name. Enabled by default. Disable it for
    * poolers that cannot preserve named statements between queries, such as
    * PgBouncer in transaction mode with `max_prepared_statements = 0`.
+   *
+   * **Gotchas**
+   *
+   * With `multiplex` enabled, PgBouncer before 1.26.0 with
+   * `max_prepared_statements > 0` can misorder or drop responses to pipelined
+   * `Close` messages, failing connections with
+   * `Unexpected ParseComplete during close`. Set `prepare: false` or upgrade
+   * PgBouncer.
    */
   readonly prepare?: boolean | undefined
   /** How many statements a connection keeps prepared. Defaults to `100`. */
@@ -225,7 +266,7 @@ export interface PgPoolConfig<R = never> extends PgClientConfig<R> {
  */
 export const make = <R = never>(
   options: PgPoolConfig<R>
-): Effect.Effect<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> =>
+): Effect.Effect<PgClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> =>
   Effect.flatMap(PgPool.make(options), (pool) =>
     makeImpl({
       acquirer: Effect.map(pool.get, makeConnection),
@@ -250,7 +291,7 @@ export const makeClient = <R = never>(
      */
     readonly acquireForStream?: boolean | undefined
   }
-): Effect.Effect<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> =>
+): Effect.Effect<PgClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> =>
   Effect.flatMap(PgConnection.make(options), (connection) =>
     makeImpl({
       acquirer: Effect.succeed(makeConnection(
@@ -276,13 +317,14 @@ const makeImpl = Effect.fnUntraced(function*<R>(
     readonly config: PgClientConfig<R>
     readonly poolStats: Effect.Effect<Pool.Stats>
   }
-): Effect.fn.Return<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> {
+): Effect.fn.Return<PgClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> {
   // The consuming fiber's services take precedence over the captured ones.
   const hook = options.config.onAcquire
   const context = yield* Effect.context<R>()
   const onAcquire = hook &&
     Effect.updateContext(hook, (current: Context.Context<never>) => Context.merge(context, current))
   const config: PgClientConfig = { ...options.config, onAcquire }
+  const resolved = yield* resolveConfig(config)
   let { acquirer, borrower, listenAcquirer, transactionAcquirer } = options
   if (onAcquire !== undefined) {
     acquirer = Effect.tap(acquirer, onAcquire)
@@ -310,34 +352,63 @@ const makeImpl = Effect.fnUntraced(function*<R>(
   ): Effect.Effect<Queue.Dequeue<PgConnection.Notification, SqlError>, SqlError, Scope.Scope> =>
     Effect.flatMap(listenAcquirer, (connection) => connection.listen(channel))
 
+  const spanAttributes: ReadonlyArray<readonly [string, unknown]> = [
+    ...(config.spanAttributes ? Object.entries(config.spanAttributes) : []),
+    [ATTR_DB_SYSTEM_NAME, "postgresql"],
+    // PostgreSQL connects to the database named after the user when none is given.
+    [ATTR_DB_NAMESPACE, resolved.startupParameters.database ?? resolved.username],
+    [ATTR_SERVER_ADDRESS, resolved.host],
+    [ATTR_SERVER_PORT, resolved.port]
+  ]
+
+  const client = yield* Client.make({
+    driver: "pg",
+    acquirer,
+    borrower,
+    // Postgres prepares transaction control like anything else, and a client
+    // with preparation turned off falls back to the unnamed path anyway.
+    prepareTransactionControls: true,
+    commit,
+    onCommitFailure,
+    // A session the server ended has nothing left to roll back.
+    isTransaction: (conn) => connectionInternals((conn as ConnectionImpl).connection).deadError() === undefined,
+    releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
+    transactionAcquirer,
+    compiler,
+    spanAttributes,
+    transformRows
+  })
+
+  // Routed and traced as a statement is, without the connection wait time.
+  const queryTextValues = (sql: string, params?: ReadonlyArray<unknown>) =>
+    Effect.useSpan(Statement.spanName(spanAttributes), { kind: "client" }, (span) =>
+      Effect.withFiber((fiber) => {
+        for (const [key, value] of spanAttributes) {
+          span.attribute(key, value)
+        }
+        span.attribute(ATTR_SQL_METHOD, "executeTextValues")
+        span.attribute(ATTR_DB_QUERY_TEXT, sql)
+        const run = (connection: Connection) => (connection as ConnectionImpl).connection.queryTextValues(sql, params)
+        const transaction = Context.getOrUndefined(fiber.context, client.transactionService)
+        const execute = transaction !== undefined
+          ? Effect.flatMap(Client.activeTransactionConnection(transaction), run)
+          : borrower !== undefined
+          ? borrower(run)
+          : Effect.scoped(Effect.flatMap(acquirer, run))
+        return fiber.cache.tracerEnabled && fiber.getRef(Statement.SpanPropagationEnabled)
+          ? Effect.provideService(execute, Tracer.ParentSpan, span)
+          : execute
+      }))
+
   return Object.assign(
-    yield* Client.make({
-      driver: "pg",
-      acquirer,
-      borrower,
-      // Postgres prepares transaction control like anything else, and a client
-      // with preparation turned off falls back to the unnamed path anyway.
-      prepareTransactionControls: true,
-      commit,
-      onCommitFailure,
-      releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
-      transactionAcquirer,
-      compiler,
-      spanAttributes: [
-        ...(config.spanAttributes ? Object.entries(config.spanAttributes) : []),
-        [ATTR_DB_SYSTEM_NAME, "postgresql"],
-        [ATTR_DB_NAMESPACE, config.database ?? config.username ?? "postgres"],
-        [ATTR_SERVER_ADDRESS, config.host ?? "localhost"],
-        [ATTR_SERVER_PORT, config.port ?? 5432]
-      ],
-      transformRows
-    }),
+    client,
     {
       [TypeId]: TypeId as TypeId,
       config,
       poolStats: options.poolStats,
       json: (_: unknown) => Statement.fragment([PgJson(_)]),
       listen,
+      queryTextValues,
       notify: (channel: string, payload: string) => {
         const channelError = validateChannelName(channel, "notify")
         return channelError !== undefined ?
@@ -452,7 +523,7 @@ const makeConnection = (
  * @since 4.0.0
  */
 export const layerFrom = <E, R>(
-  acquire: Effect.Effect<PgClient, E, R>
+  acquire: Effect.Effect<PgClient & Client.SqlClient, E, R>
 ): Layer.Layer<PgClient | Client.SqlClient, E, Exclude<R, Scope.Scope | Reactivity.Reactivity>> =>
   Layer.effectContext(
     Effect.map(acquire, (client) =>
@@ -567,3 +638,5 @@ const ATTR_DB_SYSTEM_NAME = "db.system.name"
 const ATTR_DB_NAMESPACE = "db.namespace"
 const ATTR_SERVER_ADDRESS = "server.address"
 const ATTR_SERVER_PORT = "server.port"
+const ATTR_DB_QUERY_TEXT = "db.query.text"
+const ATTR_SQL_METHOD = "effect.sql.method"

@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { firstLineTitle } from "./firstLineTitle.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -70,7 +71,7 @@ function metadataCommand(input: {
         type: "thread.metadata.update",
         commandId: input.commandId,
         threadId: input.threadId,
-        title: input.update.title!,
+        title: firstLineTitle(input.update.title) ?? input.update.title!,
       };
     case "regenerate_title":
       return {
@@ -142,7 +143,12 @@ const make = Effect.gen(function* () {
         ),
       );
     if (shell === null || shell.deletedAt !== null) {
-      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        threadManagement,
+        scope,
+        threadId,
+        `Thread ${threadId} was not found.`,
+      );
     }
     const requestKey =
       input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;

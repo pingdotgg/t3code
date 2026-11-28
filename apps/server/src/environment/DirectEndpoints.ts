@@ -7,6 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -24,7 +25,12 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
-import { isLoopbackHost, isPrivateNetworkAddress, VIRTUAL_INTERFACE } from "../startupAccess.ts";
+import {
+  isLoopbackHost,
+  isPrivateNetworkAddress,
+  isVirtualInterface,
+  WINDOWS_HOST_ADAPTER_MAC,
+} from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -40,6 +46,7 @@ export class DirectEndpoints extends Context.Service<
 >()("t3/environment/DirectEndpoints") {}
 
 // Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
+// Wildcard binds stay IPv4: the private-network listener check accepts only IPv4 peers.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
@@ -51,9 +58,6 @@ const isTailscaleInterface = (
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
-// Windows adapter names are mutable; Linux bridges can inherit these MACs.
-const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
-
 export function resolveBoundEndpoints(input: {
   readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
@@ -61,6 +65,7 @@ export function resolveBoundEndpoints(input: {
   readonly interfaces: NetworkInterfacesMap;
   /** A cloud VM's private network is its provider's, which no client shares. */
   readonly onCloudVm?: boolean;
+  readonly isolatedBridges?: ReadonlySet<string>;
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
@@ -70,7 +75,11 @@ export function resolveBoundEndpoints(input: {
   );
   const addresses = isWildcardHost(input.host)
     ? Object.entries(input.interfaces)
-        .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
+        .flatMap(([name, entries]) =>
+          isVirtualInterface(name, input.platform) || input.isolatedBridges?.has(name)
+            ? []
+            : (entries ?? []),
+        )
         .filter(
           (entry) =>
             !entry.internal &&
@@ -79,7 +88,10 @@ export function resolveBoundEndpoints(input: {
             !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
-    : [input.host!].filter(isAdvertisableAddress);
+    : [input.host!].filter(
+        (address) =>
+          isAdvertisableAddress(address) || (NodeNet.isIPv6(address) && isTailnetHost(address)),
+      );
   return [...new Set(addresses)]
     .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
     .map((address) => ({
@@ -87,6 +99,47 @@ export function resolveBoundEndpoints(input: {
       httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
     }));
 }
+
+const SYSFS_NET = "/sys/class/net";
+
+/**
+ * Linux bridges with no port leading to a NIC, such as a container network
+ * under any name. A host bridge like `br0` enslaves the NIC, directly or
+ * through a bond or VLAN, and stays listed.
+ */
+export const readIsolatedLinuxBridges = Effect.fn("DirectEndpoints.readIsolatedLinuxBridges")(
+  function* (names: ReadonlyArray<string>, root = SYSFS_NET) {
+    const fs = yield* FileSystem.FileSystem;
+    const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+    const list = (path: string) =>
+      fs.readDirectory(path).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const reachesHardware: (name: string, depth: number) => Effect.Effect<boolean> =
+      Effect.fnUntraced(function* (name: string, depth: number) {
+        if (yield* exists(`${root}/${name}/device`)) return true;
+        if (depth === 0) return false;
+        const lowers = (yield* list(`${root}/${name}`)).flatMap((entry) =>
+          entry.startsWith("lower_") ? [entry.slice("lower_".length)] : [],
+        );
+        for (const lower of lowers) {
+          if (yield* reachesHardware(lower, depth - 1)) return true;
+        }
+        return false;
+      });
+    const isolated = new Set<string>();
+    for (const name of names) {
+      if (!(yield* exists(`${root}/${name}/bridge`))) continue;
+      let uplinked = false;
+      for (const port of yield* list(`${root}/${name}/brif`)) {
+        if (yield* reachesHardware(port, 3)) {
+          uplinked = true;
+          break;
+        }
+      }
+      if (!uplinked) isolated.add(name);
+    }
+    return isolated;
+  },
+);
 
 /**
  * AWS, GCP, Azure, DigitalOcean, Hetzner, Linode, Vultr, and Oracle all serve
@@ -121,6 +174,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
+  const fileSystem = yield* FileSystem.FileSystem;
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
@@ -132,13 +186,21 @@ export const make = Effect.gen(function* () {
 
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
+    const interfaces = NodeOS.networkInterfaces();
+    const isolatedBridges =
+      platform === "linux" && isWildcardHost(config.host)
+        ? yield* readIsolatedLinuxBridges(Object.keys(interfaces)).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          )
+        : undefined;
     const endpoints = [
       ...resolveBoundEndpoints({
         platform,
         host: config.host,
         port: config.port,
-        interfaces: NodeOS.networkInterfaces(),
+        interfaces,
         onCloudVm: yield* onCloudVm,
+        ...(isolatedBridges === undefined ? {} : { isolatedBridges }),
       }),
     ];
     const servedUrl = yield* Ref.get(servedEndpoint);

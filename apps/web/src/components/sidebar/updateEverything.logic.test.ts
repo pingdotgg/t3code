@@ -8,8 +8,10 @@ import {
   collectServerUpdateTargets,
   describeUpdateCapsule,
   describeUpdateEverything,
+  resolveRestoredRetry,
   runUpdateEverything,
   type UpdateEverythingMachine,
+  type UpdateRunMachine,
 } from "./updateEverything.logic";
 
 function machine(
@@ -45,6 +47,20 @@ function machine(
   };
 }
 
+// A desktop-mode server the desktop app cannot control, such as a WSL backend or an older app.
+function withoutDesktopControl(base: UpdateEverythingMachine): UpdateEverythingMachine {
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
+      },
+    },
+  };
+}
+
 describe("collectServerUpdateTargets", () => {
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
@@ -67,6 +83,7 @@ describe("collectServerUpdateTargets", () => {
         machine("current", "0.0.50", "boot-service"),
         machine("current-offline", "0.0.50", "boot-service", { connected: false }),
         machine("manual", "0.0.40", undefined),
+        withoutDesktopControl(machine("wsl-backend", "0.0.40", "desktop-managed")),
       ],
       "0.0.50",
     );
@@ -78,10 +95,50 @@ describe("collectServerUpdateTargets", () => {
     expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
       ["nightly-service", "on the nightly channel"],
       ["offline", "not connected"],
-      ["never-connected", "not connected"],
+      ["never-connected", "still loading"],
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
+      ["wsl-backend", "update T3 Code on that machine"],
+    ]);
+  });
+
+  it("says why a disconnected server was skipped when its connection says", () => {
+    const replaced =
+      "This address now runs a different T3 Code install (b7a4, not 0359). Remove this connection and add it again.";
+    const { skipped } = collectServerUpdateTargets(
+      [
+        machine("replaced", "0.0.40", "boot-service", {
+          connected: false,
+          serverConfig: null,
+          connectionError: replaced,
+        }),
+        machine("silent", "0.0.40", "boot-service", { connected: false, connectionError: null }),
+        machine("switched-off", "0.0.40", "boot-service", {
+          connected: false,
+          serverConfig: null,
+          turnedOff: true,
+        }),
+      ],
+      "0.0.50",
+    );
+
+    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
+      ["replaced", replaced],
+      ["silent", "not connected"],
+      ["switched-off", "turned off"],
+    ]);
+  });
+
+  it("does not offer a Nightly build to a Stable desktop app, whose own feed has nothing newer", () => {
+    const { targets, skipped } = collectServerUpdateTargets(
+      [machine("stable-desktop", "0.1.9", "desktop-managed")],
+      "0.1.10-nightly.20261116.4761",
+    );
+
+    expect(targets.map((target) => target.serverLabel)).toEqual([]);
+    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
+      ["stable-desktop", "on the stable channel"],
     ]);
   });
 
@@ -119,7 +176,10 @@ describe("collectServerUpdateTargets", () => {
           ...entry,
           serverConfig: {
             ...entry.serverConfig,
-            environment: { ...entry.serverConfig.environment, serverVersion: "0.0.49-nightly.1" },
+            environment: {
+              ...entry.serverConfig.environment,
+              serverVersion: "0.0.49-nightly.20261027.1",
+            },
           },
         })),
         "0.0.50-nightly.20261028.1",
@@ -215,15 +275,9 @@ describe("collectChannelSwitchTargets", () => {
         host(machine("service", "0.1.2", "boot-service"), 70),
         // A Stable tag built a migration the latest Nightly does not have yet.
         host(machine("ahead", "0.1.3", "boot-service"), 73),
-        machine("old-desktop", "0.1.2", "desktop-managed", {
-          serverConfig: {
-            ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!,
-            environment: {
-              ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!.environment,
-              capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
-            },
-          },
-        }),
+        withoutDesktopControl(machine("old-desktop", "0.1.2", "desktop-managed")),
+        // Already on Nightly, so it needs an update rather than a channel switch.
+        withoutDesktopControl(machine("behind-desktop", OLD_NIGHTLY, "desktop-managed")),
         machine("current", NIGHTLY, "boot-service"),
         // The server refuses a track its policy rules out, so the dialog skips it up front.
         managedHost(host(machine("no-nightly", "0.1.2", "boot-service"), 70)),
@@ -239,7 +293,8 @@ describe("collectChannelSwitchTargets", () => {
         "ahead",
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
-      ["old-desktop", "needs a newer desktop app"],
+      ["old-desktop", "change the update track on that machine"],
+      ["behind-desktop", "update T3 Code on that machine"],
       [
         "no-nightly",
         "Example Corp manages T3 Code updates. Only stable releases can be installed.",
@@ -254,7 +309,7 @@ describe("localSwitchBlockReason", () => {
     const nightly = "0.1.4-nightly.20261027.3796";
 
     const windows = { connected: true, databaseMigration: 69 };
-    expect(localSwitchBlockReason(nightly, stable, [windows], 1)).toBeNull();
+    expect(localSwitchBlockReason(nightly, stable, [windows], 1, true)).toBeNull();
     // A WSL server's newer migration blocks the reinstall that would restart it.
     expect(
       localSwitchBlockReason(
@@ -262,17 +317,31 @@ describe("localSwitchBlockReason", () => {
         stable,
         [windows, { connected: true, databaseMigration: 72 }],
         2,
+        true,
       ),
     ).toContain("does not support yet");
     // A WSL backend still starting has no client entry, so its database is unchecked.
-    expect(localSwitchBlockReason(nightly, stable, [windows], 2)).toBe(
-      "its server is not connected, so its database cannot be checked",
+    expect(localSwitchBlockReason(nightly, stable, [windows], 2, true)).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
     );
     // A cached head from a disconnected server proves nothing.
     expect(
-      localSwitchBlockReason(nightly, stable, [{ connected: false, databaseMigration: 69 }], 1),
-    ).toBe("its server is not connected, so its database cannot be checked");
-    expect(localSwitchBlockReason("0.1.3", stable, [], 1)).toBeNull();
+      localSwitchBlockReason(
+        nightly,
+        stable,
+        [{ connected: false, databaseMigration: 69 }],
+        1,
+        true,
+      ),
+    ).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
+    );
+    expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
+    // A primary backend still starting has no entry or bootstrap yet, unless Local environment is off.
+    expect(localSwitchBlockReason(nightly, stable, [], 0, true)).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
+    );
+    expect(localSwitchBlockReason(nightly, stable, [], 0, false)).toBeNull();
   });
 });
 
@@ -437,6 +506,7 @@ describe("describeUpdateCapsule", () => {
         providerFailure: null,
       },
       status: "failed" as const,
+      restoredRetry: null,
     };
     const run = { localVersion: null, phase: "servers" as const, restartAt: null, machines: [] };
 
@@ -444,5 +514,48 @@ describe("describeUpdateCapsule", () => {
     expect(describeUpdateCapsule({ ...run, trackSwitch: true }, [failed], null, 0).action).toBe(
       "dismiss",
     );
+  });
+});
+
+describe("resolveRestoredRetry", () => {
+  // A row the relaunched app rebuilt from its saved handoff: no target, only the version.
+  const restored = (id: string): UpdateRunMachine => ({
+    environmentId: EnvironmentId.make(id),
+    label: id,
+    updatesProviders: false,
+    server: null,
+    handedOffVersion: "0.1.12",
+    startedAt: 0,
+    result: "failed",
+    failure: "Not back after 32 minutes",
+    providerFailure: null,
+  });
+
+  it("rebuilds the target from the server as it is now, so the capsule offers Retry", () => {
+    const retry = resolveRestoredRetry(restored("remote"), [
+      machine("other", "0.1.10", "boot-service"),
+      machine("remote", "0.1.10", "boot-service"),
+    ]);
+    expect(retry).toEqual({
+      environmentId: "remote",
+      serverLabel: "remote",
+      selfUpdate: "boot-service",
+      installation: undefined,
+      desktopAppUpdate: false,
+      targetVersion: "0.1.12",
+    });
+    const run = { localVersion: null, phase: "servers" as const, restartAt: null, machines: [] };
+    const view = { machine: restored("remote"), status: "failed" as const, restoredRetry: retry };
+    expect(describeUpdateCapsule(run, [view], null, 0).action).toBe("retry");
+    expect(describeUpdateCapsule(run, [{ ...view, restoredRetry: null }], null, 0).action).toBe(
+      "dismiss",
+    );
+  });
+
+  it("marks a server already on the target and offers nothing for one that is gone", () => {
+    expect(
+      resolveRestoredRetry(restored("remote"), [machine("remote", "0.1.12", "boot-service")]),
+    ).toBe("current");
+    expect(resolveRestoredRetry(restored("remote"), [])).toBeNull();
   });
 });

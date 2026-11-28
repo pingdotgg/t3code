@@ -1,4 +1,5 @@
 import { linkOriginIsFenced, ProjectId, type ProjectScript, ThreadId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import {
   projectScriptRuntimeEnv,
   projectScriptTerminalInput,
@@ -12,6 +13,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -145,12 +147,10 @@ function completionSentinelPattern(token: string): RegExp {
   return new RegExp(`${COMPLETION_SENTINEL_PREFIX}_${token}:(-?\\d+)`);
 }
 
+// ECMA-48: CSI, OSC, then any other escape as intermediates (0x20-0x2F) and one final byte.
 function stripTerminalControl(text: string): string {
   return text
-    .replace(
-      /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
-      "",
-    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
@@ -312,7 +312,14 @@ export const make = Effect.gen(function* () {
           ) {
             return Effect.void;
           }
-          return input.onOutputLine(cleaned.slice(0, OUTPUT_LINE_MAX_LENGTH));
+          return input.onOutputLine(
+            cleaned.slice(
+              0,
+              splitsSurrogatePair(cleaned, OUTPUT_LINE_MAX_LENGTH)
+                ? OUTPUT_LINE_MAX_LENGTH - 1
+                : OUTPUT_LINE_MAX_LENGTH,
+            ),
+          );
         });
 
       const unsubscribe = yield* terminalManager.subscribe((event) => {
@@ -326,7 +333,10 @@ export const make = Effect.gen(function* () {
           lineBuffer = lines.pop() ?? "";
           // Bound newline-free output; the sentinel has its own line, so retaining the tail is safe.
           if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
-            lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
+            const start = lineBuffer.length - PARTIAL_LINE_MAX_LENGTH;
+            lineBuffer = lineBuffer.slice(
+              splitsSurrogatePair(lineBuffer, start) ? start + 1 : start,
+            );
           }
           return Effect.forEach(lines, handleLine, { discard: true }).pipe(
             Effect.andThen(
@@ -403,7 +413,7 @@ export const make = Effect.gen(function* () {
           const seen = activity;
           yield* Effect.sleep(SHELL_QUIET_FALLBACK);
           if (activity !== seen) continue;
-          if (!busy) return "ready" as const;
+          if (!busy) return "quiet" as const;
           yield* input.onStartupPrompt;
         }
       });
@@ -497,6 +507,19 @@ export const make = Effect.gen(function* () {
       trigger === "settle"
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
+    // A surviving setup shell may still hold a deleted worktree directory.
+    if (trigger === "setup") {
+      yield* terminalManager.close({ threadId: input.threadId, terminalId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "openTerminal",
+              cause,
+            }),
+        ),
+      );
+    }
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({
@@ -505,6 +528,8 @@ export const make = Effect.gen(function* () {
       }),
       // Before client attachment, truecolor probes wait for terminal replies nobody can send.
       COLORTERM: "",
+      // Project scripts keep the default shell; the preference is for interactive terminals only.
+      T3CODE_TERMINAL_SHELL: "",
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
@@ -581,7 +606,7 @@ export const make = Effect.gen(function* () {
 
     // Return once the terminal exists so callers can show it while a startup prompt waits.
     // PowerShell and cmd have no line-editor signal.
-    yield* (
+    const commandWriter = yield* (
       completionShell === "powershell" || completionShell === null
         ? Effect.succeed("ready" as const)
         : readiness.wait
@@ -592,7 +617,12 @@ export const make = Effect.gen(function* () {
           : terminalManager.write({
               threadId: input.threadId,
               terminalId,
-              data: projectScriptTerminalInput(commandLine),
+              // macOS zsh garbles long typed-ahead multiline input; a live line editor takes it as one paste.
+              data: projectScriptTerminalInput(
+                shell === "ready" && completionShell === "posix" && commandLine.includes("\r")
+                  ? `\x1b[200~${commandLine.replaceAll("\r", "\n")}\x1b[201~`
+                  : commandLine,
+              ),
             }),
       ),
       Effect.catchCause((cause) =>
@@ -607,11 +637,30 @@ export const make = Effect.gen(function* () {
     );
 
     const completion = observed?.completion.pipe(
-      Effect.tap(({ exitCode }) =>
-        exitCode === 0
-          ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
-          : Effect.void,
+      Effect.onInterrupt(() =>
+        Fiber.interrupt(commandWriter).pipe(
+          Effect.andThen(Effect.sync(() => readiness.unsubscribe())),
+          Effect.andThen(terminalManager.close({ threadId: input.threadId, terminalId })),
+          Effect.ignore,
+        ),
       ),
+      Effect.tap(({ exitCode }) => {
+        if (exitCode !== 0) return Effect.void;
+        // Nothing closes a settle shell later, so a prompt hook still running (a git prompt)
+        // must not fail an idle check and leave it holding the settled worktree.
+        if (trigger === "settle") {
+          return terminalManager.close({ threadId: input.threadId, terminalId }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to close settle script terminal", {
+                ...errorContext,
+                terminalId,
+                error: error.message,
+              }),
+            ),
+          );
+        }
+        return terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+      }),
     );
 
     return {

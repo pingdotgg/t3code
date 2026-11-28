@@ -74,6 +74,8 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       context.page.viewportSize.mockReturnValue(null);
       const browser = { close: vi.fn(async () => {}) };
       desktopConnections.push({ endpoint, context, browser });
+      desktopConnectionStarted?.resolve();
+      await desktopConnectionGate?.promise;
       return { browser, page: context.page as unknown as Page };
     }
     async close() {
@@ -112,6 +114,9 @@ function makeSession(
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
+      if (method === "Fetch.enable" && initialAuthChallenge) {
+        events.emit("Fetch.authRequired", initialAuthChallenge);
+      }
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
@@ -233,7 +238,6 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       title: "test page",
       loading: false,
       visibleText: "delete",
-      interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
     locator: vi.fn((): unknown => {
@@ -372,6 +376,8 @@ function makeEncoderPage() {
     btoa,
     Blob,
     performance,
+    setInterval,
+    clearInterval,
   };
   sandbox.window = sandbox;
   const context = NodeVM.createContext(sandbox);
@@ -399,8 +405,11 @@ let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
+let initialAuthChallenge: typeof basicChallenge | null = null;
 let desktopRendersNext = false;
 let desktopPageUrl = "about:blank";
+let desktopConnectionGate: PromiseWithResolvers<void> | null = null;
+let desktopConnectionStarted: PromiseWithResolvers<void> | null = null;
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
@@ -417,7 +426,13 @@ const desktopRenders = (tabId: string) => {
 /** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
 let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
-const shownDesktopTabs = new Set<string>();
+const shownDesktopTabs = new (class extends Set<string> {
+  override add(tabId: string) {
+    super.add(tabId);
+    desktopDetaches.emit("shown", tabId);
+    return this;
+  }
+})();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -505,6 +520,16 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    awaitShown: (key, timeout) =>
+      shownDesktopTabs.has(key.tabId)
+        ? Effect.succeed(true)
+        : Effect.callback<boolean>((resume) => {
+            const onShown = (tabId: string) => {
+              if (tabId === key.tabId) resume(Effect.succeed(true));
+            };
+            desktopDetaches.on("shown", onShown);
+            return Effect.sync(() => desktopDetaches.off("shown", onShown));
+          }).pipe(Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.succeed(false) })),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
@@ -583,6 +608,7 @@ beforeEach(() => {
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
+  initialAuthChallenge = null;
   pageCopy = "";
   keyCopy = "";
   focusedFrame = null;
@@ -593,6 +619,8 @@ beforeEach(() => {
   desktopAttachesLate = false;
   desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
+  desktopConnectionGate = null;
+  desktopConnectionStarted = null;
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -1714,6 +1742,34 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("stops typing long text at the request's deadline and says how far it got", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      page.evaluate.mockImplementation(async () => true as never);
+      let now = 1_700_000_000_000;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      // Each piece of keys takes 10 seconds here: over the request's 5, under the 15-second default.
+      const type = vi.fn(async (_text: string) => void (now += 10_000));
+      Object.assign(page, { keyboard: { type } });
+      const failure = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "type",
+          input: { text: "a".repeat(200) },
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.flip);
+      expect(failure._tag).toBe("PreviewAutomationTimeoutError");
+      expect(failure.message).toMatch(/after 64 of 200 characters/);
+      expect(type.mock.calls).toEqual([["a".repeat(64)]]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("reports a pending dialog without evaluating the page and resolves it explicitly", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1793,6 +1849,119 @@ it.effect("reports a pending dialog without evaluating the page and resolves it 
   ).pipe(Effect.provide(layer)),
 );
 
+const basicChallenge = {
+  requestId: "auth-1",
+  frameId: "main",
+  resourceType: "Document",
+  request: { url: "http://localhost:18914/", method: "GET", headers: {} },
+  authChallenge: {
+    source: "Server",
+    origin: "http://localhost:18914",
+    scheme: "basic",
+    realm: "test",
+  },
+};
+
+it.effect("an HTTP Basic challenge asks for credentials and sends them to Chromium", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const session = contexts[0]!.sessions[0]!;
+      // Without handleAuthRequests, Chromium renders the 401 body and never asks.
+      expect(session.send).toHaveBeenCalledWith(
+        "Fetch.enable",
+        expect.objectContaining({ handleAuthRequests: true }),
+      );
+      const signedIn = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => signedIn.resolve()));
+      // Chromium holds the navigation until the challenge is answered.
+      page.goto.mockImplementationOnce(async () => {
+        session.emit("Fetch.authRequired", basicChallenge);
+        await signedIn.promise;
+      });
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:18914/" },
+      });
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(pending.dialog).toMatchObject({
+        type: "auth",
+        message: "http://localhost:18914 asks you to sign in. It says: test",
+      });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      expect(pending.dialog?.authChallengeId).toBeTypeOf("string");
+      yield* viewer.input({ type: "dialog", accept: false, authChallengeId: "stale" });
+      expect(session.send).not.toHaveBeenCalledWith("Fetch.continueWithAuth", expect.anything());
+      yield* viewer.input({
+        type: "dialog",
+        accept: true,
+        authChallengeId: pending.dialog?.authChallengeId,
+        username: "tester",
+        password: "hunter2",
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: {
+          response: "ProvideCredentials",
+          username: "tester",
+          password: "hunter2",
+        },
+      });
+      expect(yield* Queue.clear(viewer.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control", dialog: null }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an HTTP Basic challenge received during tab setup can be dismissed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      initialAuthChallenge = basicChallenge;
+      const { broker, tabId } = yield* ready;
+      const session = contexts[0]!.sessions[0]!;
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      const authChallengeId = pending.dialog?.authChallengeId;
+      expect(authChallengeId).toBeTypeOf("string");
+      const accept = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "dialog",
+          input: { accept: true, authChallengeId },
+        })
+        .pipe(Effect.flip);
+      expect(accept).toMatchObject({ reason: "dialogPending" });
+      expect(session.send).not.toHaveBeenCalledWith("Fetch.continueWithAuth", expect.anything());
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "dialog",
+        input: { accept: false, authChallengeId },
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: { response: "CancelAuth" },
+      });
+      expect(status.dialog).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("closing an isolated tab closes its context only after the page closes", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1833,44 +2002,109 @@ it.effect("closing a tab force-closes a page that never finishes unloading", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("closing a desktop tab waits for its page to unload before the desktop removes it", () =>
+it.effect("closing a desktop tab during setup unloads its page before disconnecting", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker } = yield* ready;
       const manager = yield* Manager.PreviewManager;
       desktopRendersNext = true;
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "open",
-        input: { reuseExistingTab: false, open: false },
-      });
-      const tabId = PreviewTabId.make(opened.tabId!);
+      const gate = (desktopConnectionGate = Promise.withResolvers<void>());
+      const started = (desktopConnectionStarted = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
       const { context, browser } = desktopConnections[0]!;
       const page = context.page;
-      // The desktop removes the webview once the session closes, dropping an unload in progress.
-      const events = yield* manager.subscribeEvents;
-      const sessionClosed = Promise.withResolvers<void>();
-      yield* Effect.gen(function* () {
-        while ((yield* PubSub.take(events)).type !== "closed");
-        page.removed = true;
-        sessionClosed.resolve();
-      }).pipe(Effect.forkScoped);
       page.beforeUnload = "listen";
       page.unloadGate = Promise.withResolvers<void>();
-      const closing = yield* broker
-        .invoke({ scope, tabId, operation: "close", input: {} })
-        .pipe(Effect.forkScoped);
-      // The page finishes unloading once the server listens for it, or too late if it never does.
+      const { sessions } = yield* manager.list({ threadId: testThread.threadId });
+      const session = sessions.find((candidate) => !candidate.headless)!;
+      const closing = yield* manager
+        .close({ threadId: testThread.threadId, tabId: session.tabId })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      expect(page.isClosed()).toBe(false);
+      gate.resolve();
       yield* Effect.promise(() =>
-        Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+        Promise.race([page.pagehideWatched.promise, desktopReleased.promise]),
       );
-      expect(browser.close).not.toHaveBeenCalled();
+      expect((yield* manager.list({ threadId: testThread.threadId })).sessions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ tabId: session.tabId })]),
+      );
       page.unloadGate.resolve();
       yield* Fiber.join(closing);
+      expect(yield* Fiber.join(opening)).toMatchObject({ _tag: "Failure" });
+      yield* Effect.promise(() => desktopReleased.promise);
       expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
-      expect(browser.close).toHaveBeenCalledTimes(1);
+      expect(page.isClosed()).toBe(true);
+      expect(browser.close).toHaveBeenCalled();
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["agent", "client", "all", "concurrent"] as const)(
+  "closing a desktop tab waits for unload before removal (%s)",
+  (source) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+        const { context, browser } = desktopConnections[0]!;
+        const page = context.page;
+        // The desktop removes the webview once the session closes, dropping an unload in progress.
+        const events = yield* manager.subscribeEvents;
+        const sessionClosed = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          while ((yield* PubSub.take(events)).type !== "closed");
+          page.removed = true;
+          sessionClosed.resolve();
+        }).pipe(Effect.forkScoped);
+        page.beforeUnload = "listen";
+        page.unloadGate = Promise.withResolvers<void>();
+        const close = () => manager.close({ threadId: testThread.threadId, tabId });
+        const closing = yield* (
+          source === "agent"
+            ? broker.invoke({ scope, tabId, operation: "close", input: {} })
+            : source === "all"
+              ? manager.close({ threadId: testThread.threadId })
+              : source === "concurrent"
+                ? Effect.all([close(), close()], { concurrency: "unbounded", discard: true })
+                : close()
+        ).pipe(Effect.forkScoped);
+        // The page finishes unloading once the server listens for it, or too late if it never does.
+        yield* Effect.promise(() =>
+          Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+        );
+        expect(browser.close).not.toHaveBeenCalled();
+        const openedDuringClose =
+          source === "all"
+            ? yield* manager.open({ threadId: testThread.threadId, runtime: "server" })
+            : undefined;
+        page.unloadGate.resolve();
+        yield* Fiber.join(closing);
+        yield* Effect.promise(() => desktopReleased.promise);
+        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+        expect(browser.close).toHaveBeenCalledTimes(1);
+        if (openedDuringClose) {
+          const remaining = yield* manager.list({ threadId: testThread.threadId });
+          expect(remaining.sessions.map((session) => session.tabId)).toContain(
+            openedDuringClose.tabId,
+          );
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect("closing a tab with an unsaved-changes guard still closes it", () =>
@@ -2022,6 +2256,75 @@ it.effect(
         expect(status.loading).toBe(true);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an app link's aborted request leaves the page it was clicked on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const navigation = (url: string, redirectedFrom: unknown = null) => ({
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        redirectedFrom: () => redirectedFrom,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      });
+      const loading = Effect.map(
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} }),
+        (status) => status.loading,
+      );
+      // Chromium hands the link to the OS, aborts the request and keeps the current page.
+      const direct = navigation("obsidian://open?vault=notes");
+      page.emit("request", direct);
+      page.emit("requestfailed", direct);
+      expect(yield* loading).toBe(false);
+
+      // A page that redirects to an app link ends its navigation there; the redirect itself finished.
+      const open = navigation("https://example.com/open");
+      page.emit("request", open);
+      expect(yield* loading).toBe(true);
+      const redirected = navigation("obsidian://open?vault=notes", open);
+      page.emit("request", redirected);
+      page.emit("requestfailed", redirected);
+      expect(yield* loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each(["before", "during"] as const)(
@@ -2538,6 +2841,304 @@ it.effect("a page's file picker goes to the controller and takes its uploaded fi
   ).pipe(Effect.provide(layer)),
 );
 
+/** A controlling viewer on a real Chromium page; `click` presses and releases at a point. */
+const realSelectPage = (html: string) =>
+  Effect.gen(function* () {
+    const chromiumBrowser = yield* Effect.acquireRelease(
+      Effect.promise(() => chromium.launch({ headless: true })),
+      (launched) => Effect.promise(() => launched.close()),
+    );
+    const context = yield* Effect.promise(() => chromiumBrowser.newContext());
+    realContextOverride = context;
+    const { browser, tabId } = yield* ready;
+    const page = context.pages()[0]!;
+    yield* Effect.promise(() => page.setContent(html));
+    const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+    yield* viewer.input({ type: "takeControl" });
+    yield* Queue.clear(viewer.output);
+    const click = (x: number, y: number, modifiers = 0) =>
+      Effect.gen(function* () {
+        const press = { type: "mouse", button: "left", x, y, clickCount: 1, modifiers };
+        yield* viewer.input({ ...press, action: "down", buttons: 1 });
+        yield* viewer.input({ ...press, action: "up", buttons: 0 });
+      });
+    const output = (tag: string) =>
+      Queue.clear(viewer.output).pipe(
+        Effect.map((items) => items.filter((item) => (item as { _tag: string })._tag === tag)),
+      ) as Effect.Effect<Array<{ _tag: string; id: string; options?: unknown }>>;
+    const evaluate = (expression: string) => Effect.promise(() => page.evaluate(expression));
+    return { page, viewer, click, output, evaluate };
+  });
+
+it.live("a click on a native select offers its options to the viewer and takes its choice", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Chromium draws the select popup outside the page, so the screencast never shows it.
+      const { viewer, click, output, evaluate } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 60px; width: 200px; height: 30px">
+          <option>One</option><option disabled>Two</option><option selected>Three</option>
+        </select>
+        <script>
+          for (const type of ["input", "change"])
+            document.querySelector("select").addEventListener(type, () => {
+              document.body.dataset.events = (document.body.dataset.events ?? "") + type + " ";
+            });
+        </script>`,
+      );
+      yield* click(140, 75);
+      const offers = yield* output("selectMenu");
+      expect(offers, "the viewer is offered the select's options").toEqual([
+        {
+          _tag: "selectMenu",
+          id: expect.any(String),
+          options: [
+            { label: "One", disabled: false },
+            { label: "Two", disabled: true },
+            { label: "Three", disabled: false },
+          ],
+          selectedIndex: 2,
+          x: 40,
+          y: 60,
+          width: 200,
+          height: 30,
+        },
+      ]);
+      expect(
+        yield* evaluate(`document.querySelector("select").matches(":open")`),
+        "the native picker stays closed",
+      ).toBe(false);
+      const chosen = () =>
+        evaluate(
+          `({ value: document.querySelector("select").value, events: document.body.dataset.events ?? "" })`,
+        );
+      yield* viewer.input({ type: "selectMenu", id: "unknown", index: 0 });
+      expect(yield* chosen()).toEqual({ value: "Three", events: "" });
+      yield* viewer.input({ type: "selectMenu", id: offers[0]!.id, index: 0 });
+      expect(yield* chosen()).toEqual({ value: "One", events: "input change " });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a relayed select press reaches page handlers, and a page can keep its own press", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer, click, output, evaluate } = yield* realSelectPage(
+        `<style>
+          select { position: absolute; left: 40px; width: 200px; height: 30px }
+          #custom, #custom::picker(select) { appearance: base-select }
+          #half { appearance: base-select }
+          iframe { position: absolute; left: 300px; top: 20px; width: 400px; height: 200px; border: 0 }
+        </style>
+        <select id="relayed" style="top: 20px"><option>One</option><option>Two</option></select>
+        <select id="readonly" style="top: 80px" onmousedown="return false">
+          <option>One</option><option>Two</option>
+        </select>
+        <select id="custom" style="top: 140px"><option>One</option><option>Two</option></select>
+        <select id="half" style="top: 200px"><option>One</option><option>Two</option></select>
+        <select id="shift" style="top: 260px" onmousedown="if (event.shiftKey) event.preventDefault()">
+          <option>One</option><option>Two</option>
+        </select>
+        <select id="lazy" style="top: 320px"
+          onclick="if (!this.dataset.loaded) { this.dataset.loaded = 1; this.innerHTML = '<option>Loaded</option><option>Later</option>'; }">
+          <option>Loading</option>
+        </select>
+        <select id="gone" style="top: 380px" onclick="this.remove()"><option>One</option></select>
+        <select id="stopped" style="top: 440px" onmousedown="event.stopPropagation()">
+          <option>One</option><option>Two</option>
+        </select>
+        <select id="stoppedCancelled" style="top: 500px"
+          onmousedown="event.preventDefault(); event.stopPropagation()">
+          <option>One</option>
+        </select>
+        <select id="stoppedThenCancelled" style="top: 560px"
+          onmousedown="event.stopPropagation(); event.preventDefault()">
+          <option>One</option>
+        </select>
+        <select id="stoppedImmediatelyThenCancelled" style="top: 620px"
+          onmousedown="event.stopImmediatePropagation(); event.preventDefault()">
+          <option>One</option>
+        </select>
+        <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
+        <script>
+          for (const select of document.querySelectorAll("select"))
+            for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+              select.addEventListener(type, (event) => {
+                select.dataset.events =
+                  (select.dataset.events ?? "") + type + (event.isTrusted ? "!" : "") + " ";
+              });
+        </script>`,
+      );
+      const events = (id: string) =>
+        evaluate(`({
+          events: document.getElementById("${id}").dataset.events,
+          value: document.getElementById("${id}").value,
+          open: document.getElementById("${id}").matches(":open"),
+        })`);
+
+      yield* click(140, 35);
+      expect(yield* output("selectMenu"), "a plain select is offered").toHaveLength(1);
+      expect(
+        yield* events("relayed"),
+        "the page sees the trusted press, never the native popup",
+      ).toEqual({
+        events: "pointerdown! mousedown! pointerup! mouseup! click! ",
+        value: "One",
+        open: false,
+      });
+
+      yield* click(140, 95);
+      expect(yield* output("selectMenu"), "a cancelled press offers nothing").toEqual([]);
+      expect(yield* events("readonly")).toEqual({
+        events: "pointerdown! mousedown! pointerup! mouseup! click! ",
+        value: "One",
+        open: false,
+      });
+
+      yield* click(140, 215);
+      expect(
+        yield* output("selectMenu"),
+        "a select without a customizable picker still opens a native one",
+      ).toHaveLength(1);
+
+      yield* click(140, 155);
+      expect(yield* output("selectMenu"), "a customizable select draws its own picker").toEqual([]);
+      expect(
+        ((yield* events("custom")) as { events: string }).events,
+        "the real press reaches it",
+      ).toContain("mousedown!");
+
+      yield* click(140, 275, 8);
+      expect(yield* output("selectMenu"), "the page sees the press's modifier keys").toEqual([]);
+
+      yield* click(140, 335);
+      const [lazy] = yield* output("selectMenu");
+      expect(lazy?.options, "options the page's click handler loads are offered").toEqual([
+        { label: "Loaded", disabled: false },
+        { label: "Later", disabled: false },
+      ]);
+      yield* viewer.input({ type: "selectMenu", id: lazy!.id, index: 1 });
+      expect(yield* evaluate(`document.getElementById("lazy").value`)).toBe("Later");
+
+      yield* click(140, 395);
+      expect(yield* output("selectMenu"), "a select its click removed offers nothing").toEqual([]);
+
+      yield* click(140, 455);
+      expect(yield* output("selectMenu"), "a press the page stops is still offered").toHaveLength(
+        1,
+      );
+      expect(((yield* events("stopped")) as { open: boolean }).open).toBe(false);
+
+      yield* click(140, 515);
+      expect(yield* output("selectMenu"), "a press cancelled before it stops").toEqual([]);
+
+      yield* click(140, 575);
+      expect(yield* output("selectMenu"), "a press cancelled after it stops").toEqual([]);
+
+      yield* click(140, 635);
+      expect(yield* output("selectMenu"), "a press cancelled after it stops immediately").toEqual(
+        [],
+      );
+
+      yield* click(340, 35);
+      expect(yield* output("selectMenu"), "a select in a frame keeps the real press").toEqual([]);
+
+      // A loaded page is activated by the server's title read, which Playwright evaluates with a
+      // gesture; about:blank skips that read, and content written without a gesture keeps it so.
+      yield* Effect.promise(() => page.goto("about:blank"));
+      const cdp = yield* Effect.promise(() => page.context().newCDPSession(page));
+      yield* Effect.promise(() =>
+        cdp.send("Runtime.evaluate", {
+          expression: `document.body.innerHTML = \`
+            <select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px"
+              onmousedown="if (!event.isTrusted) return; event.preventDefault(); document.querySelector('input').showPicker()">
+              <option>Upload</option>
+            </select><input type="file">\``,
+        }),
+      );
+      yield* Queue.clear(viewer.output);
+      yield* click(140, 35);
+      let chooser = yield* Queue.take(viewer.output);
+      while (chooser._tag !== "fileChooser") chooser = yield* Queue.take(viewer.output);
+      expect(chooser._tag, "the press stays trusted and carries the viewer's user activation").toBe(
+        "fileChooser",
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a select answer applies the option that was offered, wherever the page moved it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { viewer, click, output, evaluate } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+          <option hidden>Pick</option><option>One</option><option selected>Two</option>
+          <option style="display: none">Gone</option><optgroup hidden><option>Ghost</option></optgroup>
+          <option>Three</option>
+        </select>`,
+      );
+      const value = () => evaluate(`document.querySelector("select").value`);
+
+      yield* click(140, 35);
+      const [offer] = yield* output("selectMenu");
+      expect(offer, "hidden options are not offered").toMatchObject({
+        options: [
+          { label: "One", disabled: false },
+          { label: "Two", disabled: false },
+          { label: "Three", disabled: false },
+        ],
+        selectedIndex: 1,
+      });
+      yield* evaluate(`(() => {
+        const select = document.querySelector("select");
+        for (const option of [...select.querySelectorAll(":scope > option")].reverse())
+          select.append(option);
+      })()`);
+      yield* viewer.input({ type: "selectMenu", id: offer!.id, index: 0 });
+      expect(yield* value(), "the offered option, not whatever is first now").toBe("One");
+
+      yield* click(140, 35);
+      const [second] = yield* output("selectMenu");
+      yield* evaluate(
+        `[...document.querySelectorAll("option")].find((option) => option.text === "Three").remove()`,
+      );
+      yield* viewer.input({ type: "selectMenu", id: second!.id, index: 2 });
+      expect(yield* value(), "a removed option applies nothing").toBe("One");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("navigating away or releasing control withdraws an offered select menu", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer, click, output } = yield* realSelectPage(
+        `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+          <option>One</option><option>Two</option>
+        </select>`,
+      );
+      yield* click(140, 35);
+      const [offer] = yield* output("selectMenu");
+      yield* Effect.promise(() => page.goto("data:text/html,<p>Next page</p>"));
+      expect(yield* output("selectMenuClosed")).toEqual([
+        { _tag: "selectMenuClosed", id: offer!.id },
+      ]);
+
+      yield* Effect.promise(() =>
+        page.setContent(
+          `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+            <option>One</option></select>`,
+        ),
+      );
+      yield* Queue.clear(viewer.output);
+      yield* click(140, 35);
+      const [held] = yield* output("selectMenu");
+      yield* viewer.input({ type: "releaseControl" });
+      expect(yield* output("selectMenuClosed"), "releasing control withdraws its offer").toEqual([
+        { _tag: "selectMenuClosed", id: held!.id },
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("overlapping file pickers keep the newer offer answerable", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2926,6 +3527,11 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(
         yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
       ).toBeUndefined();
+      // A hidden guest takes the new size only while the desktop paints it, which a capture asks for.
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Page.captureScreenshot",
+        expect.objectContaining({ clip: expect.anything() }),
+      );
       desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,
@@ -2943,6 +3549,55 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
+      const unpainted = Promise.withResolvers<void>();
+      heldStill = () => unpainted.promise;
+      // Fill asks for no size, so a page that keeps its size without a resize is not undrawn.
+      const kept = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      let keptEvent = yield* PubSub.take(events);
+      while (keptEvent.type !== "resized" || keptEvent.tabId !== tabId) {
+        keptEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(kept)).viewport).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
+      const undrawn = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let undrawnEvent = yield* PubSub.take(events);
+      while (undrawnEvent.type !== "resized" || undrawnEvent.tabId !== tabId) {
+        undrawnEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      // The same size again still waits for a draw rather than reporting the old size.
+      const retried = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let retriedEvent = yield* PubSub.take(events);
+      while (retriedEvent.type !== "resized" || retriedEvent.tabId !== tabId) {
+        retriedEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(retried))).toBe(true);
+      heldStill = null;
+      unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
       // No page resize or load since that read, so status answers without reading again.
       let reads = 0;
@@ -3114,9 +3769,46 @@ it.effect("status reconnects the agent's tab after the desktop lets it go", () =
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect.each(["status", "evaluate"] as const)(
-  "%s on a loaded tab the desktop does not take back waits for its page",
-  (operation) =>
+it.effect("status reports a failed reconnect and keeps the agent's tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      yield* Effect.promise(() => desktopDetachReady.promise);
+      desktopAttachesLate = true;
+      desktopTabs.delete(tabId);
+      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      // The desktop does not take the tab back, and the headless browser fails to start.
+      contextFailure = new Error("Chromium launch failed");
+      const failing = yield* broker
+        .invoke<PreviewAutomationStatus>({ scope, operation: "status", input: {} })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => desktopAttachWaiting.promise);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(failing)).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        tabId,
+      });
+      contextFailure = null;
+      expect(
+        yield* broker.invoke({ scope, operation: "evaluate", input: { expression: "after()" } }),
+      ).toBe("evaluated");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["status", "evaluate", "dialog"] as const)(
+  "handles %s while restoring the page on a detached tab",
+  (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const broker = yield* Broker.PreviewAutomationBroker;
@@ -3145,12 +3837,14 @@ it.effect.each(["status", "evaluate"] as const)(
         yield* Effect.promise(() => desktopReleased.promise);
         const reloading = Promise.withResolvers<void>();
         const reloaded = Promise.withResolvers<void>();
+        yield* Effect.addFinalizer(() => Effect.sync(() => reloaded.resolve()));
         initialNavigation = () => {
           reloading.resolve();
           return reloaded.promise;
         };
         let reloadDone = false;
         let answeredAfterReload = false;
+        const operation = scenario === "evaluate" ? "evaluate" : "status";
         const pending = yield* broker
           .invoke<unknown>({
             scope,
@@ -3164,6 +3858,24 @@ it.effect.each(["status", "evaluate"] as const)(
         yield* Effect.promise(() => desktopAttachWaiting.promise);
         yield* TestClock.adjust("10 seconds");
         yield* Effect.promise(() => reloading.promise);
+        if (scenario === "dialog") {
+          const accept = vi.fn(async () => reloaded.resolve());
+          contexts[0]!.page.emit("dialog", {
+            type: () => "confirm",
+            message: () => "Continue loading?",
+            defaultValue: () => "",
+            accept,
+            dismiss: vi.fn(async () => {}),
+          });
+          expect(yield* Fiber.join(pending)).toMatchObject({
+            available: true,
+            tabId,
+            dialog: { type: "confirm", message: "Continue loading?" },
+          });
+          yield* broker.invoke({ scope, tabId, operation: "dialog", input: { accept: true } });
+          expect(accept).toHaveBeenCalledTimes(1);
+          return;
+        }
         reloadDone = true;
         reloaded.resolve();
         const result = yield* Fiber.join(pending);
@@ -3319,6 +4031,45 @@ it.effect("preview_open reports a tab it shows as visible once the client attach
       });
 
       expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open reports a hidden desktop tab it reveals as visible", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const created = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(created.tabId!);
+      expect(created.visible).toBe(false);
+      // Like the desktop renderer, the docked panel reports the tab shown after the reveal arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        // The report crosses the client, the desktop main process and its pipe, so it lands a task later.
+        yield* Effect.yieldNow;
+        yield* Effect.sync(() => shownDesktopTabs.add(tabId));
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "open",
+        input: { open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+      expect(opened.tabs).toEqual([expect.objectContaining({ tabId, visible: true })]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -3859,6 +4610,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(releasedDesktopTabs).toEqual([]);
       shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
+      desktopConnections[2]!.context.page.beforeUnload = "listen";
       const events = yield* manager.subscribeEvents;
       const releases = yield* Queue.unbounded<string>();
       const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
@@ -3869,6 +4621,11 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       const fresh = yield* open("agent-new");
       expect(fresh.tabId).toBeDefined();
       expect(yield* Queue.take(releases)).toBe(opened[2]);
+      expect(desktopConnections[2]!.context.page.unloadEvents).toEqual([
+        "beforeunload",
+        "pagehide",
+        "visibilitychange",
+      ]);
       yield* Stream.fromSubscription(events).pipe(
         Stream.filter((event) => event.type === "closed" && event.tabId === opened[2]),
         Stream.runHead,
@@ -3878,6 +4635,54 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
+
+      // A second open must reclaim a different tab while the first page is unloading.
+      const closingPage = desktopConnections[3]!.context.page;
+      closingPage.beforeUnload = "listen";
+      closingPage.unloadGate = Promise.withResolvers<void>();
+      const closeRequests = yield* Queue.unbounded<void>();
+      const close = manager.close;
+      const closeSpy = vi
+        .spyOn(manager, "close")
+        .mockImplementation((input) =>
+          Queue.offer(closeRequests, undefined).pipe(Effect.andThen(close(input))),
+        );
+      yield* Effect.addFinalizer(() => Effect.sync(() => closeSpy.mockRestore()));
+      const firstOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      yield* Effect.promise(() => closingPage.pagehideWatched.promise);
+      const secondOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      closingPage.unloadGate.resolve();
+      const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
+      expect(concurrent.every((status) => status.available)).toBe(true);
+      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(remaining).toHaveLength(32);
+      const closedBeforeReturn = yield* Deferred.make<void>();
+      const finishClose = yield* Deferred.make<void>();
+      let heldClose = false;
+      closeSpy.mockImplementation((input) => {
+        const hold = !heldClose;
+        heldClose = true;
+        return close(input).pipe(
+          Effect.andThen(
+            hold
+              ? Deferred.succeed(closedBeforeReturn, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishClose)),
+                )
+              : Effect.void,
+          ),
+        );
+      });
+      const reclaimingOpen = yield* open("agent-reclaiming").pipe(Effect.forkScoped);
+      yield* Deferred.await(closedBeforeReturn);
+      const takingFreedSlot = yield* open("agent-taking-free-slot");
+      expect(takingFreedSlot.available).toBe(true);
+      yield* Deferred.succeed(finishClose, undefined);
+      expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
+      expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
+      expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

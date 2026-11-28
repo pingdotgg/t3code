@@ -23,7 +23,7 @@ function getAbsolutePathKind(value: string): "unix" | "windows" | null {
   return null;
 }
 
-function preferredPathSeparator(value: string): "/" | "\\" {
+export function preferredPathSeparator(value: string): "/" | "\\" {
   const absolutePathKind = getAbsolutePathKind(value);
   if (absolutePathKind === "windows") return "\\";
   if (absolutePathKind === "unix") return "/";
@@ -106,8 +106,8 @@ export function resolveProjectPathForDispatch(value: string, cwd?: string | null
   }
 
   const nextSegments = [...absoluteBase.segments];
-  for (const segment of trimmedValue.split(/[\\/]+/)) {
-    if (segment.length === 0 || segment === ".") continue;
+  for (const segment of splitPathSegments(trimmedValue, absoluteBase.separator)) {
+    if (segment === ".") continue;
     if (segment === "..") {
       nextSegments.pop();
       continue;
@@ -136,11 +136,13 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
 }
 
 export function isScratchProject(
-  project: { readonly workspaceRoot: string },
+  project: { readonly workspaceRoot: string; readonly isScratch?: true },
   scratchWorkspaceRoot: string | null | undefined,
 ): boolean {
   return (
-    scratchWorkspaceRoot != null && findProjectByPath([project], scratchWorkspaceRoot) !== undefined
+    project.isScratch === true ||
+    (scratchWorkspaceRoot != null &&
+      findProjectByPath([project], scratchWorkspaceRoot) !== undefined)
   );
 }
 
@@ -206,3 +208,4 @@ export function canNavigateUp(currentPath: string): boolean {
 export * from "./projectCommands.ts";
 export * from "./projectEntities.ts";
 export * from "./projectRemoval.ts";
+export * from "./projectTrackedFolders.ts";

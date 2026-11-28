@@ -8,12 +8,14 @@ import type {
   ProviderDriverKind,
   ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
+  ProviderRuntimeModeLimit,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
@@ -24,6 +26,8 @@ import type { ProviderUsageReader } from "./usage.ts";
 
 export interface ProviderDriverMetadata {
   readonly displayName: string;
+  /** Unlabeled snapshots leave displayName out instead of reporting this one. */
+  readonly snapshotOmitsDisplayName?: boolean;
   /** Defaults to true; false rejects multiple instances of a global resource. */
   readonly supportsMultipleInstances?: boolean;
   readonly hasDefaultInstance?: boolean;
@@ -48,6 +52,18 @@ export interface ProviderInstance {
   readonly snapshotForCwd?: (
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
+  /**
+   * Modes this instance offers that cannot run in `cwd`. Must stay cheap: clients ask whenever a
+   * mode picker opens, so read configuration and never start the provider.
+   */
+  readonly runtimeModeLimitsForCwd?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ProviderRuntimeModeLimit>>;
+  /**
+   * Cwds whose workspace skills or models may have changed. The registry rescans only cwds already
+   * requested. The stream must end when the instance is torn down.
+   */
+  readonly workspaceRescans?: Stream.Stream<string>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
   /** Moves a long-lived service onto a newly updated binary before its version is read back. */
@@ -104,6 +120,11 @@ export interface ProviderDriverCreateInput<Config> {
   readonly accentColor?: string | undefined;
   readonly environment: ResolvedProviderInstanceEnvironment;
   readonly enabled: boolean;
+  /**
+   * Whether the user lets T3 read this provider's usage files and sign-in. Absent means not
+   * allowed. Read it on each probe: it changes without recreating the instance.
+   */
+  readonly usageAccess?: Effect.Effect<boolean>;
   readonly config: Config;
 }
 

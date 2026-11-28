@@ -121,6 +121,28 @@ it.effect("caches remote key sets, coalesces concurrent refreshes, and refreshes
     assert.strictEqual(requests, 4)
   }).pipe(Effect.provide(layer)))
 
+it.effect("filters raw keys before decoding, and counts maxKeys before filtering", () =>
+  Effect.gen(function*() {
+    const endorsed = { ...ec, kid: "endorsed", endorsements: ["msteams"] }
+    const document = { keys: [endorsed, { ...ec, kid: "other", endorsements: ["skype"] }, { ...ec, kid: "bare" }, 1] }
+    const filter = (jwk: { readonly [key: string]: unknown }) =>
+      Array.isArray(jwk.endorsements) && jwk.endorsements.includes("msteams")
+    const client = serve(() => Effect.succeed(new Response(JSON.stringify(document))))
+
+    const keys = Context.get(
+      yield* Layer.build(Jwks.layerRemote({ url, filter }).pipe(Layer.provide(client))),
+      Jwks.Jwks
+    )
+    assert.strictEqual((yield* keys.resolve({ algorithm: "ES256" })).kid, "endorsed")
+    assertReason(yield* keys.resolve({ algorithm: "ES256", kid: "bare" }).pipe(Effect.flip), "KeyNotFound")
+
+    const limited = Context.get(
+      yield* Layer.build(Jwks.layerRemote({ url, filter, maxKeys: 3 }).pipe(Layer.provide(client))),
+      Jwks.Jwks
+    )
+    assertReason(yield* limited.resolve({ algorithm: "ES256" }).pipe(Effect.flip), "KeySetUnavailable")
+  }).pipe(Effect.provide(layer)))
+
 it.effect("refetches an expired key set at once when timeToLive is shorter than cooldown", () =>
   Effect.gen(function*() {
     let requests = 0

@@ -9,6 +9,9 @@ import {
 } from "./pullRequestAnchor.ts";
 
 const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
+const forgejo = "https://codeberg.org/owner/repo/pulls/7";
+const bitbucket = "https://bitbucket.org/workspace/repo/pull-requests/7";
+const azure = "https://dev.azure.com/org/project/_git/repo/pullrequest/7";
 
 const url = "https://github.com/owner/repo/pull/7";
 it.each(["discussion_r123", "r123", "discussion-diff-123R5-L9", "discussion-diff-123"])(
@@ -30,6 +33,21 @@ it.each([
   "comment-123",
 ])("preserves timeline anchor %s", (anchor) => {
   expect(parsePullRequestAnchor(`${url}#${anchor}`)).toEqual({ kind: "timeline", anchor });
+});
+it("normalizes and matches mixed-case timeline anchors", () => {
+  for (const [raw, canonical] of [
+    ["ISSUECOMMENT-123", "issuecomment-123"],
+    ["PullRequestReview-9", "pullrequestreview-9"],
+    ["DISCUSSION_R123", "discussion_r123"],
+    ["NOTE_5", "note_5"],
+  ] as const) {
+    expect(parsePullRequestAnchor(`${url}#${raw}`)).toEqual({
+      kind: "timeline",
+      anchor: canonical,
+    });
+    expect(pullRequestAnchorMatchesUrl(raw, `${url}#${canonical}`)).toBe(true);
+    expect(pullRequestAnchorMatchesUrl(canonical, `${url}#${raw}`)).toBe(true);
+  }
 });
 it.each(["a".repeat(32), "b".repeat(64)])(
   "reads file and cross-side line ranges for %s",
@@ -102,13 +120,23 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
   expect(parsePullRequestAnchor(`${url}/files-not-a-tab`)).toBeNull();
   expect(parsePullRequestAnchor(`${url}/commits/main`)).toBeNull();
   expect(parsePullRequestAnchor(`${url}/checks/extra`)).toBeNull();
+  for (const query of ["_a=overview", "_a=commits", "_a=unknown", "discussionId=123"]) {
+    expect(parsePullRequestAnchor(`${azure}?${query}`)).toBeNull();
+  }
+  expect(parsePullRequestAnchor(`${url}?_a=files`)).toBeNull();
 });
 
 it("keeps the commit scope of a PR diff permalink", () => {
   const sha = "a".repeat(40);
+  const upperSha = sha.toUpperCase();
   expect(pullRequestLinkCommit(`${url}/commits/${sha}#diff-abcR5`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${url}/commits/${upperSha}#diff-abcR5`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${forgejo}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${upperSha}#${"b".repeat(40)}`)).toBe(
+    sha,
+  );
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=main`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}?commit_id=${sha}`)).toBeNull();
 });
@@ -153,6 +181,12 @@ it.each([
   [`${url}/commits/${"a".repeat(40)}`, "code"],
   [`${url}/commits`, "commits"],
   [`${url}/checks?check_run_id=1`, "checks"],
+  [`${forgejo}/files`, "code"],
+  [`${bitbucket}/diff`, "code"],
+  [`${bitbucket}/commits`, "commits"],
+  [`${azure}?_a=files`, "code"],
+  [`${azure}?path=%2Fsrc%2Fa.ts&discussionId=123&_a=files`, "code"],
+  [`${azure}?_a=Files`, "code"],
   [`${gitlab}/diffs`, "code"],
   [`${gitlab}/commits`, "commits"],
   [`${gitlab}/pipelines`, "checks"],
@@ -178,6 +212,7 @@ it("finds a review with no text of its own through the earliest comment it poste
     },
   ];
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [], threads)).toBe("discussion_r2");
+  expect(resolvePullRequestReviewAnchor("PullRequestReview-9", [], threads)).toBe("discussion_r2");
   // A review shown in its own right, an unknown review and other anchors are kept.
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [{ url: review }], threads)).toBe(
     "pullrequestreview-9",

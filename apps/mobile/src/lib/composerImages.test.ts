@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import type { ComposerAttachmentUploadState } from "./composerAttachmentUploadQueue";
 
 const files = new Map<
   string,
@@ -115,11 +116,18 @@ vi.mock("expo-file-system", () => ({
   Paths: { document: "file:///documents" },
 }));
 
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digestStringAsync: async (_algorithm: string, data: string) => `sha256:${data}`,
+}));
+
 vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
 import { convertPastedImagesToAttachments, persistComposerAttachmentFile } from "./composerImages";
+
+const STORED = "file:///documents/t3-composer-attachments/attachment-id";
 
 function oversizedPng(): string {
   const png = Buffer.alloc(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
@@ -149,10 +157,13 @@ describe("native pasted image cleanup", () => {
       expect.objectContaining({
         name: "pasted-image.jpeg",
         mimeType: "image/jpeg",
-        dataUrl: "data:image/jpeg;base64,aGVsbG8=",
-        previewUri: "data:image/jpeg;base64,aGVsbG8=",
+        fileUri: `${STORED}-pasted-image.jpeg`,
+        previewUri: `${STORED}-pasted-image.jpeg`,
+        contentDigest: "sha256:aGVsbG8=",
       }),
     ]);
+    expect(attachments[0]).not.toHaveProperty("dataUrl");
+    expect(files.get(`${STORED}-pasted-image.jpeg`)?.base64).toBe("aGVsbG8=");
     expect(files.get(uri)?.deleted).toBe(false);
   });
 
@@ -170,10 +181,10 @@ describe("native pasted image cleanup", () => {
       expect.objectContaining({
         name: "pasted-image.jpeg",
         mimeType: "image/jpeg",
-        dataUrl: "data:image/jpeg;base64,cmVuZGVyZWQ=",
-        previewUri: "data:image/jpeg;base64,cmVuZGVyZWQ=",
+        fileUri: `${STORED}-pasted-image.jpeg`,
       }),
     ]);
+    expect(files.get(`${STORED}-pasted-image.jpeg`)?.base64).toBe("cmVuZGVyZWQ=");
     expect(files.get("file:///cache/rendered.jpeg")?.deleted).toBe(true);
     expect(files.get(uri)?.deleted).toBe(false);
   });
@@ -196,23 +207,30 @@ describe("native pasted image cleanup", () => {
     expect(files.get(uri)?.deleted).toBe(false);
   });
 
-  it("converts owned files to data-backed previews and deletes the source", async () => {
+  it("stores owned pastes in an attachment file and deletes the source", async () => {
     const uri =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
+    const gif =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/anim.gif";
     files.set(uri, { base64: "aGVsbG8=", deleted: false });
+    files.set(gif, { base64: "R0lGODlh", deleted: false });
 
     const { attachments } = await convertPastedImagesToAttachments({
-      uris: [uri],
+      uris: [uri, gif],
       existingCount: 0,
     });
 
     expect(attachments).toEqual([
       expect.objectContaining({
-        dataUrl: "data:image/png;base64,aGVsbG8=",
-        previewUri: "data:image/png;base64,aGVsbG8=",
+        fileUri: `${STORED}-pasted-image.png`,
+        previewUri: `${STORED}-pasted-image.png`,
       }),
+      expect.objectContaining({ mimeType: "image/gif", fileUri: `${STORED}-pasted-image.gif` }),
     ]);
+    expect(files.get(`${STORED}-pasted-image.png`)?.base64).toBe("aGVsbG8=");
+    expect(files.get(`${STORED}-pasted-image.gif`)?.base64).toBe("R0lGODlh");
     expect(files.get(uri)?.deleted).toBe(true);
+    expect(files.get(gif)?.deleted).toBe(true);
   });
 
   it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
@@ -261,7 +279,7 @@ describe("native pasted image cleanup", () => {
     const result = await convertPastedImagesToAttachments({ uris: [gone, kept], existingCount: 0 });
 
     expect(result.attachments).toEqual([
-      expect.objectContaining({ dataUrl: "data:image/png;base64,aGVsbG8=" }),
+      expect.objectContaining({ fileUri: `${STORED}-pasted-image.png` }),
     ]);
     expect(result.error).toBe("Could not read a pasted image.");
   });
@@ -327,10 +345,26 @@ describe("composerStripAttachments", () => {
 
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
-    expect(composerStripAttachments([doc, image, video] as never).map((a) => a.id)).toEqual([
+    expect(
+      composerStripAttachments([doc, image, video] as never, () => ({
+        status: "uploading",
+        progress: 0.5,
+      })).map((a) => a.id),
+    ).toEqual(["img-1", "vid-1"]);
+  });
+
+  it("shows a document whose upload failed until its retry finishes", async () => {
+    const { composerStripAttachments } = await import("./composerImages");
+    const strip = (upload: ComposerAttachmentUploadState) =>
+      composerStripAttachments([doc, image] as never, (a) =>
+        a.id === "doc-1" ? upload : undefined,
+      ).map((a) => a.id);
+    expect(strip({ status: "failed", reason: "Service unavailable" })).toEqual(["doc-1", "img-1"]);
+    expect(strip({ status: "uploading", progress: 0.4, retrying: true })).toEqual([
+      "doc-1",
       "img-1",
-      "vid-1",
     ]);
+    expect(strip({ status: "ready" })).toEqual(["img-1"]);
   });
 
   it("keeps oversized document-picked images visible while sending them as files", async () => {
@@ -345,7 +379,7 @@ describe("composerStripAttachments", () => {
       sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
     };
 
-    expect(composerStripAttachments([oversizedImage])).toEqual([oversizedImage]);
+    expect(composerStripAttachments([oversizedImage], () => undefined)).toEqual([oversizedImage]);
     expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });

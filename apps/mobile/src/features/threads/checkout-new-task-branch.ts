@@ -13,6 +13,9 @@ import type {
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 
 const VCS_REF_QUERY_MAX_LENGTH = 256;
 
@@ -31,16 +34,15 @@ export async function checkoutNewTaskBranch<E>(input: {
 }): Promise<AtomCommandResult<VcsRef, E | Error>> {
   if (!input.project) {
     return AsyncResult.failure(
-      Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
+      Cause.fail(
+        new Error(m(msg("The selected project is unavailable. Reconnect and try again."))),
+      ),
     );
   }
-  if (input.workspaceMode === "worktree" || input.branch.current) {
-    return AsyncResult.success(
-      input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
-    );
-  }
+  if (input.workspaceMode === "worktree") return AsyncResult.success(input.branch);
 
-  // Remote refs omit local worktrees, and historical thread metadata can be stale.
+  // The picked ref's current flag, remote refs' missing worktrees and historical
+  // thread metadata can all be stale, so Git is asked again before choosing.
   const localName = localBranchName(input.branch);
   let cursor: number | undefined;
   for (;;) {
@@ -66,7 +68,11 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+              m(
+                msg(
+                  "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+                ),
+              ),
             ),
           ),
         );
@@ -75,7 +81,11 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+              m(
+                msg(
+                  "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+                ),
+              ),
             ),
           ),
         );
@@ -99,11 +109,8 @@ export async function checkoutNewTaskBranch<E>(input: {
   }));
 }
 
-// A remote name can itself contain slashes; prefer the authoritative prefix.
 function localBranchName(branch: VcsRef): string {
-  if (!branch.isRemote) return branch.name;
-  const prefix = branch.remoteName ? `${branch.remoteName}/` : null;
-  return prefix && branch.name.startsWith(prefix)
-    ? branch.name.slice(prefix.length)
-    : deriveLocalBranchNameFromRemoteRef(branch.name);
+  return branch.isRemote
+    ? deriveLocalBranchNameFromRemoteRef(branch.name, branch.remoteName)
+    : branch.name;
 }

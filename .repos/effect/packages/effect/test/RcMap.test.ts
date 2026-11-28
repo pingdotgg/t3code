@@ -467,6 +467,25 @@ describe("RcMap", () => {
       assert.deepStrictEqual(released, ["foo", "bar", "baz"])
     }))
 
+  it.effect("measures idle time on the map's clock", () =>
+    Effect.gen(function*() {
+      const released: Array<string> = []
+      const map = yield* RcMap.make({
+        lookup: (key: string) =>
+          Effect.acquireRelease(Effect.succeed(key), () => Effect.sync(() => released.push(key))),
+        idleTimeToLive: 1000
+      })
+
+      // release and touch run on a different clock than the map's TestClock
+      yield* TestClock.withLive(Effect.scoped(RcMap.get(map, "foo")))
+      yield* TestClock.adjust(500)
+      yield* TestClock.withLive(RcMap.touch(map, "foo"))
+      yield* TestClock.adjust(500)
+      assert.deepStrictEqual(released, [])
+      yield* TestClock.adjust(500)
+      assert.deepStrictEqual(released, ["foo"])
+    }))
+
   it.effect(".touch", () =>
     Effect.gen(function*() {
       const acquired: Array<string> = []

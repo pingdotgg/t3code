@@ -10,6 +10,7 @@ const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
 const LETTER = /\p{L}/u;
 const COMBINING_MARKS = /\p{M}/gu;
+const DOT_FROM_LOWERCASED_I = /(?<=i)\u0307/g;
 // Emoji and other symbols can be searched for, so they start words too.
 const SYMBOL = /\p{So}/u;
 const APOSTROPHE = /['’]/;
@@ -131,15 +132,47 @@ function prepareSearchField(source: string): SearchField {
   return field;
 }
 
-// Quotes around a pasted query: "fix sidebar".
-const WRAPPING_QUOTES = /^\s*["'`“”‘’]+|["'`“”‘’]+\s*$/g;
+const QUOTE_OR_SPACE = /["'`“”‘’\s]/;
+const DOUBLE_QUOTE = /["“”]/;
+const WHITESPACE = /\s/;
 
-/** Folded, whitespace-collapsed query; empty when there is nothing to match. */
-export function foldSearchQuery(query: string): string {
-  return foldInPlace(query.replace(WRAPPING_QUOTES, "").normalize("NFC"))
+// Without the quotes and spaces around a query, so its words never start or end with a
+// quote: 'fix sidebar'. A loop: a pattern for mixed runs backtracks on a long run of quotes.
+function unwrapQuery(query: string): string {
+  let start = 0;
+  let end = query.length;
+  while (start < end && QUOTE_OR_SPACE.test(query[start]!)) start++;
+  while (end > start && QUOTE_OR_SPACE.test(query[end - 1]!)) end--;
+  return query.slice(start, end);
+}
+
+/** Double quotes around the whole query ask for its words together, as typed: "fix sidebar". */
+function isExactQuery(query: string): boolean {
+  const trimmed = query.trim();
+  return trimmed.length > 2 && DOUBLE_QUOTE.test(trimmed[0]!) && DOUBLE_QUOTE.test(trimmed.at(-1)!);
+}
+
+function foldQueryWords(query: string): string {
+  return foldInPlace(unwrapQuery(query).normalize("NFC"))
     .split(/\s+/)
     .filter((token) => token.length > 0)
     .join(" ");
+}
+
+/**
+ * Folded, whitespace-collapsed query; empty when there is nothing to match.
+ * An exact query keeps straight double quotes around its words, so scoring sees it.
+ */
+export function foldSearchQuery(query: string): string {
+  const words = foldQueryWords(query);
+  return words.length > 0 && isExactQuery(query) ? `"${words}"` : words;
+}
+
+/** The words of a folded exact query, or null when the query is not exact. */
+function exactPhrase(normalizedQuery: string): string | null {
+  return normalizedQuery.length > 2 && normalizedQuery[0] === '"' && normalizedQuery.endsWith('"')
+    ? normalizedQuery.slice(1, -1)
+    : null;
 }
 
 function wordEnd(field: SearchField, index: number): number {
@@ -394,6 +427,64 @@ function queryTokens(normalizedQuery: string) {
   return lastQuery;
 }
 
+// Where `words` sit side by side in `field` as whole words, whatever whitespace is between them.
+function findWholePhrase(field: SearchField, words: ReadonlyArray<string>): SearchRange | null {
+  const { text } = field;
+  const first = words[0]!;
+  // A phrase that opens with punctuation ("#12 fix") brings its own boundary, as a token does.
+  const ownBoundary = !ALPHANUMERIC.test(first[0]!) && !SYMBOL.test(first[0]!);
+  for (let start = text.indexOf(first); start !== -1; start = text.indexOf(first, start + 1)) {
+    if (!field.wordStarts[start] && !ownBoundary) continue;
+    let end = start + first.length;
+    for (let word = 1; word < words.length && end !== -1; word++) {
+      let next = end;
+      while (next < text.length && WHITESPACE.test(text[next]!)) next++;
+      end = next > end && text.startsWith(words[word]!, next) ? next + words[word]!.length : -1;
+    }
+    if (end === -1) continue;
+    const endsWord =
+      end >= text.length || field.wordStarts[end] === 1 || !ALPHANUMERIC.test(text[end]!);
+    if (endsWord) return { start, end };
+  }
+  return null;
+}
+
+/**
+ * An exact query: one field must hold its words together as typed, as whole
+ * words. Typos, joined words, mid-word hits and optional filler do not count.
+ */
+function matchExactPhrase(
+  phrase: string,
+  fields: ReadonlyArray<WeightedSearchField>,
+): SearchFieldsMatch | null {
+  // An empty word would match everywhere, and loop forever in `findWholePhrase`.
+  const words = phrase.split(" ").filter((word) => word.length > 0);
+  if (words.length === 0) return null;
+  let best = 0;
+  let primaryRange: SearchRange | undefined;
+  for (const [position, weighted] of fields.entries()) {
+    if (weighted.value.length === 0) continue;
+    const range = findWholePhrase(preparedField(weighted), words);
+    if (range === null) continue;
+    best = Math.max(best, weighted.weight);
+    if (position === 0) primaryRange = range;
+  }
+  if (best === 0) return null;
+  const wholeName =
+    primaryRange?.start === 0 && primaryRange.end === preparedField(fields[0]!).text.length;
+  const bonus = wholeName
+    ? WHOLE_NAME - WHOLE_WORD
+    : primaryRange !== undefined && words.length > 1
+      ? 0.25
+      : 0;
+  return {
+    quality: best + bonus,
+    wholeWords: best >= WHOLE_WORD,
+    strong: true,
+    primaryRanges: primaryRange ? [primaryRange] : [],
+  };
+}
+
 /**
  * Every query token must match some field. Quality is the mean of each token's
  * best weighted match, plus a bonus when the first field holds the whole query
@@ -405,6 +496,8 @@ function matchSearchFields(
   options?: { readonly typos?: boolean },
 ): SearchFieldsMatch | null {
   if (normalizedQuery.length === 0) return null;
+  const phrase = exactPhrase(normalizedQuery);
+  if (phrase !== null) return matchExactPhrase(phrase, fields);
   const primary = fields[0]?.value ? preparedField(fields[0]) : undefined;
   // An empty token would match everywhere, and loop forever in `matchToken`.
   const { tokens, fillerOptional } = queryTokens(normalizedQuery);
@@ -469,9 +562,10 @@ export function messageSearchTokens(query: string): {
   readonly short: ReadonlyArray<string>;
   /** Every token, in the order typed. */
   readonly words: ReadonlyArray<string>;
+  /** The query is in double quotes: only its words together, as typed, match. */
+  readonly exact: boolean;
 } {
-  const tokens = query
-    .replace(WRAPPING_QUOTES, "")
+  const tokens = unwrapQuery(query)
     // The index stores apostrophes straight, as `indexedMessageText` writes them.
     .replace(CURLY_APOSTROPHES, "'")
     .normalize("NFC")
@@ -486,23 +580,35 @@ export function messageSearchTokens(query: string): {
     long: tokens.filter(searchable),
     short: tokens.filter((token) => !searchable(token)),
     words: tokens,
+    exact: isExactQuery(query),
   };
+}
+
+/**
+ * The most whitespace between two words of an exact query in a message: a line
+ * break and its indentation. The server's index reads only hits that close, so
+ * the matcher must not accept more.
+ */
+export const EXACT_PHRASE_GAP = 16;
+
+// An exact pattern is global and leaves word boundaries to `findExactPhrase`.
+function wordsTogether(words: ReadonlyArray<string>, exact: boolean): RegExp | null {
+  if (words.length < 2) return null;
+  const escaped = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return exact
+    ? new RegExp(escaped.join(`\\s{1,${EXACT_PHRASE_GAP}}`), "giu")
+    : new RegExp(`(?<![\\p{L}\\p{N}])${escaped.join("\\s+")}(?![\\p{L}\\p{N}])`, "iu");
 }
 
 /**
  * Matches the query's words side by side as whole words, as typed, whatever
  * whitespace is between them and ignoring case; null for a single word.
+ * An exact query allows EXACT_PHRASE_GAP of whitespace between two words, and
+ * its pattern also matches inside longer words.
  */
 export function messagePhrase(query: string): RegExp | null {
-  const { words } = messageSearchTokens(query);
-  return words.length > 1
-    ? new RegExp(
-        `(?<![\\p{L}\\p{N}])${words
-          .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          .join("\\s+")}(?![\\p{L}\\p{N}])`,
-        "iu",
-      )
-    : null;
+  const { words, exact } = messageSearchTokens(query);
+  return wordsTogether(words, exact);
 }
 
 // Words written together, as typed, rank above the same words apart, as in
@@ -532,6 +638,26 @@ function startsWordAt(text: string, index: number): boolean {
 // Whether a word ends right before `end` in `text`.
 function endsWordAt(text: string, end: number): boolean {
   return end >= text.length || !ALPHANUMERIC.test(text[end]!) || startsWordAt(text, end);
+}
+
+// Where an exact phrase sits in `text` at or after `from` as whole words, by the rule single
+// words follow: "JSON" is a word in "JSONSchema". `searched` is `text` folded in place.
+function findExactPhrase(
+  text: string,
+  searched: string,
+  pattern: RegExp,
+  from = 0,
+): SearchRange | null {
+  pattern.lastIndex = from;
+  for (let match = pattern.exec(searched); match !== null; match = pattern.exec(searched)) {
+    const end = match.index + match[0].length;
+    if (startsWordAt(text, match.index) && endsWordAt(text, end)) {
+      return { start: match.index, end };
+    }
+    // A whole character on: from an emoji's second half the pattern finds this match again.
+    pattern.lastIndex = match.index + (searched.codePointAt(match.index)! > 0xffff ? 2 : 1);
+  }
+  return null;
 }
 
 // A commit SHA or UUID part: seven or more hex characters with a digit.
@@ -597,7 +723,7 @@ export interface MessageMatch {
  * query is prepared once, since the server grades thousands of hits for it.
  */
 export function messageMatcher(query: string): (text: string) => MessageMatch | null {
-  const { long, short, words } = messageSearchTokens(query);
+  const { long, short, words, exact } = messageSearchTokens(query);
   const tokens = [...long, ...short].map((token) => ({
     token,
     // Marks go from the folded token: lowercasing "İ" adds one.
@@ -611,8 +737,9 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
   const phrase = messagePhrase(query);
   // Accents typed or left out still read as written together: "cafe open"
   // in "Café open".
-  const foldedPhrase = messagePhrase(
-    words.map((word) => foldInPlace(word).replace(COMBINING_MARKS, "")).join(" "),
+  const foldedPhrase = wordsTogether(
+    words.map((word) => foldInPlace(word).replace(COMBINING_MARKS, "")),
+    exact,
   );
   const queryNonAscii = NON_ASCII.test(query);
   return (text) => {
@@ -641,12 +768,20 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
     // Written together as typed: the snippet starts there. Apostrophes are
     // straight in the query, and straightening keeps offsets.
     const straight = (value: string) => value.replace(CURLY_APOSTROPHES, "'");
+    const phraseAt = (pattern: RegExp | null, searched: string) =>
+      pattern === null
+        ? null
+        : exact
+          ? (findExactPhrase(text, searched, pattern)?.start ?? null)
+          : (pattern.exec(searched)?.index ?? null);
     const together =
-      phrase?.exec(straight(plain)) ??
+      phraseAt(phrase, straight(plain)) ??
       (queryNonAscii || NON_ASCII.test(text)
-        ? foldedPhrase?.exec(straight((folded ??= foldInPlace(text))))
+        ? phraseAt(foldedPhrase, straight((folded ??= foldInPlace(text))))
         : null);
-    if (together) return { quality: quality + MESSAGE_PHRASE_BONUS, offset: together.index };
+    if (together !== null) return { quality: quality + MESSAGE_PHRASE_BONUS, offset: together };
+    // An exact query matches only written together; a single word must be whole.
+    if (exact && (words.length > 1 || quality < 1)) return null;
     // Else the shortest stretch that holds every word: the snippet starts
     // there, so it shows them all, and words close together rank above words
     // far apart ("lakebed perf").
@@ -697,15 +832,40 @@ function shortestSpan(places: ReadonlyArray<ReadonlyArray<number>>): {
  * Snippets vary per query, so they skip the field cache.
  */
 export function findSearchTokenRanges(text: string, query: string): SearchRange[] {
-  const tokens = new Map(
-    messageSearchTokens(query)
-      .long.map(
-        (token) =>
-          [foldSearchQuery(token), Array.from(token).length < MESSAGE_WORD_START_LENGTH] as const,
-      )
+  const { long, words, exact } = messageSearchTokens(query);
+  // Each word also without the dot lowercasing "İ" adds, which the text,
+  // folded in place, does not have. Other marks stay: dropping a Hindi vowel
+  // sign would leave a lone consonant lighting up word starts.
+  const undotted = (word: string) => word.replace(DOT_FROM_LOWERCASED_I, "");
+  // An exact query lights up only where its words are written together.
+  if (exact && words.length > 1) {
+    const folded = words.map((word) => foldInPlace(word));
+    const bare = folded.map(undotted);
+    const searched = foldInPlace(text);
+    const ranges: SearchRange[] = [];
+    for (const phraseWords of bare.join(" ") === folded.join(" ") ? [folded] : [folded, bare]) {
+      const phrase = wordsTogether(phraseWords, true)!;
+      for (
+        let found = findExactPhrase(text, searched, phrase);
+        found !== null;
+        found = findExactPhrase(text, searched, phrase, found.end)
+      ) {
+        ranges.push(found);
+      }
+    }
+    return separateExactRanges(ranges);
+  }
+  // Each folded token, and whether it must start a word; a spelling any token
+  // allows mid-word lights up mid-word.
+  const tokens = new Map<string, boolean>();
+  for (const token of long) {
+    const short = Array.from(token).length < MESSAGE_WORD_START_LENGTH;
+    const word = foldQueryWords(token);
+    for (const key of [word, undotted(word)]) {
       // Some tokens fold to nothing ("´´´"), which would match everywhere.
-      .filter(([token]) => token.length > 0),
-  );
+      if (key.length > 0) tokens.set(key, short && (tokens.get(key) ?? true));
+    }
+  }
   if (tokens.size === 0) return [];
   const field = foldSearchField(text);
   const ranges: SearchRange[] = [];
@@ -713,7 +873,11 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
     // A token that opens with punctuation brings its own boundary, as in scoring.
     const ownBoundary = !ALPHANUMERIC.test(token[0]!) && !SYMBOL.test(token[0]!);
     for (let index = field.text.indexOf(token); index !== -1;) {
-      if (needsWordStart && !ownBoundary && !field.wordStarts[index]) {
+      // An exact single word lights up only as a whole word, as it matches.
+      const skipped = exact
+        ? !startsWordAt(text, index) || !endsWordAt(text, index + token.length)
+        : needsWordStart && !ownBoundary && !field.wordStarts[index];
+      if (skipped) {
         index = field.text.indexOf(token, index + 1);
         continue;
       }
@@ -721,7 +885,19 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       index = field.text.indexOf(token, index + token.length);
     }
   }
-  return mergeRanges(ranges);
+  return exact ? separateExactRanges(ranges) : mergeRanges(ranges);
+}
+
+// Overlaps go, longest first; touching exact matches stay apart, so find opens
+// on the first one alone.
+function separateExactRanges(ranges: SearchRange[]): SearchRange[] {
+  const kept: SearchRange[] = [];
+  for (const range of ranges.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  )) {
+    if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
+  }
+  return kept;
 }
 
 export interface SearchTextPart {
@@ -768,7 +944,8 @@ const THREAD_SEARCH_PICK_MAX_LENGTH = 32;
  * it, so a long pick matches its query again.
  */
 export function pickedQuery(query: string): string {
-  const cut = foldSearchQuery(query).slice(0, THREAD_SEARCH_PICK_MAX_LENGTH);
+  // Without an exact query's quotes: the cut could keep one and drop the other.
+  const cut = foldQueryWords(query).slice(0, THREAD_SEARCH_PICK_MAX_LENGTH);
   return (/[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut).trim();
 }
 
@@ -916,7 +1093,15 @@ export interface ThreadSearchMatch {
   readonly groupQuality: number;
 }
 
+export type SearchMatchHintField =
+  | "pull-request"
+  | "branch"
+  | "project"
+  | "environment"
+  | "reference";
+
 export interface SearchMatchHint {
+  readonly field: SearchMatchHintField;
   readonly label: string;
   readonly text: string;
   readonly ranges: ReadonlyArray<SearchRange>;
@@ -952,21 +1137,26 @@ function matchHint(
   thread: ThreadSearchSubject,
   typos: boolean,
 ): SearchMatchHint | undefined {
-  const candidates: Array<{ readonly label: string; readonly text: string | null | undefined }> = [
+  const candidates: Array<{
+    readonly field: SearchMatchHintField;
+    readonly label: string;
+    readonly text: string | null | undefined;
+  }> = [
     ...(thread.pullRequests ?? []).map((pullRequest) => ({
+      field: "pull-request" as const,
       label: "PR",
       text: `#${pullRequest.number}${pullRequest.title ? ` ${pullRequest.title}` : ""}`,
     })),
-    { label: "Branch", text: searchableBranch(thread.branch) },
-    { label: "Project", text: thread.projectTitle },
-    { label: "Environment", text: thread.environmentLabel },
+    { field: "branch", label: "Branch", text: searchableBranch(thread.branch) },
+    { field: "project", label: "Project", text: thread.projectTitle },
+    { field: "environment", label: "Environment", text: thread.environmentLabel },
   ];
   const holds = (text: string, query: string) =>
     matchSearchFields(query, [{ value: text, weight: 1 }], { typos })?.primaryRanges;
   const hintFor = (query: string) => {
-    for (const { label, text } of candidates) {
+    for (const { field, label, text } of candidates) {
       const ranges = text ? holds(text, query) : undefined;
-      if (text && ranges) return { label, text, ranges };
+      if (text && ranges) return { field, label, text, ranges };
     }
     return undefined;
   };
@@ -1010,13 +1200,15 @@ let lastFieldQuery: { readonly query: string; readonly fieldQuery: string } | un
 // Strip pull request prefixes and the worktree prefix so queries match the stored fields.
 function threadFieldQuery(normalizedQuery: string): string {
   if (lastFieldQuery?.query !== normalizedQuery) {
+    const phrase = exactPhrase(normalizedQuery);
+    const stripped = (phrase ?? normalizedQuery)
+      .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
+      .replace(/^#\s*/, "")
+      .replace(WORKTREE_BRANCH_PREFIX_PATTERN, "")
+      .replace(FLAT_BRANCH_QUERY_PREFIX_PATTERN, "$1");
     lastFieldQuery = {
       query: normalizedQuery,
-      fieldQuery: normalizedQuery
-        .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
-        .replace(/^#\s*/, "")
-        .replace(WORKTREE_BRANCH_PREFIX_PATTERN, "")
-        .replace(FLAT_BRANCH_QUERY_PREFIX_PATTERN, "$1"),
+      fieldQuery: phrase === null || stripped.length === 0 ? stripped : `"${stripped}"`,
     };
   }
   return lastFieldQuery.fieldQuery;
@@ -1043,7 +1235,9 @@ export function scoreThreadSearch(
   const fields = threadSearchFields(thread);
   const fieldQuery = threadFieldQuery(normalizedQuery);
   const fieldMatch = matchSearchFields(fieldQuery, fields, options);
-  const referenceMatch = fieldMatch ? null : matchReference(normalizedQuery, thread);
+  const referenceMatch = fieldMatch
+    ? null
+    : matchReference(exactPhrase(normalizedQuery) ?? normalizedQuery, thread);
   const match = fieldMatch ?? referenceMatch;
   if (match === null) return null;
   // A row whose title shows no match must say why. With several words, one
@@ -1059,7 +1253,7 @@ export function scoreThreadSearch(
     ? undefined
     : (): SearchMatchHint | undefined =>
         referenceMatch
-          ? { label: "ID or link", text: normalizedQuery, ranges: [] }
+          ? { field: "reference", label: "ID or link", text: normalizedQuery, ranges: [] }
           : (checkedHint ?? matchHint(fieldQuery, thread, typos));
   const pick = options?.picks === false ? undefined : activePick(thread, normalizedQuery, now);
   return {
@@ -1251,12 +1445,13 @@ export function scoreSearchTerms(
   terms: ReadonlyArray<string>,
   options?: { readonly typos?: boolean },
 ): SearchTermsMatch | null {
+  const words = exactPhrase(normalizedQuery) ?? normalizedQuery;
   // Filler words ("the ci") do not make a short query long.
-  const meaningful = normalizedQuery
+  const meaningful = words
     .split(" ")
     .filter((token) => !FILLER_WORDS.has(token))
     .join(" ");
-  const short = (meaningful || normalizedQuery).length < KEYWORD_QUERY_MIN_LENGTH;
+  const short = (meaningful || words).length < KEYWORD_QUERY_MIN_LENGTH;
   const match = matchSearchFields(
     normalizedQuery,
     terms.map((value, index) =>

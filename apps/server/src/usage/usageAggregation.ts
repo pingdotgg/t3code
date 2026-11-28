@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheSavingsUsd, lookupRate, priceUsage, type RateTable } from "./usagePricing.ts";
 
 // en-CA gives ISO-ordered parts in the requested zone; Date getters are host-local.
 function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
@@ -70,24 +70,52 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly rateModel?: (provider: UsageRecord["provider"], model: string) => string | undefined;
   readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
 }
 
+export function usageTimestampFilter(
+  options: Pick<
+    AggregateOptions,
+    "timeZone" | "sinceDay" | "untilDay" | "sinceTimeMs" | "untilTimeMs"
+  >,
+) {
+  const toDay = makeDayFormatter(options.timeZone);
+  return (timestampMs: number) => {
+    if (options.sinceTimeMs !== undefined && options.untilTimeMs !== undefined) {
+      return timestampMs >= options.sinceTimeMs && timestampMs < options.untilTimeMs;
+    }
+    const day = toDay(timestampMs);
+    return day >= options.sinceDay && day <= options.untilDay;
+  };
+}
+
 export function resolveModelAliases(
   aliases: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, string> {
-  const resolved = new Map<string, string>();
-  for (const model of Object.keys(aliases)) {
-    const seen = new Set([model]);
-    let target = aliases[model]!;
-    while (Object.hasOwn(aliases, target) && !seen.has(target)) {
-      seen.add(target);
+  const models = Object.keys(aliases);
+  const memo = new Map<string, string | null>();
+  for (const model of models) {
+    if (memo.has(model)) continue;
+    const path: string[] = [];
+    let target = model;
+    while (Object.hasOwn(aliases, target) && !memo.has(target)) {
+      path.push(target);
+      // Null marks both the active walk and paths that end in a cycle.
+      memo.set(target, null);
       target = aliases[target]!;
     }
-    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
+    const terminal = Object.hasOwn(aliases, target) ? (memo.get(target) ?? null) : target;
+    for (const alias of path) memo.set(alias, terminal);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const model of models) {
+    const target = memo.get(model);
+    if (target !== null && target !== undefined) resolved.set(model, target);
   }
   return resolved;
 }
@@ -141,6 +169,9 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
     held.reportedCostUsd === null || copy.reportedCostUsd === null
       ? (held.reportedCostUsd ?? copy.reportedCostUsd)
       : Math.max(held.reportedCostUsd, copy.reportedCostUsd);
+  const heldModelCalls = held.modelCalls ?? 0;
+  const copyModelCalls = copy.modelCalls ?? 0;
+  const modelCalls = Math.max(heldModelCalls, copyModelCalls);
   if (
     b.uncachedInputTokens <= a.uncachedInputTokens &&
     b.cachedInputTokens <= a.cachedInputTokens &&
@@ -148,6 +179,7 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
     b.outputTokens <= a.outputTokens &&
     b.reasoningTokens <= a.reasoningTokens &&
     (copy.cacheCreation1hTokens ?? 0) <= (held.cacheCreation1hTokens ?? 0) &&
+    copyModelCalls <= heldModelCalls &&
     reportedCostUsd === held.reportedCostUsd
   ) {
     return held;
@@ -159,12 +191,42 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
   return {
     ...held,
     ...(cacheCreation1hTokens > 0 ? { cacheCreation1hTokens } : {}),
+    ...(modelCalls > 1 ? { modelCalls } : {}),
     totals: {
       uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
       cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
       cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
       outputTokens: Math.max(a.outputTokens, b.outputTokens),
       reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+/**
+ * Grok reports each turn once, complete, so real copies are equal. A larger one is a deleted
+ * transcript's pre-v17 maximum over turns that shared a prompt id, whichever source it came from.
+ */
+function smallestGrokCopy(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.min(held.reportedCostUsd, copy.reportedCostUsd);
+  const modelCalls =
+    held.modelCalls !== undefined && copy.modelCalls !== undefined
+      ? Math.min(held.modelCalls, copy.modelCalls)
+      : (held.modelCalls ?? copy.modelCalls);
+  return {
+    ...held,
+    ...(modelCalls !== undefined && modelCalls > 1 ? { modelCalls } : {}),
+    totals: {
+      uncachedInputTokens: Math.min(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.min(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.min(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.min(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.min(a.reasoningTokens, b.reasoningTokens),
     },
     reportedCostUsd,
   };
@@ -217,7 +279,12 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
-        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
+        if (held.bucket !== null) {
+          held.record =
+            record.provider === "grok"
+              ? smallestGrokCopy(held.record, record)
+              : mergeUsageCopies(held.record, record);
+        }
         return false;
       }
     }
@@ -301,12 +368,16 @@ export class UsageAggregator {
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
   }
 
-  // Aliases use the target's rate, replacing provider-specific rateModel.
+  // Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
   #mapModel(record: UsageRecord): UsageRecord {
     const model = this.#options.modelAliases?.get(record.model);
     if (model === undefined) return record;
     const { rateModel: _rateModel, ...rest } = record;
-    return { ...rest, model };
+    const rateModel =
+      lookupRate(this.#options.rates, model) === null
+        ? this.#options.rateModel?.(record.provider, model)
+        : undefined;
+    return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
   }
 
   // Time-ordered records usually reuse the previous bucket; avoid rebuilding its key.

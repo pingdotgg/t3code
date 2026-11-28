@@ -14,6 +14,7 @@ import {
   PROJECT_CLONE_ERROR_MAX_LENGTH,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -74,7 +75,9 @@ const DONE_RETENTION = "30 seconds";
 const STALL_AFTER = "20 seconds";
 
 function clampText(text: string, maxLength: number): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+  if (text.length <= maxLength) return text;
+  const end = splitsSurrogatePair(text, maxLength - 1) ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}…`;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -297,14 +300,19 @@ export const make = Effect.gen(function* () {
         endedAt: null,
         sequence: ++sequence,
       };
-      const claimed = yield* Ref.modify(clones, (current) => {
-        const conflict = Array.from(current.values()).some(
+      const claim = yield* Ref.modify(clones, (current) => {
+        const overlapping = Array.from(current.values()).filter(
           (tracked) =>
             tracked.snapshot.projectId === input.projectId ||
             tracked.input.destinationPath === prepared.destinationPath,
         );
-        if (conflict) return [false, current] as const;
+        // Only a running clone owns its destination; a failed or cancelled one
+        // left nothing behind, so a fresh start supersedes it.
+        if (overlapping.some((tracked) => tracked.snapshot.phase === "running")) {
+          return [null, current] as const;
+        }
         const next = new Map(current);
+        for (const stale of overlapping) next.delete(stale.snapshot.projectId);
         next.set(input.projectId, {
           snapshot,
           fiber: null,
@@ -316,14 +324,16 @@ export const make = Effect.gen(function* () {
             protocol: input.protocol ?? "auto",
           },
         });
-        return [true, next] as const;
+        return [overlapping.map((stale) => stale.snapshot.projectId), next] as const;
       });
       const alreadyInProgress = new SourceControlRepositoryError({
         operation: "cloneRepository",
         provider: input.provider ?? SourceControlProviderKind.make("unknown"),
         detail: "A clone into this destination is already in progress.",
       });
-      if (!claimed) return yield* alreadyInProgress;
+      if (claim === null) return yield* alreadyInProgress;
+      // A superseded done entry's pending removal would otherwise delete the new claim.
+      yield* Effect.forEach(claim, clearRetention, { discard: true });
       // Finish or release the claim despite disconnects; a claim without a fiber cannot be cancelled or retried.
       const projectId = yield* Effect.uninterruptible(
         Effect.gen(function* () {

@@ -13,6 +13,7 @@
  */
 import { dual } from "./Function.ts"
 import type { TypeLambda } from "./HKT.ts"
+import * as InternalRecord from "./internal/record.ts"
 import type { Ordering } from "./Ordering.ts"
 import * as Reducer from "./Reducer.ts"
 
@@ -607,7 +608,11 @@ export {
  *
  * Compares structs field-by-field in the key order of the fields object and
  * stops at the first non-zero comparison result. Field order matters: earlier
- * fields take precedence. The result is `0` only if all fields are equal.
+ * fields take precedence. Symbol fields are compared after string fields.
+ * The result is `0` only if all fields are equal.
+ * Only own enumerable string and symbol properties of `fields` define
+ * comparisons. Non-enumerable and inherited definitions are ignored. Selected
+ * properties on the compared values may be non-enumerable or inherited.
  *
  * **Example** (Ordering structs)
  *
@@ -634,10 +639,10 @@ export {
  * @category combinators
  * @since 4.0.0
  */
-export function Struct<const R extends { readonly [x: string]: Order<any> }>(
+export function Struct<R extends Record<PropertyKey, Order<any>>>(
   fields: R
-): Order<{ [K in keyof R]: [R[K]] extends [Order<infer A>] ? A : never }> {
-  const keys = Object.keys(fields)
+): Order<{ readonly [K in keyof R]: [R[K]] extends [Order<infer A>] ? A : never }> {
+  const keys = InternalRecord.ownEnumerableKeys(fields) as Array<keyof R>
   return make((self, that) => {
     for (const key of keys) {
       const o = fields[key](self[key], that[key])
@@ -911,7 +916,7 @@ export const clamp = <A>(O: Order<A>): {
     (self: A, options: {
       minimum: A
       maximum: A
-    }): A => min(O)(options.maximum, max(O)(options.minimum, self))
+    }): A => min(O)(max(O)(self, options.minimum), options.maximum)
   )
 
 /**

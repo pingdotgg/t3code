@@ -3,8 +3,6 @@
  *
  * This module is independent of the public compatibility-oriented McpSchema
  * surface and is frozen as a dated delta from v2025-03-26.
- *
- * @internal
  */
 import * as Rpc from "../../../rpc/Rpc.ts"
 import * as RpcGroup from "../../../rpc/RpcGroup.ts"

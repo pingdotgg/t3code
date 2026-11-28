@@ -1,7 +1,11 @@
 import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
-import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
+import {
+  extractInlineCodeSpans,
+  extractMarkdownLinkHrefs,
+  resolveMarkdownFileLinkTarget,
+} from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -17,6 +21,15 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:99", "/repo/src/example.ts:12", false],
     ["example.ts:12-20", "/repo/src/example.ts:12-20", true],
     ["example.ts:12-20", "/repo/src/example.ts:12", false],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10-L20", true],
+    ["main.ts#L42C7", "/repo/src/main.ts:42:7", true],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10", false],
+    ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
+    ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
+    ["src/main.ts#L10", "./src/main.ts%23L10", true],
+    ["draft.md ", "/tmp/draft.md%20", true],
+    [" draft.md  ", "./%20draft.md%20%20", true],
+    [" draft.md ", "/tmp/draft.md", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -32,6 +45,7 @@ describe("inlineCodeFilePathCandidate", () => {
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["docker/Dockerfile", "docker/Dockerfile"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
     // regression: #30757 an agent's shortened path is not a file
@@ -47,6 +61,30 @@ describe("inlineCodeFilePathCandidate", () => {
     ["./bin/run:12", "./bin/run:12"],
     ["src/資料.備份:12", "src/資料.備份:12"],
     ["src/foo.c++:12", "src/foo.c++:12"],
+    // regression: #37740 absolute paths with spaces are files, commands are not
+    ["/Users/me/Path Test/notes with spaces.md", "/Users/me/Path Test/notes with spaces.md"],
+    ["~/Library/Mobile Documents/notes.md", "~/Library/Mobile Documents/notes.md"],
+    [
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+    ],
+    ["cd /tmp && ls", null],
+    ["/usr/bin/python3 -m venv .venv", null],
+    ["/usr/local/bin/node server.js", null],
+    ["/usr/bin/env python3 foo.py", null],
+    ["/opt/homebrew/bin/python3 manage.py", null],
+    ["/bin/echo hello world.txt", null],
+    ["~/bin/run tests.sh", null],
+    ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
+    [
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+    ],
+    ["\\\\server\\Shared Docs\\Guide.md", "\\\\server\\Shared Docs\\Guide.md"],
+    ["\\\\server name\\share\\Guide Notes.md", null],
+    ["\\\\server\\Guide Notes.md", null],
+    ["~/Videos/clips/<thread-slug>/shot.png", null],
+    ["clips/<name>.mp4", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -79,6 +117,22 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
   });
 
+  // regression: #41223 names the parser rejects bare; the composer adds `./` to them
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("resolves the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(resolveMarkdownFileLinkTarget(destination ?? "", "/workspace/project")).toBe(
+      `/workspace/project/${path}`,
+    );
+  });
+
   it.each([
     "https://example.com/docs",
     "/chat/settings#L3",
@@ -91,8 +145,24 @@ describe("parseMarkdownFileLink", () => {
     "/tmp/claude-1000/....:12",
     "/tmp/claude-1000/%2E%2E%2E",
     "\\foo.ts",
+    "sandbox://server/share/notes.txt",
+    "sandbox:/%2Fserver/share/notes.txt",
+    "sandbox:/%5Cserver/share/notes.txt",
+    "sandbox:/tmp/bad%00name.txt",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
+  });
+
+  it("resolves a sandbox link as an absolute host path, even outside the workspace", () => {
+    const href = "Sandbox:/Users/me/agent-output/example/brief%20%23final.txt#L3C2";
+    expect(parseMarkdownFileLink(href)).toEqual({
+      path: "/Users/me/agent-output/example/brief #final.txt",
+      line: 3,
+      column: 2,
+    });
+    expect(resolveMarkdownFileLinkTarget(href, "/Users/me/repo")).toBe(
+      "/Users/me/agent-output/example/brief #final.txt:3:2",
+    );
   });
 
   it("recognizes a relative folder that ends in a slash", () => {
@@ -153,22 +223,156 @@ describe("workspaceRelativeFilePath", () => {
   });
 });
 
+describe("extractInlineCodeSpans", () => {
+  it.each([
+    ["``./a/shared.ts`` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["``a ` b`` and `./b/shared.ts`", ["a ` b", "./b/shared.ts"]],
+    ["``unclosed and `./b/shared.ts`", ["./b/shared.ts"]],
+    ["\\``./a/shared.ts` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["`a\\` and `./b/shared.ts`", ["a\\", "./b/shared.ts"]],
+    ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
+  });
+
+  it.each([
+    [
+      "Use `` ``` `` to open a fence, then edit `./a/shared.ts` and `./b/shared.ts`",
+      ["```", "./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["```x``` then `./a/shared.ts`", ["x", "./a/shared.ts"]],
+    ["~~~\n`./a/shared.ts`\n~~~\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["````md\n```ts\n`./a/shared.ts`\n```\n````\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["```\n    ```\n`./a/shared.ts`\n```\n`./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "```diff\n- ```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["> ```\n> `./a/shared.ts`\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "- ~~~\n  example\n\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["Step\n2. ~~~\n   `./a/shared.ts`", ["./a/shared.ts"]],
+    ["1. Step\n    ```\r\n    `./a/shared.ts`\r\n    ```\r\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["    ```\n    `./a/shared.ts`\n    ```\n\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["Example\n\n    `src/a/index.ts`\n\nOpen `src/b/index.ts`", ["src/b/index.ts"]],
+    ["\r\t`src/a/index.ts`\r\rOpen `src/b/index.ts`", ["src/b/index.ts"]],
+    ["Example\n    `src/a/index.ts`\n\n    `src/b/index.ts`", ["src/a/index.ts"]],
+  ])("skips code spans inside code blocks in %j", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
+  });
+});
+
 describe("extractMarkdownLinkHrefs", () => {
   it.each([
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [
+      "[![a](a.png)](src/index.ts) [![b](b.png)](lib/index.ts)",
+      ["a.png", "src/index.ts", "b.png", "lib/index.ts"],
+    ],
+    [String.raw`[\![a](a.png)](src/index.ts) [label!](ok)`, ["a.png", "ok"]],
+    ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
+    ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
+    ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
 
   it.each([
+    ["```md\n- [Setup](./a/README.md)\n```\n\nSee [README.md](./b/README.md)", ["./b/README.md"]],
+    ["Write `[Setup](./a/README.md)` as [README.md](./b/README.md)", ["./b/README.md"]],
+    ["[a `b](./a/README.md)` [c](./b/README.md)", ["./b/README.md"]],
+    ["[`code`](./a/README.md) and [x](<./b/a`b`.md>)", ["./a/README.md", "./b/a`b`.md"]],
+    ["`unclosed [a](./a/README.md)\n\nand` [b](./b/README.md)", ["./a/README.md", "./b/README.md"]],
+    ["~~~\n[a](./a/README.md)\n\n~~~\n[b](./b/README.md)", ["./b/README.md"]],
+    ["Type `` ``` `` then [a](./a/README.md)", ["./a/README.md"]],
+    ["\\``[a](./a/README.md)` [b](./b/README.md)", ["./b/README.md"]],
+    ["```\n```js\n[a](./a/README.md)\n```\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n  ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["> ```\n> [a](./a/README.md)\n> ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n\n[b](./b/README.md)", ["./b/README.md"]],
+  ])("skips links inside code in %s", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
+    ["\t[a](src/a.ts)\r\n\r\n    [b](src/b.ts)\r\n[c](src/c.ts)", ["src/c.ts"]],
+    ["- Item\n\n      [a](src/a.ts)\n\n  [b](src/b.ts)", ["src/b.ts"]],
+    [">     [a](src/a.ts)\n>\n> [b](src/b.ts)", ["src/b.ts"]],
+    ["Paragraph\n    [a](src/a.ts)\n\n    [b](src/b.ts)", ["src/a.ts"]],
+    ["    [a](src/a.ts)\r\rOpen [b](src/b.ts)", ["src/b.ts"]],
+    ["Intro\r\r    [a](src/a.ts)\r\nOpen [b](src/b.ts)", ["src/b.ts"]],
+    [
+      "[^n]: Intro\n\n    [a](src/a.ts)\n\n        [code](src/code.ts)\n\nSee [^n] and [b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    ["a | b\n-- | --\n    [a](src/a.ts) | hi\n\n[b](src/b.ts)", ["src/b.ts"]],
+    ["a | b\n-- | --\nrow | row\n    [a](src/a.ts) | hi\n\n[b](src/b.ts)", ["src/b.ts"]],
+    [
+      "-     [code](src/code.ts)\n-      [a](src/a.ts)\n- \t\t[b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    [
+      "-      Example\n\n      [a](src/a.ts)\n\n          [code](src/code.ts)\n- [b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    [
+      "-      [index.ts](src/a/index.ts) | heading\n      -- | --\n\n[index.ts](src/b/index.ts)\n\n-      [notes](src/notes.ts)",
+      ["src/b/index.ts", "src/notes.ts"],
+    ],
+    [
+      "-       first\n\n        -      [index.ts](src/a/index.ts) | heading\n              -- | --\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
+      "> -      [index.ts](src/a/index.ts)\n>       heading continuation\n>       ===\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
+      "[^a\u00a0b]: Intro\n\n    [index.ts](src/a/index.ts)\n\nSee [^a\u00a0b] and [index.ts](src/b/index.ts)",
+      ["src/a/index.ts", "src/b/index.ts"],
+    ],
+  ])("excludes indented code destinations in %j", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
+    [
+      String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
+      [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],
+    ],
+    [
+      String.raw`[one](<./a/doc\\> "title") [two](<./b/doc\\> (title))`,
+      [String.raw`./a/doc\\`, String.raw`./b/doc\\`],
+    ],
+    [
+      String.raw`[bad](<./x/dir\> text) [one](<./a/doc\\\> final.ts> "title") [two](<./b/doc\< final.ts>)`,
+      [String.raw`./a/doc\\\> final.ts`, String.raw`./b/doc\< final.ts`],
+    ],
     [
       "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a.ts](a/a.ts (first)) [a.ts](b/a.ts (second))", ["a/a.ts", "b/a.ts"]],
+    [
+      String.raw`[a](<a/a.ts> (escaped \(first\) and \\)) [b](b/a.ts (second))`,
+      ["a/a.ts", "b/a.ts"],
+    ],
+    [
+      "[a](a.ts (nested (title))) [b](b.ts (missing close) [c](c.ts (blank\n\nline)) [d](ok)",
+      ["ok"],
+    ],
+    [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a.ts](src/a.ts "say \\"hello\\"") [a.ts](lib/a.ts)`, ["src/a.ts", "lib/a.ts"]],
+    [`[a](a.ts 'it\\'s') [b](b.ts "ends in \\\\") [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a](a.ts "unclosed \\") [b](b.ts)`, ["b.ts"]],
+    [`[a](a.ts "mixed') [b](b.ts)`, ["b.ts"]],
+    [`[a](a.ts "it's\n\n[b](lib/a.ts)")`, ["lib/a.ts"]],
     ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
     ["[a](x\\)y) [b](x\\(y)", ["x\\)y", "x\\(y"]],
     ["[a](unclosed(paren) [b](ok)", ["ok"]],

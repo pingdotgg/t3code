@@ -70,6 +70,8 @@ vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: "session" },
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readEnvironmentScopeDenied: (environmentId: string, scope: string) =>
+    state.scopes.get(environmentId)?.has(scope) !== true,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
@@ -142,6 +144,7 @@ vi.mock("../state/entities", () => ({
       .filter((thread) => thread.environmentId === environmentId)
       .map((thread) => ({ environmentId, threadId: thread.id })),
   readProject: () => ({ workspaceRoot: "/project" }),
+  readDelegatedUnderParent: () => new Set(),
 }));
 vi.mock("../components/Sidebar.logic", () => ({
   getFallbackThreadIdAfterDelete: () => null,
