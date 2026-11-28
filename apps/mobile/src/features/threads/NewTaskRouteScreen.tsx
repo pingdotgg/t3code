@@ -52,7 +52,7 @@ type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
   /** An existing draft whose project is gone; the chosen project takes it over. */
   readonly draftId?: string | string[];
-  /** Carried to the draft this picker opens, so a request made for it (such as dictation) follows. */
+  /** A request (such as dictation) that needs its own draft, not the draft underneath the picker. */
   readonly requestId?: string;
   readonly prompt?: string | string[];
   readonly repo?: string | string[];
@@ -265,7 +265,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       : navigation.getParent();
     const rootState = root?.getState();
     const threadRoute = rootState?.routes[rootState.index - 1];
-    if (routeDraftId === undefined && isDraftThreadRoute(threadRoute)) {
+    if (
+      routeDraftId === undefined &&
+      route.params?.requestId === undefined &&
+      isDraftThreadRoute(threadRoute)
+    ) {
       setProject(project);
       root?.goBack();
       return;

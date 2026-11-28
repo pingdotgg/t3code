@@ -601,7 +601,7 @@ function AdaptiveWorkspaceLayoutContent(
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const startNewTask = (requestId: string) => {
+  const startNewTask = (requestId: string, needsOwnDraft = false) => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
@@ -660,7 +660,9 @@ function AdaptiveWorkspaceLayoutContent(
     });
     // Without a project the draft would only push the picker over itself a frame later; open it directly.
     if (destination.draft.projectId === undefined) {
-      navigation.dispatch(CommonActions.navigate("NewTaskProject", { requestId }));
+      navigation.dispatch(
+        CommonActions.navigate("NewTaskProject", needsOwnDraft ? { requestId } : undefined),
+      );
       return;
     }
     handleSelectThreadRoute(destination);
@@ -676,7 +678,7 @@ function AdaptiveWorkspaceLayoutContent(
   useStartDictationIntent(() => {
     const requestId = uuidv4();
     requestNewTaskDictation(requestId);
-    startNewTask(requestId);
+    startNewTask(requestId, true);
   });
 
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
