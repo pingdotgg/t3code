@@ -1366,6 +1366,25 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("replaces a remote socket that stalls while connected before the ping timeout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeSilentSocketHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // No wakeup, retry or network change: the socket just stops delivering
+      // frames while the host still answers a fresh request.
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Ref.get(harness.hostChecks)).not.toEqual([]);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 2,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("replaces a silent remote socket without the wait after a long resume", () =>
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness();
