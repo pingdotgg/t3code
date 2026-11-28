@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ServerNpmReleaseError } from "@t3tools/contracts";
+import { type ManagedPolicyDocument, ServerNpmReleaseError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,7 @@ import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as NpmRelease from "./npmRelease.ts";
 
@@ -36,6 +37,7 @@ const makeService = Effect.fnUntraced(function* (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   publicRegistry: HttpClient.HttpClient = noPublicRegistry,
   npmInstalled = true,
+  policy?: ManagedPolicyDocument,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -50,6 +52,7 @@ const makeService = Effect.fnUntraced(function* (
       PATH: npmInstalled ? npmBin : "",
       PATHEXT: ".CMD",
     }),
+    Effect.provide(ManagedPolicy.layerTest(policy)),
   );
 }, Effect.provide(NodeServices.layer));
 
@@ -194,5 +197,23 @@ it.effect.each(["--registry=https://example.com", "../other", "other-package@lat
     Effect.gen(function* () {
       const service = yield* makeService(() => Effect.die("invalid specs must not spawn npm"));
       expect(Result.isFailure(yield* service.get({ spec }).pipe(Effect.result))).toBe(true);
+    }),
+);
+
+it.effect.each([
+  { updates: { mode: "off" }, spec: "latest" },
+  { updates: { mode: "auto", allowNightly: false }, spec: "nightly" },
+  { updates: { mode: "auto", allowNightly: false }, spec: version },
+] as const)(
+  "answers nothing the managed policy forbids: $spec with $updates",
+  ({ updates, spec }) =>
+    Effect.gen(function* () {
+      const service = yield* makeService(
+        () => Effect.die("a refused lookup must not spawn npm"),
+        HttpClient.make(() => Effect.die("a refused lookup must not reach public npm")),
+        true,
+        { schemaVersion: 1, organization: "Example Corp", limits: { updates } },
+      );
+      expect(yield* service.get({ spec })).toBeNull();
     }),
 );
