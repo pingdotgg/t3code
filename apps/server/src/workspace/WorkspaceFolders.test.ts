@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,6 +54,15 @@ const makeTempDir = Effect.gen(function* () {
   );
 });
 
+it("matches reopened submodule sections by their decoded, case-sensitive names", () => {
+  const gitmodules = String.raw`
+[submodule.Legacy] path = stale
+[SUBMODULE "le\gacy"] path = real
+[submodule "Legacy"] path = another
+`;
+  assert.deepEqual(WorkspaceFolders.parseGitmodulesPaths(gitmodules), ["real", "another"]);
+});
+
 it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
   it.effect("scans child repositories and the folders a code-workspace file lists", () =>
     Effect.gen(function* () {
@@ -72,6 +82,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         `${padded}/.git`,
         "api/.git",
         "web/.git",
+        "unrelated/.git",
         "sub/.git",
         "libs/hash/.git",
         "libs/semi/.git",
@@ -80,6 +91,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "libs/inline/.git",
         "extra/repo/.git",
         "extra/joined/.git",
+        " notes",
         "notes",
         "src/svc/.git",
         "tree",
@@ -88,6 +100,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "../outside/.git",
       ]) {
         yield* fileSystem.makeDirectory(path.join(root, folder), { recursive: true });
+      }
+      if (!(yield* HostProcess.isWindows)) {
+        yield* fileSystem.makeDirectory(path.join(root, "trailing "), { recursive: true });
       }
       yield* fileSystem.symlink(outside, path.join(root, "linked"));
       yield* fileSystem.symlink(root, path.join(root, "self"));
@@ -103,6 +118,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           "[include]",
           "\tpath = extra/repo",
           '[submodule "sub"]',
+          "\tpath = unrelated",
           "\tpath = sub",
           "\turl = https://example.test/sub.git",
           '[submodule "hash"]',
@@ -129,7 +145,10 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             // Entries that lead nowhere take none of the room the real ones need.
             ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
+            { "path": " notes", "name": "Intended" },
+            { "path": "notes ", "name": "TrailingSpace" },
             { "path": "notes" },
+            { "path": "trailing /", "name": "TrailingSlash" },
             { "path": "../outside" },
             { "path": "gone" },
             { "path": "." },
@@ -147,6 +166,12 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             path: path.join(root, "api"),
             name: "API",
             isGitRepository: true,
+            source: "code-workspace",
+          },
+          {
+            path: path.join(root, " notes"),
+            name: "Intended",
+            isGitRepository: false,
             source: "code-workspace",
           },
           {
@@ -180,6 +205,12 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           {
             path: path.join(root, "src", "svc"),
             name: "svc",
+            isGitRepository: true,
+            source: "child",
+          },
+          {
+            path: path.join(root, "unrelated"),
+            name: "unrelated",
             isGitRepository: true,
             source: "child",
           },

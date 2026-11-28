@@ -10,6 +10,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -580,6 +581,38 @@ it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before
   ]);
 });
 
+it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const markdown = [
+    '[upper](FILE:///tmp/A.md) <a href="FiLe:///C:/Demo%20A.md">raw</a>',
+    "",
+    "![shot](FILE:///tmp/Shot.png)",
+    "",
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="FILE:///tmp/Dark.png"><source media="(prefers-color-scheme: light)" srcset="FILE:///tmp/Light.png"><img src="FILE://host/tmp/Fallback.png"></picture>',
+  ].join("\n");
+  const tree = processor.runSync(processor.parse(markdown)) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "file:///tmp/A.md" },
+    { href: "file:///C:/Demo%20A.md" },
+    { src: "file:///tmp/Shot.png", alt: "shot", dataStandalone: true },
+    {
+      src: "file://host/tmp/Fallback.png",
+      dataDarkSrc: "file:///tmp/Dark.png",
+      dataLightSrc: "file:///tmp/Light.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
+});
+
 it("keeps raw and percent-encoded Windows drive file links through the shared Markdown sanitizer", () => {
   const processor = unified()
     .use(remarkParse)
@@ -918,9 +951,7 @@ it("adds only the typed indentation, and renders what follows it as without it",
   ];
   for (const indent of ["", " ", "   ", "\t", " \t"]) {
     for (const start of starts) {
-      // Without the indentation, an image alone on a CRLF line breaks twice: the image-line break
-      // leaves the CR behind, which breaks again.
-      const joins = start.startsWith("!") ? ["\n", "  \n", "\\\n"] : ["\n", "\r\n", "  \n", "\\\n"];
+      const joins = ["\n", "\r\n", "  \n", "\\\n"];
       const markdowns = [
         ...joins.flatMap((join) => lines.map((line) => line(indent, start, join))),
         // A paragraph's first line takes at most three spaces before it reads as code.
@@ -968,15 +999,39 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
         "",
         String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>',
+        "",
+        '<picture><source media="(prefers-color-scheme: light)" srcset=" \thttps://example.com/\u00a0light\u00a0v2.png,\thttps://example.com/2x.png 2x"><img src="https://example.com/dark.png"></picture>',
       ].join("\n"),
     ),
   ) as Node;
 
-  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
+  expect(tags(tree)).toEqual([
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+  ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
     { src: "docs/dark.webp" },
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
+    { src: "https://example.com/light.png", dataDarkSrc: "https://example.com/a\u00a0b.png" },
+    {
+      src: "https://example.com/dark.png",
+      dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
+    },
   ]);
 });
 
@@ -1011,11 +1066,31 @@ it.each([
     expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
       "/tmp/x.md:3",
     ]);
+    expect(links("已保存到 /tmp/report.md。然后打开 /Users/me/app.ts:42，再刷新")).toEqual([
+      "/tmp/report.md",
+      "/Users/me/app.ts:42",
+    ]);
     expect(
       links(
         '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
       ),
     ).toEqual([]);
+    expect(links("Use <a> for links.\n\nSee /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
+    expect(
+      links(
+        'Use <a> for /Users/me/a.ts and <a href="https://example.com">/Users/me/b.ts</a> then /Users/me/c.ts',
+      ),
+    ).toEqual(["/Users/me/a.ts", "/Users/me/c.ts"]);
+    expect(
+      links("<a>/Users/me/closed.ts</a> <a/>/Users/me/also-closed.ts</a> /Users/me/after.ts"),
+    ).toEqual(["/Users/me/after.ts"]);
+    expect(links("Use <textarea><a></textarea> and /Users/me/app.ts:42")).toEqual([
+      "/Users/me/app.ts:42",
+    ]);
+    expect(links('[<a href="x">label](https://example.com) /Users/me/app.ts:42')).toEqual([
+      "https://example.com",
+      "/Users/me/app.ts:42",
+    ]);
     expect(
       links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
     ).toEqual([]);

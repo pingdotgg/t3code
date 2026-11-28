@@ -95,7 +95,7 @@ import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
-import { RightPanelTabs } from "../RightPanelTabs";
+import { RightPanelTabs, type RightPanelTabsHandle } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
@@ -117,6 +117,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
   type PullRequestSurface,
+  type RightPanelSurface,
 } from "~/rightPanelStore";
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import {
@@ -802,13 +803,16 @@ export function PullRequestsPage() {
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
+  // A panel without a host could be showing the same repository on another host.
   if (
     panelEnvironmentId !== null &&
+    renderedPullRequestSurface?.host !== undefined &&
     panelSummary?.additions !== undefined &&
     panelSummary.deletions !== undefined
   ) {
     const stat = {
       ...panelSummary,
+      host: renderedPullRequestSurface?.host,
       environmentId: panelEnvironmentId,
       additions: panelSummary.additions,
       deletions: panelSummary.deletions,
@@ -1119,7 +1123,14 @@ export function PullRequestsPage() {
   const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) {
+      setMaximized((value) => !value);
+      return;
+    }
+    // A closed panel opens straight into maximized.
+    if (!rightPanelAvailable) return;
+    toggleRightPanel();
+    setMaximized(true);
   };
   const onGuideShown = () => setMaximized(true);
   // updateSearch leaves selectedUrl out, so a reload does not reveal the link again.
@@ -1242,6 +1253,7 @@ export function PullRequestsPage() {
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
+          shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
         />
       ) : null}
       {panelToggleControls}
@@ -1481,9 +1493,12 @@ export function PullRequestsPage() {
     useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
     selectSurfaceInUrl(surface);
   };
-  const closeSurface = (surface: PullRequestSurface) => {
+  const closeSurfaces = (surfaces: readonly RightPanelSurface[]) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
+    useRightPanelStore.getState().closeSurfaces(
+      rightPanelRef,
+      surfaces.map((surface) => surface.id),
+    );
     const next = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
       rightPanelRef,
@@ -1541,11 +1556,13 @@ export function PullRequestsPage() {
       });
     });
   });
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activePullRequestSurface === null) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) closeSurface(activePullRequestSurface);
+    if (!event.repeat && !rightPanelTabsRef.current?.closeSelectedTabs())
+      closeSurfaces([activePullRequestSurface]);
   });
   const toggleRightPanelFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (!rightPanelAvailable) return;
@@ -1554,7 +1571,7 @@ export function PullRequestsPage() {
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen && !rightPanelAvailable) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
@@ -1583,6 +1600,7 @@ export function PullRequestsPage() {
 
         {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
           <RightPanelTabs
+            ref={rightPanelTabsRef}
             mode="inline"
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
@@ -1600,9 +1618,8 @@ export function PullRequestsPage() {
             onActivate={(surface) => {
               if (surface.kind === "pull-request") activateSurface(surface);
             }}
-            onCloseSurface={(surface) => {
-              if (surface.kind === "pull-request") closeSurface(surface);
-            }}
+            onCloseSurface={(surface) => closeSurfaces([surface])}
+            onCloseSelectedSurfaces={closeSurfaces}
             onCloseOtherSurfaces={(surface) => {
               if (surface.kind === "pull-request") closeOtherSurfaces(surface);
             }}
@@ -1610,9 +1627,9 @@ export function PullRequestsPage() {
               if (surface.kind === "pull-request") closeSurfacesToRight(surface);
             }}
             onCloseAllSurfaces={closeAllSurfaces}
-            onMoveSurface={(surfaceId, toIndex) => {
+            onMoveSurfaces={(surfaceIds, targetId) => {
               if (rightPanelRef !== null)
-                useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex);
+                useRightPanelStore.getState().moveSurfaces(rightPanelRef, surfaceIds, targetId);
             }}
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}
