@@ -215,6 +215,13 @@ const WEEKDAY_INDEX = {
   saturday: 6,
 } as const;
 
+/** A wake so far out it never comes; the thread stays snoozed until woken by hand. */
+export const INDEFINITE_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
+
+export function isIndefiniteSnooze(snoozedUntil: string): boolean {
+  return Date.parse(snoozedUntil) >= Date.parse(INDEFINITE_SNOOZE_UNTIL);
+}
+
 export interface SnoozePreset {
   readonly id: string;
   readonly label: string;
@@ -376,7 +383,7 @@ function pullRequestSnoozePreset(
   };
 }
 
-/** The snooze menu: soonest first, one row per wake minute, then "Until PR updates". */
+/** The snooze menu: soonest first, one row per wake minute, then "Until PR updates" and "Indefinitely". */
 export function resolveSnoozePresets(
   now: Date,
   options: SnoozePresetOptions = {},
@@ -401,7 +408,16 @@ export function resolveSnoozePresets(
       seen.add(wakeMinute(preset));
       return true;
     });
-  return pullRequest ? [...timed, pullRequest] : timed;
+  return [
+    ...timed,
+    ...(pullRequest ? [pullRequest] : []),
+    {
+      id: "indefinite",
+      label: resolve(msg("Indefinitely", { $context: "snooze until woken by hand" })),
+      whenLabel: "",
+      snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
+    },
+  ];
 }
 
 /**
@@ -435,6 +451,7 @@ export function snoozeWakeLabel(
   options: { readonly now: string },
   resolve: MFunctionType = mFallback,
 ): string {
+  if (isIndefiniteSnooze(snoozedUntil)) return "∞";
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   const now = () => resolve(msg("now", { $context: "a snoozed thread wakes now" }));
