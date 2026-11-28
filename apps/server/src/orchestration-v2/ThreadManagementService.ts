@@ -971,6 +971,23 @@ const make = Effect.gen(function* () {
         );
     }
 
+    // Like a client's send, an agent's message moves a plan thread to build mode, within the caller's limit.
+    const limit = yield* DispatchModeLimit;
+    if (
+      target.thread.interactionMode === "plan" &&
+      input.createdBy !== "system" &&
+      input.scheduledTaskId === undefined &&
+      limit?.interactionMode !== "plan" &&
+      !(yield* hasReceipt(input.commandId))
+    ) {
+      yield* dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make(`${input.commandId}:interaction-mode`),
+        threadId: input.threadId,
+        interactionMode: "default",
+      });
+    }
+
     const dispatched = yield* dispatch({
       type: "message.dispatch",
       commandId: input.commandId,

@@ -5,6 +5,7 @@ import {
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
@@ -312,6 +313,85 @@ it.effect.each([
         : "ThreadManagementWorktreeRestoreError",
     );
     expect(dispatched).toEqual(running ? ["message.dispatch"] : []);
+  }).pipe(Effect.provide(layerTest));
+});
+
+// A user's next message moves an agent-launched plan thread to build mode; an agent's must too.
+it.effect("an agent's send to an idle plan-mode thread moves it to build mode", () => {
+  const projectId = ProjectId.make("project:thread-management:plan-send");
+  const threadId = ThreadId.make("thread:thread-management:plan-send");
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(
+      Layer.succeed(ThreadWorktreeRestore, {
+        takeRecreated: () => Effect.undefined,
+        restore: () => Effect.void,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+        ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+      }),
+    ),
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: threadId,
+              projectId,
+              deletedAt: null,
+              archivedAt: null,
+              worktreePath: null,
+              branch: null,
+              runtimeMode: "full-access",
+              interactionMode: "plan",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            },
+            runs: [],
+            providerTurns: [],
+            messages: [],
+            turnItems: [],
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    // The mock records no message, so the send ends in the projection read; only the commands matter.
+    yield* Effect.exit(
+      threads.sendToThread({
+        projectId,
+        threadId,
+        commandId: CommandId.make("command:thread-management:plan-send"),
+        messageId: MessageId.make("message:thread-management:plan-send"),
+        text: "The plan is approved, please implement it.",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    );
+    const messageIndex = dispatched.findIndex((command) => command.type === "message.dispatch");
+    expect(messageIndex).toBeGreaterThanOrEqual(0);
+    const movesToBuild = dispatched
+      .slice(0, messageIndex + 1)
+      .some(
+        (command) =>
+          (command.type === "thread.interaction-mode.set" || command.type === "message.dispatch") &&
+          "interactionMode" in command &&
+          command.interactionMode === "default",
+      );
+    expect(movesToBuild).toBe(true);
   }).pipe(Effect.provide(layerTest));
 });
 
