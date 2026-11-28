@@ -21,6 +21,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { SettingsGroup } from "../settings/SettingsGroup";
+import { SettingsRow } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -164,25 +165,26 @@ function UsageAccessRows({
             ) : null}
             <SettingsGroup>
               {group.map(({ prompt, key, label, accentColor }) => (
-                <div key={key} className="flex items-center gap-3 px-3.5 py-3">
-                  <ProviderInstanceIcon
-                    driverKind={prompt.driver}
-                    displayName={label}
-                    accentColor={accentColor}
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="text-meta">{label}</span>
-                    <span className="text-caption text-muted-foreground">
-                      {usageAccessReadsLabel(prompt.driver, m)}
-                    </span>
-                  </div>
-                  <Switch
-                    aria-label={label}
-                    checked={!declined.has(key)}
-                    disabled={disabled}
-                    onCheckedChange={(checked) => onToggle(prompt, Boolean(checked))}
-                  />
-                </div>
+                <SettingsRow
+                  key={key}
+                  leading={
+                    <ProviderInstanceIcon
+                      driverKind={prompt.driver}
+                      displayName={label}
+                      accentColor={accentColor}
+                    />
+                  }
+                  title={label}
+                  description={usageAccessReadsLabel(prompt.driver, m)}
+                  control={
+                    <Switch
+                      aria-label={label}
+                      checked={!declined.has(key)}
+                      disabled={disabled}
+                      onCheckedChange={(checked) => onToggle(prompt, Boolean(checked))}
+                    />
+                  }
+                />
               ))}
             </SettingsGroup>
           </section>
