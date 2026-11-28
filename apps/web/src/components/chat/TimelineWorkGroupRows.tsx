@@ -511,7 +511,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           ) : null}
           {setupLive && ctx.onCancelWorktreeSetup ? (
             <Button size="xs" variant="ghost-muted" onClick={ctx.onCancelWorktreeSetup}>
-              <XIcon aria-hidden />
+              <XIcon aria-hidden className="size-3" />
               <T>Cancel</T>
             </Button>
           ) : null}
