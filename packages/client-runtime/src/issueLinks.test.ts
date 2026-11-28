@@ -124,6 +124,14 @@ describe("resolveIssueLinkTarget", () => {
       scope: "WEB",
       key: "WEB-17",
     });
+    expect(resolve("https://linear.app:443/acme/issue/WEB-17")?.ref).toEqual({
+      projectId: "p2",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "WEB",
+      key: "WEB-17",
+    });
+    expect(resolve("https://linear.app:8443/acme/issue/WEB-17")).toBeNull();
     expect(resolve("https://linear.app/acme/issue/DOCS-4")?.ref).toMatchObject({
       projectId: "p2",
       scope: "DOCS",
@@ -172,6 +180,7 @@ describe("mayContainStandaloneIssueLink", () => {
   it.each([
     ["[issue](https://linear.app/acme/issue/WEB-17)", true],
     ["[issue](https://LINEAR.APP/acme/issue/WEB-17)", true],
+    ["[issue](https://linear.app:443/acme/issue/WEB-17)", true],
     ["[issue](https://github.com/acme/web/issues/7)", false],
   ])("classifies %s as %s", (text, expected) => {
     expect(mayContainStandaloneIssueLink(text)).toBe(expected);
