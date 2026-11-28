@@ -170,6 +170,8 @@ export function useSwipeableScrollGate(options?: {
   const externalOnScrollBeginDrag = options?.onScrollBeginDrag;
 
   const update = useCallback((next: boolean) => {
+    // Android has no trackpad scroll path, and row pans block the list, so gating only drops swipes.
+    if (Platform.OS === "android") return;
     if (gateActiveRef.current !== next) {
       gateActiveRef.current = next;
       setGateActive(next);
@@ -566,9 +568,11 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
             overshootRight
             renderRightActions={renderRightActions}
             rightThreshold={actionsWidth * 0.42}
-            // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it
-            // lets a diagonal swipe scroll the list, which the scroll gate turns into a closed row.
+            // Only iPad trackpad pans need rows to swipe while the list scrolls. Android's ScrollView
+            // claims a touch after 8dp of vertical travel regardless of horizontal travel, so there
+            // the list waits for the row pan to activate or fail.
             simultaneousWith={Platform.OS === "ios" ? props.simultaneousWith : undefined}
+            block={Platform.OS === "android" ? props.simultaneousWith : undefined}
           >
             {
               /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */

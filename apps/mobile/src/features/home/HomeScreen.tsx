@@ -289,14 +289,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
-    swipeRowActivation.activate(
-      rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
-    );
+    swipeRowActivation.activateAround(rows, state.start, state.end);
   };
-  // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
-  const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
-  useEffect(() => () => clearTimeout(activationTimerRef.current), []);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     onFabScroll?.(event);
     if (workspace)
@@ -304,11 +298,9 @@ export function HomeScreen(props: HomeScreenProps) {
         "threads",
         Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
-    clearTimeout(activationTimerRef.current);
-    activationTimerRef.current = setTimeout(
-      () => activateVisibleRows(listRef.current?.getState().data ?? []),
-      200,
-    );
+    const state = listRef.current?.getState();
+    if (state !== undefined && state.end >= 0)
+      swipeRowActivation.followScroll(state.data, state.start, state.end);
   };
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;
