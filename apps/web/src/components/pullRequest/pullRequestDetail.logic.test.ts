@@ -581,13 +581,28 @@ describe("review thread conversations", () => {
     comments: [lastReply, { ...finding, body: "Stale finding" }, reply],
   };
 
-  it("quotes a comment without its hidden markup and mentions a bot by its handle", () => {
+  it("quotes a comment without its hidden markup and mentions only a human author", () => {
     expect(
       pullRequestQuoteReply({
         ...finding,
         body: "<!-- bot state -->\r\nFirst line\r\n\r\nSecond line",
       }),
-    ).toBe("> First line\n>\n> Second line\n\n@review ");
+    ).toBe("> First line\n>\n> Second line\n\n");
+    expect(pullRequestQuoteReply({ ...loose, body: "Hi" })).toBe("> Hi\n\n@bilal ");
+    expect(
+      pullRequestQuoteReply({
+        ...loose,
+        author: { login: "github-actions", name: null, avatarUrl: null, isBot: true },
+        body: "Hi",
+      }),
+    ).toBe("> Hi\n\n");
+    expect(
+      pullRequestQuoteReply({
+        ...loose,
+        author: { login: "github-actions[bot]", name: null, avatarUrl: null },
+        body: "Hi",
+      }),
+    ).toBe("> Hi\n\n");
     expect(pullRequestQuoteReply({ ...loose, author: null, body: "Hi" })).toBe("> Hi\n\n");
     expect(pullRequestQuoteReply({ ...loose, author: null }, "\n  picked\n\tlines \n")).toBe(
       "> \u00a0\u00a0picked\n> \u00a0\u00a0\u00a0\u00a0lines\n\n",

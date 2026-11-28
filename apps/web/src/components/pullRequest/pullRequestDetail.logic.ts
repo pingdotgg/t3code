@@ -570,9 +570,11 @@ export function pullRequestQuoteReply(comment: PullRequestComment, selection?: s
     .split(/\r?\n/u)
     .map((line) => (line.trim().length === 0 ? ">" : `> ${line}`))
     .join("\n");
-  // GitHub bot logins carry a "[bot]" suffix that does not resolve as a mention.
-  const login = comment.author?.login.replace(/\[bot\]$/u, "");
-  return `${quote}\n\n${login ? `@${login} ` : ""}`;
+  // A bot's bare login is not its handle: `@github-actions` resolves to nobody and
+  // `@coderabbitai` names an organization, so bots get no mention.
+  const author = comment.author;
+  const mention = author && !author.isBot && !author.login.endsWith("[bot]") ? author.login : null;
+  return `${quote}\n\n${mention ? `@${mention} ` : ""}`;
 }
 
 function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineEvent {
