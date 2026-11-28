@@ -127,6 +127,29 @@ describe("pull request body segmentation", () => {
         media: "video",
       },
     ]);
+    for (const [body, url] of [
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&y=2",
+      ],
+      [
+        '<video><source src="https://example.org/a.mp4?x=1&#38;y=2&#x26;z=3"></video>',
+        "https://example.org/a.mp4?x=1&y=2&z=3",
+      ],
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&amp;y=2",
+      ],
+    ] as const) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url,
+          media: "video",
+        },
+      ]);
+    }
     const dataSrcOnly = '<video data-src="https://example.org/wrong.mp4"></video>';
     expect(split(dataSrcOnly)).toEqual([
       { id: "markdown:0", kind: "markdown", text: dataSrcOnly, sourceOffset: 0 },

@@ -5738,6 +5738,7 @@
   "bd2cfcb7be24cd38": "Visade filer är dolda i den här granskningen.",
   "6ae1484aa5bd2bc8": "Visa visade filer",
   "15db3431c35d4927": "{count, plural, one {{count} visad dold} other {{count} visade dolda}}",
+  "2461bdd8e58e0a72": "T3 Connect-miljöer kan inte byta namn här.",
   "7c0dd5a5a1cd0f95": "Du kan ändra detta för varje agent under Inställningar → Leverantörer på webben eller i skrivbordsappen.",
   "a5120a92dce4546a": "Tillåt inte",
   "77bc7873d636e9b6": "Tillåt",

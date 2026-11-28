@@ -85,10 +85,19 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
+    expect(normalizeGitRemoteUrl("alice+ci@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("alice@corp.com@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
   });
 
   it("keys a one-segment URL remote by what names the repository", () => {
     expect(normalizeGitRemoteUrl("https://deploy:s3cr3ttok@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://alice@corp.com:s3cr3ttok@git.example.com/repo.git")).toBe(
       "https://git.example.com/repo",
     );
     expect(normalizeGitRemoteUrl("https://0123abcd@git.example.com/repo.git?key=0123abcd#x")).toBe(
@@ -100,11 +109,17 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git:s3cr3ttok@git.example.com:2222/repo.git")).toBe(
       "ssh://git@git.example.com:2222/repo",
     );
+    expect(normalizeGitRemoteUrl("ssh://alice@corp.com:s3cr3ttok@git.example.com/repo.git")).toBe(
+      "ssh://alice@corp.com@git.example.com/repo",
+    );
     expect(normalizeGitRemoteUrl("ssh://git@git.example.com/repo.git")).toBe(
       "ssh://git@git.example.com/repo",
     );
     expect(normalizeGitRemoteUrl("https://git.example.com/repo.git")).toBe(
       "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://git.example.com/repo@v2.git")).toBe(
+      "https://git.example.com/repo@v2",
     );
     expect(normalizeGitRemoteUrl("/srv/git/Repo.git")).toBe("/srv/git/repo");
   });

@@ -5732,6 +5732,7 @@
   "bd2cfcb7be24cd38": "Os arquivos vistos estão ocultos nesta revisão.",
   "6ae1484aa5bd2bc8": "Mostrar arquivos vistos",
   "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}",
+  "2461bdd8e58e0a72": "Ambientes do T3 Connect não podem ser renomeados aqui.",
   "7c0dd5a5a1cd0f95": "Você pode mudar isso para cada agente em Configurações → Provedores, na web ou no desktop.",
   "a5120a92dce4546a": "Não permitir",
   "77bc7873d636e9b6": "Permitir",

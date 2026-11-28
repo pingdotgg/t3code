@@ -353,6 +353,49 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     expect(viewer.text).toBe("界e\u0301Xef");
   });
 
+  it("restores the saved text color with the DEC cursor, including after resync", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const green = { color: TERMINAL_PALETTES.dark[2] };
+
+    const direct = feed(["\u001b[31mR\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(direct.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const source = feed(["\u001b[31mR\u001b7\u001b[32mG"]);
+    const resumed = feed([terminalOutputResumeText(source), "\u001b8X"]);
+    expect(terminalOutputSpans(resumed.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "RX", style: red },
+    ]);
+
+    const resetActive = feed(["\u001b[31mR\u001b7\u001b[0m"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(resetActive), "P"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "P", style: null },
+    ]);
+
+    const savedDefault = feed(["\u001b7\u001b[32mG\u001b8X"]);
+    expect(terminalOutputSpans(savedDefault.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "X", style: null },
+    ]);
+
+    const sco = feed(["\u001b[31mR\u001b[s\u001b[32mG"]);
+    expect(
+      terminalOutputSpans(
+        feed([terminalOutputResumeText(sco), "\u001b[uX"]).text,
+        TERMINAL_PALETTES.dark,
+      ),
+    ).toEqual([
+      { text: "R", style: red },
+      { text: "X", style: green },
+    ]);
+  });
+
   it("restores a cursor saved on a row erased before the resync", () => {
     for (const [prefix, next, expected] of [
       ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
