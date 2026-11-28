@@ -769,8 +769,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
 
 /**
  * Resolved executables rather than command lines: a server started through the `t3` symlink
- * shows up as `t3 serve`, possibly from another T3 home that runs this home's runtimes. Windows
- * has no symlink launcher, and its `t3.cmd` shim runs the absolute path, so command lines do there.
+ * shows up as `t3 serve`, possibly from another T3 home that runs this home's runtimes. Command
+ * lines would also expose every other process's arguments, and Windows' `t3.cmd` shim runs
+ * `versions\<version>\t3.exe` itself, so its executable path names the runtime too.
  */
 const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -798,7 +799,7 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
               "-NoProfile",
               "-NonInteractive",
               "-Command",
-              "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+              "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Property ExecutablePath | Select-Object -ExpandProperty ExecutablePath",
             ],
           }
         : { command: "lsof", args: ["-nP", "-w", "-d", "txt", "-F", "n"] }),

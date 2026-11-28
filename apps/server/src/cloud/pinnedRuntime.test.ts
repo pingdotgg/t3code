@@ -935,6 +935,59 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     }),
   );
 
+  it.effect("does not read other processes' command lines on Windows", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* setup(["1.0.0"]);
+      const queries: Array<string> = [];
+      const runner = lsofRunner("C:\\Windows\\explorer.exe\n");
+
+      yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) => {
+              queries.push([input.command, ...input.args].join(" "));
+              return runner.run(input);
+            },
+          }),
+        ),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      assert.isNotEmpty(queries);
+      for (const query of queries) assert.notInclude(query, "CommandLine");
+    }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "never sees an unrelated process's arguments on a real Windows host",
+    () =>
+      Effect.gen(function* () {
+        const { baseDir } = yield* setup(["1.0.0"]);
+        const secret = "--api-key=t3-repro-not-a-real-secret";
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        yield* spawner.spawn(
+          ChildProcess.make(process.execPath, ["-e", "setTimeout(() => {}, 60_000)", "--", secret]),
+        );
+        const outputs: Array<string> = [];
+        const real = yield* ProcessRunner.ProcessRunner.pipe(Effect.provide(ProcessRunner.layer));
+
+        yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            ProcessRunner.ProcessRunner.of({
+              run: (input) =>
+                real
+                  .run(input)
+                  .pipe(Effect.tap((result) => Effect.sync(() => outputs.push(result.stdout)))),
+            }),
+          ),
+        );
+        assert.isNotEmpty(outputs);
+        for (const output of outputs) assert.notInclude(output, secret);
+      }),
+  );
+
   it.effect.each([
     { name: "the process list is unavailable", state: undefined, lsof: "" },
     { name: "the service state is unparseable", state: "{", lsof: "p1\nftxt\nn/sbin/launchd\n" },
