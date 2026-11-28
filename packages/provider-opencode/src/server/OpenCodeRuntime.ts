@@ -120,6 +120,7 @@ export class OpenCodeRuntimeError extends Schema.TaggedError<OpenCodeRuntimeErro
     cause: Schema.optional(Schema.Defect()),
     detail: Schema.String,
     reason: Schema.optional(OpenCodeStartupFailureReason),
+    probeTimedOut: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {}
 
@@ -184,6 +185,7 @@ const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(fun
     return yield* new OpenCodeRuntimeError({
       operation: "global.health",
       detail: "Timed out while checking the OpenCode server version.",
+      probeTimedOut: true,
     });
   }
 
@@ -784,6 +786,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       return yield* new OpenCodeRuntimeError({
         operation: "startOpenCodeServerProcess",
         detail: `Timed out waiting for OpenCode server start after ${timeoutMs}ms.`,
+        probeTimedOut: true,
       });
     }
 

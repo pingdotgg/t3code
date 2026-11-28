@@ -113,6 +113,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version: null,
       status: "error",
       auth: { status: "unknown" },
+      timedOut: true,
       message: "Muse Code CLI version check timed out.",
     });
   }
@@ -146,6 +147,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       auth: { status: "unknown" },
       message:
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
+      timedOut: Result.isFailure(catalog)
+        ? catalog.failure._tag === "MuseSdkError" &&
+          catalog.failure.reason === "initializationTimeout"
+        : true,
     });
   }
   const models = catalog.success.value;

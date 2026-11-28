@@ -93,6 +93,7 @@ export const verifyServer = (client: OpenCodeClient, environment?: NodeJS.Proces
           new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "server.info",
             detail: "Timed out waiting for the OpenCode server.",
+            probeTimedOut: true,
           }),
         ),
     }),

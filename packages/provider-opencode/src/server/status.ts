@@ -970,7 +970,13 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
       slashCommands: [COMPACT_SLASH_COMMAND],
-      probe: probe("error", "OpenCode could not load its model list."),
+      probe: {
+        ...probe("error", "OpenCode could not load its model list."),
+        timedOut: Option.exists(
+          Cause.findErrorOption(result.cause),
+          (error) => error.probeTimedOut === true,
+        ),
+      },
     });
   }
   if (result.value.length === 0) {
@@ -1035,6 +1041,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         version,
         status: "error",
         auth: { status: failure.authStatus ?? "unknown" },
+        timedOut:
+          isOpenCodeProbeError(cause) &&
+          OpenCodeRuntime.isOpenCodeRuntimeError(cause.cause) &&
+          cause.cause.probeTimedOut === true,
         message: failure.message,
       },
     });

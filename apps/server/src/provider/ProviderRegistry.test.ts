@@ -77,7 +77,10 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  COMPACT_SLASH_COMMAND,
+  providerProbeTimedOut,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import type {
   AnyProviderDriver,
   ProviderInstance,
@@ -4800,6 +4803,33 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("identifies a Claude version probe timeout for update verification", () =>
+      Effect.gen(function* () {
+        const probe = yield* checkClaudeProviderStatus(defaultClaudeSettings, undefined, {}).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed({
+                ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+                exitCode: Effect.never,
+              }),
+            ),
+          ),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("20 seconds");
+        const snapshot = {
+          ...(yield* Fiber.join(probe)),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+        };
+
+        assert.isTrue(providerProbeTimedOut(snapshot));
+        assert.isFalse(providerProbeTimedOut(decodeServerProvider(encodeServerProvider(snapshot))));
+        assert.isFalse(providerProbeTimedOut({ ...snapshot, message: "A later probe failed." }));
+      }),
+    );
+
     it.effect("drops a retired gateway model when the surviving model is configured manually", () =>
       Effect.gen(function* () {
         const surviving = { value: "gateway/current", displayName: "Current", description: "" };

@@ -1267,6 +1267,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        timedOut: true,
         message: "Timed out while checking Codex app-server provider status.",
       },
     });

@@ -103,6 +103,7 @@ export interface ProviderProbeResult {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProviderAuth;
   readonly message?: string;
+  readonly timedOut?: boolean;
   readonly usageLimits?: ServerProviderUsageLimits;
 }
 
@@ -116,6 +117,17 @@ export interface ServerProviderPresentation {
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
+
+// A symbol survives server-side snapshot spreads and is omitted from JSON and the wire schema.
+const timedOutProbeMessage = Symbol("timedOutProbeMessage");
+
+export function markProviderProbeTimeout<A extends ServerProviderDraft>(snapshot: A): A {
+  return snapshot.message ? { ...snapshot, [timedOutProbeMessage]: snapshot.message } : snapshot;
+}
+
+export function providerProbeTimedOut(snapshot: ServerProvider): boolean {
+  return timedOutProbeMessage in snapshot && snapshot[timedOutProbeMessage] === snapshot.message;
+}
 
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -305,7 +317,7 @@ export function buildServerProvider(input: {
         checkedAt: input.checkedAt,
       })
     : undefined;
-  return {
+  const snapshot: ServerProviderDraft = {
     displayName: input.presentation.displayName,
     ...(typeof input.presentation.supportsConversationRollback === "boolean"
       ? { supportsConversationRollback: input.presentation.supportsConversationRollback }
@@ -338,6 +350,7 @@ export function buildServerProvider(input: {
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
+  return input.probe.timedOut ? markProviderProbeTimeout(snapshot) : snapshot;
 }
 
 export const collectStreamAsString = <E>(

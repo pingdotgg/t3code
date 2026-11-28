@@ -36,6 +36,7 @@ import {
 import {
   buildServerProvider,
   isCommandMissingCause,
+  markProviderProbeTimeout,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -318,6 +319,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
     const failure = Result.isFailure(result) ? result.failure : undefined;
+    const timedOut = Result.isSuccess(result) && Option.isNone(result.success);
     const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
     const version = incompatible?.version ?? initialized?.agentInfo?.version;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
@@ -348,32 +350,33 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : draft.auth.status === "unauthenticated"
             ? signInMessage
             : authUncheckedMessage);
+      const updatedDraft = {
+        ...draft,
+        installed: !missingInstallation,
+        // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
+        version: version === "unknown" ? previousVersion : version || previousVersion,
+        status: errorMessage ? "error" : authenticated ? "ready" : "warning",
+        checkedAt: updatedAt,
+        ...(missingInstallation
+          ? {
+              models: [],
+              slashCommands: [],
+              skills: [],
+              workspaceSnapshots: [],
+              supportsTextGeneration: false,
+            }
+          : {}),
+        ...(initialized !== undefined
+          ? {
+              supportsTextGeneration:
+                supportsTextGeneration && draft.auth.status !== "unauthenticated",
+            }
+          : {}),
+        ...(message ? { message } : {}),
+      } satisfies ServerProviderDraft;
       return {
         ...state,
-        draft: {
-          ...draft,
-          installed: !missingInstallation,
-          // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? previousVersion : version || previousVersion,
-          status: errorMessage ? "error" : authenticated ? "ready" : "warning",
-          checkedAt: updatedAt,
-          ...(missingInstallation
-            ? {
-                models: [],
-                slashCommands: [],
-                skills: [],
-                workspaceSnapshots: [],
-                supportsTextGeneration: false,
-              }
-            : {}),
-          ...(initialized !== undefined
-            ? {
-                supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
-              }
-            : {}),
-          ...(message ? { message } : {}),
-        },
+        draft: timedOut ? markProviderProbeTimeout(updatedDraft) : updatedDraft,
       } satisfies AntigravityProviderState;
     };
     // This state is published as it changes, so a failure the managed provider discards stays out.
