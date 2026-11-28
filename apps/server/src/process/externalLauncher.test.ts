@@ -1601,3 +1601,45 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
     );
   }),
 );
+
+it.effect.each([
+  { platform: "darwin", install: "Applications/Devin.app/Contents/Resources/app/bin/devin-desktop" },
+  { platform: "linux", install: ".local/bin/devin-desktop" },
+  { platform: "win32", install: "Programs/Devin/bin/devin-desktop.cmd" },
+] as const)("discovers and opens Devin on $platform", ({ platform, install }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-devin-editor-" });
+    const executable = path.join(home, install);
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "devin");
+      yield* launcher.launchEditor({ editor: "devin", cwd: "/workspace with spaces/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform,
+          env: { HOME: home, LOCALAPPDATA: home, PATH: "", PATHEXT: ".CMD" },
+          path: withSystemBin(path, path.join(home, "system-bin")),
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.ok(spawned);
+    if (platform === "win32") {
+      assert.include(spawned.command, executable);
+      assert.include(spawned.command, '^"--goto^" ^"/workspace^ with^ spaces/file.ts:12:4^"');
+      assert.equal(spawned.options.shell, true);
+    } else {
+      assert.equal(spawned.command, executable);
+      assert.deepEqual(spawned.args, ["--goto", "/workspace with spaces/file.ts:12:4"]);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

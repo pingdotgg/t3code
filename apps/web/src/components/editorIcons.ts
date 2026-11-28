@@ -5,6 +5,7 @@ import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import {
   AntigravityIcon,
   CursorIcon,
+  DevinIcon,
   FileExplorerIcon,
   FinderIcon,
   type Icon,
@@ -77,6 +78,11 @@ export function editorIconOptions(platform: string): ReadonlyArray<EditorIconOpt
     {
       Icon: AntigravityIcon,
       value: "antigravity",
+      kind: "brand",
+    },
+    {
+      Icon: DevinIcon,
+      value: "devin",
       kind: "brand",
     },
     {
