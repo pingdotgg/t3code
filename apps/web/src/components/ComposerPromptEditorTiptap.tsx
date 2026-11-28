@@ -515,6 +515,8 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     if (!current || current.type.name !== "composer-citation") return false;
     const currentCitation = current.attrs.citation as AssistantCitation;
     const next = withAssistantCitationComment(currentCitation, comment);
+    // An unchanged comment would still record an undo step that does nothing.
+    if (next.comment === currentCitation.comment) return true;
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
       ...current.attrs,
       citation: next,
