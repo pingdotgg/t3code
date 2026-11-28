@@ -3803,6 +3803,7 @@
   "6c71d251d9917587": "Kopiera som Markdown",
   "d510b122f84051a0": "Kopiera som CSV",
   "66c4ee40252d9dec": "Kopiera som HTML",
+  "e2e660429c930759": "Kopiera för chattappar",
   "7b8a7cd89a22d822": "Kopiera som PNG",
   "2912e4ac3697686b": "Läs tråden på {label}",
   "ced684880c2e1961": "Tillåta {server} att köra {tool}?",
@@ -13063,5 +13064,6 @@
   "5807c08e225c6b3d": "Ladda ned",
   "0d50b5bfe7151ece": "Det gick inte att ladda ned filen",
   "eb1fd384ad5919dd": "Intern anteckning",
-  "b45f0b467e9406d0": "Svara kunden"
+  "b45f0b467e9406d0": "Svara kunden",
+  "d454bfdeea6f1129": "Öppna förhandsvisning"
 }
