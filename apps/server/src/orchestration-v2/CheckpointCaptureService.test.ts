@@ -50,7 +50,10 @@ const gitSubcommand = (args: ReadonlyArray<string>) => {
 
 const layerProjectionStoreTest = Layer.mergeAll(
   ThreadCommandExecutor.layer,
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  ),
   SqlitePersistence.layerMemory,
 );
 
