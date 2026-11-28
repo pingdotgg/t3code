@@ -9,7 +9,7 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import { isTailscaleIpv4Address, readPassiveTailscaleStatus } from "@t3tools/tailscale";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -469,19 +469,19 @@ export const make = Effect.gen(function* () {
   // Serialize read-persist-write changes so stale runtime state cannot overwrite another update.
   const changePermit = yield* Semaphore.make(1);
 
-  // Key status by interface addresses so network changes bypass stale DNS and
-  // identity. Cache unchanged addresses to avoid repeated macOS TCC prompts.
+  const readNetworkInterfaces = networkInterfaces.read;
+
+  // Key status by interface addresses so network changes bypass stale DNS and identity.
   const tailscaleStatusCache = yield* Cache.make({
     capacity: 1,
     timeToLive: TAILSCALE_STATUS_CACHE_TTL,
     lookup: (_addresses: string) =>
-      readTailscaleStatus.pipe(
+      readNetworkInterfaces.pipe(
+        Effect.flatMap(readPassiveTailscaleStatus),
         Effect.orElseSucceed(() => null),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       ),
   });
-
-  const readNetworkInterfaces = networkInterfaces.read;
 
   // The server refuses to bind wider than the policy's clients allow, so network access or Serve
   // saved before the policy would keep the backend from starting. The backend runs without them;

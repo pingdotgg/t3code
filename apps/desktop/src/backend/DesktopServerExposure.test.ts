@@ -3,6 +3,8 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { TailnetReverseLookup } from "@t3tools/tailscale";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -11,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -132,6 +135,7 @@ const withHarness = <A, E, R>(
   spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
   desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>,
   managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>,
+  platform: NodeJS.Platform = "linux",
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -150,7 +154,11 @@ const withHarness = <A, E, R>(
         }),
       ),
     );
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.scoped,
+  );
 
 describe("DesktopServerExposure", () => {
   it.effect("uses cached Tailscale identity to exclude another VPN's pairing address", () => {
@@ -490,6 +498,58 @@ describe("DesktopServerExposure", () => {
             statusReads += 1;
           },
         ),
+      );
+    },
+  );
+
+  it.effect(
+    "reads Tailscale on macOS without starting its CLI, also after the cache expires",
+    () => {
+      let cliStarts = 0;
+      let lookups = 0;
+
+      return withHarness(
+        {
+          ...lanNetworkInterfaces,
+          utun4: [{ address: "100.90.1.2", family: "IPv4", internal: false }],
+        },
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* serverExposure.setMode("network-accessible");
+
+          const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+          assert.deepEqual(
+            endpoints.map((endpoint) => endpoint.httpBaseUrl),
+            [
+              "http://127.0.0.1:4173/",
+              "http://192.168.1.20:4173/",
+              "http://100.90.1.2:4173/",
+              "https://desktop.tail.ts.net/",
+            ],
+          );
+          assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+          assert.equal(lookups, 1);
+
+          yield* TestClock.adjust("61 seconds");
+          assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+          assert.equal(lookups, 2);
+          assert.equal(cliStarts, 0);
+        }).pipe(
+          Effect.provideService(TailnetReverseLookup, () =>
+            Effect.sync(() => {
+              lookups += 1;
+              return ["desktop.tail.ts.net."];
+            }),
+          ),
+        ),
+        {},
+        layerMockSpawner("{}", () => {
+          cliStarts += 1;
+        }),
+        undefined,
+        undefined,
+        "darwin",
       );
     },
   );

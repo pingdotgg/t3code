@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- replace the native OS lookup and sync its ESM bindings.
 import * as NodeModule from "node:module";
+import type * as NodeOS from "node:os";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import { MacosTailscaledPrefs, TailnetReverseLookup } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -29,10 +31,15 @@ interface CommandResult {
   readonly stdout: string;
 }
 
-const layerSpawner = (input: { readonly status: CommandResult; readonly prefs: CommandResult }) =>
+const layerSpawner = (input: {
+  readonly status: CommandResult;
+  readonly prefs: CommandResult;
+  readonly onSpawn?: () => void;
+}) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
+      input.onSpawn?.();
       const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       const result = args[0] === "debug" ? input.prefs : input.status;
       return Effect.succeed(
@@ -76,14 +83,20 @@ const layerNet = (input: {
 
 const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean; readonly tailnet?: boolean };
-  readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
+  readonly tailscale: {
+    readonly status: CommandResult;
+    readonly prefs: CommandResult;
+    readonly onSpawn?: () => void;
+  };
   readonly hostname: string;
   readonly username?: string | null;
+  readonly platform?: NodeJS.Platform;
 }) => {
   const resolve = Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) =>
     service.resolveTargets(),
   ).pipe(
     Effect.provideService(HostProcess.Hostname, input.hostname),
+    Effect.provideService(HostProcess.Platform, input.platform ?? "linux"),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
@@ -148,6 +161,62 @@ describe("RemoteOpenTargets", () => {
       expect(targets).toEqual([
         { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
+    }),
+  );
+
+  it.effect("finds the tailnet name on macOS without starting the Tailscale CLI", () =>
+    Effect.gen(function* () {
+      const nativeOs: typeof NodeOS = NodeModule.createRequire(import.meta.url)("node:os");
+      vi.spyOn(nativeOs, "networkInterfaces").mockReturnValue({
+        utun4: [
+          {
+            address: "100.64.1.2",
+            netmask: "255.255.255.255",
+            family: "IPv4",
+            mac: "00:00:00:00:00:00",
+            internal: false,
+            cidr: "100.64.1.2/32",
+          },
+        ],
+      });
+      NodeModule.syncBuiltinESMExports();
+      let cliStarts = 0;
+      const onSpawn = () => {
+        cliStarts += 1;
+      };
+      const resolveOnMac = (
+        sshd: { readonly ipv4: boolean; readonly tailnet?: boolean },
+        tailscaledPrefs: string | null = null,
+      ) =>
+        resolveTargets({
+          sshd: { ipv6: false, ...sshd },
+          tailscale: { ...TAILSCALE_SSH, onSpawn },
+          hostname: "bb-1",
+          username: "t3-user",
+          platform: "darwin",
+        }).pipe(
+          Effect.provideService(TailnetReverseLookup, () =>
+            Effect.succeed(["bb-1.tail1234.ts.net."]),
+          ),
+          Effect.provideService(MacosTailscaledPrefs, Effect.succeed(tailscaledPrefs)),
+        );
+      const tailnetTarget = {
+        kind: "tailscale",
+        host: "bb-1.tail1234.ts.net",
+        username: "t3-user",
+      };
+
+      expect(yield* resolveOnMac({ ipv4: true })).toEqual([
+        tailnetTarget,
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      expect(yield* resolveOnMac({ ipv4: false, tailnet: true })).toEqual([tailnetTarget]);
+      // No sshd anywhere: the Tailscale apps cannot serve SSH, the open-source tailscaled can.
+      expect(yield* resolveOnMac({ ipv4: false })).toEqual([]);
+      expect(yield* resolveOnMac({ ipv4: false }, TAILSCALE_SSH.prefs.stdout)).toEqual([
+        tailnetTarget,
+      ]);
+      expect(cliStarts).toBe(0);
     }),
   );
 

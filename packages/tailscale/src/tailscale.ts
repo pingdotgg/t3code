@@ -1,7 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - tailscaled answers on a unix socket, which HttpClient cannot address.
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -9,6 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as NodeDnsPromises from "node:dns/promises";
+import * as NodeHttp from "node:http";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 /**
@@ -25,6 +29,12 @@ const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
  * only surfaces once cleanup finishes, and a healthy `tailscale` exits at once.
  */
 const TAILSCALE_KILL_GRACE = Duration.millis(500);
+/** Tailscale's own resolver. It answers on every connected node, whatever the system DNS is. */
+const TAILNET_RESOLVER_ADDRESS = "100.100.100.100";
+const TAILNET_REVERSE_LOOKUP_TIMEOUT_MS = 1_000;
+/** Where the open-source tailscaled serves its local API on macOS. The Tailscale apps have no such socket. */
+const MACOS_TAILSCALED_SOCKET = "/var/run/tailscaled.socket";
+const TAILSCALED_PREFS_TIMEOUT_MS = 1_000;
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
@@ -308,6 +318,93 @@ export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--j
   Effect.flatMap(parseTailscaleStatus),
 );
 
+/** The names Tailscale's resolver holds for an address; none when it does not answer. */
+export const TailnetReverseLookup = Context.Reference<
+  (address: string) => Effect.Effect<ReadonlyArray<string>>
+>("@t3tools/tailscale/TailnetReverseLookup", {
+  defaultValue: () => (address) =>
+    Effect.promise((signal) => {
+      const resolver = new NodeDnsPromises.Resolver({
+        timeout: TAILNET_REVERSE_LOOKUP_TIMEOUT_MS,
+        tries: 1,
+      });
+      resolver.setServers([TAILNET_RESOLVER_ADDRESS]);
+      signal.addEventListener("abort", () => resolver.cancel(), { once: true });
+      return resolver.reverse(address).catch((): ReadonlyArray<string> => []);
+    }),
+});
+
+type TailnetNetworkInterfaces = Readonly<
+  Record<
+    string,
+    | ReadonlyArray<{
+        readonly address: string;
+        readonly family: string | number;
+        readonly internal: boolean;
+      }>
+    | undefined
+  >
+>;
+
+/**
+ * Tailscale status without starting the CLI: the tailnet addresses are the
+ * interface addresses Tailscale's resolver has a name for, and that name is the
+ * MagicDNS name. An address held by another VPN in the same range gets no answer.
+ */
+const discoverTailscaleStatus = Effect.fn("tailscale.discoverTailscaleStatus")(function* (
+  networkInterfaces: TailnetNetworkInterfaces,
+) {
+  const reverseLookup = yield* TailnetReverseLookup;
+  const candidates = [
+    ...new Set(
+      Object.values(networkInterfaces)
+        .flatMap((addresses) => addresses ?? [])
+        .filter(
+          (address) =>
+            !address.internal &&
+            address.family === "IPv4" &&
+            isTailscaleIpv4Address(address.address),
+        )
+        .map((address) => address.address),
+    ),
+  ];
+  const named = yield* Effect.forEach(
+    candidates,
+    (address) =>
+      reverseLookup(address).pipe(
+        Effect.map((names) => ({
+          address,
+          name: names.map((name) => name.trim().replace(/\.$/u, "")).find((name) => name !== ""),
+        })),
+      ),
+    { concurrency: "unbounded" },
+  );
+  const magicDnsName = named.find((entry) => entry.name !== undefined)?.name ?? null;
+  return {
+    // A disconnected Tailscale removes its interface address, so an answer means it is up.
+    running: magicDnsName === null ? null : true,
+    magicDnsName,
+    tailnetIpv4Addresses: named.flatMap((entry) =>
+      entry.name === undefined ? [] : [entry.address],
+    ),
+    httpsServeEnabled: null,
+  } satisfies TailscaleStatus;
+});
+
+/**
+ * Status for discovery the user did not ask for: a client connecting, an
+ * endpoint list being shown. On macOS the CLI is a binary inside the Tailscale
+ * app, and every launch can raise "would like to access data from other apps",
+ * which Allow does not silence. So macOS never starts it here.
+ */
+export const readPassiveTailscaleStatus = Effect.fn("tailscale.readPassiveTailscaleStatus")(
+  function* (networkInterfaces: TailnetNetworkInterfaces) {
+    return (yield* HostProcess.Platform) === "darwin"
+      ? yield* discoverTailscaleStatus(networkInterfaces)
+      : yield* readTailscaleStatus;
+  },
+);
+
 const TailscaleExitNodeJson = Schema.Struct({
   ExitNodeStatus: Schema.optional(Schema.Struct({ Online: Schema.optional(Schema.Unknown) })),
   Peer: Schema.optional(
@@ -381,6 +478,50 @@ export const parseTailscaleSshEnabled = (
 export const readTailscaleSshEnabled = readTailscaleOutput("debug", ["debug", "prefs"]).pipe(
   Effect.flatMap(parseTailscaleSshEnabled),
 );
+
+/** The preferences JSON tailscaled serves on its macOS socket; null when nothing answers there. */
+export const MacosTailscaledPrefs = Context.Reference<Effect.Effect<string | null>>(
+  "@t3tools/tailscale/MacosTailscaledPrefs",
+  {
+    defaultValue: () =>
+      Effect.callback<string | null>((resume) => {
+        const request = NodeHttp.get(
+          {
+            socketPath: MACOS_TAILSCALED_SOCKET,
+            host: "local-tailscaled.sock",
+            path: "/localapi/v0/prefs",
+            timeout: TAILSCALED_PREFS_TIMEOUT_MS,
+          },
+          (response) => {
+            const chunks: Array<Buffer> = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.once("error", () => resume(Effect.succeed(null)));
+            response.once("end", () =>
+              resume(
+                Effect.succeed(
+                  response.statusCode === 200 ? Buffer.concat(chunks).toString("utf8") : null,
+                ),
+              ),
+            );
+          },
+        );
+        request.once("timeout", () => request.destroy());
+        request.once("error", () => resume(Effect.succeed(null)));
+        return Effect.sync(() => request.destroy());
+      }),
+  },
+);
+
+/**
+ * The macOS Tailscale apps cannot run an SSH server; only the open-source
+ * tailscaled can. Its socket answers what `tailscale debug prefs` prints, so
+ * macOS reads the preference there and never starts the app's CLI.
+ */
+export const readPassiveTailscaleSshEnabled = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "darwin") return yield* readTailscaleSshEnabled;
+  const prefs = yield* yield* MacosTailscaledPrefs;
+  return prefs === null ? false : yield* parseTailscaleSshEnabled(prefs);
+});
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;
