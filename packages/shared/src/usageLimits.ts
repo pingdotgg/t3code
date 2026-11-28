@@ -745,7 +745,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
         (account) => memberByAccount.get(account.key) ?? { account, window: null },
       ),
       usedPercent: Math.round(usedPercent),
-      remainingPercent: Math.round(100 - usedPercent),
+      remainingPercent: remainingOf(usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       paceRemainingPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
       resets,
@@ -765,7 +765,13 @@ function limitsNotice(limits: ServerProviderUsageLimits): string | null {
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
-  return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+  return remainingOf(window.usedPercent);
+}
+
+// Some use must not round to 100% left, and some room must not round to 0% left.
+function remainingOf(usedPercent: number): number {
+  const left = 100 - Math.max(0, Math.min(100, usedPercent));
+  return left > 0 && left < 100 ? Math.max(1, Math.min(99, Math.round(left))) : left;
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {
