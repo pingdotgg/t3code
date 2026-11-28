@@ -80,6 +80,7 @@ export const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
             new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "probeOpenCodeBinary",
               detail: `OpenCode CLI version probe timed out after ${timeoutMs / 1_000} seconds.`,
+              probeTimedOut: true,
             }),
           ),
       }),
@@ -149,6 +150,7 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
               new OpenCodeRuntime.OpenCodeRuntimeError({
                 operation: "probeOpenCodeServer",
                 detail: "Timed out while checking the OpenCode server version.",
+                probeTimedOut: true,
               }),
             ),
         }),

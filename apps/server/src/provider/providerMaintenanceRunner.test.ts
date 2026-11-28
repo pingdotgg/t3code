@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import {
+  ClaudeSettings,
   CodexSettings,
+  defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -32,6 +34,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as TextGenerators from "../textGeneration/TextGenerators.ts";
+import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import { checkCodexProviderStatus } from "./CodexProvider.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -46,6 +49,7 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 const defaultCodexSettings = Schema.decodeSync(CodexSettings)({});
+const defaultClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const NATIVE_CLI_DRIVER = ProviderDriverKind.make("nativeCli");
@@ -580,36 +584,49 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("reports an inconclusive update when the Codex status check times out", () =>
-    Effect.gen(function* () {
-      const { registry, providersRef } = yield* makeRegistry(baseProvider);
-      const probe = yield* checkCodexProviderStatus(
-        defaultCodexSettings,
-        () => Effect.never,
-        {},
-      ).pipe(Effect.provide(NodeServices.layer), Effect.forkChild);
-      yield* TestClock.adjust("20 seconds");
-      const timedOut = yield* Fiber.join(probe);
-      const updater = yield* makeTestRunner({
-        ...registry,
-        refreshAfterUpdate: () =>
-          Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) => ({ ...provider, ...timedOut })),
-          ),
-      });
+  it.effect.each([
+    {
+      driver: CODEX_DRIVER,
+      checkStatus: checkCodexProviderStatus(defaultCodexSettings, () => Effect.never, {}),
+    },
+    {
+      driver: ProviderDriverKind.make("claude"),
+      checkStatus: checkClaudeProviderStatus(defaultClaudeSettings, undefined, {}).pipe(
+        Effect.provide(layerMockSpawner(() => ({ exitCode: Effect.never }))),
+      ),
+    },
+  ])(
+    "reports an inconclusive update when the $driver status check times out",
+    ({ driver, checkStatus }) =>
+      Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry({
+          ...baseProvider,
+          driver,
+          instanceId: defaultInstanceIdForDriver(driver),
+        });
+        const probe = yield* checkStatus.pipe(Effect.provide(NodeServices.layer), Effect.forkChild);
+        yield* TestClock.adjust("20 seconds");
+        const timedOut = yield* Fiber.join(probe);
+        const updater = yield* makeTestRunner({
+          ...registry,
+          refreshAfterUpdate: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, ...timedOut })),
+            ),
+        });
 
-      const result = yield* updater.updateProvider(CODEX_DRIVER);
-      assert.notInclude(result.providers[0]?.updateState?.message ?? "", "cannot start");
-      assert.include(result.providers[0]?.updateState?.message ?? "", "could not verify");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("1.0.0"),
-          layerMockSpawner(() => ({ stdout: "updated" })),
+        const result = yield* updater.updateProvider(driver);
+        assert.notInclude(result.providers[0]?.updateState?.message ?? "", "cannot start");
+        assert.include(result.providers[0]?.updateState?.message ?? "", "could not verify");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.0.0"),
+            layerMockSpawner(() => ({ stdout: "updated" })),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("spawns the updater with the environment its capabilities declare", () => {

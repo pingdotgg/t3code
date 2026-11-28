@@ -38,6 +38,7 @@ import {
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import { providerProbeTimedOut } from "@t3tools/provider-core/server/snapshotProbe";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
@@ -623,7 +624,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const startupFailure = verifiedProviders.find(
               (verifiedProvider) =>
                 verifiedProvider.status === "error" &&
-                !verifiedProvider.probeTimedOut &&
+                !providerProbeTimedOut(verifiedProvider) &&
                 verifiedProvider.message?.trim(),
             )?.message;
             const stillOutdated =

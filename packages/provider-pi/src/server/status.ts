@@ -496,6 +496,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        timedOut: true,
         message: "Pi CLI is installed but timed out while running `pi --version`.",
       },
     });

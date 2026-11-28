@@ -316,6 +316,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
       version: null,
       status: "error",
       auth: { status: "unknown" },
+      timedOut: Result.isSuccess(versionResult) && Option.isNone(versionResult.success),
       message: missing ? "fx is not installed or not on PATH." : "Failed to run `fx --version`.",
     });
   }

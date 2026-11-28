@@ -470,6 +470,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        timedOut: true,
         message: "Grok CLI is installed but timed out while running `grok --version`.",
       },
     });

@@ -1035,6 +1035,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         version,
         status: "error",
         auth: { status: failure.authStatus ?? "unknown" },
+        timedOut:
+          isOpenCodeProbeError(cause) &&
+          OpenCodeRuntime.isOpenCodeRuntimeError(cause.cause) &&
+          cause.cause.probeTimedOut === true,
         message: failure.message,
       },
     });

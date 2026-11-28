@@ -750,6 +750,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
+        timedOut: true,
         message:
           "Claude Agent CLI is installed but failed to run. Timed out while running command.",
       },
