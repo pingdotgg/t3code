@@ -13078,5 +13078,7 @@
   "b45f0b467e9406d0": "Svara kunden",
   "e18f183d8feb3c21": "Visar en växel för planeringsläge i meddelandefältet för agenter som stöder det. Av skickar varje meddelande i byggläge.",
   "a24f29cdd04997d7": "beta bygg plan planeringsläge meddelandefält växel",
-  "d454bfdeea6f1129": "Öppna förhandsvisning"
+  "d454bfdeea6f1129": "Öppna förhandsvisning",
+  "8363b914aade0bdc": "Maximera panelen ({shortcut})",
+  "6f9f7ac334779864": "Återställ panelens storlek ({shortcut})"
 }

@@ -13066,5 +13066,7 @@
   "b45f0b467e9406d0": "Responder al cliente",
   "e18f183d8feb3c21": "Muestra en el compositor un interruptor de modo de planificación para los agentes que lo admiten. Desactivado envía cada mensaje en modo build.",
   "a24f29cdd04997d7": "beta build plan planificación compositor interruptor",
-  "d454bfdeea6f1129": "Abrir vista previa"
+  "d454bfdeea6f1129": "Abrir vista previa",
+  "8363b914aade0bdc": "Maximizar el panel ({shortcut})",
+  "6f9f7ac334779864": "Restaurar el tamaño del panel ({shortcut})"
 }

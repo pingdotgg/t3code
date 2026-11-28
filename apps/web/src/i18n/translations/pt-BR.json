@@ -13071,5 +13071,7 @@
   "b45f0b467e9406d0": "Responder ao cliente",
   "e18f183d8feb3c21": "Mostra no compositor um botão de modo de planejamento para agentes compatíveis. Desativado envia cada mensagem no modo build.",
   "a24f29cdd04997d7": "beta build plan planejamento compositor botão",
-  "d454bfdeea6f1129": "Abrir pré-visualização"
+  "d454bfdeea6f1129": "Abrir pré-visualização",
+  "8363b914aade0bdc": "Maximizar painel ({shortcut})",
+  "6f9f7ac334779864": "Restaurar tamanho do painel ({shortcut})"
 }

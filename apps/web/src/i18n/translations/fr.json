@@ -13071,5 +13071,7 @@
   "b45f0b467e9406d0": "Répondre au client",
   "e18f183d8feb3c21": "Affiche dans le compositeur un bouton de mode planification pour les agents qui le prennent en charge. Désactivé envoie chaque message en mode build.",
   "a24f29cdd04997d7": "beta build plan planification compositeur bouton",
-  "d454bfdeea6f1129": "Ouvrir l’aperçu"
+  "d454bfdeea6f1129": "Ouvrir l’aperçu",
+  "8363b914aade0bdc": "Agrandir le panneau ({shortcut})",
+  "6f9f7ac334779864": "Rétablir la taille du panneau ({shortcut})"
 }

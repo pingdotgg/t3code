@@ -13079,5 +13079,7 @@
   "b45f0b467e9406d0": "Reply to customer",
   "e18f183d8feb3c21": "Show a Plan mode toggle in the composer for agents that support it. Off sends every message in build mode.",
   "a24f29cdd04997d7": "beta build plan composer toggle",
-  "d454bfdeea6f1129": "Open preview"
+  "d454bfdeea6f1129": "Open preview",
+  "8363b914aade0bdc": "Maximize panel ({shortcut})",
+  "6f9f7ac334779864": "Restore panel size ({shortcut})"
 }

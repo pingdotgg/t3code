@@ -13071,5 +13071,7 @@
   "b45f0b467e9406d0": "Dem Kunden antworten",
   "e18f183d8feb3c21": "Zeigt im Composer einen Schalter für den Planungsmodus bei Agents, die ihn unterstützen. Aus sendet jede Nachricht im Build-Modus.",
   "a24f29cdd04997d7": "beta build plan planungsmodus composer schalter",
-  "d454bfdeea6f1129": "Vorschau öffnen"
+  "d454bfdeea6f1129": "Vorschau öffnen",
+  "8363b914aade0bdc": "Panel maximieren ({shortcut})",
+  "6f9f7ac334779864": "Panelgröße wiederherstellen ({shortcut})"
 }
