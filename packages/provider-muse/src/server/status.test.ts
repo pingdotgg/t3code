@@ -60,40 +60,45 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
   });
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
-  it.effect("marks an SDK initialize deadline as a probe timeout", () =>
-    Effect.gen(function* () {
-      const binaryPath = yield* fakeCli();
-      const close = vi.fn(async () => ({ code: 0, signal: null }));
-      const handshake = {
-        initialize: () => new Promise(() => {}),
-        close,
-      } as unknown as MspHandshake;
-      const snapshot = yield* checkMuseProviderStatus(
-        settings({ enabled: true, binaryPath }),
-        {},
-        undefined,
-        (options) => {
-          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-          try {
-            const host = createMuseSdkHost(options, () => handshake);
-            vi.advanceTimersByTime(options.startupTimeoutMs ?? 20_000);
-            return host;
-          } finally {
-            vi.useRealTimers();
-          }
-        },
-      );
+  it.effect.each([false, true])(
+    "marks an SDK initialize deadline when shutdown rejects: %s",
+    (rejectClose) =>
+      Effect.gen(function* () {
+        const binaryPath = yield* fakeCli();
+        const close = vi.fn(async () => {
+          if (rejectClose) throw new Error("SDK stdin failed during shutdown");
+          return { code: 0, signal: null };
+        });
+        const handshake = {
+          initialize: () => new Promise(() => {}),
+          close,
+        } as unknown as MspHandshake;
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          {},
+          undefined,
+          (options) => {
+            vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+            try {
+              const host = createMuseSdkHost(options, () => handshake);
+              vi.advanceTimersByTime(options.startupTimeoutMs ?? 20_000);
+              return host;
+            } finally {
+              vi.useRealTimers();
+            }
+          },
+        );
 
-      const driver = ProviderDriverKind.make("muse");
-      expect(
-        providerProbeTimedOut({
-          ...snapshot,
-          driver,
-          instanceId: defaultInstanceIdForDriver(driver),
-        }),
-      ).toBe(true);
-      expect(close).toHaveBeenCalledOnce();
-    }),
+        const driver = ProviderDriverKind.make("muse");
+        expect(
+          providerProbeTimedOut({
+            ...snapshot,
+            driver,
+            instanceId: defaultInstanceIdForDriver(driver),
+          }),
+        ).toBe(true);
+        expect(close).toHaveBeenCalledOnce();
+      }),
   );
 
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>

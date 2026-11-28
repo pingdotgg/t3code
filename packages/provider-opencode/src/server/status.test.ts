@@ -11,12 +11,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { beforeEach } from "vite-plus/test";
 import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 import {
@@ -29,6 +31,7 @@ import { providerProbeTimedOut } from "@t3tools/provider-core/server/snapshotPro
 import { OpenCodeSettings } from "../settings.ts";
 import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -1139,6 +1142,70 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         true,
       );
     }),
+  );
+
+  it.effect.each([false, true])(
+    "classifies owned OpenCode 2 startup before announcing a URL, early exit: %s",
+    (exits) =>
+      Effect.gen(function* () {
+        runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+        const child = ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: exits ? Effect.succeed(ChildProcessSpawner.ExitCode(1)) : Effect.never,
+          isRunning: Effect.succeed(!exits),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+        const loadModels = Effect.gen(function* () {
+          const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+          yield* runtime.startOpenCodeServerProcess({
+            binaryPath: "opencode",
+            directory: process.cwd(),
+            port: 4096,
+            timeoutMs: 1000,
+          });
+          return [];
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            OpenCodeRuntime.layer.pipe(
+              Layer.provide(OpenCodeServerLedger.layerTest),
+              Layer.provide(
+                Layer.succeed(
+                  ChildProcessSpawner.ChildProcessSpawner,
+                  ChildProcessSpawner.make(() => Effect.succeed(child)),
+                ),
+              ),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        );
+        const check = yield* checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          loadModels,
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        const snapshot = yield* Fiber.join(check);
+        const driver = ProviderDriverKind.make("opencode");
+        NodeAssert.equal(snapshot.status, "error");
+        NodeAssert.equal(
+          providerProbeTimedOut({
+            ...snapshot,
+            driver,
+            instanceId: defaultInstanceIdForDriver(driver),
+          }),
+          !exits,
+        );
+      }),
   );
 
   it.effect("reports local model inventory failures without treating them as empty", () =>
