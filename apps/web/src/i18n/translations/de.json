@@ -10614,8 +10614,41 @@
       ]
     }
   ],
-  "cb5720bb25664da1": "Projekte anzeigen auf",
-  "d3fea7335fee8460": "Gilt für",
+  "90dbd9f9efec2c48": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Projekte anzeigen auf"
+    },
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "b05baa240678dc08": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        {
+          "t": "span",
+          "i": 2,
+          "c": "Gilt für"
+        },
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    },
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
   "a8c2b705bbb43a80": "Keine Treffer gefunden.",
   "425f7ce2f24cb248": "Einstellungsbereiche",
   "ee3e8bd8b7918aec": "Suchen",

@@ -10611,8 +10611,41 @@
       ]
     }
   ],
-  "cb5720bb25664da1": "Mostrando proyectos en",
-  "d3fea7335fee8460": "Se aplica a",
+  "90dbd9f9efec2c48": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Mostrando proyectos en"
+    },
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "b05baa240678dc08": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        {
+          "t": "span",
+          "i": 2,
+          "c": "Se aplica a"
+        },
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    },
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
   "a8c2b705bbb43a80": "No se encontraron coincidencias.",
   "425f7ce2f24cb248": "Secciones de ajustes",
   "ee3e8bd8b7918aec": "Buscar",

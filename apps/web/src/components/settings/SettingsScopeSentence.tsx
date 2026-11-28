@@ -188,27 +188,27 @@ export function SettingsProjectSwitcher() {
 }
 
 function ProjectsPageScope(props: SettingsScopeMenuProps) {
-  const { value } = props;
-  const sentence = SENTENCE_CLASSNAME;
-  if (!value.project) {
+  const environment = <EnvironmentScopeMenu {...props} />;
+  if (!props.value.project) {
     return (
-      <p className={sentence}>
-        <span className="shrink-0">
-          <T>Showing projects on</T>
-        </span>
-        <EnvironmentScopeMenu {...props} />
+      <p className={SENTENCE_CLASSNAME}>
+        <T context="settings scope sentence; each variable is a menu">
+          <span className="shrink-0">Showing projects on</span>
+          <Var>{environment}</Var>
+        </T>
       </p>
     );
   }
+  const checkout = <CheckoutScopeMenu {...props} />;
   return (
-    <p className={sentence}>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">
-          <T>Applies to</T>
+    <p className={SENTENCE_CLASSNAME}>
+      <T context="settings scope sentence; each variable is a menu">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0">Applies to</span>
+          <Var>{environment}</Var>
         </span>
-        <EnvironmentScopeMenu {...props} />
-      </span>
-      <CheckoutScopeMenu {...props} />
+        <Var>{checkout}</Var>
+      </T>
     </p>
   );
 }
