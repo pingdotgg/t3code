@@ -40,6 +40,20 @@ describe("truncateLongDiffLines", () => {
 });
 
 describe("parseDiffFileRevisions", () => {
+  it("locates a pure copy when a path contains the header separator", () => {
+    const patch = patchOf(
+      "diff --git a/source.txt b/folder b/copy.txt",
+      "similarity index 100%",
+      "copy from source.txt",
+      "copy to folder b/copy.txt",
+    );
+
+    assert.deepStrictEqual(parseDiffFilePaths(patch), [
+      { oldPath: "source.txt", newPath: "folder b/copy.txt" },
+    ]);
+    assert.strictEqual(diffFileSection(patch, "folder b/copy.txt"), patch);
+  });
+
   it("reads the head id of a changed file off its index line", () => {
     const revisions = parseDiffFileRevisions(
       patchOf(

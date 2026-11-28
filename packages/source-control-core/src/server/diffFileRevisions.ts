@@ -94,6 +94,10 @@ function parseEntries(patch: string): ReadonlyArray<Omit<Entry, "inBody">> {
       entry.revision = headRevision(line.slice("index ".length));
     } else if (line.startsWith("deleted file mode")) {
       entry.deleted = true;
+    } else if (line.startsWith("copy from ")) {
+      entry.oldPath = unquoteGitPatchPath(line.slice("copy from ".length));
+    } else if (line.startsWith("copy to ")) {
+      entry.newPath = unquoteGitPatchPath(line.slice("copy to ".length));
     } else if (line.startsWith("rename from ")) {
       entry.oldPath = unquoteGitPatchPath(line.slice("rename from ".length));
     } else if (line.startsWith("rename to ")) {
