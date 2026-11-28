@@ -1,6 +1,6 @@
 import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 
-const AT_IMPORT = /@import(?![-\w\u0080-\uffff])/i;
+const AT_IMPORT = /@import(?![-\w\u0080-\uffff\\])/i;
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 // Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
 const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;

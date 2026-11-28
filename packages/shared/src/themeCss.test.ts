@@ -58,6 +58,7 @@ describe("themeCssLoadsRemoteFiles", () => {
     ],
     [String.raw`.\@import{color:red}`, false],
     ["@important { color: red; }", false],
+    [String.raw`:root { --label: @import\61 nt; }`, false],
     ['@import "x.css";', true],
     ['@import"x.css"screen;', true],
     [String.raw`.a { background: \url(https://example.invalid/x.png); }`, true],
