@@ -103,6 +103,7 @@ export type PreviewStreamInput =
     }
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "resize"; readonly width: number; readonly height: number }
+  | { readonly type: "maxSize"; readonly maxWidth: number; readonly maxHeight: number }
   | { readonly type: "navigate"; readonly url: string }
   | { readonly type: "history"; readonly delta: -1 | 1 }
   | { readonly type: "reload"; readonly ignoreCache?: boolean }
@@ -257,7 +258,8 @@ export function createPreviewStreamClient(
     maxHeight: String(Math.max(1, Math.round(target.maxHeight))),
   });
   if (target.interactive === false) query.set("interactive", "false");
-  const url = withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
+  const url = () =>
+    withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
   let stopped = false;
   let socket: WebSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -281,7 +283,7 @@ export function createPreviewStreamClient(
 
   const connect = () => {
     if (stopped) return;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url());
     ws.binaryType = "arraybuffer";
     socket = ws;
     let opened = false;
@@ -446,7 +448,15 @@ export function createPreviewStreamClient(
 
   return {
     send: (input) => {
+      if (input.type === "maxSize") {
+        query.set("maxWidth", String(Math.max(1, Math.round(input.maxWidth))));
+        query.set("maxHeight", String(Math.max(1, Math.round(input.maxHeight))));
+      }
       if (socket?.readyState !== WebSocket.OPEN) return false;
+      if (input.type === "maxSize") {
+        socket.send(JSON.stringify(input));
+        return true;
+      }
       if (!control?.canOperate) return false;
       if (input.type !== "takeControl" && control.controller !== "you") return false;
       socket.send(JSON.stringify(input));

@@ -248,6 +248,12 @@ export function start(configuration: PreviewStreamConfiguration) {
     const height = Math.round((interactive ? next.height : side) * ratio);
     if (cap && cap.width >= width && cap.height >= height) return;
     cap = { width: Math.max(width, cap?.width ?? 0), height: Math.max(height, cap?.height ?? 0) };
+    // A new socket would release control, and agent-owned tabs do not hand it back.
+    if (
+      control?.controller === "you" &&
+      send({ type: "maxSize", maxWidth: cap.width, maxHeight: cap.height })
+    )
+      return;
     connect();
   };
   const observer = new ResizeObserver(() => {

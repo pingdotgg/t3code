@@ -115,6 +115,8 @@ const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 // A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
 const VIEWER_STILL_TIMEOUT_MS = 2_000;
+export const MAX_STREAM_WIDTH = 7680;
+export const MAX_STREAM_HEIGHT = 4320;
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
@@ -3591,6 +3593,7 @@ const make = Effect.gen(function* () {
     const recentFrames: Array<number> = [];
     let screencastParams = Promise.resolve();
     let screencastScale = 1;
+    let maxSize = { width: input.maxWidth, height: input.maxHeight };
     const startScreencast = (scale: number) => {
       screencastScale = scale;
       screencastParams = screencastParams.then(async () => {
@@ -3600,8 +3603,8 @@ const make = Effect.gen(function* () {
           .send("Page.startScreencast", {
             format: "jpeg",
             quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
-            maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
-            maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
+            maxWidth: Math.max(1, Math.round(maxSize.width * screencastScale)),
+            maxHeight: Math.max(1, Math.round(maxSize.height * screencastScale)),
           })
           .catch(constVoid);
       });
@@ -3753,9 +3756,21 @@ const make = Effect.gen(function* () {
       output,
       input: (raw: unknown) =>
         Effect.promise(async () => {
-          if (!viewer.canOperate) return;
           const message = asRecord(raw);
           if (!message) return;
+          // Raising the cap in place keeps this viewer's control, which a new socket would lose.
+          if (message.type === "maxSize") {
+            const width = num(message.maxWidth);
+            const height = num(message.maxHeight);
+            if (!(width > 0 && height > 0)) return;
+            maxSize = {
+              width: Math.min(Math.round(width), MAX_STREAM_WIDTH),
+              height: Math.min(Math.round(height), MAX_STREAM_HEIGHT),
+            };
+            await startScreencast(screencastScale);
+            return;
+          }
+          if (!viewer.canOperate) return;
           try {
             if (message.type === "takeControl") {
               const taking = tab.control.take(viewer.id);
