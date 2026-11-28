@@ -12,6 +12,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ScheduledTask,
+  ScheduledTaskId,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
@@ -42,6 +43,10 @@ import {
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import {
+  moveScheduledTask,
+  orderScheduledTasks,
+} from "@t3tools/client-runtime/scheduled-task-order";
 import type { MessageResolver } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
@@ -63,6 +68,7 @@ import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { cn } from "../../lib/cn";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { withImplicitFastModeSelection } from "../../lib/providerOptions";
@@ -71,12 +77,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { usePaginatedBranches } from "../../state/queries";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   changeDraftProject,
@@ -1613,9 +1621,57 @@ function EnvironmentTasks({
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const visibleTasks = tasks.data?.tasks.filter(
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const save = useAtomCommand(saveMobilePreferences);
+  const savedOrder =
+    preferences._tag === "Success"
+      ? preferences.value.scheduledTaskOrders?.[environmentId]
+      : undefined;
+  const allTasks = tasks.data?.tasks ?? [];
+  const visibleTasks = orderScheduledTasks(allTasks, savedOrder).filter(
     (task) => projectIds === null || projectIds.includes(task.projectId),
   );
+  const reorderable = visibleTasks.length > 1 && preferences._tag === "Success";
+  const [drag, setDrag] = useState<{ id: ScheduledTaskId; translation: number } | null>(null);
+  const [heights, setHeights] = useState<ReadonlyMap<ScheduledTaskId, number>>(() => new Map());
+  const move = (from: ScheduledTaskId, to: ScheduledTaskId) => {
+    if (from === to) return;
+    const visibleIds = new Set(visibleTasks.map((task) => task.id));
+    void save({
+      transform: (current) => {
+        const order = moveScheduledTask(
+          orderScheduledTasks(allTasks, current.scheduledTaskOrders?.[environmentId]),
+          visibleIds,
+          from,
+          to,
+        );
+        return order
+          ? { scheduledTaskOrders: { ...current.scheduledTaskOrders, [environmentId]: order } }
+          : {};
+      },
+    });
+  };
+  const dropIndex = (from: number, translation: number) => {
+    const step = translation > 0 ? 1 : -1;
+    let to = from;
+    let remaining = Math.abs(translation);
+    while (to + step >= 0 && to + step < visibleTasks.length) {
+      const height = heights.get(visibleTasks[to + step]!.id) ?? 0;
+      if (height === 0 || remaining < height / 2) break;
+      remaining -= height;
+      to += step;
+    }
+    return to;
+  };
+  const dragFrom = drag === null ? -1 : visibleTasks.findIndex((task) => task.id === drag.id);
+  const dragTo = drag && dragFrom >= 0 ? dropIndex(dragFrom, drag.translation) : -1;
+  const liftedHeight = drag === null ? 0 : (heights.get(drag.id) ?? 0);
+  const rowOffset = (index: number) => {
+    if (index === dragFrom) return drag?.translation ?? 0;
+    if (dragFrom < index && index <= dragTo) return -liftedHeight;
+    if (dragFrom > index && index >= dragTo) return liftedHeight;
+    return 0;
+  };
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -1675,19 +1731,33 @@ function EnvironmentTasks({
         <Text className="p-4 text-base text-foreground-muted">
           <T>Loading tasks…</T>
         </Text>
-      ) : visibleTasks?.length === 0 ? (
+      ) : visibleTasks.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
           {projectIds === null ? gt("No scheduled tasks yet.") : gt("No tasks in this project.")}
         </Text>
       ) : (
-        visibleTasks?.map((task, index) => (
+        visibleTasks.map((task, index) => (
           <View
             key={task.id}
-            className={
-              index === 0
-                ? "flex-row items-start gap-1 px-4 py-3"
-                : "flex-row items-start gap-1 border-t border-border-subtle px-4 py-3"
+            onLayout={(event) => {
+              const height = event.nativeEvent.layout.height;
+              setHeights((current) =>
+                current.get(task.id) === height ? current : new Map(current).set(task.id, height),
+              );
+            }}
+            style={
+              dragFrom >= 0
+                ? {
+                    transform: [{ translateY: rowOffset(index) }],
+                    zIndex: index === dragFrom ? 1 : 0,
+                  }
+                : undefined
             }
+            className={cn(
+              "flex-row items-start gap-1 px-4 py-3",
+              index > 0 && "border-t border-border-subtle",
+              index === dragFrom && "bg-grouped-card shadow-md",
+            )}
           >
             <Pressable
               accessibilityRole="button"
@@ -1784,6 +1854,24 @@ function EnvironmentTasks({
                 />
               </Pressable>
             </Menu>
+            {reorderable ? (
+              <SettingsDragHandle
+                title={task.title}
+                canMoveUp={index > 0}
+                canMoveDown={index + 1 < visibleTasks.length}
+                onStart={() => setDrag({ id: task.id, translation: 0 })}
+                onMove={(translation) => setDrag({ id: task.id, translation })}
+                onEnd={(translation, cancelled) => {
+                  setDrag(null);
+                  const target = visibleTasks[dropIndex(index, translation)];
+                  if (!cancelled && target) move(task.id, target.id);
+                }}
+                onStep={(direction) => {
+                  const target = visibleTasks[index + (direction === "up" ? -1 : 1)];
+                  if (target) move(task.id, target.id);
+                }}
+              />
+            ) : null}
           </View>
         ))
       )}

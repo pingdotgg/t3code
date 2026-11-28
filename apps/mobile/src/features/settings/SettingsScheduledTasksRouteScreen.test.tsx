@@ -66,6 +66,7 @@ vi.mock("../../components/ui/Menu", () => ({
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
+vi.mock("./components/SettingsDragHandle", () => ({ SettingsDragHandle: () => null }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   useSettingsEnvironmentMenu: () => null,
 }));
@@ -145,6 +146,10 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks, threads: [] } }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: Atom.make({ _tag: "Initial" }),
+  saveMobilePreferences: {},
+}));
 vi.mock("../../state/queries", () => ({
   usePaginatedBranches: () => ({ refs: [], data: null, error: null }),
 }));

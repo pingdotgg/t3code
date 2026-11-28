@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
+import { ScheduledTaskOrder } from "@t3tools/client-runtime/scheduled-task-order";
 import {
   EnvironmentId,
   IssueInvolvement,
@@ -133,8 +134,10 @@ const ThreadProject = Schema.Struct({
   projectId: Schema.NonEmptyString,
 });
 const isThreadProject = Schema.is(ThreadProject);
+const isScheduledTaskOrders = Schema.is(Schema.Record(Schema.String, ScheduledTaskOrder));
 
 export interface Preferences {
+  readonly scheduledTaskOrders?: Readonly<Record<string, typeof ScheduledTaskOrder.Type>>;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   /** Whether pull requests or issues last held the tab bar slot they share. */
@@ -239,6 +242,7 @@ const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    scheduledTaskOrders?: Preferences["scheduledTaskOrders"];
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     sharedSlotTab?: "pullRequests" | "issues";
@@ -287,6 +291,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
     issueSavedViews?: ReadonlyArray<IssueSavedView>;
   } = {};
+
+  if (isScheduledTaskOrders(parsed.scheduledTaskOrders)) {
+    preferences.scheduledTaskOrders = parsed.scheduledTaskOrders;
+  }
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(

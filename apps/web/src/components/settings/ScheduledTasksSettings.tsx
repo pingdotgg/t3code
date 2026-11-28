@@ -1,3 +1,14 @@
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAtomValue } from "@effect/atom-react";
@@ -7,6 +18,7 @@ import {
   ChevronDownIcon,
   Clock3Icon,
   CopyIcon,
+  GripVerticalIcon,
   InboxIcon,
   MessageSquareIcon,
   MoreHorizontalIcon,
@@ -16,6 +28,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type {
   EnvironmentId,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -36,6 +49,11 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import {
+  moveScheduledTask,
+  orderScheduledTasks,
+  ScheduledTaskOrder,
+} from "@t3tools/client-runtime/scheduled-task-order";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -62,6 +80,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
@@ -567,6 +586,7 @@ function ScheduledTaskEnvironmentList({
       environment,
       connected: index >= 0,
       timeZone: data?.timeZone,
+      allTasks: data?.tasks,
       tasks: data?.tasks.filter((task) =>
         matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
       ),
@@ -577,7 +597,9 @@ function ScheduledTaskEnvironmentList({
   const linkedTask = linkedState?.tasks?.find((task) => task.id === taskId);
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
-  const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
+  const populated = loaded.flatMap(({ environment, allTasks, tasks, timeZone }) =>
+    allTasks && tasks?.length ? [{ environment, allTasks, tasks, timeZone }] : [],
+  );
   const loading = states.some((state) => state.connected && state.error === null && !state.tasks);
   // Until one machine has tasks to show, rows stand in for the list instead of a status line.
   const placeholder = loading && populated.length === 0;
@@ -604,7 +626,7 @@ function ScheduledTaskEnvironmentList({
 
   return (
     <SettingsGroup>
-      {populated.map(({ environment, tasks, timeZone }) => {
+      {populated.map(({ environment, allTasks, tasks, timeZone }) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
         return (
           <div key={environment.environmentId} className="divide-y divide-border/50">
@@ -623,15 +645,13 @@ function ScheduledTaskEnvironmentList({
                 {connectionStatusTitle(environment.connection, messages)}
               </span>
             </EnvironmentRow>
-            {tasks?.map((task) => (
-              <ScheduledTaskRow
-                key={task.id}
-                environmentId={environment.environmentId}
-                task={task}
-                timeZone={timeZone}
-                onEdit={() => onEdit(environment.environmentId, task)}
-              />
-            ))}
+            <ScheduledTaskRows
+              environmentId={environment.environmentId}
+              allTasks={allTasks}
+              visibleTasks={tasks}
+              timeZone={timeZone}
+              onEdit={onEdit}
+            />
           </div>
         );
       })}
@@ -739,7 +759,7 @@ function ScheduledTaskEnvironmentSection({
         />
       ) : tasksQuery.error ? (
         <SettingsRow title={gt("Could not load scheduled tasks")} description={tasksQuery.error} />
-      ) : !tasks ? (
+      ) : !tasksQuery.data || !tasks ? (
         <ScheduledTaskRowsSkeleton />
       ) : (
         <>
@@ -758,19 +778,110 @@ function ScheduledTaskEnvironmentSection({
               description={gt("No tasks match this environment and project selection.")}
             />
           ) : (
-            tasks.map((task) => (
-              <ScheduledTaskRow
-                key={task.id}
-                environmentId={environment.environmentId}
-                task={task}
-                timeZone={tasksQuery.data?.timeZone}
-                onEdit={() => onEdit(environment.environmentId, task)}
-              />
-            ))
+            <ScheduledTaskRows
+              environmentId={environment.environmentId}
+              allTasks={tasksQuery.data.tasks}
+              visibleTasks={tasks}
+              timeZone={tasksQuery.data.timeZone}
+              onEdit={onEdit}
+            />
           )}
         </>
       )}
     </SettingsSection>
+  );
+}
+
+function ScheduledTaskRows({
+  environmentId,
+  allTasks,
+  visibleTasks,
+  timeZone,
+  onEdit,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly allTasks: readonly ScheduledTask[];
+  readonly visibleTasks: readonly ScheduledTask[];
+  readonly timeZone: string | undefined;
+  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
+}) {
+  const gt = useGT();
+  const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
+  const [savedOrder, setSavedOrder] = useLocalStorage(
+    `t3code:scheduled-task-order:${environmentId}`,
+    [],
+    ScheduledTaskOrder,
+  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const visibleIds = new Set(visibleTasks.map((task) => task.id));
+  const tasks = orderScheduledTasks(visibleTasks, savedOrder);
+  const announcePosition = (title: string, index: number) =>
+    gt("{title}, position {position} of {count}.", {
+      title,
+      position: index + 1,
+      count: tasks.length,
+    });
+  const move = (from: ScheduledTaskId, to: ScheduledTaskId) => {
+    setSavedOrder(
+      (current) =>
+        moveScheduledTask(orderScheduledTasks(allTasks, current), visibleIds, from, to) ?? current,
+    );
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    const from = tasks.find((task) => task.id === active.id);
+    const to = tasks.find((task) => task.id === over?.id);
+    if (from && to && from !== to) move(from.id, to.id);
+  };
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragEnd={onDragEnd}
+      accessibility={{
+        announcements: {
+          onDragStart: ({ active }) => {
+            const index = tasks.findIndex((task) => task.id === active.id);
+            const task = tasks[index];
+            return task ? announcePosition(task.title, index) : undefined;
+          },
+          onDragOver: ({ active, over }) => {
+            const task = tasks.find((task) => task.id === active.id);
+            const index = tasks.findIndex((task) => task.id === over?.id);
+            return task && index >= 0 ? announcePosition(task.title, index) : undefined;
+          },
+          onDragEnd: ({ over }) => (over ? undefined : gt("Reorder canceled.")),
+          onDragCancel: () => gt("Reorder canceled."),
+        },
+        screenReaderInstructions: {
+          draggable: gt("Use the Up and Down arrow keys to move this task."),
+        },
+      }}
+    >
+      <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+        <div className="divide-y divide-border/50">
+          {tasks.map((task, index) => (
+            <ScheduledTaskRow
+              key={task.id}
+              environmentId={environmentId}
+              task={task}
+              timeZone={timeZone}
+              reorderable={tasks.length > 1}
+              onStep={(step) => {
+                const target = tasks[index + step];
+                if (!target) return;
+                move(task.id, target.id);
+                setKeyboardAnnouncement(announcePosition(task.title, index + step));
+              }}
+              onEdit={() => onEdit(environmentId, task)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+      <div role="status" aria-atomic="true" className="sr-only">
+        {keyboardAnnouncement}
+      </div>
+    </DndContext>
   );
 }
 
@@ -809,16 +920,29 @@ function ScheduledTaskRow({
   environmentId,
   task,
   timeZone,
+  reorderable,
+  onStep,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask;
   readonly timeZone: string | undefined;
+  readonly reorderable: boolean;
+  readonly onStep: (step: -1 | 1) => void;
   readonly onEdit: () => void;
 }) {
   const messages = useMessages();
   const locale = useLocale();
   const gt = useGT();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id, disabled: !reorderable });
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -862,7 +986,7 @@ function ScheduledTaskRow({
       );
     }
   };
-  return (
+  const row = (
     <SettingsRow
       title={task.title}
       description={<span className="line-clamp-2">{task.prompt}</span>}
@@ -947,6 +1071,27 @@ function ScheduledTaskRow({
               </MenuItem>
             </MenuPopup>
           </Menu>
+          {reorderable ? (
+            <button
+              type="button"
+              ref={setActivatorNodeRef}
+              {...attributes}
+              {...listeners}
+              aria-roledescription={undefined}
+              aria-label={gt("Reorder {item}", { item: task.title })}
+              aria-keyshortcuts="ArrowUp ArrowDown"
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                event.preventDefault();
+                const handle = event.currentTarget;
+                flushSync(() => onStep(event.key === "ArrowUp" ? -1 : 1));
+                handle.focus();
+              }}
+              className="flex size-8 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+            >
+              <GripVerticalIcon className="size-4" />
+            </button>
+          ) : null}
           {deliveriesOpen ? (
             <WebhookDeliveriesDialog
               environmentId={environmentId}
@@ -957,6 +1102,15 @@ function ScheduledTaskRow({
         </div>
       }
     />
+  );
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={isDragging ? "relative z-10 rounded-xl bg-card shadow-md" : undefined}
+    >
+      {row}
+    </div>
   );
 }
 

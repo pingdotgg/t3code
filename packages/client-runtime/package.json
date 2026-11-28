@@ -139,6 +139,10 @@
       "types": "./src/scheduledTaskWorktree.ts",
       "default": "./src/scheduledTaskWorktree.ts"
     },
+    "./scheduled-task-order": {
+      "types": "./src/scheduledTaskOrder.ts",
+      "default": "./src/scheduledTaskOrder.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
