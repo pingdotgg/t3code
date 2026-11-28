@@ -29,15 +29,22 @@ const KNOWN_SHARED_DIRECTORIES = [
   "thread-writer-locks",
 ] as const;
 
+// Codex creates these lock files on first use. Creating them in the shared home first keeps a
+// shadow home from making a local lock that would guard shared state on its own.
+const KNOWN_SHARED_LOCK_FILES = ["session_index.jsonl.lock"] as const;
+
 // auth.lock guards the shadow home's private auth.json.
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
-const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
-  "mcp-oauth-locks",
-  "thread-writer-locks",
-  ".sqlite-maintenance.lock",
+// Only the kind Codex creates is replaced; anything else at that path stays a conflict.
+// Codex reopens session_index.jsonl.lock for each update, so a swap can split only the update in flight.
+const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Map<string, FileSystem.File.Type>([
+  ["mcp-oauth-locks", "Directory"],
+  ["thread-writer-locks", "Directory"],
+  [".sqlite-maintenance.lock", "File"],
+  ["session_index.jsonl.lock", "File"],
 ]);
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
@@ -96,7 +103,14 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "stat",
+      "makeDirectory",
+      "readDirectory",
+      "remove",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -265,14 +279,32 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
-      return yield* new CodexShadowHomeEntryConflictError({
-        sharedHomePath: input.sharedHomePath,
-        effectiveHomePath: input.effectiveHomePath,
-        entryName: input.entryName,
-        linkPath: link,
-        targetPath: target,
-      });
+    const conflict = new CodexShadowHomeEntryConflictError({
+      sharedHomePath: input.sharedHomePath,
+      effectiveHomePath: input.effectiveHomePath,
+      entryName: input.entryName,
+      linkPath: link,
+      targetPath: target,
+    });
+    const replaceableType = REPLACEABLE_SHARED_RUNTIME_ENTRIES.get(input.entryName);
+    if (replaceableType === undefined) {
+      return yield* conflict;
+    }
+    const info = yield* input.fileSystem.stat(link).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: input.sharedHomePath,
+            effectiveHomePath: input.effectiveHomePath,
+            operation: "stat",
+            path: link,
+            entryName: input.entryName,
+            cause,
+          }),
+      }),
+    );
+    if (info.type !== replaceableType) {
+      return yield* conflict;
     }
 
     if (input.entryName === "thread-writer-locks") {
@@ -403,6 +435,24 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     ],
     { concurrency: "unbounded" },
   );
+  // Append mode creates a missing lock without truncating one Codex already uses. If that fails,
+  // the link is still made below and Codex creates the shared file through it.
+  yield* Effect.forEach(
+    KNOWN_SHARED_LOCK_FILES,
+    (lockName) => {
+      const lockPath = path.join(layout.sharedHomePath, lockName);
+      return fileSystem.writeFileString(lockPath, "", { flag: "a" }).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            Effect.logWarning("Could not create a shared Codex lock file; linking it anyway.", {
+              path: lockPath,
+              cause,
+            }),
+        }),
+      );
+    },
+    { discard: true },
+  );
 
   const sharedEntryNames = yield* fileSystem.readDirectory(layout.sharedHomePath).pipe(
     Effect.catchTags({
@@ -416,7 +466,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
         }),
     }),
   );
-  const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
+  const entries = new Set<string>([...KNOWN_SHARED_DIRECTORIES, ...KNOWN_SHARED_LOCK_FILES]);
   for (const entryName of sharedEntryNames) {
     if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
       entries.add(entryName);
