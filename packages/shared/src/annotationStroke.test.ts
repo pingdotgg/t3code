@@ -7,7 +7,7 @@ import {
   startStroke,
   strokeBounds,
   STROKE_SEGMENTS_PER_PATH,
-} from "./AnnotationStroke.ts";
+} from "./annotationStroke.ts";
 
 // The Draw tool used to rebuild the whole path and rescan every point on each move.
 const fullPath = (points: ReadonlyArray<PreviewAnnotationPoint>): string => {

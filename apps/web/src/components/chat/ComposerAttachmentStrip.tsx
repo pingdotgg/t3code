@@ -155,6 +155,7 @@ export function ComposerAttachmentMediaRow({
   canOperateThread,
   onExpandImage,
   onCopySnapshot,
+  onEditImage,
   onFileOpen,
   onRemoveImage,
   onRemoveFile,
@@ -174,6 +175,7 @@ export function ComposerAttachmentMediaRow({
   readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
   readonly canOperateThread: boolean;
   readonly onCopySnapshot: (imageId: string) => Promise<void>;
+  readonly onEditImage: (imageId: string) => void;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
   readonly onRemoveImage: (imageId: string) => void;
@@ -233,7 +235,12 @@ export function ComposerAttachmentMediaRow({
                   aria-label={gt("Preview {name}", { name: image.name })}
                   disabled={!ready}
                   onClick={() => {
-                    const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
+                    const preview = buildExpandedImagePreview(
+                      images,
+                      image.id,
+                      onCopySnapshot,
+                      onEditImage,
+                    );
                     if (!preview) return;
                     onExpandImage(preview);
                   }}
@@ -598,12 +605,14 @@ export function ComposerRestingImagePreviews({
   resolvedTheme,
   onExpandImage,
   onCopySnapshot,
+  onEditImage,
   onShowMore,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly allImages: ReadonlyArray<ComposerImageAttachment>;
   readonly resolvedTheme: "light" | "dark";
   readonly onCopySnapshot: (imageId: string) => Promise<void>;
+  readonly onEditImage: (imageId: string) => void;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onShowMore: () => void;
 }) {
@@ -620,7 +629,12 @@ export function ComposerRestingImagePreviews({
           aria-label={gt("Preview {name}", { name: image.name })}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
-            const preview = buildExpandedImagePreview(allImages, image.id, onCopySnapshot);
+            const preview = buildExpandedImagePreview(
+              allImages,
+              image.id,
+              onCopySnapshot,
+              onEditImage,
+            );
             if (preview) onExpandImage(preview);
           }}
         >

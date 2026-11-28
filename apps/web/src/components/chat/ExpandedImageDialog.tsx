@@ -1,7 +1,14 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { useGT } from "gt-react";
-import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ImageIcon,
+  PencilIcon,
+  TextIcon,
+  XIcon,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -272,6 +279,25 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 </SharedTooltipTrigger>
               ) : item.source ? (
                 <SnapShotContentsButton source={item.source} side="top" />
+              ) : null}
+              {item.onEdit && !isVideo ? (
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      aria-label={gt("Draw on image")}
+                      onClick={() => {
+                        const edit = item.onEdit;
+                        close();
+                        edit?.();
+                      }}
+                      size="icon-micro"
+                      variant="overlay"
+                    />
+                  }
+                  label={gt("Draw on image")}
+                >
+                  <PencilIcon className="size-3" aria-hidden="true" />
+                </SharedTooltipTrigger>
               ) : null}
               {item.onCopySnapshot && (
                 <div className="-my-1.5">

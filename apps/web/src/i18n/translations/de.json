@@ -13049,5 +13049,20 @@
   "5807c08e225c6b3d": "Herunterladen",
   "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden",
   "eb1fd384ad5919dd": "Interne Notiz",
-  "b45f0b467e9406d0": "Dem Kunden antworten"
+  "b45f0b467e9406d0": "Dem Kunden antworten",
+  "2d4b888d587a5b70": "Auf {name} zeichnen",
+  "cfa1fc62923d3d32": "Zeichenwerkzeug",
+  "3b7a720d84d54cd5": "Freihand zeichnen (D)",
+  "2f5782fab3b69ec0": "Zeichnen",
+  "d921a0a1ba87a665": "Strich entfernen (E)",
+  "449a265c477785b0": "Radieren",
+  "a8ed2dbdd7333ead": "Strichfarbe",
+  "650afcc1cdb79840": "Designfarbe",
+  "42102b61a3c388ad": "Die Zeichnung konnte nicht gespeichert werden. Versuche es erneut oder brich ab.",
+  "e1abc4e22afc6c41": "Auf Bild zeichnen",
+  "677fbda9e901b45e": "Rot",
+  "c23be241b9d249c9": "Orange",
+  "c63d942911808821": "Grün",
+  "75f923f6e3e41def": "Weiß",
+  "04cabf0f2aa08368": "Schwarz"
 }

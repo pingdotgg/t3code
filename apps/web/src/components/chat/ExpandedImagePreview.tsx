@@ -20,6 +20,7 @@ import {
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
+import { isHeicImageFile } from "../../lib/imageCompression";
 
 export interface ExpandedImageItem {
   src: string | null;
@@ -30,6 +31,8 @@ export interface ExpandedImageItem {
   ownsSrc?: boolean;
   source?: SnapShotSource;
   onCopySnapshot?: (() => Promise<void>) | undefined;
+  /** Opens a composer draft image for drawing; only draft images can be edited. */
+  onEdit?: (() => void) | undefined;
   autoPlay?: boolean;
   originalUrl?: string;
   srcFragment?: string;
@@ -168,6 +171,7 @@ export function buildExpandedImagePreview(
   images: ReadonlyArray<ChatImageAttachment | ComposerFileAttachment>,
   selectedImageId: string,
   onCopySnapshot?: (id: string) => Promise<void>,
+  onEditImage?: (id: string) => void,
 ): ExpandedImagePreview | null {
   const selected = images.find((image) => image.id === selectedImageId);
   if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
@@ -192,6 +196,7 @@ export function buildExpandedImagePreview(
             name: image.name,
             mimeType: image.mimeType,
             source: image.source,
+            editable: !isHeicImageFile({ name: image.name, type: image.mimeType }),
           },
         ]
       : [],
@@ -208,6 +213,7 @@ export function buildExpandedImagePreview(
       src: image.src,
       name: image.name,
       mimeType: image.mimeType,
+      ...(onEditImage && image.editable ? { onEdit: () => onEditImage(image.id) } : {}),
       ...(image.source?.kind === "snap-shot"
         ? {
             source: image.source,
