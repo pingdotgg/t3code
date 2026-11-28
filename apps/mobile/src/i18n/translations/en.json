@@ -3902,7 +3902,7 @@
   "5b4b3003b87b4737": "Agents also report T3 Code problems they hit on their own.",
   "c8c52fccfab3ed12": "Inactive days",
   "bd1801b4c1402c9f": "Auto-settle defaults differ",
-  "a39859173ceced06": "Fold working and monitoring threads into a Working section. They return to the top of the list when they need you. While this is on, active threads are ordered by time and cannot be moved.",
+  "66e99ff589a9d5bf": "Fold working and monitoring threads into a Working section, and sort Active by recent activity. When off, you arrange Active and replies do not move threads.",
   "3a260203f2c67208": "Reports go to the T3 team. A report you ask for is shown to you first in a card, with an outline of recent turns. Turn on Include the conversation there to add the messages of the turns the report is about.",
   "eb4898101556e51c": "Download {model}?",
   "8dde46fc67352f68": "{environment} will download {size} and use it as its transcription model.",

@@ -3895,7 +3895,7 @@
   "5b4b3003b87b4737": "Los agentes también informan por su cuenta de los problemas que encuentran en T3 Code.",
   "c8c52fccfab3ed12": "Días de inactividad",
   "bd1801b4c1402c9f": "Los valores predeterminados de resolución automática difieren",
-  "a39859173ceced06": "Agrupa los hilos activos y en seguimiento en la sección En curso. Vuelven arriba de la lista cuando te necesitan. Mientras esté activado, los hilos activos se ordenan por tiempo y no se pueden mover.",
+  "66e99ff589a9d5bf": "Agrupa los hilos en ejecución y en seguimiento en la sección En curso y ordena Activos por actividad reciente. Si está desactivado, tú ordenas Activos y las respuestas no mueven los hilos.",
   "3a260203f2c67208": "Los informes se envían al equipo de T3. Los que solicitas se te muestran primero en una tarjeta, con un resumen de los turnos recientes. Activa «Incluir la conversación» ahí para añadir los mensajes de los turnos de los que trata el informe.",
   "eb4898101556e51c": "¿Descargar {model}?",
   "8dde46fc67352f68": "{environment} descargará {size} y lo usará como su modelo de transcripción.",

@@ -3895,7 +3895,7 @@
   "5b4b3003b87b4737": "Les agents signalent aussi spontanément les problèmes qu'ils rencontrent dans T3 Code.",
   "c8c52fccfab3ed12": "Jours d’inactivité",
   "bd1801b4c1402c9f": "Les valeurs par défaut de clôture automatique diffèrent",
-  "a39859173ceced06": "Regroupe les fils en cours et en surveillance dans une section En cours. Ils reviennent en haut de la liste quand ils ont besoin de vous. Tant que l’option est activée, les fils actifs sont triés par date et ne peuvent pas être déplacés.",
+  "66e99ff589a9d5bf": "Regroupe les fils en cours et en surveillance dans une section En cours et trie Actifs par activité récente. Quand l’option est désactivée, vous ordonnez Actifs vous-même et les réponses ne déplacent pas les fils.",
   "3a260203f2c67208": "Les rapports sont envoyés à l'équipe T3. Un rapport demandé vous est d'abord présenté dans une carte, avec un résumé des derniers tours. Activez « Inclure la conversation » dans cette carte pour ajouter les messages des tours concernés par le rapport.",
   "eb4898101556e51c": "Télécharger {model} ?",
   "8dde46fc67352f68": "{environment} va télécharger {size} et l’utiliser comme modèle de transcription.",

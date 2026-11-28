@@ -1899,6 +1899,23 @@ describe("Working section beta", () => {
     expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
   });
 
+  it("keeps the arranged order while off, so a new reply does not move a thread", () => {
+    const arranged = [
+      { ...finishedAt("older-with-reply", "2026-06-01T03:00:00.000Z"), activeOrderKey: "t" },
+      makeThread({
+        id: ThreadId.make("newer"),
+        title: "newer",
+        createdAt: "2026-06-01T02:00:00.000Z",
+        activeOrderKey: "f",
+      }),
+    ];
+    expect(ids(build({ threads: arranged, workingShelfEnabled: false }))).toEqual([
+      "newer",
+      "older-with-reply",
+    ]);
+    expect(ids(build({ threads: arranged }))).toEqual(["older-with-reply", "newer"]);
+  });
+
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {
     const layout = buildThreadListV2Items({
       threads: [

@@ -958,8 +958,9 @@ export function GeneralSettingsPanel() {
           {...setting("working-shelf")}
           description={
             <T>
-              Fold working and monitoring threads into a Working section. They return to the top of
-              the inbox when they need you. The boring sidebar in Labs has no Working section.
+              Fold working and monitoring threads into a Working section, and sort Active by recent
+              activity. When off, you arrange Active and replies do not move threads. The boring
+              sidebar in Labs has none.
             </T>
           }
           resetAction={

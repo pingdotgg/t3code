@@ -25,7 +25,7 @@ Threads don't require a project. Pick **No project** (or press `mod+alt+n` on we
 
 - **Resize or hide** (web/desktop): Drag the sidebar's right edge past its minimum width to hide it; hover the left window edge and click or drag the handle to bring it back.
 - **Drop files onto a thread** (web/desktop): Drag files from your computer onto any thread row to open it and attach them to its composer.
-- **Pin and reorder**: Pin a thread from its menu (on web and desktop, also from the pin button that appears when you hover or focus its card), or drag threads between **Pinned**, **Active**, and **Settled** (or drag out of **Snoozed** to wake). On mobile, use **Arrange threads** or **Move up / Move down** in the thread menu. Custom order syncs across devices (requires an up-to-date server).
+- **Pin and reorder**: Pin a thread from its menu (on web and desktop, also from the pin button that appears when you hover or focus its card), or drag threads between **Pinned**, **Active**, and **Settled** (or drag out of **Snoozed** to wake). On mobile, use **Arrange threads** or **Move up / Move down** in the thread menu. Custom order syncs across devices (requires an up-to-date server). While the [Working section](#working-section-beta) is off, Active keeps this order and replies do not move threads.
 - **Undo** (web/desktop): Unpinning, settling, snoozing, archiving, or discarding a draft shows a 5-second **Undo** toast (`mod+z`).
 - **Titles**: Choose **Regenerate title** from a thread's menu, or customize title style in **Settings → Threads → Text generation → Thread title instructions** (global or per-project).
 
@@ -33,7 +33,7 @@ Threads don't require a project. Pick **No project** (or press `mod+alt+n` on we
 
 Enabled by default (**Settings → General → Working section**, per device). Unpinned threads that are actively running—or waiting on subagents, watched PRs, or monitors—collapse into a **Working** section below Active, and return to the top of Active when they finish, fail, or need input.
 
-While enabled, Active is sorted by most recent return (manual reordering is paused until you turn it off).
+While enabled, Active is sorted by recent activity, so a thread with a new reply moves to the top (manual reordering is paused). Turn it off to keep the order you arrange: your saved order returns, and new replies no longer move threads.
 
 ### Group threads by project (beta)
 

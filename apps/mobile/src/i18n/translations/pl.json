@@ -3902,7 +3902,7 @@
   "5b4b3003b87b4737": "Agenci zgłaszają też samodzielnie problemy T3 Code, na które trafiają.",
   "c8c52fccfab3ed12": "Dni bezczynności",
   "bd1801b4c1402c9f": "Domyślne automatyczne dokańczanie różni się",
-  "a39859173ceced06": "Składaj wątki robocze i monitorujące do Sekcji roboczej. Wracają na górę listy, gdy Cię potrzebują. Gdy to jest włączone, aktywne wątki są uporządkowane według czasu i nie można ich przenosić.",
+  "66e99ff589a9d5bf": "Składaj wątki robocze i monitorujące do Sekcji roboczej i sortuj sekcję Aktywne według ostatniej aktywności. Gdy to jest wyłączone, sam układasz sekcję Aktywne, a odpowiedzi nie przesuwają wątków.",
   "3a260203f2c67208": "Raporty trafiają do zespołu T3. Raport, o który poprosisz, jest najpierw pokazywany Tobie w karcie, wraz ze zarysami ostatnich tur. Włącz tam Dołącz rozmowę, aby dodać wiadomości tur, których dotyczy raport.",
   "eb4898101556e51c": "Pobrać {model}?",
   "8dde46fc67352f68": "{environment} pobierze {size} i użyje tego jako swojego modelu transkrypcji.",

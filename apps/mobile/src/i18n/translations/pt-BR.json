@@ -3895,7 +3895,7 @@
   "5b4b3003b87b4737": "Os agentes também relatam por conta própria os problemas que encontram no T3 Code.",
   "c8c52fccfab3ed12": "Dias inativos",
   "bd1801b4c1402c9f": "Os padrões de conclusão automática diferem",
-  "a39859173ceced06": "Agrupa as threads em andamento e em monitoramento em uma seção Trabalhando. Elas voltam ao topo da lista quando precisam de você. Enquanto isso estiver ativado, as threads ativas são ordenadas por tempo e não podem ser movidas.",
+  "66e99ff589a9d5bf": "Agrupa as threads em andamento e em monitoramento em uma seção Trabalhando e ordena Ativas por atividade recente. Quando desativado, você mesmo organiza Ativas e respostas não movem as threads.",
   "3a260203f2c67208": "Os relatórios vão para a equipe do T3. Um relatório que você pede é mostrado primeiro para você em um cartão, com um resumo dos turnos recentes. Ative \"Incluir a conversa\" nele para adicionar as mensagens dos turnos de que o relatório trata.",
   "eb4898101556e51c": "Baixar {model}?",
   "8dde46fc67352f68": "{environment} vai baixar {size} e usá-lo como modelo de transcrição.",

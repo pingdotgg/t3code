@@ -3901,7 +3901,7 @@
   "5b4b3003b87b4737": "Agenter rapporterar även problem med T3 Code som de själva stöter på.",
   "c8c52fccfab3ed12": "Inaktiva dagar",
   "bd1801b4c1402c9f": "Standardvärdena för automatisk markering som klar skiljer sig åt",
-  "a39859173ceced06": "Fäll in arbetande och övervakande trådar i avsnittet Arbetar. De återvänder överst i listan när de behöver dig. När detta är på sorteras aktiva trådar efter tid och kan inte flyttas.",
+  "66e99ff589a9d5bf": "Fäll in arbetande och övervakande trådar i avsnittet Arbetar och sortera Aktiva efter senaste aktivitet. När detta är av ordnar du Aktiva själv och svar flyttar inte trådar.",
   "3a260203f2c67208": "Rapporter skickas till T3-teamet. En rapport du ber om visas för dig först i ett kort med en översikt över de senaste omgångarna. Slå på Ta med konversationen där för att lägga till meddelandena från de omgångar rapporten gäller.",
   "eb4898101556e51c": "Ladda ned {model}?",
   "8dde46fc67352f68": "{environment} laddar ned {size} och använder den som transkriberingsmodell.",
