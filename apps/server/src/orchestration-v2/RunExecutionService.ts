@@ -461,6 +461,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "app_thread.model_selection.updated":
+      return [ownsThread(event.threadId), state];
     case "thread_model_selection.updated":
       return [event.threadId === input.threadId, state];
     case "provider_thread.updated": {
