@@ -396,7 +396,9 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
         fence.length >= openFence.marker.length &&
         fenceMatch[2]!.trim().length === 0 &&
         !LIST_ITEM_PATTERN.test(line) &&
-        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line));
+        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line)) &&
+        // A closer may sit at most three columns past its list item's content.
+        !(openFence.itemIndent > 0 && indentColumns(line) > openFence.itemIndent + 3);
       if (openFence === null) {
         openFence = {
           marker: fence,
