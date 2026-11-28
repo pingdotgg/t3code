@@ -18,6 +18,7 @@ export const WEB_LINK_READY_CHANNEL = "desktop:web-link-ready";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
 export const TRACKPAD_SCROLL_BEGIN_CHANNEL = "desktop:trackpad-scroll-begin";
 export const TRACKPAD_SCROLL_END_CHANNEL = "desktop:trackpad-scroll-end";
+export const WHEEL_ZOOM_CHANNEL = "desktop:wheel-zoom";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
 export const SYNC_HTML_FULLSCREEN_CHANNEL = "desktop:sync-html-fullscreen";

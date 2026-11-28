@@ -13,6 +13,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+import { makeWheelZoomStepper } from "./wheelZoom.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -56,6 +57,21 @@ if (clientPlatform === "darwin") {
   };
   window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
   window.addEventListener("resize", syncWindowControlInset);
+
+  // Chromium zooms only on Ctrl+wheel; on macOS Cmd+wheel zooms the app as Cmd+plus and Cmd+minus do.
+  const wheelZoomStep = makeWheelZoomStepper(() => webFrame.getZoomFactor());
+  window.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event.metaKey || event.ctrlKey || event.deltaY === 0) return;
+      // Capture phase, so the terminal or list under the pointer does not scroll as well.
+      event.preventDefault();
+      event.stopPropagation();
+      const direction = wheelZoomStep(event);
+      if (direction !== null) void ipcRenderer.invoke(IpcChannels.WHEEL_ZOOM_CHANNEL, direction);
+    },
+    { capture: true, passive: false },
+  );
 }
 
 const syncHtmlFullscreen = () => {

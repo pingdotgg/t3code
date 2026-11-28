@@ -64,6 +64,7 @@ import {
   setTheme,
   syncHtmlFullscreen,
   showContextMenu,
+  wheelZoom,
 } from "./methods/window.ts";
 import {
   acknowledgeSnapShot,
@@ -174,6 +175,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
+  yield* ipc.handle(wheelZoom);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
