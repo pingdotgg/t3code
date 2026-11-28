@@ -913,7 +913,12 @@ function markWordMergeContinuations(table: XmlNode) {
   }
 }
 
-const covered = (cell: XmlNode) => cell.name === "covered-table-cell" || cell.wordMergeCovered;
+// PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
+const drawingMergeCovered = (cell: XmlNode) =>
+  cell.name === "tc" &&
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+const covered = (cell: XmlNode) =>
+  cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
   if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
