@@ -87,6 +87,12 @@ it.effect("closes a secret card recorded under an earlier root after a steering 
       createdBy: "user",
       creationSource: "web",
     });
+    // A settled thread can run a background wake; the card it asks must reopen the thread.
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("secret-request-record:settle"),
+      threadId,
+    });
     yield* projections.apply({
       id: EventId.make("secret-request-record:session"),
       type: "provider-session.attached",
@@ -219,6 +225,7 @@ it.effect("closes a secret card recorded under an earlier root after a steering 
     const opened = yield* readCard(cardId);
     assert.equal(opened?.secretStatus, "pending");
     assert.equal(opened?.providerTurnId, originalTurnId);
+    assert.isNull((yield* projections.getThread(threadId)).settledOverride);
 
     // The user steers while the card waits: the run's root moves to a new attempt.
     yield* projections.apply({

@@ -1241,6 +1241,30 @@ function currentPullRequestWatchWake(
   };
 }
 
+/**
+ * A settled thread can run a background wake. A card it then asks the user to answer reopens it,
+ * like a question does, so the request does not wait unseen in Settled.
+ */
+function reopenSettledForNewCard(
+  thread: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+): Omit<OrchestrationV2DomainEvent, "id"> | undefined {
+  if (thread.settledOverride !== "settled") return undefined;
+  return {
+    type: "thread.unsettled",
+    threadId: thread.id,
+    providerInstanceId: thread.providerInstanceId,
+    occurredAt: now,
+    payload: {
+      ...thread,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: now,
+      updatedAt: now,
+    },
+  };
+}
+
 function withoutSection({ section: _, ...stamp }: MonitorPullRequestStamp) {
   return stamp;
 }
@@ -11369,6 +11393,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
         });
       }
+      const reopened =
+        existing === undefined && pending
+          ? reopenSettledForNewCard(projection.thread, now)
+          : undefined;
+      if (reopened !== undefined) yield* emit(events, command)(reopened);
       yield* emit(
         events,
         command,
@@ -11432,6 +11461,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const nodeId = existing?.nodeId ?? command.nodeId;
       const now = yield* DateTime.now;
       const pending = command.feedbackStatus === "pending";
+      const reopened =
+        existing === undefined && pending
+          ? reopenSettledForNewCard(projection.thread, now)
+          : undefined;
+      if (reopened !== undefined) yield* emit(events, command)(reopened);
       yield* emit(
         events,
         command,
@@ -11596,6 +11630,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
         });
       }
+      const reopened =
+        existing === undefined && pending
+          ? reopenSettledForNewCard(projection.thread, now)
+          : undefined;
+      if (reopened !== undefined) yield* emit(events, command)(reopened);
       yield* emit(
         events,
         command,
