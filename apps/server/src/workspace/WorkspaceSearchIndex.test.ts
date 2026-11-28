@@ -547,6 +547,8 @@ it.live("answers content searches with git grep while a slow content index build
         `${" ".repeat(507)}tokenized`,
         `é token ${"d".repeat(600)} token`,
         `é tokenized${" ".repeat(600)}token`,
+        // The cap falls inside the emoji, so the shown line drops it whole.
+        `token ${"a".repeat(505)}😀`,
       ].join("\n"),
     );
     const longLines = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
@@ -563,6 +565,7 @@ it.live("answers content searches with git grep while a slow content index build
       [1, 512, []],
       [3, 512, [{ start: 2, end: 7 }]],
       [4, 512, []],
+      [5, 511, [{ start: 0, end: 5 }]],
     ];
     expect(yield* longLines({ wholeWord: true })).toEqual(wholeWordLines);
     expect(yield* longLines({ query: "tok+en", wholeWord: true, useRegex: true })).toEqual(
@@ -573,6 +576,7 @@ it.live("answers content searches with git grep while a slow content index build
       [2, 512, []],
       [3, 512, [{ start: 2, end: 7 }]],
       [4, 512, [{ start: 2, end: 11 }]],
+      [5, 511, [{ start: 0, end: 5 }]],
     ]);
 
     isWarmupComplete = true;
