@@ -96,6 +96,33 @@ export function psiAverage(
   return value === undefined ? null : Number(value);
 }
 
+/** Milliseconds each block device had I/O in flight (`io_ticks`), from `/proc/diskstats`. */
+export function diskBusyTicks(diskstats: string): ReadonlyMap<string, number> {
+  const ticks = new Map<string, number>();
+  for (const line of diskstats.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    const ioTicks = Number(fields[12]);
+    if (fields.length >= 14 && fields[2] && Number.isFinite(ioTicks)) ticks.set(fields[2], ioTicks);
+  }
+  return ticks;
+}
+
+/** The busiest device's share of the interval with I/O in flight, in percent. */
+export function diskBusyPercent(
+  before: ReadonlyMap<string, number>,
+  after: ReadonlyMap<string, number>,
+  elapsedMillis: number,
+): number | null {
+  if (elapsedMillis <= 0) return null;
+  let busiest: number | null = null;
+  for (const [device, ticks] of after) {
+    const previous = before.get(device);
+    if (previous === undefined || ticks < previous) continue;
+    busiest = Math.max(busiest ?? 0, Math.min(100, ((ticks - previous) / elapsedMillis) * 100));
+  }
+  return busiest;
+}
+
 export interface PressureSample {
   /** Linux PSI avg10 percentages for memory. */
   readonly memorySome: number | null;
@@ -106,6 +133,12 @@ export interface PressureSample {
   /** Linux PSI avg60 percentages; a minute, so a build's burst is not an overload. */
   readonly cpuSome: number | null;
   readonly ioFull: number | null;
+  /**
+   * The busiest block device's busy percent over about the same minute. PSI also counts
+   * waits that touch no disk, such as a terminal idling in `io_uring_enter`, but tasks
+   * cannot all wait on a disk for longer than some disk has I/O in flight.
+   */
+  readonly diskBusy: number | null;
   /** One-minute load average per CPU, where PSI is missing. */
   readonly loadPerCpu: number | null;
   readonly diskFreeBytes: number | null;
@@ -125,6 +158,7 @@ const RANK = { none: 0, elevated: 1, severe: 2 } as const;
 // A level is left only well below where it was entered, so it does not flicker.
 const EXIT_RATIO = 0.4;
 const GiB = 1024 ** 3;
+const IO_ELEVATED = 10;
 
 const worst = (levels: ReadonlyArray<HostPressureLevel>): HostPressureLevel =>
   levels.reduce((left, right) => (RANK[right] > RANK[left] ? right : left), "none");
@@ -183,7 +217,15 @@ export function nextPressureLevels(
       : sample.loadPerCpu !== null
         ? grade(previous.cpu, sample.loadPerCpu, 1.5, 3)
         : previous.cpu;
-  const io = sample.ioFull === null ? previous.io : grade(previous.io, sample.ioFull, 10, 30);
+  const io =
+    sample.ioFull === null
+      ? previous.io
+      : grade(
+          previous.io,
+          sample.diskBusy === null ? sample.ioFull : Math.min(sample.ioFull, sample.diskBusy),
+          IO_ELEVATED,
+          30,
+        );
   const disk =
     sample.diskFreeBytes === null || sample.diskTotalBytes === null
       ? previous.disk
@@ -195,6 +237,8 @@ const PRESSURE_INTERVAL = "5 seconds";
 const MAX_UNREAD_PRESSURE_SAMPLES = 6;
 const HEAVIEST_AGENT_COUNT = 3;
 const CPU_SAMPLE_MAX_AGE_MS = 30_000;
+// Matches the avg60 PSI window that io pressure is graded on.
+const DISK_BUSY_WINDOW_MS = 60_000;
 
 /** Up to about an eighth coarser, so ordinary growth does not push an update every sample. */
 export function roundCoarsely(bytes: number): number {
@@ -245,6 +289,9 @@ const make = Effect.fn("makeHostResources")(function* () {
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
   } | null>(null);
+  const diskTicks = yield* Ref.make<
+    ReadonlyArray<{ readonly at: number; readonly ticks: ReadonlyMap<string, number> }>
+  >([]);
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
@@ -293,6 +340,31 @@ const make = Effect.fn("makeHostResources")(function* () {
     );
   });
 
+  const readDiskTicks = () => Effect.map(readFile("/proc/diskstats"), diskBusyTicks);
+  // Busy share since the oldest reading in the last minute. Without one, a reading 200 ms
+  // apart stands in, but only when io PSI is high enough to raise a level.
+  const sampleDiskBusy = Effect.fnUntraced(function* (needed: boolean) {
+    let ticks = yield* readDiskTicks();
+    if (ticks.size === 0) return null;
+    let now = yield* Clock.currentTimeMillis;
+    const history = (yield* Ref.get(diskTicks)).filter(
+      (reading) => now - reading.at <= DISK_BUSY_WINDOW_MS,
+    );
+    if (history.length === 0) {
+      history.push({ at: now, ticks });
+      if (!needed) {
+        yield* Ref.set(diskTicks, history);
+        return null;
+      }
+      yield* Effect.sleep("200 millis");
+      ticks = yield* readDiskTicks();
+      now = yield* Clock.currentTimeMillis;
+    }
+    const oldest = history[0]!;
+    yield* Ref.set(diskTicks, [...history, { at: now, ticks }]);
+    return diskBusyPercent(oldest.ticks, ticks, now - oldest.at);
+  });
+
   // Untraced: it runs every few seconds while a client listens.
   const samplePressure = Effect.fnUntraced(function* () {
     const linux = platform === "linux";
@@ -314,13 +386,18 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? NodeOS.loadavg()[0]! / Math.max(1, NodeOS.availableParallelism())
         : null;
     const disk = yield* diskSpace;
+    const ioFull = psiAverage(ioPsi, "full", "avg60");
+    const diskBusy = linux
+      ? yield* sampleDiskBusy(ioFull !== null && ioFull >= IO_ELEVATED * EXIT_RATIO)
+      : null;
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),
       agentsMemoryFull: psiAverage(agentsPsi, "full", "avg10"),
       darwinMemoryLevel,
       cpuSome,
-      ioFull: psiAverage(ioPsi, "full", "avg60"),
+      ioFull,
+      diskBusy,
       loadPerCpu,
       diskFreeBytes: disk?.free ?? null,
       diskTotalBytes: disk?.total ?? null,

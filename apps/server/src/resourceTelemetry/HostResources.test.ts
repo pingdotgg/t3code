@@ -272,6 +272,7 @@ const quiet: HostResources.PressureSample = {
   darwinMemoryLevel: null,
   cpuSome: 0,
   ioFull: 0,
+  diskBusy: null,
   loadPerCpu: null,
   diskFreeBytes: 500 * GiB,
   diskTotalBytes: 1000 * GiB,
@@ -283,6 +284,7 @@ const unread: HostResources.PressureSample = {
   darwinMemoryLevel: null,
   cpuSome: null,
   ioFull: null,
+  diskBusy: null,
   loadPerCpu: null,
   diskFreeBytes: null,
   diskTotalBytes: null,
@@ -299,6 +301,27 @@ describe("pressure levels", () => {
     expect(HostResources.psiAverage(text, "some", "avg10")).toBe(12.5);
     expect(HostResources.psiAverage(text, "full", "avg60")).toBe(1);
     expect(HostResources.psiAverage("", "full", "avg10")).toBeNull();
+  });
+
+  it("reads how busy the busiest disk was", () => {
+    const stats = (nvme: number, sda: number) =>
+      ` 259       0 nvme0n1 5 0 9 1 7 0 3 2 0 ${nvme} 4 0 0 0 0 0 0\n` +
+      `   8       0 sda 5 0 9 1 7 0 3 2 0 ${sda} 4 0 0 0 0 0 0\n`;
+    const before = HostResources.diskBusyTicks(stats(1000, 500));
+    expect(before).toEqual(
+      new Map([
+        ["nvme0n1", 1000],
+        ["sda", 500],
+      ]),
+    );
+    expect(
+      HostResources.diskBusyPercent(before, HostResources.diskBusyTicks(stats(1030, 2500)), 2000),
+    ).toBe(100);
+    expect(
+      HostResources.diskBusyPercent(before, HostResources.diskBusyTicks(stats(1030, 510)), 2000),
+    ).toBe(1.5);
+    expect(HostResources.diskBusyTicks("")).toEqual(new Map());
+    expect(HostResources.diskBusyPercent(before, new Map(), 2000)).toBeNull();
   });
 
   it("keeps small agents listed while rounding large ones coarsely", () => {
@@ -396,6 +419,24 @@ describe("pressure levels", () => {
       expected: { io: "elevated" },
     },
     {
+      name: "storage stalling every task while the disk is busy",
+      previous: {},
+      sample: { ...quiet, ioFull: 40, diskBusy: 90 },
+      expected: { io: "severe" },
+    },
+    {
+      name: "io PSI from waits that touch no disk, such as an idle io_uring terminal",
+      previous: {},
+      sample: { ...quiet, ioFull: 77, diskBusy: 1.5 },
+      expected: {},
+    },
+    {
+      name: "io PSI that was elevated, now with an idle disk",
+      previous: { io: "elevated" },
+      sample: { ...quiet, ioFull: 77, diskBusy: 1 },
+      expected: {},
+    },
+    {
       name: "a disk under 20 GiB free",
       previous: {},
       sample: { ...quiet, diskFreeBytes: 15 * GiB },
@@ -470,6 +511,48 @@ describe("HostResources pressure on Linux", () => {
         { threadId: "thread-1", agent: "claude", memoryBytes: 960 * MiB, cpuCores: 3 },
       ]);
     }).pipe(Effect.provide(pressured({}))),
+  );
+
+  const ioStalled = "some avg10=80.00 avg60=77.00\nfull avg10=78.00 avg60=75.00\n";
+  const calmCpu = "some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n";
+  const diskstats = (ioTicks: number) =>
+    ` 259       1 nvme1n1 5 0 9 1 7 0 3 2 0 ${ioTicks} 4 0 0 0 0 0 0\n`;
+  const firstIo = Effect.gen(function* () {
+    const hostResources = yield* HostResources.HostResources;
+    const fiber = yield* Effect.forkChild(hostResources.readPressure);
+    yield* TestClock.adjust("200 millis");
+    return (yield* Fiber.join(fiber)).io;
+  });
+
+  it.effect("ignores io PSI while no disk is busy", () =>
+    Effect.gen(function* () {
+      setup();
+      // 3 ms with I/O in flight over 200 ms, as with Ghostty waiting in io_uring.
+      expect(yield* firstIo).toBe("none");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": [calmCpu],
+          "/proc/pressure/io": [ioStalled],
+          "/proc/diskstats": [diskstats(1000), diskstats(1003)],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("reports io pressure while a disk is busy", () =>
+    Effect.gen(function* () {
+      setup();
+      expect(yield* firstIo).toBe("severe");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": [calmCpu],
+          "/proc/pressure/io": [ioStalled],
+          "/proc/diskstats": [diskstats(1000), diskstats(1190)],
+        }),
+      ),
+    ),
   );
 
   it.effect("reports a nearly full disk with its free space", () =>
