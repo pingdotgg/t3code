@@ -122,10 +122,10 @@ export function rewindFileRestore(input: {
 }
 
 function pathSegments(path: string): { root: string; segments: string[] } | undefined {
-  const posix = path.startsWith("/");
-  const normalized = posix ? path : path.replaceAll("\\", "/");
-  const segments = normalized.split("/").filter((segment) => segment.length > 0);
-  if (normalized.startsWith("/")) return { root: posix ? "/" : "\\", segments };
+  // A backslash is a separator on Windows but an ordinary filename character on POSIX.
+  if (path.startsWith("/")) return { root: "/", segments: path.split("/").filter(Boolean) };
+  const segments = path.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (path.startsWith("\\")) return { root: "\\", segments };
   const drive = segments[0];
   if (drive === undefined || !/^[a-zA-Z]:$/.test(drive)) return undefined;
   return { root: drive.toLowerCase(), segments: segments.slice(1) };
@@ -152,7 +152,7 @@ function relativeFolderPath(from: string, to: string): string | undefined {
   );
 }
 
-/** Whether a `/`-separated path from a folder stays inside that folder. */
+/** Whether a `/`-separated path from `folder` stays inside it; `folder` decides POSIX or Windows. */
 export function isRelativePathInsideFolder(relativePath: string, folder?: string): boolean {
   return (
     relativePath !== ".." &&
