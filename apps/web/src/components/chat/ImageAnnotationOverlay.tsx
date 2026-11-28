@@ -307,7 +307,7 @@ export function ImageAnnotationOverlay({
         onPointerCancel={finishStroke}
       >
         {tool === "erase" && (
-          <g aria-hidden="true">
+          <g>
             {strokes.map((stroke) => (
               <path
                 key={stroke.id}
