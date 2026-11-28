@@ -324,7 +324,7 @@ function commandScripts(
 
   let readsStdinScript = false;
   if (interpreter) {
-    const found = interpreterArgs(interpreter, args);
+    const found = interpreterArgs(interpreter, args, name);
     for (const script of found.scripts) {
       const mapped = wordText(script.word, source);
       if (!mapped) continue;
@@ -366,16 +366,18 @@ interface ScriptArgument {
 function interpreterArgs(
   interpreter: Interpreter,
   args: ReadonlyArray<Word>,
+  program: string,
 ): { scripts: ScriptArgument[]; scriptFromFile: boolean } {
   const positionals: Word[] = [];
   const scripts: ScriptArgument[] = [];
   const whole = (word: Word): ScriptArgument => ({ word, inValue: false });
   let optionsEnded = false;
   let scriptFromFile = false;
+  let shellInline = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     const flag = interpreter.ignoreCase ? arg.value.toLowerCase() : arg.value;
-    if (!optionsEnded && flag === "--") {
+    if (!optionsEnded && (flag === "--" || (shellInline && flag === "-"))) {
       optionsEnded = true;
       continue;
     }
@@ -392,29 +394,32 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
+      if (interpreter === SHELL) {
+        // bash, dash, and sh accept `--long` options only before `-c`.
+        if (shellInline && name.startsWith("--") && LONG_OPTIONS_FIRST.has(program)) {
+          return { scripts, scriptFromFile: true };
+        }
+        // `-c` makes the first operand the script, so more options may follow it.
+        if (interpreter.inline(name)) shellInline = true;
+        if (value === undefined) index += shellOptionValues(program, flag);
+        continue;
+      }
       if (interpreter.inline(name)) {
-        // Only POSIX shells skip a `--` after `-c`, and they never read a missing `-c` script from stdin.
-        const next =
-          args[index + (interpreter === SHELL && args[index + 1]?.value === "--" ? 2 : 1)];
+        const next = args[index + 1];
         if (value !== undefined) scripts.push({ word: arg, inValue: true });
         else if (next) scripts.push(whole(next));
-        else if (interpreter === SHELL) scriptFromFile = true;
         if (!interpreter.repeatable) return { scripts, scriptFromFile };
         if (value === undefined) index += 1;
         continue;
       }
-      if (
-        value === undefined &&
-        (interpreter.valueOptions?.has(flag) ||
-          (interpreter === SHELL && /^[-+][a-zA-Z]*[oO]$/u.test(flag)))
-      ) {
-        index += 1;
-      }
+      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
       continue;
     }
+    if (shellInline) return { scripts: [whole(arg)], scriptFromFile: false };
     positionals.push(arg);
     if (interpreter.stdin === "without-script-file" && !interpreter.subcommand) break;
   }
+  if (shellInline) return { scripts, scriptFromFile: true };
 
   if (interpreter.subcommand) {
     if (positionals[0]?.value !== interpreter.subcommand) return { scripts, scriptFromFile: true };
@@ -427,6 +432,18 @@ function interpreterArgs(
   if (interpreter.stdin === "always") return { scripts, scriptFromFile };
   const first = positionals[0];
   return { scripts, scriptFromFile: first !== undefined && first.value !== "-" };
+}
+
+const LONG_OPTIONS_FIRST = new Set(["bash", "dash", "sh"]);
+
+/** How many following words a shell option consumes as values. */
+function shellOptionValues(program: string, flag: string): number {
+  if (flag.startsWith("--")) {
+    return (program === "bash" || program === "sh") && SHELL.valueOptions?.has(flag) ? 1 : 0;
+  }
+  // zsh and ksh take an `-o` value attached (`-oextendedglob`); other shells read one word per o or O in a bundle (`-oe pipefail`).
+  if (program === "zsh" || program === "ksh") return /^[-+][a-zA-Z]*[oO]$/u.test(flag) ? 1 : 0;
+  return /^[-+][a-zA-Z]+$/u.test(flag) ? (flag.match(/[oO]/gu)?.length ?? 0) : 0;
 }
 
 function sliceMapped(mapped: MappedText, start: number): MappedText {
