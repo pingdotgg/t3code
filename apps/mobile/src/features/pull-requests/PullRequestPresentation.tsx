@@ -1,9 +1,18 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
-import type { PullRequestActor } from "@t3tools/contracts";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type EnvironmentId,
+  type ProjectId,
+  type PullRequestActor,
+} from "@t3tools/contracts";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
 import { useGT } from "gt-react-native";
+import { use, type ReactNode } from "react";
 import { View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -11,6 +20,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useAssetUrlState } from "../../state/assets";
+import { useProject } from "../../state/entities";
+import { PullRequestMediaContext } from "./PullRequestMedia";
+import type { PullRequestMediaLocation } from "./pullRequestMediaSource";
 
 export function PullRequestReadStatus(props: {
   readonly pending: boolean;
@@ -47,16 +60,73 @@ export function PullRequestConflictBadge(props: { readonly surfaceClassName: str
   );
 }
 
+/** Avatars inside are fetched through the project's environment. */
+export function PullRequestProjectMedia(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly children: ReactNode;
+}) {
+  const cwd = useProject({
+    environmentId: props.environmentId,
+    projectId: props.projectId,
+  })?.workspaceRoot;
+  return (
+    <PullRequestMediaContext value={cwd ? { environmentId: props.environmentId, cwd } : null}>
+      {props.children}
+    </PullRequestMediaContext>
+  );
+}
+
 export function PullRequestAvatar(props: {
   readonly actor: PullRequestActor | null;
   readonly size?: number;
 }) {
+  const media = use(PullRequestMediaContext);
+  const avatarUrl = props.actor?.avatarUrl || null;
+  // A host that shows avatars only to its signed-in users is fetched through the server.
+  const fetchUrl =
+    avatarUrl === null ? undefined : sourceControlClients.mediaUrl(avatarUrl)?.fetchUrl;
+  if (fetchUrl === undefined) {
+    return <AvatarImage actor={props.actor} uri={avatarUrl} size={props.size} />;
+  }
+  return media === null ? (
+    <AvatarImage actor={props.actor} uri={null} size={props.size} />
+  ) : (
+    <HostAvatar actor={props.actor} media={media} fetchUrl={fetchUrl} size={props.size} />
+  );
+}
+
+function HostAvatar(props: {
+  readonly actor: PullRequestActor | null;
+  readonly media: PullRequestMediaLocation;
+  readonly fetchUrl: string;
+  readonly size: number | undefined;
+}) {
+  const asset = useAssetUrlState(props.media.environmentId, {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd: props.media.cwd,
+    url: props.fetchUrl,
+  });
+  return (
+    <AvatarImage
+      actor={props.actor}
+      uri={asset._tag === "Success" ? asset.url : null}
+      size={props.size}
+    />
+  );
+}
+
+function AvatarImage(props: {
+  readonly actor: PullRequestActor | null;
+  readonly uri: string | null;
+  readonly size: number | undefined;
+}) {
   const size = props.size ?? 24;
-  return props.actor?.avatarUrl ? (
+  return props.uri ? (
     <Image
-      source={{ uri: props.actor.avatarUrl }}
-      recyclingKey={props.actor.avatarUrl}
-      accessibilityLabel={props.actor.login}
+      source={{ uri: props.uri }}
+      recyclingKey={props.uri}
+      accessibilityLabel={props.actor?.login}
       style={{ width: size, height: size, borderRadius: size / 2 }}
       cachePolicy="memory-disk"
     />

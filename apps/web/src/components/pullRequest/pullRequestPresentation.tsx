@@ -1,16 +1,20 @@
 import { Spinner } from "~/components/ui/spinner";
-import type {
-  PullRequestActor,
-  PullRequestCheck,
-  PullRequestCheckStatus,
-  PullRequestChecksState,
-  PullRequestLabel,
-  PullRequestMergeability,
-  PullRequestReviewDecision,
-  PullRequestState,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  type PullRequestActor,
+  type PullRequestCheck,
+  type PullRequestCheckStatus,
+  type PullRequestChecksState,
+  type PullRequestLabel,
+  type PullRequestMergeability,
+  type PullRequestReviewDecision,
+  type PullRequestState,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -23,11 +27,21 @@ import {
   UserRoundXIcon,
 } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
+import {
+  Children,
+  createContext,
+  type CSSProperties,
+  isValidElement,
+  type ReactNode,
+  use,
+  useState,
+} from "react";
 
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
+import { useProject } from "~/state/entities";
 
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
@@ -460,6 +474,30 @@ export function PullRequestReviewOutcomeBadge({
   );
 }
 
+/** Where to fetch avatars a host shows only to its signed-in users, such as Azure DevOps. */
+const PullRequestAvatarSourceContext = createContext<{
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+} | null>(null);
+
+/** Avatars inside are fetched through the project's environment. */
+export function PullRequestProjectAvatarSource({
+  project,
+  children,
+}: {
+  project: ScopedProjectRef;
+  children: ReactNode;
+}) {
+  const cwd = useProject(project)?.workspaceRoot;
+  return (
+    <PullRequestAvatarSourceContext
+      value={cwd === undefined ? null : { environmentId: project.environmentId, cwd }}
+    >
+      {children}
+    </PullRequestAvatarSourceContext>
+  );
+}
+
 export function PullRequestActorAvatar({
   actor,
   className,
@@ -467,10 +505,57 @@ export function PullRequestActorAvatar({
   actor: PullRequestActor | null;
   className?: string;
 }) {
-  const login = actor?.login ?? "ghost";
+  const source = use(PullRequestAvatarSourceContext);
   const avatarUrl = actor?.avatarUrl ?? null;
-  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
-  return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
+  const fetchUrl =
+    avatarUrl === null ? undefined : sourceControlClients.mediaUrl(avatarUrl)?.fetchUrl;
+  if (fetchUrl === undefined) {
+    return <ActorAvatarImage actor={actor} src={avatarUrl} className={className} />;
+  }
+  return source === null ? (
+    <ActorAvatarImage actor={actor} src={null} className={className} />
+  ) : (
+    <HostActorAvatar actor={actor} source={source} fetchUrl={fetchUrl} className={className} />
+  );
+}
+
+function HostActorAvatar({
+  actor,
+  source,
+  fetchUrl,
+  className,
+}: {
+  actor: PullRequestActor | null;
+  source: { readonly environmentId: EnvironmentId; readonly cwd: string };
+  fetchUrl: string;
+  className: string | undefined;
+}) {
+  const asset = useAssetUrlState(source.environmentId, {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd: source.cwd,
+    url: fetchUrl,
+  });
+  return (
+    <ActorAvatarImage
+      actor={actor}
+      src={asset._tag === "Success" ? asset.url : null}
+      className={className}
+    />
+  );
+}
+
+function ActorAvatarImage({
+  actor,
+  src,
+  className,
+}: {
+  actor: PullRequestActor | null;
+  src: string | null;
+  className: string | undefined;
+}) {
+  const login = actor?.login ?? "ghost";
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return src === null || failedSrc === src ? (
     <span
       aria-hidden
       className={cn(
@@ -484,10 +569,10 @@ export function PullRequestActorAvatar({
     <img
       aria-hidden
       alt=""
-      src={avatarUrl}
+      src={src}
       loading="lazy"
       className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
-      onError={() => setFailedAvatarUrl(avatarUrl)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }

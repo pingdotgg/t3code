@@ -37,6 +37,7 @@ import {
   type ClosedStates,
 } from "./azureDevOpsIssueJson.ts";
 import { decodePullRequestJson } from "./azureDevOpsPullRequestJson.ts";
+import { azureDevOpsAvatarUrl } from "../shared/azureDevOpsAvatar.ts";
 
 const KIND = IssueTrackerKind.make("azure-devops");
 
@@ -1025,7 +1026,7 @@ export const make: Effect.Effect<
                       id: login,
                       login,
                       name: identity.displayName?.trim() || null,
-                      avatarUrl: identity.imageUrl?.trim() || null,
+                      avatarUrl: azureDevOpsAvatarUrl(identity.imageUrl?.trim() || null),
                     });
                   }
                   return [...byLogin.values()];

@@ -116,6 +116,35 @@ describe("decodePullRequestListJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it("does not hand the client an avatar that only a signed-in Azure browser session can load", () => {
+    const identityImage = (id: string) =>
+      `https://dev.azure.com/acme/_api/_common/identityImage?id=${id}`;
+    const decoded = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            createdBy: {
+              displayName: "Bilal Hassan",
+              uniqueName: "bilal@acme.dev",
+              imageUrl: identityImage("045e40d6-c17e-66c1-9649-dc1f0141a3a3"),
+            },
+            reviewers: [
+              {
+                displayName: "Mina Okafor",
+                uniqueName: "mina@acme.dev",
+                imageUrl: identityImage("7a1b2c3d-0000-4000-8000-000000000001"),
+                vote: 0,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+
+    expect(decoded?.author?.avatarUrl).not.toContain("/_api/_common/identityImage");
+    expect(decoded?.reviewers[0]?.avatarUrl).not.toContain("/_api/_common/identityImage");
+  });
+
   it("keeps the strategy stored with auto-complete", () => {
     const armed = expectSuccess(
       decodePullRequestJson(

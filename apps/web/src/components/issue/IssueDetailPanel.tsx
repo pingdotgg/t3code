@@ -72,6 +72,7 @@ import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import {
   PullRequestActorLabel,
+  PullRequestProjectAvatarSource,
   PullRequestLabelChip,
   PullRequestMetaLine,
   PullRequestStateGlyph,
@@ -429,7 +430,17 @@ function IssueEventText({
 
 const issueScrollPositions = new LRUCache<number>(128, 64 * 1024);
 
-export function IssueDetailPanel({
+export function IssueDetailPanel(props: Parameters<typeof IssueDetailPanelBody>[0]) {
+  return (
+    <PullRequestProjectAvatarSource
+      project={{ environmentId: props.environmentId, projectId: props.reference.projectId }}
+    >
+      <IssueDetailPanelBody {...props} />
+    </PullRequestProjectAvatarSource>
+  );
+}
+
+function IssueDetailPanelBody({
   environmentId,
   reference,
   threadRef = null,

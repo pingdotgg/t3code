@@ -167,6 +167,7 @@ import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
   PullRequestMetaLine,
+  PullRequestProjectAvatarSource,
   PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
   pullRequestChecksStatePresentation,
@@ -355,7 +356,17 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
 // restored position and its scroll compensation would move the view.
 const summaryCondensedByScopeKey = new Map<string, boolean>();
 
-export function PullRequestDetailPanel({
+export function PullRequestDetailPanel(props: Parameters<typeof PullRequestDetailPanelBody>[0]) {
+  return (
+    <PullRequestProjectAvatarSource
+      project={{ environmentId: props.environmentId, projectId: props.reference.projectId }}
+    >
+      <PullRequestDetailPanelBody {...props} />
+    </PullRequestProjectAvatarSource>
+  );
+}
+
+function PullRequestDetailPanelBody({
   environmentId,
   shortcutsEnabled,
   getShortcutContext,

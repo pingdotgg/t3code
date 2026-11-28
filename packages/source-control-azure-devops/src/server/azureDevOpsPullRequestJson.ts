@@ -19,6 +19,7 @@ import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
+import { azureDevOpsAvatarUrl } from "../shared/azureDevOpsAvatar.ts";
 
 // CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
@@ -174,7 +175,11 @@ function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | unde
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
   return login === null
     ? null
-    : { login, name: trimmed(raw?.displayName), avatarUrl: trimmed(raw?.imageUrl) };
+    : {
+        login,
+        name: trimmed(raw?.displayName),
+        avatarUrl: azureDevOpsAvatarUrl(trimmed(raw?.imageUrl)),
+      };
 }
 
 function toLabels(

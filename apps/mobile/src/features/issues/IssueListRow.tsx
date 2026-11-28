@@ -8,7 +8,10 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { ListRowLabel } from "../pull-requests/PullRequestListRow";
-import { PullRequestAvatar } from "../pull-requests/PullRequestPresentation";
+import {
+  PullRequestAvatar,
+  PullRequestProjectMedia,
+} from "../pull-requests/PullRequestPresentation";
 import {
   selectedThreadRowColors,
   THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE,
@@ -74,7 +77,9 @@ export const IssueListRow = memo(function IssueListRow(props: {
           )}
         >
           <View className="flex-row items-center gap-1.5">
-            <PullRequestAvatar actor={item.author} size={16} />
+            <PullRequestProjectMedia environmentId={item.environmentId} projectId={item.projectId}>
+              <PullRequestAvatar actor={item.author} size={16} />
+            </PullRequestProjectMedia>
             <Text className={cn("min-w-0 flex-1 text-xs", muted)} numberOfLines={1}>
               {/* A Linear key already names its team; a git host's number needs the repository. */}
               {item.displayKey.startsWith(`${item.scope}-`)

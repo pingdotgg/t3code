@@ -350,3 +350,44 @@ describe("Azure DevOps issue scope", () => {
     ).toBeNull();
   });
 });
+
+describe("Azure DevOps avatars", () => {
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+  const id = "045e40d6-c17e-66c1-9649-dc1f0141a3a3";
+  const fetchUrl = `https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/${id}`;
+
+  it("fetches every spelling of an identity's picture through the REST route", () => {
+    for (const url of [
+      `https://dev.azure.com/Acme/_api/_common/identityImage?id=${id.toUpperCase()}`,
+      `https://acme.visualstudio.com/_api/_common/identityImage?id=${id}`,
+      fetchUrl,
+    ]) {
+      expect(media(url)).toEqual({ fetchUrl, fileName: `${id}.png`, kind: "image" });
+    }
+  });
+
+  it("keeps the subject descriptor work item identities carry, case and all", () => {
+    const descriptor = "aad.MDQ1ZTQwZDYtYzE3ZS03NmMxLTk2NDktZGMxZjAxNDFhM2Ez";
+    expect(
+      media(`https://dev.azure.com/Acme/_apis/GraphProfile/MemberAvatars/${descriptor}`),
+    ).toEqual({
+      fetchUrl: `https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/${descriptor}`,
+      fileName: `${descriptor}.png`,
+      kind: "image",
+    });
+  });
+
+  it("claims nothing else", () => {
+    for (const url of [
+      `https://dev.azure.com/acme/_api/_common/identityImage?id=not-a-guid`,
+      `https://dev.azure.com/acme/project/_api/_common/identityImage?id=${id}`,
+      `https://tfs.acme.dev/tfs/DefaultCollection/_api/_common/identityImage?id=${id}`,
+      `http://dev.azure.com/acme/_api/_common/identityImage?id=${id}`,
+      "https://dev.azure.com/acme/project/_git/web/pullrequest/1",
+      "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.bad%2Fslash",
+      "https://dev.azure.com/acme/_api/_common/identityImage?id=aad.MDQ1ZTQwZDY",
+    ]) {
+      expect(media(url)).toBeNull();
+    }
+  });
+});
