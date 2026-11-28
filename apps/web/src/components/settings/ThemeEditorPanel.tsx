@@ -1455,7 +1455,7 @@ export function ThemeEditorPanel({
                         )}
                 </p>
               ) : null}
-              {!isAdvanced ? renderAppearanceButtons() : null}
+              {renderAppearanceButtons()}
               {isAdvanced ? renderAdvancedColors() : renderSimpleColors()}
               {renderAdvancedSwitch()}
               <div className="space-y-2">

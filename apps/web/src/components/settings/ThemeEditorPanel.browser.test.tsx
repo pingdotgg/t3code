@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import type { ReactNode } from "react";
 
 import { act, render } from "../../../test/render";
+import { getStandardThemeColors, type ThemeDefinition } from "../../themePalette";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
@@ -374,5 +375,35 @@ describe("ThemeEditorPanel", () => {
     expect(filter.value).toBe("accent");
     expect(view.onEditorOpenChange).not.toHaveBeenCalled();
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps appearance switching available in advanced mode for dual-palette themes", async () => {
+    const editingTheme: ThemeDefinition = {
+      id: "custom-hand-tuned",
+      label: "Hand Tuned",
+      appearance: "dark",
+      colors: { ...getStandardThemeColors("dark"), sidebar: "#123456" },
+      variants: {
+        light: { ...getStandardThemeColors("light"), sidebar: "#abcdef" },
+      },
+    };
+    await using _screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={() => {}}
+        onSaved={() => true}
+        editingTheme={editingTheme}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+
+    await expect
+      .element(page.getByRole("switch", { name: "Use advanced theme colors" }))
+      .toBeChecked();
+    await userEvent.click(page.getByRole("button", { name: "Light" }));
+    await expect
+      .element(page.getByRole("textbox", { name: "Sidebar background hex value" }))
+      .toHaveValue("#abcdef");
   });
 });
