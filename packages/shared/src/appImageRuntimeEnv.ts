@@ -7,8 +7,24 @@ const APPIMAGE_PATH_LIKE_ENV_SEPARATORS = {
   GSETTINGS_SCHEMA_DIR: /:/,
 } as const;
 
-function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
-  return segment === appDir || segment.startsWith(`${appDir}/`);
+interface NormalizedPosixPath {
+  readonly absolute: boolean;
+  readonly parts: readonly string[];
+}
+
+function normalizePosixPath(value: string): NormalizedPosixPath {
+  return {
+    absolute: value.startsWith("/"),
+    parts: value.split("/").filter((part) => part !== "" && part !== "."),
+  };
+}
+
+function isPathSegmentUnderAppDir(segment: string, appDir: NormalizedPosixPath): boolean {
+  const normalized = normalizePosixPath(segment);
+  if (normalized.absolute !== appDir.absolute || normalized.parts.length < appDir.parts.length) {
+    return false;
+  }
+  return appDir.parts.every((part, index) => normalized.parts[index] === part);
 }
 
 // AppImage mount paths would make child commands resolve against the mount instead of the user's system.
@@ -20,8 +36,8 @@ export function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessE
     delete scrubbed[key];
   }
 
-  const appDir = env.APPDIR?.replace(/\/+$/, "");
-  if (appDir) {
+  const appDir = env.APPDIR ? normalizePosixPath(env.APPDIR) : undefined;
+  if (appDir && appDir.parts.length > 0) {
     for (const [key, separator] of Object.entries(APPIMAGE_PATH_LIKE_ENV_SEPARATORS)) {
       const value = scrubbed[key];
       if (value === undefined) continue;
