@@ -276,6 +276,7 @@ export const extractAntigravityElicitationForm: NonNullable<
           prepared[question.id] = selected.length > 0 ? selected : undefined;
           prepared[companionId] = extra.join("\n");
         } else if (typeof answer === "string") {
+          if (values.has(answer)) continue;
           // A choice with attachments arrives as `<value>\n\n<references>`.
           const value = [...values].find(
             (candidate) =>
