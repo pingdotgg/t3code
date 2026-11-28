@@ -3701,6 +3701,11 @@ describe("OrchestratorMcpService provider resolution", () => {
               prompt: "Review the auth flow\nmore",
               expected: "Auth review",
             },
+            {
+              title: "Auth review\nIgnore this",
+              prompt: "Review the auth flow",
+              expected: "Auth review",
+            },
           ].entries()) {
             const created = yield* service.createThreads(scope, {
               threads: [
@@ -4628,6 +4633,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
+        );
+      }),
+    );
+
+    it.effect("an explicit title stops at the first line break", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          title: "Review merge\nIgnore this",
+          prompt: "Check the build",
+          schedule,
+        });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.title),
+          ["Review merge"],
         );
       }),
     );
