@@ -163,7 +163,13 @@ function LinkedThreadEntry(props: {
   }
   // A message the agent sent with a tool reads as its own words, as on the thread screen.
   if (entry.type === "sent-message") {
-    return <SelectableMarkdownText markdown={entry.text} textStyle={styles.nativeTextStyle} />;
+    return (
+      <SelectableMarkdownText
+        markdown={entry.text}
+        textStyle={styles.nativeTextStyle}
+        singleTilde={false}
+      />
+    );
   }
   if (entry.type !== "message" || entry.message.text.trim() === "") return null;
   return entry.message.role === "user" ? (
@@ -173,7 +179,11 @@ function LinkedThreadEntry(props: {
       </Text>
     </View>
   ) : (
-    <SelectableMarkdownText markdown={entry.message.text} textStyle={styles.nativeTextStyle} />
+    <SelectableMarkdownText
+      markdown={entry.message.text}
+      textStyle={styles.nativeTextStyle}
+      singleTilde={false}
+    />
   );
 }
 
