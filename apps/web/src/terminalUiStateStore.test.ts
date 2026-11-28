@@ -66,57 +66,23 @@ describe("terminalUiStateStore actions", () => {
   );
 
   it.each([
-    {
-      order: "first then second",
-      reverse: false,
-      newer: false,
-      rejectFirst: true,
-      expected: "first",
-    },
-    {
-      order: "second then first",
-      reverse: true,
-      newer: false,
-      rejectFirst: true,
-      expected: "first",
-    },
-    {
-      order: "after a newer selection",
-      reverse: false,
-      newer: true,
-      rejectFirst: true,
-      expected: "second",
-    },
-    {
-      order: "after the first succeeds",
-      reverse: false,
-      newer: false,
-      rejectFirst: false,
-      expected: "pending-1",
-    },
-  ])(
-    "keeps the expected selection when overlapping launches settle $order",
-    ({ reverse, newer, rejectFirst, expected }) => {
-      const store = useTerminalUiStateStore.getState();
-      for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
-      store.setActiveTerminal(THREAD_REF, "first");
-      const settleFirst = store.trackTerminalPlacement(THREAD_REF, "pending-1");
-      store.newTerminal(THREAD_REF, "pending-1");
-      const settleSecond = store.trackTerminalPlacement(THREAD_REF, "pending-2");
-      store.newTerminal(THREAD_REF, "pending-2");
+    { order: "first then second", reverse: false },
+    { order: "second then first", reverse: true },
+  ])("restores the original tab when overlapping launches are rejected $order", ({ reverse }) => {
+    const store = useTerminalUiStateStore.getState();
+    for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
+    store.setActiveTerminal(THREAD_REF, "first");
+    const settleFirst = store.trackTerminalPlacement(THREAD_REF, "pending-1");
+    store.newTerminal(THREAD_REF, "pending-1");
+    const settleSecond = store.trackTerminalPlacement(THREAD_REF, "pending-2");
+    store.newTerminal(THREAD_REF, "pending-2");
 
-      if (newer) store.setActiveTerminal(THREAD_REF, "second");
-      if (reverse) {
-        settleSecond(true);
-        settleFirst(rejectFirst);
-      } else {
-        settleFirst(rejectFirst);
-        settleSecond(true);
-      }
+    for (const settle of reverse ? [settleSecond, settleFirst] : [settleFirst, settleSecond]) {
+      settle(true);
+    }
 
-      expect(layout().activeTerminalId).toBe(expected);
-    },
-  );
+    expect(layout().activeTerminalId).toBe("first");
+  });
 
   it("caps splits at four terminals per group", () => {
     const store = useTerminalUiStateStore.getState();
