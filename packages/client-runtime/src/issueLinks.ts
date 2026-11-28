@@ -5,6 +5,7 @@ import {
   type IssueTrackerConnectionList,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
+import { JIRA_KIND, parseJiraIssueUrl } from "@t3tools/issue-tracker-jira/shared/issueUrl";
 import {
   LINEAR_HOST,
   LINEAR_KIND,
@@ -63,8 +64,11 @@ function parseIssueLink(
 
 function parseStandaloneIssueLink(url: string) {
   try {
-    const link = parseLinearIssueUrl(new URL(url));
-    return link === null ? null : { tracker: LINEAR_KIND, link };
+    const parsed = new URL(url);
+    const linear = parseLinearIssueUrl(parsed);
+    if (linear !== null) return { tracker: LINEAR_KIND, link: linear };
+    const jira = parseJiraIssueUrl(parsed);
+    return jira === null ? null : { tracker: JIRA_KIND, link: jira };
   } catch {
     return null;
   }
@@ -82,7 +86,7 @@ const LINEAR_LINK_HINT_PATTERN = new RegExp(
 
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return LINEAR_LINK_HINT_PATTERN.test(text);
+  return LINEAR_LINK_HINT_PATTERN.test(text) || /\.atlassian\.net\/browse\//i.test(text);
 }
 
 /**
@@ -124,12 +128,22 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
     issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
   const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
-  if (lender === undefined) return null;
+  // An unbound Jira project uses the server's default Jira account. Never use it
+  // to open a link for another site or route through a project bound to another Jira account.
+  const fallback =
+    tracker === JIRA_KIND && accounts.has(null)
+      ? projects.find(
+          (project) =>
+            project.id === preferredProjectId && bindings[project.id]?.tracker !== tracker,
+        )
+      : undefined;
+  const project = lender?.project ?? fallback;
+  if (project === undefined) return null;
   return {
-    project: lender.project,
+    project,
     ref: {
-      projectId: lender.project.id,
-      tracker: lender.binding.tracker,
+      projectId: project.id,
+      tracker,
       host: link.host,
       scope: (own && boundScope(own)) ?? link.scope,
       key: link.key,

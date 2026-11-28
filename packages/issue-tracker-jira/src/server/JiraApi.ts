@@ -10,16 +10,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { type IssueCommentAudience, IssueTrackerKind } from "@t3tools/contracts";
+import type { IssueCommentAudience } from "@t3tools/contracts";
 import {
   IssueTrackerError,
   type IssueTrackerCredential,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
 
+import { JIRA_KIND } from "../shared/issueUrl.ts";
 import type { AdfNode } from "./adf.ts";
-
-export const KIND = IssueTrackerKind.make("jira");
 const REQUEST_TIMEOUT = "30 seconds";
 const PAGE = 100;
 /** Pages read of a list that only feeds a picker; past it the list is reported truncated. */
@@ -126,7 +125,7 @@ export const fail = (
   extra: { readonly retryAt?: number | undefined; readonly cause?: unknown } = {},
 ) =>
   new IssueTrackerError({
-    tracker: KIND,
+    tracker: JIRA_KIND,
     operation,
     reason,
     detail,
@@ -250,7 +249,7 @@ export const make = Effect.gen(function* () {
   const host = yield* IssueTrackerHost.IssueTrackerHost;
 
   const storedSite = (operation: string) =>
-    host.credentials.get(KIND).pipe(
+    host.credentials.get(JIRA_KIND).pipe(
       Effect.flatMap(
         Effect.fromOption(() =>
           fail(operation, "unauthenticated", "Jira is not connected on this server."),

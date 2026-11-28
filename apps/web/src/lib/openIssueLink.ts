@@ -9,7 +9,7 @@ import type { MouseEvent } from "react";
 
 import { readIssueListPreferences } from "../components/issue/issueListPreferences";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
-import { useProjects, useServerConfigs } from "../state/entities";
+import { readThreadShell, useProjects, useServerConfigs } from "../state/entities";
 
 /**
  * Opens an issue link beside the thread, and says whether it did. Anything else — a host no
@@ -42,6 +42,8 @@ export function useOpenIssueLink(
     const target = resolveIssueLinkTarget({
       url: targetUrl,
       projects: allProjects.filter((project) => project.environmentId === environmentId),
+      preferredProjectId:
+        threadRef === undefined ? undefined : readThreadShell(threadRef)?.projectId,
       trackers,
     });
     if (target === null) return false;

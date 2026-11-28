@@ -160,6 +160,49 @@ describe("resolveIssueLinkTarget", () => {
     ]).toEqual(["p2", "p1"]);
   });
 
+  it("opens a Jira link through No project only for the connected site", () => {
+    const jira = IssueTrackerKind.make("jira");
+    const scratch = {
+      id: ProjectId.make("scratch"),
+      environmentId: EnvironmentId.make("env"),
+      repositoryIdentity: null,
+    };
+    const connection = {
+      tracker: jira,
+      displayName: "Jira",
+      host: "atlassian.net",
+      scopeNoun: "project",
+      credential: { label: "API token", helpUrl: null },
+      connected: true,
+      account: "alex",
+      detail: null,
+      workspace: "acme.atlassian.net",
+      scopes: [],
+    };
+    const resolve = (url: string, trackers = { trackers: [connection], bindings: {} }) =>
+      resolveIssueLinkTarget({
+        url,
+        projects: [scratch, ...projects],
+        preferredProjectId: scratch.id,
+        trackers,
+      })?.ref;
+    expect(resolve("https://acme.atlassian.net/browse/HELP-42?focusedCommentId=1")).toEqual({
+      projectId: scratch.id,
+      tracker: jira,
+      host: "atlassian.net",
+      scope: "HELP",
+      key: "HELP-42",
+    });
+    expect(resolve("https://other.atlassian.net/browse/HELP-42")).toBeUndefined();
+    expect(resolve("https://acme.atlassian.net.evil.test/browse/HELP-42")).toBeUndefined();
+    expect(
+      resolve("https://acme.atlassian.net/browse/HELP-42", {
+        trackers: [connection],
+        bindings: { [ProjectId.make("p1")]: { tracker: jira, scope: "HELP" } },
+      })?.projectId,
+    ).toBe("p1");
+  });
+
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",
     "https://github.com/acme/web/pull/7",
@@ -172,6 +215,7 @@ describe("mayContainStandaloneIssueLink", () => {
   it.each([
     ["[issue](https://linear.app/acme/issue/WEB-17)", true],
     ["[issue](https://LINEAR.APP/acme/issue/WEB-17)", true],
+    ["[issue](https://acme.atlassian.net/browse/HELP-42)", true],
     ["[issue](https://github.com/acme/web/issues/7)", false],
   ])("classifies %s as %s", (text, expected) => {
     expect(mayContainStandaloneIssueLink(text)).toBe(expected);
