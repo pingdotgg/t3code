@@ -690,7 +690,7 @@ function visitMarkdownLines(
         paragraph = false;
         break;
       }
-      const footnote = content.startsWith("[^") && FOOTNOTE_DEFINITION_PATTERN.exec(content);
+      const footnote = FOOTNOTE_DEFINITION_PATTERN.exec(content);
       if (footnote) {
         containers.push(4);
         position += indent + footnote[0].length;
