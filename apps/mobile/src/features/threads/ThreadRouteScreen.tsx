@@ -258,6 +258,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 
 function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const gt = useGT();
+  const m = useMessages();
   useAndroidWorkspaceBack();
   const connectionsReady = useConnectionsReady();
   const { connectedEnvironments, connectionState } = useRemoteConnectionStatus();
@@ -380,12 +381,22 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   }
 
   if (connectionWait === "unreachable") {
+    const environment = routeEnvironment?.environmentLabel ?? environmentId;
+    // While the host hasn't approved this device, the connection error says where to approve it.
+    const approvalDetail = routeEnvironmentRuntime?.connectionAwaitingApproval
+      ? runtimeConnectionErrorText(routeEnvironmentRuntime, m)
+      : null;
     return withInspectorHeader(
       <ThreadUnavailableScreen
-        title={gt("Waiting to connect")}
-        detail={gt("Can't reach {environment} yet. The thread opens once it connects.", {
-          environment: routeEnvironment?.environmentLabel ?? environmentId,
-        })}
+        title={
+          approvalDetail === null
+            ? gt("Waiting to connect")
+            : gt("Waiting for {environment} to approve this device", { environment })
+        }
+        detail={
+          approvalDetail ??
+          gt("Can't reach {environment} yet. The thread opens once it connects.", { environment })
+        }
         actionLabel={gt("Retry")}
         onAction={() => onReconnectEnvironment(environmentId)}
       />,
