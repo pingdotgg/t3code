@@ -18,7 +18,7 @@ import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { useMemo } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetHeader } from "../../components/ui/SheetHeader";
@@ -196,13 +196,17 @@ function AgentRow(props: {
       </Pressable>
     );
 
+  const stop = <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />;
+
   return (
     <View className="flex-row items-center">
       {content}
-      {/* Every row reserves the stop slot so running and finished rows share a trailing edge. */}
-      <View className="ml-2 min-w-8 android:min-w-12">
-        <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
-      </View>
+      {Platform.OS === "ios" ? (
+        // iOS rows reserve the stop slot so running and finished rows share a trailing edge.
+        <View className="w-[44px]">{stop}</View>
+      ) : (
+        stop
+      )}
     </View>
   );
 }

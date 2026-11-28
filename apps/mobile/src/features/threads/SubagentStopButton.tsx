@@ -6,6 +6,7 @@ import { View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { IconButton } from "../../components/ui/IconButton";
+import { cn } from "../../lib/cn";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,7 +49,8 @@ export function SubagentStopButton(props: {
   };
 
   return (
-    <View className={props.className}>
+    // The iOS box bounds the compact button's hitSlop so it never reaches neighbouring controls.
+    <View className={cn("ios:size-[44px] ios:items-center ios:justify-center", props.className)}>
       <IconButton
         icon="stop.fill"
         variant="danger"
