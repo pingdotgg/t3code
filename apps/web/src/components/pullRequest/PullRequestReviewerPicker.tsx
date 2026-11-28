@@ -27,6 +27,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
@@ -71,6 +72,7 @@ export function PullRequestReviewerPicker({
   const resolve = useMessages();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const [draft, setDraft] = useState(emptySelection<PullRequestReviewerCandidate>);
 
   const candidatesQuery = useEnvironmentQuery(
@@ -105,6 +107,8 @@ export function PullRequestReviewerPicker({
     people: ReadonlyArray<PullRequestReviewerCandidate>,
     requested: boolean,
   ) => {
+    const keys = people.map((candidate) => `${candidate.kind}:${candidate.id}`);
+    setPendingKeys((current) => new Set([...current, ...keys]));
     const result = await requestReviewers({
       environmentId,
       input: {
@@ -112,6 +116,8 @@ export function PullRequestReviewerPicker({
         reviewers: people.map(({ id, kind }) => ({ id, kind })),
         requested,
       },
+    }).finally(() => {
+      setPendingKeys((current) => new Set([...current].filter((key) => !keys.includes(key))));
     });
     if (result._tag === "Success") return;
     const logins = people.map((person) => person.login).join(", ");
@@ -181,6 +187,7 @@ export function PullRequestReviewerPicker({
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError, resolve)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
+      pendingKeys={pendingKeys}
       onSelect={(candidate) =>
         setDraft((current) =>
           toggleSelection(
@@ -192,13 +199,15 @@ export function PullRequestReviewerPicker({
         )
       }
     >
-      {(candidate) => (
+      {(candidate, busy) => (
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
-          {isSelected(draft, `${candidate.kind}:${candidate.id}`, candidate.isRequested) ? (
+          {busy ? (
+            <Spinner size="sm" className="shrink-0" />
+          ) : isSelected(draft, `${candidate.kind}:${candidate.id}`, candidate.isRequested) ? (
             <CheckIcon aria-label={gt("Already asked")} className="size-3.5 shrink-0" />
           ) : null}
         </>
