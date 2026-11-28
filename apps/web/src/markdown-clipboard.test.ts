@@ -266,6 +266,15 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph.children.map(inline)).toEqual([["text", value]]);
   });
 
+  it("copies bracketed prose that does not read back as display math", () => {
+    const value = "Tags [WIP] and [done]";
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)), {
+      math: true,
+    });
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
+  });
+
   it("escapes literal block starts across containers without escaping real blocks or verbatim spans", () => {
     const el = (tag: string, ...children: Array<FakeElement | string>) =>
       new FakeElement(tag).append(
@@ -392,6 +401,7 @@ describe("serializeRenderedMarkdownFragment", () => {
 
   it.each([
     ["array[index]", "https://example.com"] as const,
+    ["C:\\repo\\file[1].ts", "https://example.com"] as const,
     ...[
       "support@example.com?subject=Help",
       "foo",
