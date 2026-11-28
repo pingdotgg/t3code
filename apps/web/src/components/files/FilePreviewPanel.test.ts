@@ -823,6 +823,23 @@ Third}`;
     );
   });
 
+  it("respects ODT hidden text and hidden paragraph fields", async () => {
+    // Field markup as LibreOffice Writer saves it: a visible hidden-text field keeps no content, only
+    // its text:string-value.
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+      '<text:p>Gate code <text:hidden-text text:condition="ooow:1" text:string-value="4471 (staff only)" text:is-hidden="true">4471 (staff only)</text:hidden-text>is posted.</text:p>' +
+      '<text:p>Shown field <text:hidden-text text:condition="ooow:0" text:string-value="visible note"/><text:s/>end.</text:p>' +
+      '<text:p><text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/>Internal margin is 42%.</text:p>' +
+      '<text:p><text:hidden-paragraph text:condition="ooow:0"/>Kept paragraph.</text:p>' +
+      "</office:text></office:body></office:document-content>";
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p>",
+    );
+  });
+
   it("maps ODT heading outline levels to HTML heading tags", async () => {
     const xml =
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
