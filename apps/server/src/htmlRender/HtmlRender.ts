@@ -132,17 +132,12 @@ const findInCss = (css: string) => {
   return undefined;
 };
 
-// Quotes in script text belong to the script, not to the CSS it spells out.
-const findInScriptText = (css: string) => VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
-
-const findViewportHeight = (
-  source: string,
-  pattern: RegExp,
-  find: (css: string) => string | undefined,
-) => {
+// Generated text (`content`) only lives in stylesheets. Attribute values hold HTML character
+// references and scripts hold their own quotes, so neither is parsed as CSS strings.
+const findViewportHeight = (source: string, pattern: RegExp) => {
   for (const [, ...captures] of source.matchAll(pattern)) {
     for (const css of captures) {
-      const found = css === undefined ? undefined : find(css);
+      const found = css === undefined ? undefined : VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
       if (found !== undefined) return found;
     }
   }
@@ -153,10 +148,10 @@ const rejectViewportHeight = (html: string) => {
   for (const [, scriptTag, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
     const found =
       script !== undefined
-        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE, findInCss) ??
-          findViewportHeight(script, SCRIPT_STYLE, findInScriptText))
+        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE) ??
+          findViewportHeight(script, SCRIPT_STYLE))
         : tag !== undefined
-          ? findViewportHeight(tag, TAG_STYLE, findInCss)
+          ? findViewportHeight(tag, TAG_STYLE)
           : findInCss(sheet ?? "");
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }

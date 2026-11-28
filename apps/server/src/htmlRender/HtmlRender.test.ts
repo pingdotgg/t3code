@@ -123,6 +123,7 @@ describe("HtmlRender", () => {
         "<style>/* don't */main{height:100vh}/* it's */</style>",
         "<style>main{background:url(https://example.com/*);height:100vh}</style>",
         "<style>.x\\'y{height:100vh;--label:'ok'}</style>",
+        `<main style="--a:&quot;'&quot;;height:100vh;--b:&quot;'&quot;">x</main>`,
         `<script>document.write("<style>" + 'main{height:100vh}' + "</style>");</script>`,
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
@@ -147,9 +148,7 @@ describe("HtmlRender", () => {
         "<script>const markup = '<!-- <div style=\"height:100vh\"></div> -->';</script>",
       );
       yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
-      yield* htmlRender.prepare(
-        `<style>p::after{content:"\\"100vh\\""}</style><p style="content:'100vh'">Unit: </p>`,
-      );
+      yield* htmlRender.prepare(`<style>p::after{content:"\\"100vh\\""}</style><p>Unit: </p>`);
     }).pipe(Effect.provide(layerTest)),
   );
 
