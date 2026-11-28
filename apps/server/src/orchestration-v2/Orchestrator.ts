@@ -5211,6 +5211,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil: null,
             snoozedAt: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
+            limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
         }
@@ -5238,6 +5239,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil: null,
             snoozedAt: null,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
+            limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
         }
