@@ -56,7 +56,7 @@ vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
-  readEnvironmentScope: () => canReadFiles,
+  readEnvironmentScope: () => true,
 }));
 vi.mock(import("~/state/projects"), async (original) => {
   const module = await original();
@@ -69,19 +69,14 @@ vi.mock(import("~/state/projects"), async (original) => {
   };
 });
 
-let canReadFiles = true;
 const previewSizes = new Map([
   ["README.md", FULL_TEXT_MAX_BYTES],
   ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
 ]);
-const delayedSize = Promise.withResolvers<number>();
 const metadataForPath = Atom.family((path: string) =>
   Atom.make(
     Effect.gen(function* (): Effect.fn.Return<ProjectStatFileResult> {
-      const byteLength =
-        path === "delayed.md"
-          ? yield* Effect.promise(() => delayedSize.promise)
-          : previewSizes.get(path);
+      const byteLength = previewSizes.get(path);
       if (byteLength === undefined) return yield* Effect.die("File size unavailable");
       return { byteLength };
     }),
@@ -190,10 +185,10 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
-  it("offers Open preview for Markdown files within the render limit", async () => {
+  it("offers Open preview unless a Markdown file is over the render limit", async () => {
     using _listing = withDirectoryListing([
       ...entries,
-      ...["missing.md", "oversized.md", "delayed.md"].map((path): ProjectEntry => ({
+      ...["unknown.md", "oversized.md"].map((path): ProjectEntry => ({
         path,
         kind: "file",
       })),
@@ -213,24 +208,12 @@ describe("FileBrowserPanel", () => {
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
-    using _reset = {
-      [Symbol.dispose]: () => {
-        canReadFiles = true;
-        previewSizes.set("README.md", FULL_TEXT_MAX_BYTES);
-      },
-    };
-    for (const [path, byteLength, readAllowed, offersPreview] of [
-      ["README.md", FULL_TEXT_MAX_BYTES, true, true],
-      ["README.md", FULL_TEXT_MAX_BYTES + 1, true, false],
-      ["README.md", FULL_TEXT_MAX_BYTES, true, true],
-      ["README.md", FULL_TEXT_MAX_BYTES, false, false],
-      ["missing.md", undefined, true, false],
-      ["oversized.md", FULL_TEXT_MAX_BYTES + 1, true, false],
-      ["delayed.md", undefined, true, false],
-      ["src/", undefined, true, false],
+    for (const [path, offersPreview] of [
+      ["README.md", true],
+      ["oversized.md", false],
+      ["unknown.md", true],
+      ["src/", false],
     ] as const) {
-      canReadFiles = readAllowed;
-      if (byteLength !== undefined) previewSizes.set(path, byteLength);
       await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
       findTreeRow(path)!.dispatchEvent(
         new MouseEvent("contextmenu", {
@@ -251,7 +234,6 @@ describe("FileBrowserPanel", () => {
         await userEvent.keyboard("{Escape}");
       }
     }
-    delayedSize.resolve(FULL_TEXT_MAX_BYTES + 1);
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {

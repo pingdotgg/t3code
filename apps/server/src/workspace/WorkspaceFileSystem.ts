@@ -267,16 +267,14 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const home = yield* HostProcess.HomeDirectory;
-    const cwd = expandHomePath(input.cwd, home);
     const requestedPath = input.relativePath;
     const hostPath =
       requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
-        ? expandHomePath(requestedPath, home)
+        ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
         : yield* toHostPath(requestedPath);
     if (
       isNetworkPath(hostPath) &&
-      !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(cwd))
+      !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
     ) {
       return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
         workspaceRoot: input.cwd,
@@ -310,12 +308,12 @@ export const make = Effect.gen(function* () {
     }
 
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: cwd,
+      workspaceRoot: input.cwd,
       relativePath: input.relativePath,
     });
 
     const realWorkspaceRoot = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(path.resolve(cwd)),
+      try: () => NodeFSP.realpath(path.resolve(input.cwd)),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,

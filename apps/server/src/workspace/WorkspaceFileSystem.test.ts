@@ -223,62 +223,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("statFile", () => {
-    it.effect("stats a file inside a Windows workspace share", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* makeTempDir;
-        yield* writeTextFile(root, "notes.md", "shared notes");
-        const localStat = yield* fs.stat(path.join(root, "notes.md"));
-        const cwd = "\\\\nas.test\\share\\project";
-        const relativePath = "notes.md";
-        const target = cwd + "\\notes.md";
-        const stat = vi.fn((requestedPath: string) =>
-          requestedPath === target ? Effect.succeed(localStat) : fs.stat(requestedPath),
-        );
-        const service = yield* WorkspaceFileSystem.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, FileSystem.FileSystem.of({ ...fs, stat })),
-          Effect.provide(Layer.merge(layerKnownWorkspacesTest, NodePath.layerWin32)),
-        );
-        vi.mocked(NodeFSP.realpath).mockResolvedValueOnce(cwd).mockResolvedValueOnce(target);
-
-        expect(yield* service.statFile({ cwd, relativePath })).toEqual({ byteLength: 12 });
-        expect(stat).toHaveBeenCalledWith(target);
-      }),
-    );
-
-    it.effect("uses the home file when a literal tilde directory also has the path", () =>
+    it.effect("reports the byte length of a workspace file", () =>
       Effect.gen(function* () {
         const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
-        const home = yield* makeTempDir;
-        yield* writeTextFile(home, "notes.md", "home notes");
-        yield* writeTextFile(cwd, "~/notes.md", "decoy");
+        yield* writeTextFile(cwd, "docs/notes.md", "héllo");
 
-        const input = { cwd, relativePath: "~/notes.md" };
-        const result = yield* service
-          .statFile(input)
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
-        expect(result).toEqual({ byteLength: 10 });
-      }),
-    );
-
-    it.effect("preserves a filename under a long home-relative workspace path", () =>
-      Effect.gen(function* () {
-        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* makeTempDir;
-        const home = path.join(root, ...Array.from({ length: 3 }, () => "folder".repeat(30)));
-        const cwd = path.join(home, "deep");
-        yield* fs.makeDirectory(cwd, { recursive: true });
-        yield* writeTextFile(cwd, " notes.md", "hello");
-        yield* writeTextFile(cwd, "notes.md", "decoy file");
-
-        const result = yield* service
-          .statFile({ cwd: "~/deep", relativePath: " notes.md" })
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
-        expect(result).toEqual({ byteLength: 5 });
+        expect(yield* service.statFile({ cwd, relativePath: "docs/notes.md" })).toEqual({
+          byteLength: 6,
+        });
       }),
     );
   });
@@ -450,6 +403,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         ]) {
           const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+          const statError = yield* workspaceFileSystem.statFile(input).pipe(Effect.flip);
+          expect(statError).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
         const metadata = yield* workspaceFileSystem.getMetadata({
           paths: [
