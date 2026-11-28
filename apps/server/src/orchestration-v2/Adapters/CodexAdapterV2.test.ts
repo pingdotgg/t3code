@@ -7729,6 +7729,61 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("wakes the agent for a background command that exits before its turn ends", () =>
+    Effect.gen(function* () {
+      const [preamble, started, answer, turnCompleted] = [
+        backgroundExecTranscript.entries.slice(0, -4),
+        ...backgroundExecTranscript.entries.slice(-4, -1),
+      ] as const;
+      // The model got a session id back and never polled it; the command fails mid-turn.
+      const failedMidTurn = {
+        type: "emit_inbound" as const,
+        label: "item/completed/command-mid-turn",
+        frame: {
+          method: "item/completed",
+          params: {
+            item: {
+              ...backgroundCommandItem("completed"),
+              aggregatedOutput: "CODEX_BG_FAILED_MID_TURN\n",
+              exitCode: 1,
+            },
+            threadId: BG_NATIVE_THREAD,
+            turnId: BG_NATIVE_TURN,
+          },
+        },
+      };
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-exits-mid-turn",
+          entries: [...preamble, started!, failedMidTurn, answer!, turnCompleted!],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-exits-mid-turn"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+      assert.lengthOf(harness.continuationRequests, 1);
+      assert.include(harness.continuationRequests[0]?.detail, "(exit 1)");
+      assert.include(harness.continuationRequests[0]?.detail, "CODEX_BG_FAILED_MID_TURN");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     { stop: "onStop", woken: ["CODEX_BG_OTHER_DONE"] },
     { stop: "onStopAbandoned", woken: ["CODEX_BG_OTHER_DONE", "CODEX_BG_WAKE_DONE"] },
