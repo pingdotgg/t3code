@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -59,6 +60,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -794,6 +796,7 @@ function layerTest(input: {
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
       ),
+      Layer.provideMerge(ThreadViewers.layer),
     ),
   ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
@@ -2139,6 +2142,61 @@ it.effect.each([
         assert.isTrue(yield* manager.isLive(providerSessionId));
         yield* TestClock.adjust("1 second");
         assert.isFalse(yield* manager.isLive(providerSessionId));
+      }).pipe(Effect.provide(layerTest({ state, capabilities })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session with native resume while its thread is open, up to 30 minutes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const capabilities = {
+        ...CodexCapabilities,
+        turns: { ...CodexCapabilities.turns, supportsNativeResume: true },
+      };
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadViewers = yield* ThreadViewers.ThreadViewers;
+        const openSession = Effect.fn(function* (threadId: ThreadId) {
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [
+              yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+            ],
+          });
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          return providerSessionId;
+        });
+        const viewedThreadId = ThreadId.make("thread-viewed-idle");
+        const viewedSession = yield* openSession(viewedThreadId);
+        const closedViewer = yield* Scope.make();
+        yield* threadViewers.view(viewedThreadId).pipe(Scope.provide(closedViewer));
+        const leftViewer = yield* Scope.make();
+        yield* threadViewers.view(viewedThreadId).pipe(Scope.provide(leftViewer));
+        yield* Scope.close(closedViewer, Exit.void);
+
+        yield* TestClock.adjust("29 minutes");
+        assert.isTrue(yield* manager.isLive(viewedSession));
+        yield* TestClock.adjust("1 minute");
+        assert.isFalse(yield* manager.isLive(viewedSession));
+
+        // Closing the thread lets the usual 2 minutes apply again.
+        const closedThreadId = ThreadId.make("thread-closed-idle");
+        const closedSession = yield* openSession(closedThreadId);
+        const viewer = yield* Scope.make();
+        yield* threadViewers.view(closedThreadId).pipe(Scope.provide(viewer));
+        yield* TestClock.adjust("3 minutes");
+        assert.isTrue(yield* manager.isLive(closedSession));
+        yield* Scope.close(viewer, Exit.void);
+        yield* TestClock.adjust("2 minutes");
+        assert.isFalse(yield* manager.isLive(closedSession));
+        yield* Scope.close(leftViewer, Exit.void);
       }).pipe(Effect.provide(layerTest({ state, capabilities })));
     }),
 );

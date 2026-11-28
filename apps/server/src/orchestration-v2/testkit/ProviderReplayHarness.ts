@@ -457,6 +457,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerStores,
         ProviderInstallationGate.layer,
+        ThreadViewers.layer,
       ),
     ),
   );

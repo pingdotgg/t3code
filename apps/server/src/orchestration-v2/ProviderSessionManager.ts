@@ -77,10 +77,13 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 // Without native resume, a released session comes back as a summary of the thread, so it stays longer.
 const NO_NATIVE_RESUME_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// Resuming a long thread can take tens of seconds, so a thread open in a client stays loaded this long.
+const VIEWED_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
@@ -468,6 +471,7 @@ export const layerWithOptions = (
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ProviderInstallationGate.ProviderInstallationGate
+  | ThreadViewers.ThreadViewers
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
@@ -489,6 +493,7 @@ export const layerWithOptions = (
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
       const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+      const threadViewers = yield* ThreadViewers.ThreadViewers;
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
       // Unreadable settings keep it off.
       const promptSuggestionsEnabled = Option.isNone(serverSettings)
@@ -588,6 +593,19 @@ export const layerWithOptions = (
               : NO_NATIVE_RESUME_IDLE_TIMEOUT_MS),
         );
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
+      /** Ms to wait before checking again while a client still has one of these threads open. */
+      const viewedRecheckMs = (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        threadIds: Iterable<ThreadId>,
+        idleSinceMs: number,
+      ) =>
+        Effect.map(Clock.currentTimeMillis, (now) => {
+          const remaining = idleSinceMs + VIEWED_IDLE_TIMEOUT_MS - now;
+          if (remaining <= 0 || ![...threadIds].some((id) => threadViewers.isViewed(id))) {
+            return null;
+          }
+          return Math.min(idleTimeoutFor(runtime), remaining);
+        });
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
@@ -1677,6 +1695,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly generation: number;
+          readonly idleSinceMs: number;
         }): Effect.fn.Return<void> {
           const current = yield* Ref.get(sessions);
           const key = sessionKey(input.providerSessionId);
@@ -1687,6 +1706,16 @@ export const layerWithOptions = (
             entry.idleGeneration !== input.generation
           ) {
             return;
+          }
+          const viewedRetryMs = yield* viewedRecheckMs(
+            entry.runtime,
+            entry.attachedThreadIds,
+            input.idleSinceMs,
+          );
+          if (viewedRetryMs !== null) {
+            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
+            yield* Effect.sleep(Duration.millis(viewedRetryMs));
+            return yield* releaseIfStillIdle(input);
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
@@ -1800,8 +1829,9 @@ export const layerWithOptions = (
 
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
+        const idleSinceMs = yield* Clock.currentTimeMillis;
         const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutFor(entry.runtime))).pipe(
-          Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
+          Effect.andThen(releaseIfStillIdle({ providerSessionId, generation, idleSinceMs })),
           Effect.forkIn(layerScope),
         );
         yield* Ref.update(sessions, (latest) => {
@@ -2170,6 +2200,7 @@ export const layerWithOptions = (
           const pending = entry.idleThreadUnloads.get(providerThreadId);
           if (pending === undefined) return;
           const generation = pending.generation + 1;
+          const idleSinceMs = yield* Clock.currentTimeMillis;
           const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutFor(entry.runtime))).pipe(
             Effect.andThen(
               unloadIdleThread({
@@ -2177,6 +2208,7 @@ export const layerWithOptions = (
                 threadId: pending.threadId,
                 providerThreadId,
                 generation,
+                idleSinceMs,
               }),
             ),
             Effect.forkIn(layerScope),
@@ -2232,6 +2264,8 @@ export const layerWithOptions = (
           readonly threadId: ThreadId;
           readonly providerThreadId: ProviderThreadId;
           readonly generation: number;
+          /** Unset when the session release unloads it. */
+          readonly idleSinceMs?: number;
           /** Session release unloads only the threads it would archive, and never waits. */
           readonly archiveOnly?: boolean;
         }): Effect.fn.Return<void> {
@@ -2251,6 +2285,14 @@ export const layerWithOptions = (
                 hasBusyTurn(entry, pending.providerThread.id)
               ) {
                 return "skipped" as const;
+              }
+              if (input.idleSinceMs !== undefined) {
+                const viewedRetryMs = yield* viewedRecheckMs(
+                  entry.runtime,
+                  [input.threadId],
+                  input.idleSinceMs,
+                );
+                if (viewedRetryMs !== null) return { retryAfterMs: viewedRetryMs };
               }
               // Unloading kills background terminals; keep threads with pending work loaded.
               const hasPendingWork =
