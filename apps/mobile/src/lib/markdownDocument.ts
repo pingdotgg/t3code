@@ -10,8 +10,18 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
+import { getCachedMarkdownAst } from "./markdownParseCache";
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
+const rawParser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
+const parser = {
+  parse(markdown: string): Root {
+    return getCachedMarkdownAst(markdown, (input) => rawParser.parse(input));
+  },
+};
+
+export function parseMarkdownAst(markdown: string): Root {
+  return parser.parse(markdown);
+}
 export type MarkdownNode = Root | RootContent;
 
 interface MarkdownEdit {
