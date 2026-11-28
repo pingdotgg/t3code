@@ -300,6 +300,11 @@ describe("searchSettings", () => {
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
       ["ChatGPT account", "providers"],
+      ["Live Processes", "diagnostics"],
+      ["Most Common Failures", "diagnostics"],
+      ["Top Span Names", "diagnostics"],
+      ["Slowest Spans", "diagnostics"],
+      ["Third-party notices", "open-source-licenses"],
       ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);

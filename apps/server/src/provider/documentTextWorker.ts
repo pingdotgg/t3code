@@ -694,22 +694,23 @@ function* text(node: XmlNode): Generator<TextPart, void> {
       else yield* text(child);
     }
 }
-// SpreadsheetML `t` and `v` values are ST_Xstring: `_xHHHH_` is one UTF-16 code unit, and an
+// SpreadsheetML sheet names and cell strings are ST_Xstring: `_xHHHH_` is one UTF-16 code unit, and an
 // escaped lead underscore (`_x005F_xHHHH_`) keeps the literal `_xHHHH_`. Decoded in one pass.
+function decodeXstring(value: string): string {
+  return value.replaceAll(
+    /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
+    (_, literal?: string, hex?: string) =>
+      literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
+  );
+}
+
 function* xstringText(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.name !== "t" && node.name !== "v") {
     for (const child of children(node)) yield* xstringText(child);
     return;
   }
-  yield node.children
-    .filter((child) => typeof child === "string")
-    .join("")
-    .replaceAll(
-      /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
-      (_, literal?: string, hex?: string) =>
-        literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
-    );
+  yield decodeXstring(node.children.filter((child) => typeof child === "string").join(""));
 }
 
 function hasXstringText(node: XmlNode): boolean {
@@ -963,7 +964,12 @@ function markWordMergeContinuations(table: XmlNode) {
   }
 }
 
-const covered = (cell: XmlNode) => cell.name === "covered-table-cell" || cell.wordMergeCovered;
+// PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
+const drawingMergeCovered = (cell: XmlNode) =>
+  cell.name === "tc" &&
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+const covered = (cell: XmlNode) =>
+  cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
   if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
@@ -1354,6 +1360,7 @@ function* rtfParts(
     skip: false,
     deleted: false,
     hiddenText: false,
+    inTable: false,
     uc: 1,
     font: 0,
     fontTable: false,
@@ -1505,6 +1512,9 @@ function* rtfParts(
           const codePage = rtfCodePage(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
+        // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
+        if (control === "intbl") state.inTable = true;
+        else if (control === "pard") state.inTable = false;
         if (control === "deleted") state.deleted = value !== 0;
         else if (control === "v") state.hiddenText = value !== 0;
         else if (control === "plain") {
@@ -1525,7 +1535,8 @@ function* rtfParts(
           if (!hidden()) yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
         } else if (!hidden() && ["par", "line", "sect", "page", "column"].includes(control))
-          yield "\n";
+          // A cell's paragraphs share its column, as in DOCX and ODT tables.
+          yield state.inTable && (control === "par" || control === "line") ? " " : "\n";
         else if (!hidden() && control === "tab") yield "\t";
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
@@ -1542,7 +1553,8 @@ function* rtfParts(
           // Shape instructions are an optional destination, but a text box keeps its text there.
           if (rest[0] === "*" && !/^\*[\r\n]*\\shpinst(?![a-z])/i.test(rest)) state.skip = true;
           // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
+          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r"))
+            yield state.inTable ? " " : "\n";
           else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
         }
       }
@@ -1741,10 +1753,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
       const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
-        yield `\n## Sheet: ${sheet.attrs.name}\n`;
+        const sheetName = sheet.attrs.name && decodeXstring(sheet.attrs.name);
+        yield `\n## Sheet: ${sheetName}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
         if (!target) {
-          skip(`sheet relationship ${sheet.attrs.name}`);
+          skip(`sheet relationship ${sheetName}`);
           continue;
         }
         const name = resolveWorkbookPart(target);
