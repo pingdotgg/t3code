@@ -1,0 +1,6 @@
+# Link the MSVC C runtime statically, so Windows binaries such as
+# t3-resource-monitor.exe start on machines without the Visual C++
+# Redistributable. Cargo reads this file for every build started from the
+# repository root, including `--manifest-path` builds of native/* crates.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

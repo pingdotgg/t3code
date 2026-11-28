@@ -145,7 +145,7 @@ export const satisfiesSemverRange: (rawVersion: string, range: string) => boolea
   function satisfiesSemverRange(rawVersion, range) {
     const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
     const versionMatch = normalizedVersion.match(
-      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/,
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
     );
     if (!versionMatch) {
       return false;

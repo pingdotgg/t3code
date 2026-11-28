@@ -109,6 +109,82 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
+it.effect("publishes validated HTTP quotas as display-only accounts", () => {
+  const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
+  const accounts = [
+    { id: "account", label: "External plan", providerInstanceId: "work-codex", windows: [window] },
+  ];
+  let usedPercent = 35;
+  let oversized = false;
+  const client = HttpClient.make((request, url) =>
+    Effect.sync(() => {
+      expect(url.href).toBe("https://quota.test/v1");
+      expect(request.headers.authorization).toBe("Bearer test-token");
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    version: 1,
+                    accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
+                  }),
+                ),
+              );
+              if (oversized) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+              controller.close();
+            },
+          }),
+        ),
+      );
+    }),
+  );
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const [snapshot] = yield* sources.current;
+    expect(snapshot).toMatchObject({ kind: "http", accounts: [], quotaAccounts: accounts });
+    expect(snapshot?.origin).toBeUndefined();
+    usedPercent = 101;
+    yield* sources.refresh;
+    const [failed] = yield* sources.current;
+    expect(failed).toMatchObject({ accounts: [], error: "Could not read the HTTP quota source." });
+    expect(failed?.quotaAccounts).toBeUndefined();
+    usedPercent = 35;
+    oversized = true;
+    yield* sources.refresh;
+    expect((yield* sources.current)[0]).toMatchObject({
+      accounts: [],
+      error: "Could not read the HTTP quota source.",
+    });
+  }).pipe(
+    Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("quota")]: {
+            kind: "http",
+            url: "https://quota.test/v1",
+            managementKey: "test-token",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(HttpClient.HttpClient, client),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
 it.effect("reads a management key from its secret provider", () => {
   const authorizations: Array<string | undefined> = [];
   const keySource = (reference: string) => ({
@@ -288,6 +364,7 @@ const spent = (id: string, hours: number): ServerProviderUsageWindow => ({
 const hub = (
   accounts: ReadonlyArray<{
     driver?: string;
+    models?: ReadonlyArray<string>;
     windows?: ReadonlyArray<ServerProviderUsageWindow>;
     unavailable?: true;
   }>,
@@ -299,6 +376,7 @@ const hub = (
   accounts: accounts.map((account, index) => ({
     id: `account-${index}`,
     driver: ProviderDriverKind.make(account.driver ?? "claudeAgent"),
+    ...(account.models ? { models: account.models } : {}),
     usageLimits: {
       checkedAt: at(0),
       windows: account.windows ?? [],
@@ -353,6 +431,44 @@ it.each([
     accounts: [{ driver: "codex", windows: [spent("five_hour", 1)] }],
     model: "claude-haiku-5-5",
     expected: null,
+  },
+  // regression: #30778 only the accounts the hub routes the model to can refill it
+  {
+    name: "an account of another driver the hub routes the model to counts",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.6-sol"], windows: [spent("five_hour", 3)] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
+    ],
+    model: "gpt-5.6-sol",
+    expected: at(3),
+  },
+  {
+    name: "an account that lists no models is left out of an alias",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { models: [], windows: [] }],
+    model: "opus",
+    expected: at(1),
+  },
+  {
+    name: "a hub thinking suffix routes by its base model",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
+    ],
+    model: "gpt-5.2(high)",
+    expected: at(3),
+  },
+  {
+    name: "an own-driver account whose model list was unread still counts",
+    accounts: [
+      { windows: [spent("five_hour", 1)] },
+      {
+        driver: "antigravity",
+        models: ["claude-sonnet-4-6"],
+        windows: [spent("3p-5h", 8)],
+      },
+    ],
+    model: "claude-sonnet-4-6",
+    expected: at(1),
   },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(

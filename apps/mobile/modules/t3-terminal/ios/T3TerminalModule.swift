@@ -32,6 +32,10 @@ public class T3TerminalModule: Module {
         view.fontSize = CGFloat(fontSize)
       }
 
+      Prop("fontFamily") { (view: T3TerminalView, fontFamily: String) in
+        view.fontFamily = fontFamily
+      }
+
       Prop("focusRequest") { (view: T3TerminalView, focusRequest: Double) in
         view.focusRequest = focusRequest
       }

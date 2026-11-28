@@ -35,6 +35,7 @@ import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
@@ -78,8 +79,14 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { withLocalTracing } from "@t3tools/shared/relayTracing";
+import { routineSpan } from "@t3tools/shared/observability";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
+
+/** The task a create carrying this idempotency key writes, and rewrites when the key is replayed. */
+export const scheduledTaskIdForCommand = (commandId: CommandId) =>
+  ScheduledTaskId.make(`scheduled-task:${commandId}`);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
@@ -90,6 +97,13 @@ const WEBHOOK_DEDUPE_LOG_PER_MINUTE = 10;
 const WEBHOOK_FILTERED_LOG_PER_MINUTE = 10;
 const WEBHOOK_DELIVERY_LOG_BODY_LIMIT = 64 * 1024;
 const WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT = 64 * 1024;
+const loggedWebhookPrompt = (prompt: string) =>
+  prompt.slice(
+    0,
+    splitsSurrogatePair(prompt, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)
+      ? WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1
+      : WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT,
+  );
 const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
 // Enforce the relay's per-task/minute limit here too; tunnel hostnames are public.
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
@@ -638,6 +652,8 @@ export const layer = Layer.effect(
       requireExisting: boolean,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
+      /** The thread this save unbinds; any other stored thread is kept. */
+      unboundThreadId: ThreadId | null,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -703,12 +719,12 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run may bind the thread while this save is in flight; only a
-          -- switch to new threads unbinds.
+          -- A first run may bind the thread while this save is in flight, so a save
+          -- without a thread keeps any thread but the one it unbinds.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
             WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
-            ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
+            ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
@@ -1114,6 +1130,7 @@ export const layer = Layer.effect(
                     commandId,
                     projectId: active.projectId,
                     title: active.title,
+                    titleRenamed: true,
                     modelSelection: active.modelSelection,
                     runtimeMode: active.runtimeMode,
                     interactionMode: active.interactionMode,
@@ -1296,56 +1313,58 @@ export const layer = Layer.effect(
       if (updated.length > 0) yield* notifyChanged;
     });
 
-    const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
-      const now = yield* localNow;
-      const nowMs = DateTime.toEpochMillis(now);
-      if (yield* dueTasks.isIdle(nowMs)) return;
-      const readVersion = yield* dueTasks.version;
-      const [next] = yield* sql<{ next_run_at: string | null }>`
+    const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks", { attributes: routineSpan })(
+      function* () {
+        const now = yield* localNow;
+        const nowMs = DateTime.toEpochMillis(now);
+        if (yield* dueTasks.isIdle(nowMs)) return;
+        const readVersion = yield* dueTasks.version;
+        const [next] = yield* sql<{ next_run_at: string | null }>`
         SELECT MIN(next_run_at) AS next_run_at FROM scheduled_tasks
         WHERE enabled = 1 AND next_run_at IS NOT NULL AND last_run_status <> 'running'
       `.pipe(
-        NodeSqliteClient.readOnly,
-        Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
-      );
-      // Compare as text like listDueTasks: expanded years (`+011533-…`) sort first but parse far ahead.
-      const nextRunAt = next?.next_run_at ?? null;
-      if (nextRunAt === null || nextRunAt > iso(now)) {
-        const nextDueAt =
-          nextRunAt === null
-            ? Option.some(Infinity)
-            : DateTime.make(nextRunAt).pipe(Option.map(DateTime.toEpochMillis));
-        if (Option.isSome(nextDueAt) && nextDueAt.value > nowMs) {
-          yield* dueTasks.record(readVersion, nextDueAt.value, nowMs);
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
+        );
+        // Compare as text like listDueTasks: expanded years (`+011533-…`) sort first but parse far ahead.
+        const nextRunAt = next?.next_run_at ?? null;
+        if (nextRunAt === null || nextRunAt > iso(now)) {
+          const nextDueAt =
+            nextRunAt === null
+              ? Option.some(Infinity)
+              : DateTime.make(nextRunAt).pipe(Option.map(DateTime.toEpochMillis));
+          if (Option.isSome(nextDueAt) && nextDueAt.value > nowMs) {
+            yield* dueTasks.record(readVersion, nextDueAt.value, nowMs);
+          }
+          return;
         }
-        return;
-      }
-      const tasks = yield* listDueTasks(now).pipe(
-        Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
-      );
-      const due = tasks.flatMap((task) =>
-        task.nextRunAt === null ? [] : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
-      );
-      yield* Effect.forEach(
-        due,
-        ({ task, dueAt }) =>
-          Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
-              ? rescheduleMissedRun(
-                  task,
-                  now,
-                  "missed",
-                  "Missed a scheduled run because the server was not running at that time.",
-                )
-              : runTask(task, "scheduled"),
-          ).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
+        const tasks = yield* listDueTasks(now).pipe(
+          Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
+        );
+        const due = tasks.flatMap((task) =>
+          task.nextRunAt === null ? [] : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
+        );
+        yield* Effect.forEach(
+          due,
+          ({ task, dueAt }) =>
+            Effect.suspend(() =>
+              isMissedFixedTimeRun(task.schedule, dueAt, now)
+                ? rescheduleMissedRun(
+                    task,
+                    now,
+                    "missed",
+                    "Missed a scheduled run because the server was not running at that time.",
+                  )
+                : runTask(task, "scheduled"),
+            ).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
+              ),
             ),
-          ),
-        { concurrency: 1, discard: true },
-      );
-    });
+          { concurrency: 1, discard: true },
+        );
+      },
+    );
 
     // Recover crash-left running rows that the due-task filter would otherwise skip forever.
     yield* Effect.gen(function* () {
@@ -1470,15 +1489,16 @@ export const layer = Layer.effect(
           : null;
       const id =
         input.id ??
-        ScheduledTaskId.make(
-          input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
-        );
+        (input.commandId
+          ? scheduledTaskIdForCommand(input.commandId)
+          : ScheduledTaskId.make(`scheduled-task:${uuid}`));
       // Look up by the *resolved* id so idempotent creates (commandId replays)
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
       const threadMode = resolveThreadMode(input, existingTask);
-      const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
+      const keptThreadId =
+        input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
       const movedOffThread =
         existingTask !== null &&
@@ -1610,6 +1630,7 @@ export const layer = Layer.effect(
         task,
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
+        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
         webhook,
       );
       yield* notifyChanged;
@@ -1943,7 +1964,7 @@ export const layer = Layer.effect(
                 ${loggedBody},
                 ${input.request.body.byteLength}, ${truncated ? 1 : 0}, ${input.outcome},
                 ${input.signatureVerified ? 1 : 0}, ${encodeMissingFieldsJson(input.missing)},
-                ${input.renderedPrompt?.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) ?? null},
+                ${input.renderedPrompt === null ? null : loggedWebhookPrompt(input.renderedPrompt)},
                 ${input.error ?? null}
               WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${input.taskId})
               -- A held request retried after a rate limit reuses its relay
@@ -2537,6 +2558,9 @@ export const layer = Layer.effect(
           yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
             permit.withPermits(1),
             Effect.ensuring(release),
+            // A relay-delivered webhook is traced to the relay; the run it starts is local work
+            // whose spans carry workspace paths.
+            withLocalTracing,
             Effect.forkIn(serviceScope),
           );
           // Dispatch owns the accepted delivery now; retries must keep its claim.
@@ -2556,7 +2580,9 @@ export const layer = Layer.effect(
       );
     });
 
-    const dispatchPending = Effect.fn("ScheduledTaskService.dispatchPendingWebhooks")(function* () {
+    const dispatchPending = Effect.fn("ScheduledTaskService.dispatchPendingWebhooks", {
+      attributes: routineSpan,
+    })(function* () {
       const now = DateTime.toEpochMillis(yield* localNow);
       if (yield* pendingWebhooks.isIdle(now)) return;
       const readVersion = yield* pendingWebhooks.version;
@@ -2632,7 +2658,7 @@ export const layer = Layer.effect(
               } else {
                 if (taskJson !== null)
                   yield* sql`UPDATE scheduled_task_webhook_pending SET task_json = ${taskJson} WHERE delivery_id = ${entry.delivery_id}`;
-                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${loggedWebhookPrompt(rendered.prompt)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
                 if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
               }
               yield* remove;

@@ -24,6 +24,7 @@ const row = (overrides: Partial<ProjectRow> = {}): ProjectRow => ({
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  trackedFolders: [],
   pinnedAt: null,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -110,6 +111,37 @@ describe("planProjectCommand", () => {
     const untouched = update(organized, {});
     assert.notProperty(untouched, "pinnedAt");
     assert.notProperty(untouched, "archivedAt");
+  });
+
+  it("records tracked folders on create and replaces them on update", () => {
+    const trackedFolders = [{ path: "/tmp/shared", name: "Shared" }];
+    const create = (folders?: typeof trackedFolders) =>
+      payloadOf(
+        plan({
+          type: "project.create",
+          commandId: CommandId.make("cmd-create-tracked"),
+          projectId,
+          title: "Tracked",
+          workspaceRoot: "/tmp/scripts",
+          ...(folders === undefined ? {} : { trackedFolders: folders }),
+        }),
+      );
+    const update = (folders?: typeof trackedFolders) =>
+      payloadOf(
+        plan(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-update-tracked"),
+            projectId,
+            ...(folders === undefined ? {} : { trackedFolders: folders }),
+          },
+          { project: row({ trackedFolders }) },
+        ),
+      );
+    assert.deepEqual(create(trackedFolders).trackedFolders, trackedFolders);
+    assert.notProperty(create(), "trackedFolders");
+    assert.deepEqual(update([]).trackedFolders, []);
+    assert.notProperty(update(), "trackedFolders");
   });
 
   it("rejects a workspace root held by another active project", () => {

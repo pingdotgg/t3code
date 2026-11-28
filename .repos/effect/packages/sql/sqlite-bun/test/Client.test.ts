@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Duration, Effect, Exit, Fiber } from "effect"
+import { Cause, Deferred, Duration, Effect, Exit, Fiber } from "effect"
 import { Reactivity } from "effect/reactivity"
+import { SqlError } from "effect/sql/SqlError"
 import { TestClock } from "effect/testing"
 import { rejects } from "node:assert/strict"
 import { mkdtemp, rm, stat } from "node:fs/promises"
@@ -81,6 +82,21 @@ describe("Client", () => {
         snapshot.close()
       }
     }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect.skipIf(!isBun)(
+    "fails exports from a fiber that outlives its transaction",
+    () =>
+      Effect.gen(function*() {
+        const { SqliteClient } = yield* Effect.promise(() => import("@effect/sql-sqlite-bun"))
+        const sql = yield* SqliteClient.make({ filename: ":memory:" })
+        const go = yield* Deferred.make<void>()
+        const stale = yield* sql.withTransaction(Effect.forkChild(Effect.andThen(Deferred.await(go), sql.export)))
+        yield* Deferred.succeed(go, undefined)
+        const error = yield* Effect.flip(Fiber.join(stale))
+        assert.instanceOf(error, SqlError)
+        assert.strictEqual(error.reason.message, "SqlClient: the transaction has already ended")
+      }).pipe(Effect.provide(Reactivity.layer))
+  )
 
   it.effect.skipIf(!isBun)(
     "recovers a failed deferred commit without losing an in-memory database",

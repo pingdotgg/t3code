@@ -6,7 +6,9 @@ import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import type {
   IssueComment,
+  IssueCommentAudience,
   IssueEvent,
+  IssueEventReference,
   IssueLinkedPullRequest,
   IssueReaction,
   IssueState,
@@ -15,7 +17,8 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useContext, useState } from "react";
-import { Linking, Platform, Pressable, Share, View } from "react-native";
+import { Platform, Pressable, Share, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
 import { RelativeTime } from "../../components/RelativeTime";
@@ -45,6 +48,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { PullRequestDescription } from "../pull-requests/PullRequestDescription";
 import {
@@ -278,7 +282,7 @@ function LinkedPullRequests(props: {
                       ...(props.params.host ? { host: props.params.host } : {}),
                     }),
                   )
-                : void Linking.openURL(link.url)
+                : void tryOpenExternalUrl(link.url)
             }
             className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
@@ -380,12 +384,23 @@ function IssueCommentCard(props: {
   const messages = useMessages();
   const { comment } = props;
   return (
-    <View className="gap-3 rounded-2xl bg-grouped-card p-3">
-      <View className="flex-row items-center gap-2">
+    <View
+      className={
+        comment.internal
+          ? "gap-3 rounded-2xl border border-warning-border bg-warning p-3"
+          : "gap-3 rounded-2xl bg-grouped-card p-3"
+      }
+    >
+      <View accessible accessibilityRole="header" className="flex-row items-center gap-2">
         <PullRequestAvatar actor={comment.author} size={22} />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
           {comment.author?.login ?? gt("Unknown author")}
         </Text>
+        {comment.internal ? (
+          <Text className="text-2xs font-t3-medium text-warning-foreground">
+            {gt("Internal note")}
+          </Text>
+        ) : null}
         <Text className="text-2xs text-foreground-tertiary">
           {relativeTime(comment.createdAt, undefined, messages)}
         </Text>
@@ -403,9 +418,48 @@ function IssueCommentCard(props: {
   );
 }
 
-function IssueEventRow({ event }: { readonly event: IssueEvent }) {
+function IssueEventRow({
+  params,
+  event,
+}: {
+  readonly params: IssueParams;
+  readonly event: IssueEvent;
+}) {
   const gt = useGT();
   const messages = useMessages();
+  const navigation = useNavigation();
+  const sentence = issueEventSentence(event, messages);
+  const source = event.reference;
+  const at = event.detail === null ? -1 : sentence.indexOf(event.detail);
+  // Only a git host's tracker shares its host with the change request it links.
+  const sameHost = sourceControlClients.find(params.tracker) !== undefined;
+  const openSource = (target: IssueEventReference) => {
+    const host = params.host ? { host: params.host } : {};
+    if (target.kind === "issue") {
+      navigation.dispatch(
+        StackActions.push("Issue", {
+          environmentId: params.environmentId,
+          projectId: params.projectId,
+          tracker: params.tracker,
+          ...host,
+          scope: target.repository,
+          issueKey: String(target.number),
+        }),
+      );
+    } else if (sameHost) {
+      navigation.dispatch(
+        StackActions.push("PullRequest", {
+          environmentId: params.environmentId,
+          projectId: params.projectId,
+          repository: target.repository,
+          number: target.number,
+          ...host,
+        }),
+      );
+    } else {
+      void tryOpenExternalUrl(target.url);
+    }
+  };
   return (
     <View className="flex-row items-center gap-2 px-1">
       <PullRequestAvatar actor={event.actor} size={18} />
@@ -413,7 +467,21 @@ function IssueEventRow({ event }: { readonly event: IssueEvent }) {
         <Text className="text-xs font-t3-medium">
           {event.actor?.login ?? gt("Someone", { $context: "an unknown person" })}
         </Text>{" "}
-        {issueEventSentence(event, messages)}
+        {source === undefined || event.detail === null || at < 0 ? (
+          sentence
+        ) : (
+          <>
+            {sentence.slice(0, at)}
+            <Text
+              accessibilityRole="link"
+              className="text-xs font-t3-medium text-primary-text"
+              onPress={() => openSource(source)}
+            >
+              {event.detail}
+            </Text>
+            {sentence.slice(at + event.detail.length)}
+          </>
+        )}
       </Text>
       <Text className="text-2xs text-foreground-tertiary">
         {relativeTime(event.createdAt, undefined, messages)}
@@ -504,7 +572,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
         ...detail.events.map((event) => ({
           key: `e:${event.id}`,
           at: event.createdAt,
-          content: <IssueEventRow event={event} />,
+          content: <IssueEventRow params={params} event={event} />,
         })),
       ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
     : [];
@@ -531,9 +599,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     });
     if (failure) setOlderCommentsError(gt("Older comments could not be read."));
   };
-  const submitComment = (body: string) =>
+  const submitComment = (body: string, audience?: IssueCommentAudience) =>
     access?.comment === true
-      ? run("comment", () => postComment({ ...target, input: { ...target.input, body } }))
+      ? run("comment", () => postComment({ ...target, input: { ...target.input, body, audience } }))
       : Promise.resolve(false);
   const moveTo = (state: string) =>
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
@@ -592,7 +660,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                         id: "open-on-host",
                         title: gt("Open on the tracker"),
                         icon: "arrow.up.right",
-                        onPress: () => void Linking.openURL(url),
+                        onPress: () => void tryOpenExternalUrl(url),
                       },
                       {
                         id: "copy-link",
@@ -629,7 +697,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             refreshControl={
               <RefreshControl
                 refreshing={pullRefresh.refreshing}
-                onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
+                onRefresh={() =>
+                  void pager.refresh(registry, () =>
+                    pullRefresh.onRefresh(async () =>
+                      issueEnvironment.oweDetailRefresh(registry, detailAtom),
+                    ),
+                  )
+                }
               />
             }
             contentContainerStyle={{
@@ -691,6 +765,16 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}
                     <LinkedThreads params={params} host={detail.host} />
+                    <WorkflowRunsAbout
+                      environmentId={issueTarget(params).environmentId}
+                      item={{
+                        subject: detail.url,
+                        issue: {
+                          ...issueTarget(params).input,
+                          host: params.host ?? detail.host,
+                        },
+                      }}
+                    />
                     <View className="gap-3">
                       <PullRequestSectionHeading>
                         {detail.commentCount > 0
@@ -743,6 +827,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   label={issue?.displayKey ?? params.issueKey}
                   blocked={commentBlocked}
                   posting={busy === "comment"}
+                  audiences={detail?.commentAudiences === true}
                   bottomInset={composerBottomInset}
                   contentMaxWidth={contentMaxWidth}
                   onSubmit={submitComment}

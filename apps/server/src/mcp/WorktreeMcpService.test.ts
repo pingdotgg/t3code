@@ -35,6 +35,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-worktree-test");
@@ -70,6 +71,8 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       id: threadId,
       projectId,
       title: "Worktree test thread",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       archivedAt: null,
@@ -310,6 +313,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
         } satisfies Partial<ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]>),
+        Layer.mock(TaskFolders.TaskFolders)({
+          plan: () => Effect.succeed(null),
+          find: () => Effect.succeed(null),
+        }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),

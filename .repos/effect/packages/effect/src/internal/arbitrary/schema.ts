@@ -11,6 +11,7 @@ import * as SchemaAST from "../../SchemaAST.ts"
 import * as SchemaGetter from "../../SchemaGetter.ts"
 import * as SchemaParser from "../../SchemaParser.ts"
 import * as InternalArray from "../array.ts"
+import { done } from "../core.ts"
 import { effectIsExit } from "../effect.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
@@ -48,6 +49,20 @@ export function compileValidator<S extends Schema.Constraint>(
 
 function arbitraryError(what: string, path: ReadonlyArray<PropertyKey>) {
   return errorWithPath(`Unable to derive an arbitrary for ${what}`, path)
+}
+
+function recordUnsupportedPatterns(
+  { diagnosticPath: path, diagnostics }: Model.GenerationState,
+  patterns: ReadonlyArray<Schema.Annotations.ToArbitrary.Pattern>
+): void {
+  if (diagnostics === undefined) return
+  for (const { flags, source } of patterns) {
+    const seen = diagnostics.some((diagnostic) =>
+      diagnostic._tag === "UnsupportedPattern" && diagnostic.source === source && diagnostic.flags === flags &&
+      diagnostic.path.length === path.length && diagnostic.path.every((key, index) => key === path[index])
+    )
+    if (!seen) diagnostics.push({ _tag: "UnsupportedPattern", path, source, flags })
+  }
 }
 
 function sumCosts(costs: Iterable<number>): number {
@@ -714,25 +729,79 @@ const generateRepeatedUniqueValues = (
   return loop()
 }
 
-function shrinkString(value: string, minimum: number): ReadonlyArray<string> {
-  const values = value.length <= minimum
-    ? []
-    : [
-      value.slice(0, minimum),
-      value.slice(0, Math.max(minimum, Math.floor(value.length / 2))),
-      value.slice(0, -1)
-    ]
-  // fast-check v4.9.0 builds strings from shrinkable units (MIT). Effect keeps UTF-16 code units as its string domain
-  // and applies its integer-halving shrink toward the Effect-owned null-unit target.
-  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/string.ts
-  for (let index = 0; index < value.length; index++) {
-    for (const candidate of shrinkInteger(value.charCodeAt(index), 0, true)) {
-      values.push(
-        value.slice(0, index) + globalThis.String.fromCharCode(candidate.value) + value.slice(index + 1)
-      )
+interface StringShrink {
+  readonly value: string
+  readonly start: number
+  readonly limit: number
+}
+
+function stringSample(
+  value: string,
+  options: {
+    readonly minimumLength: number
+    readonly minimumCodePoints: number | undefined
+    readonly pattern: Regexp.Compiled | undefined
+  }
+): Model.Sample<string> {
+  const { minimumCodePoints, pattern } = options
+  const minimum = Math.max(options.minimumLength, pattern?.minimumLength ?? 0)
+  const codePoints = minimumCodePoints !== undefined
+  const minimumUnits = minimumCodePoints ?? minimum
+  const sample = ({ value, start, limit }: StringShrink): Model.Sample<string> =>
+    Model.makeSampleWithLazyShrinks(value, () => {
+      const candidates = shrinks(value, start, limit)
+      const seen = new Set([value])
+      return Effect.suspend(() => {
+        for (let next = candidates.next(); !next.done; next = candidates.next()) {
+          const candidate = next.value.value
+          // Reject pattern mismatches here so they do not consume the runner's shrink budget.
+          if (candidate.length < minimum || seen.has(candidate) || pattern?.test(candidate) === false) continue
+          seen.add(candidate)
+          return Effect.succeed(sample(next.value))
+        }
+        return done()
+      })
+    })
+  function* shrinks(value: string, start: number, limit: number): Generator<StringShrink> {
+    if (pattern !== undefined) {
+      for (const candidate of pattern.shrink(value, minimum)) {
+        yield { value: candidate, start: 0, limit: infinity }
+      }
+    }
+    const units = codePoints ? Array.from(value) : value.split("")
+    const length = units.length
+    // Each removed unit costs at least one UTF-16 code unit.
+    const removable = Math.min(length - minimumUnits, value.length - minimum)
+    const edit = (index: number, count: number, limit: number, insert = ""): StringShrink => {
+      const prefix = units.slice(0, index).join("")
+      const value = prefix + insert + units.slice(index + count).join("")
+      // Joining a trailing high surrogate to a low surrogate changes the preceding code point.
+      const start = codePoints && index > 0 && value.codePointAt(prefix.length - 1)! > 0xffff ? index - 1 : index
+      return { value, start, limit }
+    }
+    if (start === 0) {
+      for (let count = removable; count > 0; count = Math.floor(count / 2)) {
+        yield { value: units.slice(0, length - count).join(""), start: 0, limit }
+      }
+    }
+    // Follows the removal order of `array.ts` (fast-check v4.9.0's ArrayArbitrary, MIT).
+    // Resume at the changed unit, retaining the accepted deletion size there;
+    // suffix truncations must preserve that cap too.
+    for (let index = start, cap = limit; index < length; index++, cap = infinity) {
+      for (let count = Math.min(length - index, removable, cap); count > 0; count = Math.floor(count / 2)) {
+        yield edit(index, count, count)
+      }
+      // Structural pattern candidates already canonicalise characters.
+      if (pattern !== undefined) continue
+      // Unit simplification follows fast-check v4.9.0's string arbitrary (MIT), halving toward the null unit.
+      // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/string.ts
+      const code = units[index].codePointAt(0)!
+      for (let gap = code; gap > 0; gap = Math.floor(gap / 2)) {
+        yield edit(index, 1, 0, globalThis.String.fromCodePoint(code - gap))
+      }
     }
   }
-  return [...new Set(values)].filter((candidate) => candidate !== value)
+  return sample({ value, start: 0, limit: infinity })
 }
 
 // Edge-case injection is inspired by fast-check v4.9.0's cached dangerous slices (MIT). The concrete corpus is
@@ -972,6 +1041,26 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   const nodes: Array<Model.Compiled<any>> = []
   const suspendBodies = new Map<Model.Compiled<any>, Model.Compiled<any>>()
   const pending: Array<() => void> = []
+  let hasUnsupportedPatterns = false
+  const pathNodes: Array<readonly [Model.Compiled<any>, Model.Compiled<any>]> = []
+  const atPath = (compiled: Model.Compiled<any>, key: PropertyKey): Model.Compiled<any> => {
+    const node = Model.makeCompiled(
+      [compiled],
+      () => compiled.minCost,
+      (state) =>
+        compiled.generate(
+          state.diagnostics === undefined ? state : {
+            ...state,
+            diagnosticPath: [...state.diagnosticPath, key]
+          }
+        )
+    )
+    // Scalar index-signature specializations can also be compiled during generation.
+    node.minCost = compiled.minCost
+    nodes.push(node)
+    pathNodes.push([node, compiled])
+    return node
+  }
   const recur = (
     ast: SchemaAST.AST,
     path: ReadonlyArray<PropertyKey>,
@@ -1017,6 +1106,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     return placeholder
   }
 
+  const recurAt = (
+    ast: SchemaAST.AST,
+    path: ReadonlyArray<PropertyKey>,
+    key: PropertyKey,
+    inherited?: FilterConstraint
+  ): Model.Compiled<any> => atPath(recur(ast, [...path, key], inherited), key)
+
   const compileBase = (
     ast: SchemaAST.AST,
     path: ReadonlyArray<PropertyKey>,
@@ -1048,10 +1144,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       case "String": {
         const patterns: Array<Regexp.Compiled> = []
+        const unsupported: Array<Schema.Annotations.ToArbitrary.Pattern> = []
         for (const candidate of constraint?.patterns ?? []) {
           const pattern = Regexp.compile(candidate)
           if (pattern !== undefined) patterns.push(pattern)
+          else unsupported.push(candidate)
         }
+        if (unsupported.length > 0) hasUnsupportedPatterns = true
         let [minimum, maximum = infinity] = lengthBounds(constraint, ["minLength", "maxLength"], path, "string")
         const hasCodePoints = constraint?.minCodePoints !== undefined || constraint?.maxCodePoints !== undefined
         let [minCodePoints, maxCodePoints = infinity] = lengthBounds(
@@ -1073,6 +1172,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           [],
           () => 0,
           (state) => {
+            recordUnsupportedPatterns(state, unsupported)
             const pattern = patterns.length === 0
               ? undefined
               : patterns.length === 1
@@ -1091,12 +1191,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               : randomString(state, minimum, upper)
             if (value === undefined) return Model.discarded
             return state.shrinks
-              ? Model.sampleFromShrink(
-                value,
-                pattern === undefined
-                  ? (value) => shrinkString(value, minimum)
-                  : (value) => pattern.shrink(value, minimum)
-              )
+              ? stringSample(value, {
+                minimumLength: minimum,
+                minimumCodePoints: hasCodePoints ? minCodePoints : undefined,
+                pattern
+              })
               : Model.makeSample(value)
           }
         )
@@ -1205,7 +1304,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       }
       case "TemplateLiteral": {
-        const parts = ast.parts.map((part, index) => recur(part, [...path, index], finiteNumberConstraint))
+        const parts = ast.parts.map((part, index) => recurAt(part, path, index, finiteNumberConstraint))
         return Model.makeCompiled(
           parts,
           () => sumCosts(parts.map((part) => part.minCost)),
@@ -1276,12 +1375,12 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     const uniqueBy = constraint?.uniqueBy
     const elements = ast.elements.map((element, index) => ({
       optional: SchemaAST.isOptional(element),
-      compiled: recur(element, [...path, index])
+      compiled: recurAt(element, path, index)
     }))
     const requiredCount = elements.findIndex((element) => element.optional)
     const required = requiredCount === -1 ? elements.length : requiredCount
     const optional = elements.length - required
-    const rest = ast.rest.map((element, index) => recur(element, [...path, elements.length + index]))
+    const rest = ast.rest.map((element, index) => recurAt(element, path, elements.length + index))
     const head = rest[0]
     const tail = rest.slice(1)
     const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "array")
@@ -1433,16 +1532,17 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       const constraint = collectChecks(index.type.checks, undefined).constraint
       return constraint === undefined ? [] : [{ index, position, constraint }]
     })
-    const compileIndexedValue = (type: SchemaAST.AST, path: ReadonlyArray<PropertyKey>) => {
-      const compiled = recur(type, path)
+    const compileIndexedValue = (type: SchemaAST.AST, schemaKey: PropertyKey) => {
+      const valuePath = [...path, schemaKey]
+      const compiled = recurAt(type, path, schemaKey)
       // Scalar specializations have no recursive dependencies and keep the same minimum cost.
       const candidates = type._tag === "String" || type._tag === "Number" || type._tag === "BigInt"
         ? constrainedIndexes.filter(({ index }) => index.type !== type && index.type._tag === type._tag)
         : []
       const specializations = new Map<string, Model.Compiled<any>>()
-      const forKey = (key: PropertyKey): Model.Compiled<any> => {
+      const forKey = (propertyKey: PropertyKey): Model.Compiled<any> => {
         if (candidates.length === 0) return compiled
-        const input = { [key]: undefined }
+        const input = { [propertyKey]: undefined }
         const matching = candidates.filter(({ index }) =>
           SchemaAST.getIndexSignatureKeys(input, index.parameter).length > 0
         )
@@ -1455,9 +1555,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           let inherited: FilterConstraint | undefined
           for (const match of matching) inherited = mergeConstraint(inherited, match.constraint)
           const checks = collectChecks(type.checks, inherited)
-          specialized = compileBase(type, path, checks.constraint)
+          specialized = compileBase(type, valuePath, checks.constraint)
           specialized.minCost = 0
           applyFilters(specialized, type, checks.filters)
+          specialized = atPath(specialized, schemaKey)
         } catch {
           // Incompatible scalar constraints keep the original generator and indexed validation.
         }
@@ -1472,7 +1573,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     const properties = ast.propertySignatures.map((property) => ({
       property,
       optional: SchemaAST.isOptional(property.type),
-      compiled: compileIndexedValue(property.type, [...path, property.name]).forKey(property.name)
+      compiled: compileIndexedValue(property.type, property.name).forKey(property.name)
     }))
     const propertyNames = new Set<PropertyKey>(
       properties.map(({ property }) =>
@@ -1480,9 +1581,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       )
     )
     const indexes = ast.indexSignatures.map((index, position) => {
-      const value = compileIndexedValue(index.type, [...path, `index-${position}-value`])
+      const value = compileIndexedValue(index.type, `index-${position}-value`)
       return {
-        parameter: recur(index.parameter, [...path, `index-${position}-key`]),
+        parameter: recurAt(index.parameter, path, `index-${position}-key`),
         value: value.compiled,
         valueForKey: value.forKey
       }
@@ -1617,7 +1718,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     constraint: FilterConstraint | undefined
   ): Model.Compiled<any> => {
     validateConstraint(constraint, path)
-    const typeParameters = ast.typeParameters.map((parameter, index) => recur(parameter, [...path, index]))
+    const typeParameters = ast.typeParameters.map((parameter, index) => recurAt(parameter, path, index))
     const parameters = ast.typeParameters.map((parameter) => Schema.make(SchemaAST.toType(parameter)))
     const getArbitrary = ast.annotations?.toCodecArbitrary
     const representation = (ast.annotations as Schema.Annotations.Declaration<any> | undefined)?.representation
@@ -1675,6 +1776,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
 
   const root = recur(rootAst, [])
   for (let index = 0; index < pending.length; index++) pending[index]()
+  // Schemas without unsupported patterns need no path tracking while generating values.
+  if (!hasUnsupportedPatterns) {
+    for (const [node, compiled] of pathNodes) node.generate = compiled.generate
+  }
   const dependents = analyzeDependencyGraph(nodes, suspendBodies)
   const recursiveQueue = nodes.filter((node) => node.recursive)
   for (let index = 0; index < recursiveQueue.length; index++) {

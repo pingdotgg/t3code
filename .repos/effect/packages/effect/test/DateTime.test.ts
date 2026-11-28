@@ -411,6 +411,25 @@ describe("DateTime", () => {
       })
       strictEqual(updated.toJSON(), "2023-06-25T00:00:00.000Z")
     })
+
+    it("preserves valid offset across DST transitions", () => {
+      const secondOneThirty = DateTime.makeZonedUnsafe("2025-11-02T06:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(
+        DateTime.formatIso(DateTime.setParts(secondOneThirty, { second: 0, millisecond: 0 })),
+        "2025-11-02T06:30:00.000Z"
+      )
+      const afterRepeated = DateTime.makeZonedUnsafe("2025-11-02T08:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(DateTime.formatIso(DateTime.setParts(afterRepeated, { hour: 1 })), "2025-11-02T06:30:15.250Z")
+      strictEqual(DateTime.formatIso(DateTime.setParts(secondOneThirty, { day: 1 })), "2025-11-01T05:30:15.250Z")
+      const afterGap = DateTime.makeZonedUnsafe("2025-03-10T06:30:15.250Z", {
+        timeZone: "America/New_York"
+      })
+      strictEqual(DateTime.formatIso(DateTime.setParts(afterGap, { day: 9 })), "2025-03-09T07:30:15.250Z")
+    })
   })
 
   describe("formatIso", () => {
@@ -559,6 +578,50 @@ describe("DateTime", () => {
     })
   })
 
+  describe("zoneMakeNamed", () => {
+    it("keeps the name of a renamed zone", () => {
+      for (const name of ["Europe/Kiev", "Europe/Kyiv", "Europe/Kiev", "Europe/Kyiv"]) {
+        strictEqual(DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe(name)), name)
+      }
+      strictEqual(
+        DateTime.formatIsoZoned(DateTime.makeZonedUnsafe("2024-01-01T00:00:00Z", { timeZone: "Europe/Kyiv" })),
+        "2024-01-01T02:00:00.000+02:00[Europe/Kyiv]"
+      )
+      strictEqual(DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe("europe/london")), "Europe/London")
+    })
+
+    const mapsRenamedZones =
+      new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Kyiv" }).resolvedOptions().timeZone ===
+        new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Kiev" }).resolvedOptions().timeZone
+
+    it.runIf(mapsRenamedZones)("treats a renamed zone and its old name as equal", () => {
+      const kyiv = DateTime.zoneMakeNamedUnsafe("Europe/Kyiv")
+      const kiev = DateTime.zoneMakeNamedUnsafe("Europe/Kiev")
+      assertTrue(Equal.equals(kyiv, kiev))
+      strictEqual(Hash.hash(kyiv), Hash.hash(kiev))
+    })
+
+    it("treats a zone from an older copy of effect as equal", () => {
+      const zone = DateTime.zoneMakeNamedUnsafe("Europe/London")
+      // Older copies store Intl's resolved identifier in `id` and have no `resolvedId`
+      const older = {
+        "~effect/DateTime/TimeZone": "~effect/DateTime/TimeZone",
+        _tag: "Named",
+        id: "Europe/London",
+        format: new Intl.DateTimeFormat("en-US", { timeZone: "Europe/London" }),
+        [Hash.symbol]() {
+          return Hash.string(`Named:${this.id}`)
+        },
+        [Equal.symbol](that: unknown) {
+          return DateTime.isTimeZoneNamed(that) && this.id === that.id
+        }
+      }
+      assertTrue(Equal.equals(older, zone))
+      assertTrue(Equal.equals(zone, older))
+      strictEqual(Hash.hash(zone), Hash.hash(older))
+    })
+  })
+
   describe("toUtc", () => {
     it.effect("with a Utc", () =>
       Effect.gen(function*() {
@@ -682,13 +745,14 @@ describe("DateTime", () => {
       strictEqual(dt.toJSON(), "2024-01-01T01:00:00.000Z")
     })
 
-    it("treats strings with lowercase letters in comments as UTC", { concurrent: false }, () => {
+    it.each([
+      ["Tue, 27 Jan 2026 17:14:06 (xyz)", "2026-01-27T17:14:06.000Z"],
+      ["2024-1-15", "2024-01-15T00:00:00.000Z"]
+    ])("reads zoneless %s as UTC", { concurrent: false }, (input, expected) => {
       const previousTZ = process.env.TZ
       try {
         process.env.TZ = "America/New_York"
         strictEqual(new Date("2026-01-27T17:14:06.000Z").getTimezoneOffset(), 300)
-        const input = "Tue, 27 Jan 2026 17:14:06 (xyz)"
-        const expected = "2026-01-27T17:14:06.000Z"
         deepStrictEqual(
           [DateTime.makeUnsafe(input).toJSON(), Option.map(DateTime.make(input), DateTime.formatIso)],
           [expected, Option.some(expected)]
@@ -712,6 +776,11 @@ describe("DateTime", () => {
       strictEqual(dt.toJSON(), "2020-02-01T00:17:00.000Z")
     })
 
+    it("preserves a GMT offset before the year", () => {
+      const dt = DateTime.makeUnsafe("Jan 15 12:00 GMT-0500 2024")
+      strictEqual(dt.toJSON(), "2024-01-15T17:00:00.000Z")
+    })
+
     it("does not append Z to strings containing GMT", () => {
       const dt = DateTime.makeUnsafe("Tue, 27 Jan 2026 17:14:06 GMT")
       strictEqual(dt.toJSON(), "2026-01-27T17:14:06.000Z")
@@ -719,10 +788,27 @@ describe("DateTime", () => {
 
     it.each([
       ["2024-01-01T00:00:00z", "2024-01-01T00:00:00.000Z"],
-      ["Tue, 27 Jan 2026 17:14:06 gmt", "2026-01-27T17:14:06.000Z"]
-    ])("accepts lowercase UTC designators: %s", (input, expected) => {
+      ["Tue, 27 Jan 2026 17:14:06 gmt", "2026-01-27T17:14:06.000Z"],
+      ["2024-06-01 10:00:00 UTC", "2024-06-01T10:00:00.000Z"],
+      ["Sat, 01 Jun 2024 10:00:00 UT", "2024-06-01T10:00:00.000Z"],
+      ["June 1, 2024 10:00 est", "2024-06-01T15:00:00.000Z"]
+    ])("accepts trailing zone designators in any case: %s", (input, expected) => {
       strictEqual(DateTime.makeUnsafe(input).toJSON(), expected)
       assertSomeIso(DateTime.make(input), expected)
+    })
+
+    it.each([
+      ["Tue, 27 Jan 2026 17:14:06 -0500 (EST)", "2026-01-27T22:14:06.000Z"],
+      ["Tue, 27 Jan 2026 17:14:06 +0530 (India Standard Time)", "2026-01-27T11:44:06.000Z"],
+      ["Tue, 27 Jan 2026 17:14:06 -05 ", "2026-01-27T22:14:06.000Z"],
+      ["Tue, 27 Jan 2026 05:14:06 PM EST (Eastern Standard Time)", "2026-01-27T22:14:06.000Z"],
+      ["Tue, 27 Jan 2026 17:14:06 -0500 EST (Eastern Standard Time)", "2026-01-27T22:14:06.000Z"],
+      ["Tue, 27 Jan 2026 17:14:06 est\r\n", "2026-01-27T22:14:06.000Z"],
+      ["12:00:00 2024-01-01 (note)", "2024-01-01T12:00:00.000Z"],
+      ["2024-01-01 ", "2024-01-01T00:00:00.000Z"],
+      ["01-01-2024 (note)", "2024-01-01T00:00:00.000Z"]
+    ])("preserves zone interpretation before comments or whitespace: %s", (input, expected) => {
+      strictEqual(DateTime.makeUnsafe(input).toJSON(), expected)
     })
   })
 

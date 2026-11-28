@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 
 import {
@@ -207,7 +208,12 @@ it.effect.each(["provider", "mcp"] as const)(
       });
       assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
     }).pipe(
-      Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layerDigest),
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+        ),
+      ),
     ),
 );
 
@@ -348,37 +354,65 @@ it("waits for nested work and retains the report across monitor acknowledgements
     ordinal: 3,
     now: childCreatedAt,
   });
+  const update = {
+    ...artifacts.message,
+    runId: monitor.id,
+    notification: {
+      source: { kind: "monitor" as const },
+      outcome: "updated" as const,
+      summary: "Monitor update",
+    },
+  };
   const progress = delegatedTaskProgress({
     ...projection,
     runs: [run, report, monitor],
-    messages: [
-      {
-        ...artifacts.message,
-        runId: monitor.id,
-        notification: {
-          source: { kind: "monitor" },
-          outcome: "updated",
-          summary: "Monitor update",
-        },
-      },
-    ],
+    messages: [update],
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.id, report.id);
+  // A task still waiting when the wake ran gets that run's outcome, not its earlier report.
+  assert.equal(
+    delegatedTaskProgress(
+      { ...projection, runs: [run, report, monitor], messages: [update] },
+      { unsettled: true },
+    ).resultRun?.id,
+    monitor.id,
+  );
+  // A monitor-woken run can stop the awaited work itself, so it holds the task until it ends.
+  const executing = { ...monitor, status: "running" as const, completedAt: null };
+  assert.equal(
+    delegatedTaskProgress({ ...projection, runs: [run, report, executing], messages: [update] })
+      .state,
+    "working",
+  );
+  const failed = delegatedTaskProgress({
+    ...projection,
+    runs: [run, report, { ...monitor, status: "failed" }],
+    messages: [update],
+  });
+  assert.equal(failed.state, "result_available");
+  assert.equal(failed.resultRun?.id, monitor.id);
+  // A usage limit leaves later wakes queued without a hold, so a queued update holds nothing.
+  const queuedUpdate = {
+    ...monitor,
+    status: "queued" as const,
+    startedAt: null,
+    completedAt: null,
+  };
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      runs: [run, { ...report, status: "failed" }, queuedUpdate],
+      messages: [update],
+    }).state,
+    "result_available",
+  );
   const ended = { ...report, id: RunId.make("monitor-ended"), ordinal: 4 };
   const afterMonitorEnded = delegatedTaskProgress({
     ...projection,
     runs: [run, report, monitor, ended],
     messages: [
-      {
-        ...artifacts.message,
-        runId: monitor.id,
-        notification: {
-          source: { kind: "monitor" },
-          outcome: "updated",
-          summary: "Monitor update",
-        },
-      },
+      update,
       {
         ...artifacts.message,
         runId: ended.id,
@@ -492,7 +526,7 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
-it("reports a provider's stop reason for a completed run without an assistant result", () => {
+it("reports a provider's stop reason with and without assistant progress", () => {
   const { projection, run } = taskFixture();
   const notice = {
     id: IdAllocator.derive.runSignalTurnItem({
@@ -519,6 +553,48 @@ it("reports a provider's stop reason for a completed run without an assistant re
   assert.equal(
     subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
     `Child task completed without an assistant result.\n\n${notice.message}`,
+  );
+  const progress = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("before-hook-stop"),
+    turnItemId: TurnItemId.make("before-hook-stop"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "I am checking the remaining files.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, notice],
+      },
+      run,
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
+  );
+  const interruptResult = {
+    ...notice,
+    id: IdAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+    status: "interrupted",
+    title: "Interrupted",
+    type: "run_interrupt_result",
+  } satisfies OrchestrationV2TurnItem;
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, interruptResult],
+      },
+      { ...run, status: "interrupted" },
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
   );
 });
 

@@ -8,6 +8,10 @@
  * patterns, and common checks such as strings, numbers, records, and class
  * instances.
  *
+ * Object patterns use their own enumerable string and symbol properties.
+ * Non-enumerable and inherited pattern properties are ignored. The selected
+ * properties may be non-enumerable or inherited on the value being matched.
+ *
  * @stability stable
  * @since 4.0.0
  */
@@ -25,12 +29,12 @@ const TypeId = internal.TypeId
 // intersection loses contextual typing for nested generic calls (microsoft/TypeScript#52864).
 type Contextual<P, Fallback> = [P] extends [never] ? Fallback : P
 
-type TagHandlers<D extends string, R, Ret> = {
-  readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>) => Ret
+type TagHandlers<D extends string, R, Ret, Args extends Array<any>> = {
+  readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>, ...args: Args) => Ret
 }
 
-type PartialTagHandlers<D extends string, R, Ret> = {
-  readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>) => Ret) | undefined
+type PartialTagHandlers<D extends string, R, Ret, Args extends Array<any>> = {
+  readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>, ...args: Args) => Ret) | undefined
 }
 
 type ValueTagHandlers<I> = {
@@ -50,17 +54,19 @@ type LiteralKeys<R, All = Extract<R, string | number>> = R extends string | numb
   : R
   : never
 
-type LiteralHandlers<R, Ret> = [Exclude<R, LiteralKeys<R>>] extends [never] ? {
-    readonly [K in LiteralKeys<R>]: (_: K) => Ret
+type LiteralHandlers<R, Ret, Args extends Array<any>> = [Exclude<R, LiteralKeys<R>>] extends [never] ? {
+    readonly [K in LiteralKeys<R>]: (_: K, ...args: Args) => Ret
   }
   : never
 
-type PartialLiteralHandlers<R, Ret> = {
-  readonly [K in LiteralKeys<R>]?: ((_: K) => Ret) | undefined
+type PartialLiteralHandlers<R, Ret, Args extends Array<any>> = {
+  readonly [K in LiteralKeys<R>]?: ((_: K, ...args: Args) => Ret) | undefined
 }
 
-// Only keys with a defined handler remove a literal from the remaining input.
-type HandledLiterals<P> = { readonly [K in keyof P]-?: undefined extends P[K] ? never : K }[keyof P]
+// Map keys separately so handler-map unions do not distribute.
+type HandledKeys<P, Keys extends keyof P = keyof P> = {
+  readonly [K in Keys]-?: undefined extends P[K] ? never : K
+}[Keys]
 
 /**
  * Marker used by `Matcher` to distinguish matchers created with `Match.value`.
@@ -628,6 +634,9 @@ type ExactPatterns<R, P> = {
  * Supports both direct value comparisons and predicate functions. If the
  * pattern matches, the associated function is executed and the matched input is
  * removed from the remaining cases tracked by the matcher.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching with values and predicates)
  *
@@ -696,6 +705,9 @@ export const when: <
  * Unlike {@link when}, which requires separate conditions for each pattern,
  * this function enables combining them into a single statement, making the
  * matcher more concise.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching one of several patterns)
  *
@@ -765,6 +777,9 @@ export const whenOr: <
  * ensures that multiple conditions are met before executing the callback. It is
  * useful when checking for values that need to fulfill multiple criteria at
  * once.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching all provided patterns)
  *
@@ -861,17 +876,24 @@ export const whenAnd: <
  */
 export const discriminator: <D extends string>(
   field: D
-) => <R, P extends Types.Tags<D, R> & string, Ret, Fn extends (_: Extract<R, Record<D, P>>) => Ret>(
+) => <
+  R,
+  P extends Types.Tags<D, R> & string,
+  Ret,
+  Fn extends (_: Extract<R, Record<D, P>>, ...args: Args) => Ret,
+  Args extends Array<any> = []
+>(
   ...pattern: [first: P, ...values: Array<P>, f: Fn]
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
   Types.AddWithout<F, Extract<R, Record<D, P>>>,
   Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, P>>>>,
   A | ReturnType<Fn>,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.discriminator
 
 /**
@@ -913,18 +935,25 @@ export const discriminator: <D extends string>(
  */
 export const discriminatorStartsWith: <D extends string>(
   field: D
-) => <R, P extends string, Ret, Fn extends (_: Extract<R, Record<D, `${P}${string}`>>) => Ret>(
+) => <
+  R,
+  P extends string,
+  Ret,
+  Fn extends (_: Extract<R, Record<D, `${P}${string}`>>, ...args: Args) => Ret,
+  Args extends Array<any> = []
+>(
   pattern: P,
   f: Fn
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
   Types.AddWithout<F, Extract<R, Record<D, `${P}${string}`>>>,
   Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, `${P}${string}`>>>>,
   A | ReturnType<Fn>,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.discriminatorStartsWith
 
 /**
@@ -981,19 +1010,21 @@ export const discriminators: <D extends string>(
   R,
   Ret,
   P extends
-    & PartialTagHandlers<D, R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
+    & PartialTagHandlers<D, R, Ret, Args>
+    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, PartialTagHandlers<D, R, Ret>>
+  fields: Contextual<P, PartialTagHandlers<D, R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, Record<D, keyof P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, keyof P>>>>,
+  Types.AddWithout<F, Extract<R, Record<D, HandledKeys<P>>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, HandledKeys<P>>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.discriminators
 
 /**
@@ -1045,14 +1076,16 @@ export const discriminatorsExhaustive: <D extends string>(
   R,
   Ret,
   P extends
-    & TagHandlers<D, R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
+    & TagHandlers<D, R, Ret, Args>
+    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, TagHandlers<D, R, Ret>>
+  fields: Contextual<P, TagHandlers<D, R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
-) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>> : Unify<A | ReturnType<P[keyof P]>> =
-  internal.discriminatorsExhaustive
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
+) => [Pr] extends [never] ? [Args] extends [[]] ? (u: I) => Unify<A | ReturnType<P[keyof P]>>
+  : (...args: Args) => Unify<A | ReturnType<P[keyof P]>>
+  : Unify<A | ReturnType<P[keyof P]>> = internal.discriminatorsExhaustive
 
 /**
  * Matches discriminated union members by their `_tag` field.
@@ -1152,19 +1185,21 @@ export const tagStartsWith: <
   R,
   P extends string,
   Ret,
-  Fn extends (_: Extract<R, Record<"_tag", `${P}${string}`>>) => Ret
+  Fn extends (_: Extract<R, Record<"_tag", `${P}${string}`>>, ...args: Args) => Ret,
+  Args extends Array<any> = []
 >(
   pattern: P,
   f: Fn
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
   Types.AddWithout<F, Extract<R, Record<"_tag", `${P}${string}`>>>,
   Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<"_tag", `${P}${string}`>>>>,
   ReturnType<Fn> | A,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.tagStartsWith
 
 /**
@@ -1208,19 +1243,21 @@ export const tags: <
   R,
   Ret,
   P extends
-    & PartialTagHandlers<"_tag", R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never }
+    & PartialTagHandlers<"_tag", R, Ret, Args>
+    & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, PartialTagHandlers<"_tag", R, Ret>>
+  fields: Contextual<P, PartialTagHandlers<"_tag", R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, Record<"_tag", keyof P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<"_tag", keyof P>>>>,
+  Types.AddWithout<F, Extract<R, Record<"_tag", HandledKeys<P>>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<"_tag", HandledKeys<P>>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.tags
 
 /**
@@ -1264,14 +1301,16 @@ export const tagsExhaustive: <
   R,
   Ret,
   P extends
-    & TagHandlers<"_tag", R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never }
+    & TagHandlers<"_tag", R, Ret, Args>
+    & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, TagHandlers<"_tag", R, Ret>>
+  fields: Contextual<P, TagHandlers<"_tag", R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
-) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>> : Unify<A | ReturnType<P[keyof P]>> =
-  internal.tagsExhaustive
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
+) => [Pr] extends [never] ? [Args] extends [[]] ? (u: I) => Unify<A | ReturnType<P[keyof P]>>
+  : (...args: Args) => Unify<A | ReturnType<P[keyof P]>>
+  : Unify<A | ReturnType<P[keyof P]>> = internal.tagsExhaustive
 
 /**
  * Matches string and number literal values, mapping each literal to a
@@ -1312,19 +1351,21 @@ export const literals: <
   R,
   Ret,
   P extends
-    & PartialLiteralHandlers<R, Ret>
-    & { readonly [K in Exclude<keyof P, LiteralKeys<R>>]: never }
+    & PartialLiteralHandlers<R, Ret, Args>
+    & { readonly [K in Exclude<keyof P, LiteralKeys<R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, PartialLiteralHandlers<R, Ret>>
+  fields: Contextual<P, PartialLiteralHandlers<R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, HandledLiterals<P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, HandledLiterals<P>>>>,
+  Types.AddWithout<F, Extract<R, HandledKeys<P>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, HandledKeys<P>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
-  Ret
+  Ret,
+  Args
 > = internal.literals
 
 /**
@@ -1366,14 +1407,16 @@ export const literalsExhaustive: <
   R,
   Ret,
   P extends
-    & LiteralHandlers<R, Ret>
-    & { readonly [K in Exclude<keyof P, LiteralKeys<R>>]: never }
+    & LiteralHandlers<R, Ret, Args>
+    & { readonly [K in Exclude<keyof P, LiteralKeys<R>>]: never },
+  Args extends Array<any> = []
 >(
-  fields: Contextual<P, LiteralHandlers<R, Ret>>
+  fields: Contextual<P, LiteralHandlers<R, Ret, Args>>
 ) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
-) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>> : Unify<A | ReturnType<P[keyof P]>> =
-  internal.literalsExhaustive
+  self: Matcher<I, F, R, A, Pr, Ret, Args>
+) => [Pr] extends [never] ? [Args] extends [[]] ? (u: I) => Unify<A | ReturnType<P[keyof P]>>
+  : (...args: Args) => Unify<A | ReturnType<P[keyof P]>>
+  : Unify<A | ReturnType<P[keyof P]>> = internal.literalsExhaustive
 
 /**
  * Creates a pattern that excludes a specific value while allowing all others.
@@ -1387,6 +1430,9 @@ export const literalsExhaustive: <
  *
  * Any excluded value bypasses the provided function and continues matching
  * through later cases.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Ignoring a specific value)
  *

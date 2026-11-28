@@ -205,6 +205,34 @@ describe("Csv", () => {
       assert.deepStrictEqual(yield* run(["score\n\"\"\n"], Csv.decodeSchemaString(Lazy)({ headers: true })), [{}])
     }))
 
+  it.effect("decodes empty header cells according to the selected union member", () =>
+    Effect.gen(function*() {
+      const Entry = Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("score"), cell: Schema.optional(Schema.Number) }),
+        Schema.Struct({ kind: Schema.Literal("text"), cell: Schema.String })
+      ])
+      const text = "kind,cell\nscore,\nscore,12\ntext,\n"
+      assert.deepStrictEqual(yield* run([text], Csv.decodeSchemaString(Entry)({ headers: true })), [
+        { kind: "score" },
+        { kind: "score", cell: 12 },
+        { kind: "text", cell: "" }
+      ])
+    }))
+
+  it.effect("omits empty union member cells before checking index signatures", () =>
+    Effect.gen(function*() {
+      const Score = Schema.StructWithRest(
+        Schema.Struct({ kind: Schema.Literal("score"), cell: Schema.optionalKey(Schema.Number) }),
+        [Schema.Record(Schema.TemplateLiteral(["cell", Schema.String]), Schema.Number)]
+      )
+      const Text = Schema.Struct({ kind: Schema.Literal("text"), cell: Schema.String })
+      const Entry = Schema.Union([Score, Text], { mode: "oneOf" })
+      const text = "kind,cell\nscore,\n"
+      assert.deepStrictEqual(yield* run([text], Csv.decodeSchemaString(Entry)({ headers: true })), [
+        { kind: "score" }
+      ])
+    }))
+
   it.effect("round trips tuple schemas by position", () =>
     Effect.gen(function*() {
       const TuplePerson = Schema.Tuple([Schema.String, Schema.NumberFromString]).pipe(
@@ -216,6 +244,32 @@ describe("Csv", () => {
       const text = yield* run([{ name: "Alice", age: 32 }], Csv.encodeSchemaString(TuplePerson)())
       assert.deepStrictEqual(text, ["Alice,32\r\n"])
       assert.deepStrictEqual(yield* run(text, Csv.decodeSchemaString(TuplePerson)()), [{ name: "Alice", age: 32 }])
+    }))
+
+  it.effect("emits completed records before decoding errors in the same chunk", () =>
+    Effect.gen(function*() {
+      const beforeError = Effect.fnUntraced(function*(
+        text: string,
+        channel: ReturnType<typeof Csv.decodeString<never>> = Csv.decodeString()
+      ) {
+        const values: Array<unknown> = []
+        const error = yield* Stream.make(text).pipe(
+          Stream.pipeThroughChannel(channel),
+          Stream.runForEach((value) => Effect.sync(() => values.push(value))),
+          Effect.flip
+        )
+        return [error.kind, values]
+      })
+
+      assert.deepStrictEqual(yield* beforeError("a,b\nc,d\n\"e\"x\n"), [
+        "Syntax",
+        [["a", "b"], ["c", "d"]]
+      ])
+      assert.deepStrictEqual(yield* beforeError("a,b\nc,d\ne\n\"f\"x\n", Csv.decodeString({ headers: true })), [
+        "Header",
+        [{ a: "c", b: "d" }]
+      ])
+      assert.deepStrictEqual(yield* beforeError("a,b\n\"c"), ["Syntax", [["a", "b"]]])
     }))
 
   it.effect("fails with upstream errors without flushing a partial record", () =>

@@ -6,10 +6,10 @@ import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { AndroidFoldError, setAndroidFold, type AndroidFoldPosture } from "./deviceFold";
 import { androidFoldReadAtom, androidFoldViewAtom, foldAngle, NOOP_ATOM } from "./deviceHubAtoms";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 const isAndroidFoldError = Schema.is(AndroidFoldError);
 
@@ -78,61 +78,62 @@ export function DeviceAndroidFoldControls(props: {
   return (
     <div aria-label={gt("Android fold controls")} className="flex flex-col items-center gap-2">
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant={fold.posture === "closed" ? "secondary" : "ghost"}
-                aria-label={gt("Fold device")}
-                aria-pressed={fold.posture === "closed"}
-                disabled={pending || !props.enabled}
-                onClick={() => change("closed")}
-              />
-            }
-          >
-            <DeviceDuoGlyph pose="closed" />
-          </TooltipTrigger>
-          <TooltipPopup side="left">
-            <T>Fold device</T>
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant={fold.posture === "opened" ? "secondary" : "ghost"}
-                aria-label={gt("Unfold device")}
-                aria-pressed={fold.posture === "opened"}
-                disabled={pending || !props.enabled}
-                onClick={() => change("opened")}
-              />
-            }
-          >
-            <DeviceDuoGlyph pose="open" />
-          </TooltipTrigger>
-          <TooltipPopup side="left">
-            <T>Unfold device</T>
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon"
+              variant={fold.posture === "closed" ? "secondary" : "ghost"}
+              aria-label={gt("Fold device")}
+              aria-pressed={fold.posture === "closed"}
+              disabled={pending || !props.enabled}
+              onClick={() => change("closed")}
+            />
+          }
+          label={
+            <>
+              <T>Fold device</T>
+            </>
+          }
+          side="left"
+        >
+          <DeviceDuoGlyph pose="closed" />
+        </SharedTooltipTrigger>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon"
+              variant={fold.posture === "opened" ? "secondary" : "ghost"}
+              aria-label={gt("Unfold device")}
+              aria-pressed={fold.posture === "opened"}
+              disabled={pending || !props.enabled}
+              onClick={() => change("opened")}
+            />
+          }
+          label={
+            <>
+              <T>Unfold device</T>
+            </>
+          }
+          side="left"
+        >
+          <DeviceDuoGlyph pose="open" />
+        </SharedTooltipTrigger>
       </div>
       {error ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                tabIndex={0}
-                role="alert"
-                aria-label={error}
-                className="pointer-events-auto text-xs text-destructive"
-              >
-                !
-              </span>
-            }
-          />
-          <TooltipPopup side="left">{error}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <span
+              tabIndex={0}
+              role="alert"
+              aria-label={error}
+              className="pointer-events-auto text-xs text-destructive"
+            >
+              !
+            </span>
+          }
+          label={error}
+          side="left"
+        />
       ) : null}
     </div>
   );

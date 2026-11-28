@@ -22,9 +22,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -307,25 +307,25 @@ function ProviderSetupActions({
                 ) : null}
               </div>
               {installation?.canRemove && !installActive ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        className="col-start-1 row-start-1"
-                        aria-label={gt("Remove downloaded runtime")}
-                        disabled={actionsDisabled || authActive}
-                        onClick={() => void removeRuntime()}
-                      />
-                    }
-                  >
-                    <Trash2Icon className="size-3.5" />
-                  </TooltipTrigger>
-                  <TooltipPopup>
-                    <T>Remove downloaded runtime</T>
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="col-start-1 row-start-1"
+                      aria-label={gt("Remove downloaded runtime")}
+                      disabled={actionsDisabled || authActive}
+                      onClick={() => void removeRuntime()}
+                    />
+                  }
+                  label={
+                    <>
+                      <T>Remove downloaded runtime</T>
+                    </>
+                  }
+                >
+                  <Trash2Icon className="size-3.5" />
+                </SharedTooltipTrigger>
               ) : null}
             </div>
           </div>

@@ -3,7 +3,7 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
@@ -33,5 +33,13 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
   execute: (input: ConnectionOnboarding.SshConnectionInput) =>
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.registerSsh(input)),
+    ),
+});
+
+export const reachesEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:reaches-environment",
+  execute: (input: { readonly host: string; readonly environmentId: EnvironmentId }) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.reaches(input)),
     ),
 });

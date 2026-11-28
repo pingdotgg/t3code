@@ -512,6 +512,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
 }
@@ -1064,6 +1065,39 @@ it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
     }),
 );
 
+it.effect("pins a quick merge to the head it judged mergeable unless the caller showed one", () =>
+  Effect.gen(function* () {
+    const pinned: Array<string | undefined> = [];
+    const client = {
+      [WS_METHODS.pullRequestsDetail]: () =>
+        Effect.succeed({
+          state: "open",
+          isDraft: false,
+          headSha: "checked-head",
+          capabilities: { actions: ["merge"] },
+          viewerPermissions: { actions: ["merge"] },
+        }),
+      [WS_METHODS.pullRequestsRunAction]: (input: { expectedHeadSha?: string }) =>
+        Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+    } as unknown as WsRpcProtocolClient;
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const input = {
+      projectId: ProjectId.make("project-1"),
+      repository: "acme/web",
+      number: 1,
+      action: "merge" as const,
+      resolveMergeMethod: () => "squash" as const,
+    };
+    for (const shown of [{}, { expectedHeadSha: "shown-head" }]) {
+      yield* atoms.runAction.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, ...shown },
+      });
+    }
+    expect(pinned).toEqual(["checked-head", "shown-head"]);
+  }),
+);
+
 it.effect("keeps a close batch ordered and continues after a refused close", () =>
   Effect.gen(function* () {
     const calls: number[] = [];
@@ -1151,6 +1185,60 @@ function actionReplyClient(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as unknown as WsRpcProtocolClient;
 }
+
+it.effect("waits for a fresh check status before clearing a workflow approval", () =>
+  Effect.gen(function* () {
+    const afterApproval = yield* Deferred.make<void>();
+    const checksStarted = yield* Deferred.make<void>();
+    const staleReadStarted = yield* Deferred.make<void>();
+    const approvalStarted = yield* Deferred.make<void>();
+    const commitApproval = yield* Deferred.make<void>();
+    let reads = 0;
+    let approved = false;
+    const client = actionReplyClient({
+      [WS_METHODS.pullRequestsRunAction]: () =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(approvalStarted, undefined);
+          yield* Deferred.await(commitApproval);
+          approved = true;
+        }),
+      [WS_METHODS.pullRequestsChecks]: () =>
+        Effect.gen(function* () {
+          if (++reads === 1) return { state: "open", checks: [], workflowApprovalsRequired: 1 };
+          if (!approved) {
+            yield* Deferred.succeed(staleReadStarted, undefined);
+            return yield* Effect.never;
+          }
+          yield* Deferred.succeed(checksStarted, undefined);
+          yield* Deferred.await(afterApproval);
+          return { state: "open", checks: [], workflowApprovalsRequired: 0 };
+        }),
+    });
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const target = { environmentId: TARGET.environmentId, input: actionReference };
+    const checks = atoms.checks(target);
+    yield* AtomRegistry.mount(registry, checks);
+    yield* AtomRegistry.getResult(registry, checks);
+    const action = yield* atoms.runAction
+      .run(registry, { ...target, input: { ...actionReference, action: "approve-workflows" } })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(approvalStarted);
+    registry.refresh(checks);
+    yield* Deferred.await(staleReadStarted);
+    yield* Deferred.succeed(commitApproval, undefined);
+    yield* Effect.raceFirst(
+      Deferred.await(checksStarted),
+      Fiber.join(action).pipe(
+        Effect.andThen(Effect.die("Approval finished before refreshing the checks")),
+      ),
+    );
+    yield* Deferred.succeed(afterApproval, undefined);
+    yield* Fiber.join(action);
+    expect(Option.getOrThrow(AsyncResult.value(registry.get(checks)))).toMatchObject({
+      workflowApprovalsRequired: 0,
+    });
+  }),
+);
 
 it.effect("shows an action's reply in loaded readers and moves list rows without reads", () =>
   Effect.gen(function* () {

@@ -722,6 +722,9 @@ export const matchWithWaiting: {
  *
  * **Details**
  *
+ * Record inputs use own enumerable string and symbol properties.
+ * Non-enumerable and inherited properties are ignored.
+ *
  * If the first non-success result is a failure, its previous success is
  * rebuilt in the combined shape from each input's current or previous value.
  * It is omitted if any input has no value.
@@ -749,7 +752,9 @@ export const all = <const Arg extends Iterable<any> | Record<string, any>>(
   const isIter = isIterable(results)
   const entries = isIter
     ? Array.from(results, (result, i) => [i, result] as const)
-    : Object.entries(results)
+    : InternalRecord.ownEnumerableKeys(results).map((key) =>
+      [key, (results as Record<PropertyKey, unknown>)[key]] as const
+    )
   const successes: any = isIter ? [] : {}
   let waiting = false
   for (let i = 0; i < entries.length; i++) {

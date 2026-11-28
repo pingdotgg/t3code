@@ -148,6 +148,9 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Add generated commit message");
       expect(cursorSdkMock.create).toHaveBeenCalledTimes(3);
+      for (const [options] of cursorSdkMock.create.mock.calls) {
+        expect(options).toMatchObject({ mode: "agent", tools: [] });
+      }
       expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
       expect(cursorSdkMock.close).toHaveBeenCalledTimes(3);
       expect(cursorSdkMock.create.mock.calls[0]?.[0]).toMatchObject({
@@ -407,6 +410,43 @@ describe("CursorTextGeneration", () => {
 
       expect(error.detail).toBe("Sign in with Cursor or add CURSOR_API_KEY in provider settings.");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("delegates to sdkRunner.textGenerate without loading the in-process SDK", () =>
+    Effect.gen(function* () {
+      const textGenerate = vi.fn(() =>
+        Effect.succeed({
+          id: "run-worker-title",
+          status: "finished",
+          result: JSON.stringify({ title: "Worker title" }),
+        } satisfies RunResult),
+      );
+      const generation = yield* makeCursorTextGeneration(
+        cursorSettings,
+        { CURSOR_API_KEY: "test-cursor-key" },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          open: () => Effect.die("unused"),
+          assertComplete: Effect.void,
+          textGenerate,
+        },
+      );
+      const result = yield* generation.generateThreadTitle({
+        cwd: process.cwd(),
+        message: "Run text generation out of process",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("cursor"),
+          model: "composer-2",
+        },
+      });
+      expect(result.title).toBe("Worker title");
+      expect(textGenerate).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.create).not.toHaveBeenCalled();
+      expect(cursorSdkMock.storeOpen).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layerTest)),
   );
 });

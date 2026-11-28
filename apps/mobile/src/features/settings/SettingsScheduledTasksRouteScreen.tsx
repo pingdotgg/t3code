@@ -20,6 +20,7 @@ import {
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  trimAsciiWhitespace,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -149,12 +150,15 @@ function describeSchedule(
     : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
 }
 
+// A stored wall time names no date or zone, so format it in UTC where nothing can shift it.
 function formatTime(value: string): string {
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
-  const time = new Date();
-  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-  return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(Date.UTC(2000, 0, 1, hours ?? 9, minutes ?? 0)).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
 }
 
 function formatRunAtDate(value: Date): string {
@@ -167,7 +171,8 @@ function formatRunAtTime(value: Date): string {
 
 function timePickerValue(value: string): Date {
   const [hours, minutes] = value.split(":").map(Number);
-  const time = new Date();
+  // Native pickers read local hours, and 2000-01-01 has no DST change in any zone, unlike today.
+  const time = new Date(2000, 0, 1);
   time.setHours(
     Number.isInteger(hours) ? (hours ?? 9) : 9,
     Number.isInteger(minutes) ? (minutes ?? 0) : 0,
@@ -747,7 +752,7 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
-  const automaticBaseRef = draft.workspace === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef = draft.workspace === "worktree" && !trimAsciiWhitespace(draft.baseRef);
   const automaticBaseRefCwd = automaticBaseRef
     ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
     : null;
@@ -884,6 +889,7 @@ function TaskForm({
       schedule,
       enabled: draft.enabled,
       threadId: draft.threadId,
+      ...(draft.threadId === null && draft.task?.threadId != null ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy:
         draft.workspace === "root"
@@ -1227,6 +1233,7 @@ function TaskForm({
                   display={Platform.OS === "ios" ? "spinner" : "default"}
                   onDismiss={() => setTimePickerOpen(false)}
                   onValueChange={(_, selected) => {
+                    if (Platform.OS === "android") setTimePickerOpen(false);
                     const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
                     setDraft((current) => ({
                       ...current,

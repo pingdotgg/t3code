@@ -20,8 +20,10 @@ import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -38,6 +40,9 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
+// npm leaves a killed packument download in its cache's tmp dir, so registry probes are
+// bounded by npm's own fetch-timeout instead of being killed.
+const NPM_REGISTRY_PROBE_TIMEOUT = null;
 const PROBE_MAX_BYTES = 256 * 1_024;
 const WRAPPER_SCRIPT_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
@@ -413,6 +418,7 @@ const runProbe = Effect.fn("runProbe")(function* (
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
   okExitCodes: ReadonlyArray<number> = [0],
+  timeoutMs: number | null = PROBE_TIMEOUT_MS,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
@@ -439,8 +445,13 @@ const runProbe = Effect.fn("runProbe")(function* (
   });
   return yield* collect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
-    Effect.map(Option.getOrNull),
+    (scoped) =>
+      timeoutMs === null
+        ? scoped
+        : scoped.pipe(
+            Effect.timeoutOption(Duration.millis(timeoutMs)),
+            Effect.map(Option.getOrNull),
+          ),
     Effect.catchCause((cause) =>
       Effect.logWarning("Maintenance probe failed", {
         command,
@@ -498,39 +509,111 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// Provider packages npm may own. Naming all of them costs one npm start, about a second on
+// Windows, the same as naming one, so providers sharing a global prefix share a run.
+const npmProviderPackageNames = new Set<string>();
+const NPM_IGNORED_VARIABLE = /^(?:CLAUDE|ELECTRON_RUN_AS_NODE$)/i;
+type NpmGlobalLatestVersions = ReadonlyMap<string, string | null>;
+const npmGlobalLatestVersionRuns = new Map<
+  string,
+  Deferred.Deferred<Option.Option<NpmGlobalLatestVersions>>
+>();
+
 // Unlike `npm view`, `outdated` applies min-release-age, before and their excludes.
-const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
-  packageName: string,
+const runNpmGlobalLatestVersions = Effect.fn("runNpmGlobalLatestVersions")(function* (
+  npmPath: string,
   npmPrefix: string,
   env: NodeJS.ProcessEnv,
+  packageName: string,
 ) {
-  // Match the updater's npm and environment.
-  const npmPath = yield* resolveCommandPath("npm", {
-    env: { ...(yield* HostProcess.Environment), ...env },
-  });
-  if (!npmPath) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Only installed packages, so a missing one cannot force the `ls` fallback.
+  const others = yield* Effect.filter(
+    Array.from(npmProviderPackageNames).filter((name) => name !== packageName),
+    (name) =>
+      Effect.forEach([path.join(npmPrefix, "lib"), npmPrefix], (root) =>
+        fileSystem
+          .exists(path.join(root, "node_modules", ...name.split("/"), "package.json"))
+          .pipe(Effect.orElseSucceed(() => false)),
+      ).pipe(Effect.map((found) => found.includes(true))),
+  );
+  const packageNames = [packageName, ...others];
+  const versions = new Map<string, string | null>(packageNames.map((name) => [name, null]));
   const outdated = yield* runProbe(
     npmPath,
-    ["outdated", "-g", "--prefix", npmPrefix, "--json", packageName],
+    ["outdated", "-g", "--prefix", npmPrefix, "--json", ...packageNames],
     env,
     // npm outdated exits 1 when updates are available.
     [0, 1],
+    NPM_REGISTRY_PROBE_TIMEOUT,
   );
   const outdatedEntries = outdated ? Option.getOrUndefined(decodeOutdated(outdated)) : undefined;
   // npm prints failures such as an unreachable registry as `{"error": ...}`, also exiting 1.
-  if (!outdatedEntries || "error" in outdatedEntries) return null;
-  const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
-  if (latest) return latest;
+  if (!outdatedEntries || "error" in outdatedEntries) return versions;
+  for (const name of packageNames) {
+    versions.set(name, nonEmptyString(outdatedEntries[name]?.latest));
+  }
   // An empty result means the installed version is still the eligible release.
+  const current = packageNames.filter((name) => versions.get(name) === null);
+  if (current.length === 0) return versions;
   const listed = yield* runProbe(
     npmPath,
-    ["ls", "-g", "--prefix", npmPrefix, "--depth", "0", "--json", packageName],
+    ["ls", "-g", "--prefix", npmPrefix, "--depth", "0", "--json", ...current],
     env,
     // npm ls still prints the tree but exits 1 when other globals have problems.
     [0, 1],
   );
   const listedEntries = listed ? Option.getOrUndefined(decodeNpmList(listed)) : undefined;
-  return nonEmptyString(listedEntries?.dependencies?.[packageName]?.version);
+  for (const name of current) {
+    versions.set(name, nonEmptyString(listedEntries?.dependencies?.[name]?.version));
+  }
+  return versions;
+});
+
+const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
+  packageName: string,
+  npmPrefix: string,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<string | null, never, ProviderMaintenanceResolverServices> {
+  // Match the updater's npm and environment.
+  const npmPath = yield* resolveCommandPath("npm", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
+  if (!npmPath) return null;
+  // Claude's driver sets its own variables and drops ELECTRON_RUN_AS_NODE; npm reads neither.
+  const npmEnv = Object.entries(env).filter(([name]) => !NPM_IGNORED_VARIABLE.test(name));
+  const key = [npmPath, npmPrefix, environmentCacheKey(Object.fromEntries(npmEnv))].join("\0");
+  const versions = yield* Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const running = npmGlobalLatestVersionRuns.get(key);
+      if (running) return { running };
+      const own = Deferred.makeUnsafe<Option.Option<NpmGlobalLatestVersions>>();
+      npmGlobalLatestVersionRuns.set(key, own);
+      return { own };
+    }),
+    (claim) =>
+      claim.own
+        ? runNpmGlobalLatestVersions(npmPath, npmPrefix, env, packageName).pipe(Effect.asSome)
+        : Deferred.await(claim.running),
+    (claim, exit) =>
+      claim.own
+        ? Effect.sync(() => {
+            if (npmGlobalLatestVersionRuns.get(key) === claim.own) {
+              npmGlobalLatestVersionRuns.delete(key);
+            }
+          }).pipe(
+            Effect.andThen(
+              Deferred.succeed(claim.own, Exit.isSuccess(exit) ? exit.value : Option.none()),
+            ),
+          )
+        : Effect.void,
+  );
+  // A run interrupted before answering, or one started before this package was known, retries.
+  if (Option.isSome(versions) && versions.value.has(packageName)) {
+    return versions.value.get(packageName) ?? null;
+  }
+  return yield* resolveNpmGlobalLatestVersion(packageName, npmPrefix, env);
 });
 
 // npm names the tarball `${name}-${version}.tgz`, dropping a scope's `@` and its `/`.
@@ -986,6 +1069,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // npm proof outranks a containing Homebrew keg; Homebrew Node globals still belong to npm.
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
+    npmProviderPackageNames.add(packageName);
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
     const capabilities = makeProviderMaintenanceCapabilities({
@@ -1108,9 +1192,10 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
 });
 
 /**
- * The port that installed the executable, "" when MacPorts owns it under an unusable name,
- * or null when it does not. MacPorts prefixes are root-owned and its Claude port disables
- * `claude update`, so neither npm nor the native updater can upgrade these installs.
+ * The port that installed the launcher or its target, "" when MacPorts owns it under an
+ * unusable name or its registry cannot be read, or null when it does not. MacPorts prefixes
+ * are root-owned and its Claude port disables `claude update`, so neither npm nor the native
+ * updater can upgrade these installs.
  */
 export const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   context: ProviderMaintenanceResolutionContext,
@@ -1118,17 +1203,29 @@ export const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* 
   if (context.platform === "win32") return null;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const siblingPort = path.join(path.dirname(context.resolvedCommandPath), "port");
-  const portPath = (yield* fileSystem.exists(siblingPort).pipe(Effect.orElseSucceed(() => false)))
-    ? siblingPort
-    : yield* resolveCommandPath("port", { env: context.env });
-  if (!portPath) return null;
-  const prefix = `${normalizeCommandPath(path.dirname(path.dirname(portPath)))}/`;
-  if (!normalizeCommandPath(context.realCommandPath).startsWith(prefix)) return null;
-  const output = yield* runProbe(portPath, ["provides", context.realCommandPath], context.env);
-  const name = output ? /\bis provided by: (\S+)/.exec(output)?.[1] : undefined;
-  if (name === undefined) return null;
-  return /^[\w.+-]+$/.test(name) ? name : "";
+  const commandPaths = [...new Set([context.resolvedCommandPath, context.realCommandPath])];
+  // A MacPorts prefix holds `bin/port`, so every prefix containing a command path is an ancestor.
+  const portPaths = new Set<string>();
+  for (const commandPath of commandPaths) {
+    for (let dir = path.dirname(commandPath); ; dir = path.dirname(dir)) {
+      portPaths.add(path.join(dir, "bin", "port"));
+      if (path.dirname(dir) === dir) break;
+    }
+  }
+  for (const portPath of portPaths) {
+    if (!(yield* fileSystem.exists(portPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+    const prefix = `${normalizeCommandPath(path.dirname(path.dirname(portPath)))}/`;
+    const owned = commandPaths.filter((commandPath) =>
+      normalizeCommandPath(commandPath).startsWith(prefix),
+    );
+    if (owned.length === 0) continue;
+    const output = yield* runProbe(portPath, ["provides", ...owned], context.env);
+    // A failed registry lookup is no proof that the files are free to update.
+    if (output === null) return "";
+    const name = /\bis provided by: (\S+)/.exec(output)?.[1];
+    if (name !== undefined) return /^[\w.+-]+$/.test(name) ? name : "";
+  }
+  return null;
 });
 
 // Volta bin entries only identify its shim; the package image proves ownership.
@@ -1186,6 +1283,7 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
 export function makePackageManagedProviderMaintenanceResolver(
   definition: PackageManagedProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
+  npmProviderPackageNames.add(definition.npmPackageName);
   return {
     resolve: (context) => resolvePackageManagedProviderMaintenance(definition, context),
   };
@@ -1214,6 +1312,7 @@ function environmentCacheKey(env: NodeJS.ProcessEnv): string {
 
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
+  npmCacheDir: string | undefined,
 ) {
   const packageName = capabilities.packageName;
   if (!packageName || capabilities.latestVersion !== undefined) {
@@ -1223,11 +1322,32 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-  const lookup = runProbe(
-    npmPath,
-    ["view", "--global", "--json", `${packageName}@latest`, "version"],
-    env,
-  ).pipe(
+  const path = yield* Path.Path;
+  // `npm view` downloads the whole packument into its cache's tmp directory and a killed npm
+  // leaves it there. A cache only T3 writes to can drop that directory without touching another
+  // npm run's files, and lasting across lookups lets npm revalidate instead of re-downloading.
+  const cacheDir = npmCacheDir && path.join(npmCacheDir, encodeURIComponent(packageName));
+  const lookup = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* runProbe(
+      npmPath,
+      ["view", "--global", "--json", `${packageName}@latest`, "version"],
+      cacheDir ? { ...env, npm_config_cache: cacheDir } : env,
+      [0],
+      NPM_REGISTRY_PROBE_TIMEOUT,
+    ).pipe(
+      Effect.onInterrupt(() =>
+        cacheDir
+          ? Effect.ignore(
+              fileSystem.remove(path.join(cacheDir, "_cacache", "tmp"), {
+                recursive: true,
+                force: true,
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+  }).pipe(
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
       return nonEmptyString(typeof value === "string" ? value : value?.[0]);
@@ -1263,39 +1383,47 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
 
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
-)(function* (
-  resolver: ProviderMaintenanceCapabilitiesResolver,
-  options?: {
-    readonly binaryPath?: string | null;
-    readonly env?: NodeJS.ProcessEnv;
+)(
+  function* (
+    resolver: ProviderMaintenanceCapabilitiesResolver,
+    options?: {
+      readonly binaryPath?: string | null;
+      readonly env?: NodeJS.ProcessEnv;
+      /** Where configured npm lookups keep their npm cache, apart from the user's. */
+      readonly npmCacheDir?: string;
+    },
+  ) {
+    const binaryPath = nonEmptyString(options?.binaryPath);
+    if (!binaryPath) {
+      return yield* resolver.resolve(null);
+    }
+
+    const env = options?.env ?? (yield* readCommandLookupEnv);
+    const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
+    if (!resolvedCommandPath) {
+      return yield* resolver.resolve(null);
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const realCommandPath = yield* fileSystem
+      .realPath(resolvedCommandPath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!realCommandPath) {
+      return yield* resolver.resolve(null);
+    }
+    return yield* resolver.resolve({
+      binaryPath,
+      resolvedCommandPath,
+      realCommandPath,
+      env,
+      platform: yield* HostProcess.Platform,
+    });
   },
-) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
-  if (!binaryPath) {
-    return yield* resolver.resolve(null);
-  }
-
-  const env = options?.env ?? (yield* readCommandLookupEnv);
-  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
-  if (!resolvedCommandPath) {
-    return yield* resolver.resolve(null);
-  }
-
-  const fileSystem = yield* FileSystem.FileSystem;
-  const realCommandPath = yield* fileSystem
-    .realPath(resolvedCommandPath)
-    .pipe(Effect.orElseSucceed(() => null));
-  if (!realCommandPath) {
-    return yield* resolver.resolve(null);
-  }
-  return yield* resolver.resolve({
-    binaryPath,
-    resolvedCommandPath,
-    realCommandPath,
-    env,
-    platform: yield* HostProcess.Platform,
-  });
-}, Effect.flatMap(withConfiguredNpmVersionLookup));
+  (effect, _resolver, options) =>
+    Effect.flatMap(effect, (capabilities) =>
+      withConfiguredNpmVersionLookup(capabilities, options?.npmCacheDir),
+    ),
+);
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",

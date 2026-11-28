@@ -418,7 +418,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       standalone: DESCRIPTOR,
       parseIssueUrl: parseLinearIssueUrl,
 
-      probeCredential: (token) =>
+      probeCredential: ({ token }) =>
         linear.viewer(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),
@@ -430,12 +430,17 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       // The id, not the display name: it is what the involvement filters compare against.
       getViewer: () => linear.viewer().pipe(Effect.map((data) => toActor(data.viewer).login)),
 
-      listIssues: (input) => {
-        // `ENG-12`, `#12` or `12` asks for one issue of this team by number.
+      listIssues: Effect.fn("LinearIssueTracker.listIssues")((input) => {
+        const team = input.scope.trim().toUpperCase();
+        // A qualified issue number applies only to its own team. Text can match anywhere.
         const reference =
           input.query === undefined
             ? null
-            : /^(?:[A-Za-z][A-Za-z0-9]*-|#)?(\d+)$/.exec(input.query.trim());
+            : /^(?:([A-Za-z][A-Za-z0-9]*)-|#)?(\d+)$/.exec(input.query.trim());
+        const number =
+          reference !== null && (reference[1] === undefined || reference[1].toUpperCase() === team)
+            ? Number(reference[2])
+            : undefined;
         // Each is its own clause: an assignee filter must narrow "assigned to me", not replace it.
         const clauses: LinearApi.IssueFilter[] = [
           ...(input.assignee === undefined
@@ -444,7 +449,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           ...(input.labels ?? []).map((name) => ({ labels: { some: { name: { eq: name } } } })),
         ];
         const filter: LinearApi.IssueFilter = {
-          team: { key: { eq: input.scope.trim().toUpperCase() } },
+          team: { key: { eq: team } },
           ...involvementFilter(input),
           ...(input.state === "all"
             ? {}
@@ -463,7 +468,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
                 or: [
                   { title: { containsIgnoreCase: input.query } },
                   { description: { containsIgnoreCase: input.query } },
-                  ...(reference === null ? [] : [{ number: { eq: Number(reference[1]) } }]),
+                  ...(number === undefined ? [] : [{ number: { eq: number } }]),
                 ],
               }),
         };
@@ -480,20 +485,28 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
               nextCursor: page.nextCursor,
             })),
           );
-      },
+      }),
 
       getIssue: Effect.fn("LinearIssueTracker.getIssue")(function* (input) {
         const identifier = yield* requireIdentifier("getIssue", input.key);
         // One read of the viewer: the id matches reactions, the handle is what the client sees.
-        const [issue, me] = yield* Effect.all([
-          linear.getIssue(identifier, COMMENTS_PAGE),
-          linear.viewer().pipe(
-            Effect.map((data) => data.viewer),
-            Effect.orElseSucceed(() => null),
-          ),
-        ]);
+        // A missing issue interrupts it rather than waiting for it.
+        const [issue, me] = yield* Effect.all(
+          [
+            linear.getIssue(identifier, COMMENTS_PAGE).pipe(
+              Effect.filterOrElse(
+                (issue) => issue !== null,
+                () => notFound("getIssue"),
+              ),
+            ),
+            linear.viewer().pipe(
+              Effect.map((data) => data.viewer),
+              Effect.orElseSucceed(() => null),
+            ),
+          ],
+          { concurrency: 2 },
+        );
         const viewer = me?.id ?? null;
-        if (issue === null) return yield* notFound("getIssue");
         return {
           ...toSummary(issue, issue.comments.nodes.length),
           body: issue.description ?? "",

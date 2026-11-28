@@ -14,6 +14,7 @@
 import * as Context from "../Context.ts"
 import * as Effect from "../Effect.ts"
 import { dual } from "../Function.ts"
+import { passthroughLink } from "../internal/schema/passthrough.ts"
 import * as Schema from "../Schema.ts"
 import * as SchemaGetter from "../SchemaGetter.ts"
 
@@ -159,11 +160,6 @@ export const schema: {
       })
     )
 )
-
-const passthroughLink = Schema.link()(Schema.Any, {
-  decode: SchemaGetter.passthrough(),
-  encode: SchemaGetter.passthrough()
-})
 
 /**
  * Schema for transferring `ImageData` values with their pixel data buffer.

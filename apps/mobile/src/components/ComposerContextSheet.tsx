@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react-native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
@@ -16,17 +16,18 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../lib/changeRequestTerm";
 import { videoMimeType } from "@t3tools/shared/video";
+import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
+import { reviewCommentRangeText } from "../features/review/reviewCommentSelection";
 import {
   composerAttachmentInlineUri,
   isFileBackedComposerAttachment,
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
-import { FilePreviewModal } from "./ui/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "./ui/FilePreviewModal";
 import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./ui/AppText";
@@ -58,14 +59,23 @@ function ContextField(props: {
       ) : (
         <Text
           selectable
-          className={props.code ? "text-sm text-foreground" : "text-base text-foreground"}
-          style={props.code ? { fontFamily: REVIEW_MONO_FONT_FAMILY } : undefined}
+          className={props.code ? "font-mono text-sm text-foreground" : "text-base text-foreground"}
         >
           {props.value}
         </Text>
       )}
     </View>
   );
+}
+
+// FilePreviewSession reads a new source for the same file after its viewer closed as a re-tap and
+// presents it again, so a source rebuilt on each render must stay the one the preview opened with.
+function OpenedFilePreview(props: {
+  readonly source: FilePreviewSource;
+  readonly onRequestClose: () => void;
+}) {
+  const [source] = useState(props.source);
+  return <FilePreviewModal source={source} onRequestClose={props.onRequestClose} />;
 }
 
 function ContextSource(props: { source: ElementContextSource | null }) {
@@ -106,6 +116,7 @@ export function ComposerContextSheet(props: {
         : undefined,
   });
   const gt = useGT();
+  const messages = useMessages();
   const reviewColors = useReviewCommentColors();
   const insets = useSafeAreaInsets();
   const { themeId, themeAppearance } = useAppearancePreferences();
@@ -163,7 +174,8 @@ export function ComposerContextSheet(props: {
           : remoteSource;
       if (source) {
         return (
-          <FilePreviewModal
+          <OpenedFilePreview
+            key={record.contextId}
             source={{
               kind: record.kind === "image" || previewKind === "image" ? "image" : "pdf",
               name: record.name,
@@ -248,9 +260,8 @@ export function ComposerContextSheet(props: {
                 >
                   <Text
                     selectable
-                    className="text-sm text-foreground"
+                    className="font-mono text-sm text-foreground"
                     style={{
-                      fontFamily: REVIEW_MONO_FONT_FAMILY,
                       fontSize: 13,
                       lineHeight: 20,
                       color: terminalTheme.foreground,
@@ -280,7 +291,11 @@ export function ComposerContextSheet(props: {
                 {!record.sectionId.startsWith("pull-request:") ? (
                   <>
                     <ReviewCommentCard
-                      comment={{ ...record, id: record.contextId }}
+                      comment={{
+                        ...record,
+                        id: record.contextId,
+                        rangeLabel: reviewCommentRangeText(record.rangeLabel, messages),
+                      }}
                       colors={reviewColors}
                     />
                   </>
@@ -361,7 +376,7 @@ export function ComposerContextSheet(props: {
             {record.kind === "image" ? (
               <ContextField
                 label={gt("File", { $context: "noun" })}
-                value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
+                value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes, messages)}`}
               />
             ) : null}
             {record.kind === "mention" ? (

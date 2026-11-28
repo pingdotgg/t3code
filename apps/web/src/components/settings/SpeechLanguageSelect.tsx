@@ -14,12 +14,22 @@ export function languageLabel(code: string, locale = "en"): string {
   return languageNames.of(code) ?? code;
 }
 
+export function compareLanguageLabels(left: string, right: string, locale: string): number {
+  return languageLabel(left, locale).localeCompare(languageLabel(right, locale), locale);
+}
+
 type ModelLanguages = Pick<
   Extract<EnvironmentSpeechStatus, { supported: true }>,
   "languages" | "supportsLanguageDetection"
 >;
 
-export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages | null }) {
+export function SpeechLanguageSelect({
+  model,
+  automaticLabel,
+}: {
+  readonly model: ModelLanguages | null;
+  readonly automaticLabel?: string | undefined;
+}) {
   const gt = useGT();
   const locale = useLocale();
   const preference = useClientSettings((settings) => settings.speechLanguage);
@@ -30,7 +40,8 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
         preference,
       )
     : preference;
-  const effectiveLabel = resolved === "auto" ? gt("Auto-detect") : languageLabel(resolved, locale);
+  const effectiveLabel =
+    resolved === "auto" ? (automaticLabel ?? gt("Auto-detect")) : languageLabel(resolved, locale);
   const unavailable =
     preference !== "auto" && preference !== resolved
       ? gt("{language} unavailable", { language: languageLabel(preference, locale) })
@@ -61,9 +72,7 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
           </SelectItem>
         ) : null}
         {languages
-          .toSorted((left, right) =>
-            languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
-          )
+          .toSorted((left, right) => compareLanguageLabels(left, right, locale))
           .map((code) => (
             <SelectItem key={code} value={code}>
               {languageLabel(code, locale)}

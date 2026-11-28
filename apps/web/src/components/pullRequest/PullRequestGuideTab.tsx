@@ -105,13 +105,21 @@ export function PullRequestGuideTab({
   if (guide === null) {
     if (query.isPending && data === null) {
       return (
-        <div className="flex min-h-48 items-center justify-center">
+        <div
+          tabIndex={-1}
+          data-workspace-focus-default
+          className="flex min-h-48 items-center justify-center outline-none"
+        >
           <Spinner />
         </div>
       );
     }
     return (
-      <div className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center">
+      <div
+        tabIndex={-1}
+        data-workspace-focus-default
+        className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center outline-none"
+      >
         <p className="text-sm font-medium text-foreground">
           {running
             ? gt("Writing a review guide")

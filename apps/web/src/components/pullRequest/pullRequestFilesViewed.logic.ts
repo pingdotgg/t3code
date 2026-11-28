@@ -28,6 +28,20 @@ export function isFileViewed(
   return pressed ?? isViewedState(states?.get(path));
 }
 
+export function countViewedFiles(
+  states: FileViewedStates | null,
+  overlay: FileViewedOverlay,
+): number {
+  let count = 0;
+  for (const [path, state] of states ?? []) {
+    if (overlay.get(path) ?? isViewedState(state)) count++;
+  }
+  for (const [path, viewed] of overlay) {
+    if (viewed && !states?.has(path)) count++;
+  }
+  return count;
+}
+
 /** Retain presses until a read could have observed the write. */
 export function settleFileViewedOverlay(
   overlay: FileViewedOverlay,

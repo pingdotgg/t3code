@@ -10,7 +10,10 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Headers from "effect/http/Headers";
 import { GraphQLClientError, GraphQLMiddleware, GraphQLProtocol } from "effect/graphql";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import {
+  collectUint8StreamChunks,
+  decodeUtf8,
+} from "@t3tools/provider-core/server/collectStreamText";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -189,10 +192,10 @@ const capResponse = Effect.fn("gitHubGraphQlClient.capResponse")(function* (
     onNone: () => DEFAULT_MAX_RESPONSE_BYTES,
     onSome: (target) => target.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
   });
-  const collected = yield* collectUint8StreamText({ stream: response.stream, maxBytes }).pipe(
+  const collected = yield* collectUint8StreamChunks({ stream: response.stream, maxBytes }).pipe(
     Effect.catchIf(
       (error) => error.reason._tag === "EmptyBodyError",
-      () => Effect.succeed({ text: "", truncated: false }),
+      () => Effect.succeed({ chunks: [], bytes: 0, truncated: false }),
     ),
   );
   if (collected.truncated) {
@@ -204,12 +207,10 @@ const capResponse = Effect.fn("gitHubGraphQlClient.capResponse")(function* (
       }),
     });
   }
+  const { text } = decodeUtf8(Buffer.concat(collected.chunks, collected.bytes));
   return HttpClientResponse.fromWeb(
     response.request,
-    new Response(collected.text === "" ? null : collected.text, {
-      status: response.status,
-      headers: response.headers,
-    }),
+    new Response(text === "" ? null : text, { status: response.status, headers: response.headers }),
   );
 });
 

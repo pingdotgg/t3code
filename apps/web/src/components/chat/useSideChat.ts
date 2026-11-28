@@ -120,7 +120,7 @@ export function useSideChat(input: {
     } else if (modelSelection !== undefined) {
       useComposerDraftStore.getState().setModelSelection(targetRef, modelSelection);
     }
-    useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+    useRightPanelStore.getState().openThread(threadRef, targetThreadId);
     return true;
   };
   const open = async (message?: SideChatMessage) => {

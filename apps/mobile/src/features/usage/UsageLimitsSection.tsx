@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { resetCreditFailureText } from "@t3tools/client-runtime/state/usage";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -22,7 +22,8 @@ import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/share
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
-import { Linking, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -224,7 +225,7 @@ export function AccountLimits(props: {
         <Pressable
           accessibilityRole="link"
           className="min-h-11 justify-center"
-          onPress={() => void Linking.openURL(externalUsage.url).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(externalUsage.url)}
         >
           <Text className="text-sm font-t3-medium text-primary">
             <T>Manage usage</T>
@@ -271,11 +272,7 @@ export function ResetCredits(props: {
       setStatus(result.value.warning ?? resolveNow(OUTCOME_TEXT[result.value.outcome]));
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? (errorDisplayMessage(result.cause.error, resolveNow) ?? result.cause.error.message)
-        : resolveNow(msg("Could not use the reset credit.")),
-    );
+    setStatus(resetCreditFailureText(result, resolveNow));
   };
 
   const confirm = (choice: ResetCreditChoice) => {

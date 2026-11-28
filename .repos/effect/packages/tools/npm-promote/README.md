@@ -34,9 +34,12 @@ Each run:
 
 When the version bump commit is older than `--overdue-after-hours` (12 by
 default) and the release is still not visible or cannot be promoted, the tool
-opens or updates a single tracking issue. For versions that are not visible it
-checks each version's own registry document and lists versions missing from npm
-(404), versions published but not visible yet, and versions whose check failed.
+opens or updates a single tracking issue. Promotion waits for every current
+workspace package. If only packages added after the bump are missing, live
+tags must confirm earlier packages reached their targets to skip the alert. For
+versions that are not visible it checks each version's own registry document
+and lists versions missing from npm (404), versions published but not visible
+yet, and versions whose check failed.
 Failed `npm dist-tag add` writes are listed separately, and a registry read
 that fails during promotion lists its version as unchecked. Read failures while
 deciding the website deploy happen after promotion succeeded, so they fail the

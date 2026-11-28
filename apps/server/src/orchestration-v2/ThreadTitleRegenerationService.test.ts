@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -88,6 +89,7 @@ function makeHarness(
               faviconPath: null,
               projectIcon: null,
               scripts: [],
+              trackedFolders: [],
               pinnedAt: null,
               archivedAt: null,
               createdAt: "2026-06-20T00:00:00.000Z",
@@ -342,9 +344,19 @@ describe("ThreadTitleRegenerationService", () => {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const outbox = yield* EffectOutbox.EffectOutboxV2;
         // An MCP launch names the thread, or leaves a placeholder, and sends no message.
-        for (const [key, title, expectedTitle, generates] of [
-          ["preset", "[API] #4821 — retry webhook deliveries after a timeout", undefined, false],
-          ["placeholder", placeholderThreadTitle("Parent", 0), seed, true],
+        for (const [key, title, titleRenamed, compactFirst, expectedTitle, generates] of [
+          [
+            "preset",
+            "[API] #4821 - retry webhook deliveries after a timeout",
+            false,
+            false,
+            undefined,
+            false,
+          ],
+          ["placeholder", placeholderThreadTitle("Parent", 0), false, false, seed, true],
+          ["named like a placeholder", "Release thread 2", true, false, undefined, false],
+          ["named, then compacted", "Release notes", true, true, undefined, false],
+          ["draft titled by its /compact", "/compact", false, true, seed, true],
         ] as const) {
           const threadId = ThreadId.make(`thread:title:${key}`);
           yield* threads.dispatch({
@@ -353,6 +365,7 @@ describe("ThreadTitleRegenerationService", () => {
             threadId,
             projectId,
             title,
+            ...(titleRenamed ? { titleRenamed } : {}),
             modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -361,6 +374,21 @@ describe("ThreadTitleRegenerationService", () => {
             createdBy: "agent",
             creationSource: "mcp",
           });
+          if (compactFirst) {
+            yield* threads.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:title:${key}:compact`),
+              threadId,
+              messageId: MessageId.make(`command:title:${key}:compact:message`),
+              text: "/compact",
+              titleSeed: "/compact",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
           const requestId = CommandId.make(`command:title:${key}:message`);
           yield* threads.dispatch({
             type: "message.dispatch",
@@ -913,6 +941,115 @@ describe("ThreadTitleRegenerationService", () => {
           status: "failed",
           message: "model unavailable",
         });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("does not retry an initial title after the provider refuses with 403", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail:
+                "Codex CLI command failed: OpenAI Codex\nERROR: Reconnecting... 5/5\nERROR: unexpected status 403 Forbidden: model: gpt-6-luna\n",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:forbidden:create",
+          thread: "thread:title:forbidden",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:forbidden:message",
+          threadId,
+          text: "Fix the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:forbidden", threadId });
+        const messageId = MessageId.make("command:title:forbidden:message:message");
+
+        const fiber = yield* Effect.forkChild(
+          service.execute({ threadId, requestId, kind: { type: "initial", messageId } }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(fiber);
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("retries an initial title after a transient failure", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "Codex CLI request timed out.",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:timeout:create",
+          thread: "thread:title:timeout",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:timeout:message",
+          threadId,
+          text: "Fix the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:timeout", threadId });
+        const messageId = MessageId.make("command:title:timeout:message:message");
+
+        const fiber = yield* Effect.forkChild(
+          service.execute({ threadId, requestId, kind: { type: "initial", messageId } }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(fiber);
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 3);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("cuts a long failure message without splitting an emoji", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: `${"a".repeat(298)}🚀 and the rest of the error`,
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:long-failure:create",
+          thread: "thread:title:long-failure",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:long-failure:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({
+          command: "command:title:long-failure:1",
+          threadId,
+        });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.equal(projection.thread.lastTitleRegeneration?.message, `${"a".repeat(298)}…`);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

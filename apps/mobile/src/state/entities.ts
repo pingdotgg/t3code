@@ -28,7 +28,7 @@ import {
 import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { msg, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
@@ -240,8 +240,16 @@ export function useSideChats(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
-export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
+
+/** `linked` names the machines `environmentId` links to, whose threads open read-only. */
+export function useLiveThreadLinkLabels(
+  markdown: string,
+  environmentId: EnvironmentId,
+  linked = NO_LINKED_ENVIRONMENTS,
+): string {
   const resolve = useMessages();
+  const gt = useGT();
   const titles = useAtomValue(
     hasThreadLinks(markdown)
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
@@ -250,11 +258,15 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
   return relabelThreadLinks(
     markdown,
     environmentId,
-    (ref) => {
+    (ref, label) => {
       const title = titles.get(threadKey(ref));
-      return title === FALLBACK_THREAD_TITLE
-        ? resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
-        : title;
+      if (typeof title === "string") return title;
+      // A thread only the message's environment can reach keeps its written name.
+      const machine = linked.get(ref.environmentId);
+      if (machine !== undefined) {
+        return label?.trim() || gt("Thread on {label}", { label: machine });
+      }
+      return title && resolve(msg("Thread", { $context: "fallback title of a linked thread" }));
     },
     resolve,
   );

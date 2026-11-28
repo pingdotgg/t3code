@@ -37,7 +37,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { enrichedModelDetails, enrichedModelReference } from "../lib/enrichedLinkPresentation";
 import { useModelMentions } from "../state/model-mentions";
 import { mobilePreferencesAtom } from "../state/preferences";
-import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
+import { useOpenThreadLink } from "../features/threads/useOpenThreadLink";
 import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
@@ -186,7 +186,7 @@ export function ComposerEditor({
           }),
         })
       : "";
-  const openLinkedThread = useOpenLinkedThread();
+  const openThreadLink = useOpenThreadLink(environmentId ?? null);
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
@@ -338,10 +338,7 @@ export function ComposerEditor({
             : {})}
           onOpenThread={(thread) => {
             setSelected(null);
-            openLinkedThread({
-              environmentId: String(thread.environmentId),
-              threadId: String(thread.threadId),
-            });
+            openThreadLink(thread);
           }}
           environmentId={environmentId ?? draft.project?.environmentId}
           projectId={draft.project?.projectId}

@@ -105,6 +105,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -137,6 +138,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     remove: () => Effect.die("Unexpected environment removal"),
     removeRoute: () => Effect.die("Unexpected route removal"),
     reorderRoutes: () => Effect.die("Unexpected route reorder"),
+    setLabel: () => Effect.die("Unexpected label update"),
     removeRelayEnvironments: () => Effect.die("Unexpected environment removal"),
     retryNow: () => Effect.void,
     setEnabled: () => Effect.die("Unexpected environment toggle"),
@@ -304,6 +306,8 @@ describe("createEnvironmentThreadStateAtoms", () => {
       });
       const unmount = h.registry.mount(h.stateAtom);
       const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
       const loading = yield* h.loadEarlier().pipe(Effect.forkScoped);
       const older = yield* Queue.take(h.olderLoads);
       expect(h.registry.get(h.stateAtom).history.loading).toBe(true);

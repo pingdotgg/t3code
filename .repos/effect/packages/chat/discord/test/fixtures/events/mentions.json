@@ -1,0 +1,491 @@
+{
+  "case": "Mention tokens sent through the webhook with allowed_mentions resolving them (or not), and the bot naming itself and a role with parse []: a token counts only outside code and when mentions, mention_roles or mention_everyone says it resolved",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord gateway v10 dispatches to the Janitor application (1564742987727118426), logged by a local dfx-free websocket client with the GUILDS, GUILD_MESSAGES, GUILD_MESSAGE_REACTIONS, DIRECT_MESSAGES, DIRECT_MESSAGE_REACTIONS and MESSAGE_CONTENT intents",
+    "where": "guild 840178841540362250 (Tim's test guild); #effect-chat-scratch 1570607253965246584, #effect-chat-forum 1570607255684915302 and #test 1570605581192929301",
+    "author": "webhook effect-chat-fixtures and the Janitor bot",
+    "recordedAt": "2026-11-13T01:16Z, during EFF-3695",
+    "body": "Each d verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed"
+  },
+  "dispatches": [
+    {
+      "receivedAt": "2026-11-13T01:16:22.047Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:22.010000+00:00",
+        "pinned": false,
+        "mentions": [
+          {
+            "username": "Janitor",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "1564742987727118426",
+            "global_name": null,
+            "display_name_styles": null,
+            "discriminator": "5426",
+            "collectibles": null,
+            "clan": null,
+            "bot": true,
+            "avatar_decoration_data": null,
+            "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+          }
+        ],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608227853533387",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <@1564742987727118426> as a plain user token",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:23.497Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:23.426000+00:00",
+        "pinned": false,
+        "mentions": [
+          {
+            "username": "Janitor",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "1564742987727118426",
+            "global_name": null,
+            "display_name_styles": null,
+            "discriminator": "5426",
+            "collectibles": null,
+            "clan": null,
+            "bot": true,
+            "avatar_decoration_data": null,
+            "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+          }
+        ],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608233792405568",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <@!1564742987727118426> as a nickname token",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:25.076Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:24.944000+00:00",
+        "pinned": false,
+        "mentions": [
+          {
+            "username": "timsmart",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "449108784879763458",
+            "global_name": "Tim Smart",
+            "display_name_styles": null,
+            "discriminator": "0",
+            "collectibles": null,
+            "clan": null,
+            "avatar_decoration_data": null,
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+          }
+        ],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608240159625278",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <@449108784879763458> another user",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:26.781Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:26.546000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [
+          "1570607256838479964"
+        ],
+        "mention_everyone": false,
+        "id": "1570608246878773301",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <@&1570607256838479964> a role",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:28.532Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:28.416000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": true,
+        "id": "1570608254721982479",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: @everyone that resolves",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:29.956Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:29.899000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": true,
+        "id": "1570608260942397441",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: @here that resolves",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:31.721Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:31.658000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608268320051301",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: @everyone with parse empty",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:33.208Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:33.157000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608274607440034",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <#1570605581192929301> a channel",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:35.385Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:35.311000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608283641970709",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: `<@1564742987727118426>` in a code span",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:36.882Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:36.848000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608290088484875",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: in a fence\n```\n<@1564742987727118426>\n```",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:38.528Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:38.346000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "member": {
+          "roles": [
+            "1570605977017778196"
+          ],
+          "premium_since": null,
+          "pending": false,
+          "nick": null,
+          "mute": false,
+          "joined_at": "2026-11-13T01:07:25.410129+00:00",
+          "flags": 0,
+          "deaf": false,
+          "communication_disabled_until": null,
+          "banner": null,
+          "avatar": null
+        },
+        "id": "1570608296371425382",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: the bot naming <@1564742987727118426> and <@&1570607256838479964> with parse empty",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "Janitor",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "1564742987727118426",
+          "global_name": null,
+          "display_name_styles": null,
+          "discriminator": "5426",
+          "collectibles": null,
+          "clan": null,
+          "bot": true,
+          "avatar_decoration_data": null,
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+        },
+        "attachments": [],
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:16:40.029Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:39.899000+00:00",
+        "pinned": false,
+        "mentions": [
+          {
+            "username": "Janitor",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "1564742987727118426",
+            "global_name": null,
+            "display_name_styles": null,
+            "discriminator": "5426",
+            "collectibles": null,
+            "clan": null,
+            "bot": true,
+            "avatar_decoration_data": null,
+            "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+          }
+        ],
+        "mention_roles": [
+          "1570607256838479964"
+        ],
+        "mention_everyone": false,
+        "id": "1570608302885179546",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: <@1564742987727118426> and `<@449108784879763458>` and <@&1570607256838479964> and <#1570607253965246584>",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    }
+  ]
+}

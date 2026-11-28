@@ -22,6 +22,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -35,9 +36,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { lock } from "proper-lockfile";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -86,6 +89,49 @@ export class EnvironmentThemeRefusedError extends Schema.TaggedError<Environment
     return `Theme "${this.themeId}" ${this.problem}${known}`;
   }
 }
+
+/**
+ * Hold through the settings write so CLI and server publishers share one catalog snapshot.
+ * Returns a guard that skips a rollback once a stalled holder has lost the lock to another.
+ */
+export const acquireThemePublishLock = Effect.fn("EnvironmentTheme.acquirePublishLock")(function* (
+  themesDir: string,
+  themeId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs
+    .makeDirectory(themesDir, { recursive: true })
+    .pipe(
+      Effect.mapError(
+        (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_PUBLISHED, cause }),
+      ),
+    );
+  let compromised = false;
+  yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () =>
+        lock(themesDir, {
+          lockfilePath: NodePath.join(themesDir, ".t3-theme-publish.lock"),
+          stale: 60_000,
+          onCompromised: () => {
+            compromised = true;
+          },
+        }),
+      catch: (cause) =>
+        new EnvironmentThemeRefusedError({
+          themeId,
+          problem:
+            (cause as { code?: unknown } | null)?.code === "ELOCKED"
+              ? "could not be published because the themes directory is busy. Try again."
+              : NOT_PUBLISHED,
+          cause,
+        }),
+    }),
+    (release) => Effect.promise(() => release().catch(() => undefined)),
+  );
+  return (rollback: Effect.Effect<void>) =>
+    Effect.suspend(() => (compromised ? Effect.void : rollback));
+});
 
 /** The settings write that makes a theme or mode the default failed. */
 export class EnvironmentThemeNotSelectedError extends Schema.TaggedError<EnvironmentThemeNotSelectedError>()(
@@ -151,7 +197,11 @@ const pathIsTaken = (filePath: string): boolean => {
 
 /** Validates and reads one handle; rejects symlinked files, allows symlinked directories.
  * Uses non-blocking opens against FIFOs; Windows lacks these flags and checks symlinks with lstat. */
-export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
+export const readThemeFileGuarded = (
+  filePath: string,
+  maxBytes: number,
+  onMissing?: () => void,
+): string | null => {
   let fd: number;
   try {
     if (NodeFS.constants.O_NOFOLLOW === undefined && NodeFS.lstatSync(filePath).isSymbolicLink()) {
@@ -163,7 +213,8 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
         (NodeFS.constants.O_NOFOLLOW ?? 0) |
         (NodeFS.constants.O_NONBLOCK ?? 0),
     );
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") onMissing?.();
     return null;
   }
   try {
@@ -214,11 +265,19 @@ export function findThemeBackground(
   return null;
 }
 
-export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
+export const readPublishedThemes = Effect.fn(function* (
+  themesDir: string,
+  /** Runs when the directory or a file it listed is gone, as when an ancestor moves mid-read. */
+  onPathMissing: Effect.Effect<void> = Effect.void,
+) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs
-    .readDirectory(themesDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const entries = yield* Effect.catch(fs.readDirectory(themesDir), (error) =>
+    Effect.as(error.reason._tag === "NotFound" ? onPathMissing : Effect.void, []),
+  );
+  let listedFileMissing = false;
+  const markListedFileMissing = () => {
+    listedFileMissing = true;
+  };
 
   const themes: Array<EnvironmentTheme> = [];
   const entryNames = new Set(entries);
@@ -241,7 +300,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
 
     const filePath = `${themesDir}/${entry}`;
-    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES);
+    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES, markListedFileMissing);
     if (raw === null) {
       yield* Effect.logWarning("ignoring unusable environment theme file", {
         path: filePath,
@@ -277,6 +336,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     const background = findThemeBackground(themesDir, id, entryNames);
     themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
   }
+  if (listedFileMissing) yield* onPathMissing;
   return themes;
 });
 
@@ -287,6 +347,7 @@ const make = Effect.gen(function* () {
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
+  const pathMissing = yield* Ref.make(false);
   // Serialize read/compare/publish so slow older reads cannot publish with newer sequence numbers.
   const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
@@ -294,9 +355,10 @@ const make = Effect.gen(function* () {
 
   const refresh = refreshSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-      );
+      const themes = yield* readPublishedThemes(
+        environmentThemesDir,
+        Ref.set(pathMissing, true),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
       // Compare the whole value so new fields cannot silently miss republishes.
       const [changed, next] = yield* Ref.modify(
         published,
@@ -315,8 +377,32 @@ const make = Effect.gen(function* () {
     .makeDirectory(environmentThemesDir, { recursive: true })
     .pipe(Effect.ignoreCause({ log: true }));
 
-  // A save emits several events, and fs.watch can fire before content is flushed.
-  const watchEvents = fs.watch(environmentThemesDir).pipe(Stream.debounce(Duration.millis(100)));
+  const watchDirectory = (directory: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const markReady = () => Deferred.doneUnsafe(ready, Exit.void);
+        const events = fs.watch(directory, { onReady: markReady }).pipe(
+          Stream.as(undefined),
+          Stream.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Stream.empty,
+          ),
+          Stream.ignoreCause({ log: true }),
+          Stream.ensuring(Effect.sync(markReady)),
+        );
+        return Stream.merge(events, Stream.fromEffect(Deferred.await(ready)));
+      }),
+    );
+
+  const watchEvents = watchDirectoryPath(
+    environmentThemesDir,
+    watchDirectory(environmentThemesDir),
+    Ref.getAndSet(pathMissing, false),
+  ).pipe(
+    // A save emits several events, and fs.watch can fire before content is flushed.
+    Stream.debounce(Duration.millis(100)),
+  );
 
   yield* refresh;
   yield* Stream.runForEach(watchEvents, () => refresh.pipe(Effect.ignoreCause({ log: true }))).pipe(
@@ -359,6 +445,9 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const whileLocked = yield* acquireThemePublishLock(environmentThemesDir, themeId).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
     const destination = `${environmentThemesDir}/${themeId}${THEME_FILE_SUFFIX}`;
     // The watcher reads only .json names, so it never sees a half-written file.
     const staging = `${destination}.staging-${process.pid}`;
@@ -384,10 +473,9 @@ const make = Effect.gen(function* () {
     const revert = Option.match(previous, {
       onNone: () => fs.remove(destination, { force: true }),
       onSome: replace,
-    }).pipe(Effect.ignore, Effect.andThen(refresh), Effect.asVoid);
+    }).pipe(Effect.ignore, whileLocked, Effect.andThen(refresh), Effect.asVoid);
 
-    yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
-      Effect.andThen(replace(contents)),
+    yield* replace(contents).pipe(
       Effect.mapError(
         (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_PUBLISHED, cause }),
       ),
@@ -442,7 +530,7 @@ const make = Effect.gen(function* () {
         }
         const revert = yield* publish(themeId, theme);
         yield* select.pipe(Effect.tapError(() => revert));
-      }),
+      }).pipe(Effect.scoped),
     );
   });
 

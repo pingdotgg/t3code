@@ -4,7 +4,7 @@ import remarkParse from "remark-parse";
 import { msg } from "gt-react-native";
 import { m, type MessageResolver } from "../i18n/messages";
 
-import { decodeHtmlEntities, markdownHtmlTags } from "./markdownDocument";
+import { decodeHtmlEntities, markdownHtmlTags, splitLeadingBom } from "./markdownDocument";
 
 export type MarkdownDetailsSegment =
   | { readonly kind: "markdown"; readonly markdown: string; readonly sourceOffset: number }
@@ -33,6 +33,7 @@ export function splitMarkdownDetails(
 ): ReadonlyArray<MarkdownDetailsSegment> {
   if (!/<details\b/i.test(markdown)) return [{ kind: "markdown", markdown, sourceOffset: 0 }];
 
+  const [bom] = splitLeadingBom(markdown);
   const folds: Array<OpenFold & { end: number; closeTagLength: number }> = [];
   let depth = 0;
   // Asserted so the scan closure's writes are not narrowed away after the loop.
@@ -46,7 +47,7 @@ export function splitMarkdownDetails(
       return;
     }
     if (node.position?.start.offset === undefined) return;
-    const nodeStart = node.position.start.offset;
+    const nodeStart = bom.length + node.position.start.offset;
     for (const tag of markdownHtmlTags(node.value)) {
       const details = DETAILS_TAG.exec(tag[0]);
       if (!details || (inline && depth === 0)) continue;
