@@ -767,6 +767,41 @@ it.live.each([{ linked: false }, { linked: true }])(
     ),
 );
 
+// Reftable repositories keep `ref: refs/heads/.invalid` in HEAD whatever is checked out.
+it.live("adopts a layout command's worktree in a reftable repository", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run } = yield* fixture;
+      const mono = path.join(tmp, "mono");
+      yield* fileSystem.makeDirectory(mono, { recursive: true });
+      yield* run(mono, "init", "-b", "main", "--ref-format=reftable");
+      yield* run(mono, "config", "user.email", "task-folders@example.test");
+      yield* run(mono, "config", "user.name", "Task folders");
+      yield* fileSystem.writeFileString(
+        path.join(mono, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
+          },
+        }),
+      );
+      yield* run(mono, "add", ".");
+      yield* run(mono, "commit", "-m", "initial");
+      state.workspaceRoot = mono;
+      state.trackedFolders = [];
+      yield* approveLayoutCommands;
+
+      const { taskFolder } = yield* create("feature");
+
+      assert.isTrue(taskFolder.projectIsWorktree);
+      assert.equal(
+        yield* run(taskFolder.projectPath, "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+    }),
+  ),
+);
+
 it.live("starts each repository from the base branch where it has one", () =>
   withState((state) =>
     Effect.gen(function* () {
