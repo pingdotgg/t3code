@@ -9257,6 +9257,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each(["team\u00a0remote", "\u00a0"])(
+      "ensureRemote reuses a remote whose name contains Unicode whitespace (%j)",
+      (remoteName) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const url = "https://github.com/example/repository.git";
+          yield* git(cwd, ["init"]);
+          yield* git(cwd, ["remote", "add", remoteName, url]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          assert.equal(yield* driver.ensureRemote({ cwd, preferredName: "fork", url }), remoteName);
+          assert.equal(
+            yield* git(cwd, ["config", "--get-regexp", "^remote\\..*\\.url$"]),
+            `remote.${remoteName}.url ${url}`,
+          );
+          assert.isTrue((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+          assert.isTrue((yield* driver.listRefs({ cwd })).hasPrimaryRemote);
+        }),
+    );
+
     it.effect.each(["\n", "\r\n"])(
       "ensureRemote preserves spaces in fetch URLs and reserves their names (%j)",
       (lineEnding) =>
@@ -11738,6 +11758,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           timeoutMs: 10_000,
         });
         assert.notEqual(originMain.exitCode, 0);
+      }),
+    );
+
+    it.effect("pushes to a reused remote whose name ends in Unicode whitespace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const trimmedRemote = yield* makeTmpDir("git-trimmed-remote-");
+        const publishRemote = yield* makeTmpDir("git-publish-remote-");
+        const remoteName = "team\u00a0";
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(trimmedRemote, ["init", "--bare"]);
+        yield* git(publishRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "team", trimmedRemote]);
+        yield* git(cwd, ["remote", "add", remoteName, publishRemote]);
+
+        const reused = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "origin",
+          url: publishRemote,
+        });
+        assert.equal(reused, remoteName);
+        const pushed = yield* driver.pushCurrentBranch(cwd, null, { remoteName: reused });
+
+        assert.deepInclude(pushed, { status: "pushed", upstreamBranch: `${remoteName}/main` });
+        assert.equal(
+          yield* git(publishRemote, ["--git-dir=.", "log", "-1", "--pretty=%s", "main"]),
+          "initial commit",
+        );
+        assert.equal(yield* git(trimmedRemote, ["--git-dir=.", "for-each-ref"]), "");
       }),
     );
 
