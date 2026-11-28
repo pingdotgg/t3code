@@ -372,21 +372,24 @@ export const make = Effect.gen(function* () {
         );
         if (work === undefined) return;
         const nativeId = item.nativeItemRef?.nativeId;
-        // Preserve an explicit wait from the roster before deduplicating the shell.
-        const rosterAwaited =
-          item.type === "command_execution" &&
-          nativeId != null &&
-          projection.providerThreads
-            ?.find((candidate) => candidate.id === awaitingId)
-            ?.pendingBackgroundTasks?.some(
-              (task) => task.taskId === nativeId && task.awaited === true,
-            );
+        // The roster lists this shell too, by its own id or the item's: record it once, keeping its wait.
+        const rosterTask =
+          item.type === "command_execution" && nativeId != null
+            ? projection.providerThreads
+                ?.find((candidate) => candidate.id === awaitingId)
+                ?.pendingBackgroundTasks?.find(
+                  (task) => task.taskId === nativeId || task.nativeItemId === nativeId,
+                )
+            : undefined;
         recordCancelledBackgroundWork(
           awaitingId,
-          rosterAwaited ? { ...work, awaited: true } : work,
+          rosterTask?.awaited === true ? { ...work, awaited: true } : work,
         );
         if (nativeId != null) {
           cancelledBackgroundNativeIds.add(nativeId);
+        }
+        if (rosterTask !== undefined) {
+          cancelledBackgroundNativeIds.add(rosterTask.taskId);
         }
       };
       const unstartedRuns = runs.filter(

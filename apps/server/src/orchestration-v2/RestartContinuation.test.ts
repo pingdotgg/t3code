@@ -664,6 +664,20 @@ const awaitedBuild = {
   },
 };
 
+// Claude rosters key a shell by its SDK task id and point at the turn item through nativeItemId.
+const awaitedTaskBuild = {
+  ...awaitedBuild,
+  pendingBackgroundTasks: [
+    {
+      taskId: "task-build",
+      nativeItemId: "sh_build",
+      kind: "command",
+      description: "cargo build",
+      awaited: true,
+    },
+  ],
+};
+
 const unacceptedFollowUp = {
   id: RunId.make("run:follow-up"),
   ordinal: 2,
@@ -679,6 +693,7 @@ it.effect.each([
   ["completed", ProjectId.make("restart-project"), devServer, false, ""],
   ["waiting", scratchProjectId, devServer, false, ""],
   ["completed", ProjectId.make("restart-project"), awaitedBuild, true, ""],
+  ["completed", ProjectId.make("restart-project"), awaitedTaskBuild, true, ""],
   [
     "completed",
     ProjectId.make("restart-project"),
