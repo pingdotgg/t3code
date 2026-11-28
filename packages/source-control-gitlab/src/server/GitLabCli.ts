@@ -26,6 +26,7 @@ import {
   type NormalizedGitLabMergeRequestRecord,
   withSourceProjectPath,
 } from "./gitLabMergeRequests.ts";
+import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -459,24 +460,39 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
-function parseRepositoryLookup(repository: string): {
+// GitLab's Clone button offers `git@host:group/project.git`.
+const SCP_LIKE_REMOTE = /^[^@/\s]+@([^:/\s]+):(.+)$/;
+
+interface RepositoryLookup {
   readonly host: string | null;
   readonly projectPath: string;
-} {
+}
+
+const LOOKS_LIKE_HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?$/i;
+
+function parseRepositoryLookup(repository: string): RepositoryLookup {
   const trimmed = repository.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return { host: null, projectPath: repository };
+  const scpLike = SCP_LIKE_REMOTE.exec(trimmed);
+  if (scpLike) return repositoryLookupAt(scpLike[1]!, scpLike[2]!, repository);
+  if (!/^(?:https?|ssh|git\+ssh):\/\//i.test(trimmed)) {
+    return { host: null, projectPath: trimmed.replace(/\.git$/, "") };
+  }
   try {
     const url = new URL(trimmed);
-    const projectPath = decodeURIComponent(url.pathname)
-      .replace(/\/-(?:\/.*)?$/, "")
-      .replace(/^\/+|\/+$/g, "")
-      .replace(/\.git$/, "");
-    return projectPath.length === 0
-      ? { host: null, projectPath: repository }
-      : { host: url.host, projectPath };
+    // An SSH URL's port belongs to the git daemon, not to the API.
+    const host = /^https?:$/i.test(url.protocol) ? url.host : url.hostname;
+    return repositoryLookupAt(host, decodeURIComponent(url.pathname), repository);
   } catch {
     return { host: null, projectPath: repository };
   }
+}
+
+function repositoryLookupAt(host: string, path: string, repository: string): RepositoryLookup {
+  const projectPath = path
+    .replace(/\/-(?:\/.*)?$/, "")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/, "");
+  return projectPath.length === 0 ? { host: null, projectPath: repository } : { host, projectPath };
 }
 
 // glab prints a missing project or merge request as a bare 404, and an expired
@@ -582,6 +598,35 @@ export const make = Effect.gen(function* () {
         error,
       ),
     );
+
+  // `host/group/project` reads the same as a namespace path, so the first segment is a host
+  // only when glab has a login for it.
+  const resolveRepositoryLookup = (cwd: string, lookup: RepositoryLookup) => {
+    const [first, ...rest] = lookup.projectPath.split("/");
+    if (
+      lookup.host !== null ||
+      first === undefined ||
+      rest.length < 2 ||
+      !LOOKS_LIKE_HOST.test(first)
+    ) {
+      return Effect.succeed(lookup);
+    }
+    const host = first.toLowerCase();
+    return execute({
+      cwd,
+      callerNamedHost: host,
+      args: ["auth", "status", "--hostname", host],
+    }).pipe(
+      Effect.map(({ stdout, stderr }) =>
+        parseGitLabAuthStatusHosts(`${stdout}\n${stderr}`).some(
+          (entry) => entry.host === host && entry.account !== null,
+        )
+          ? { host, projectPath: rest.join("/") }
+          : lookup,
+      ),
+      Effect.orElseSucceed(() => lookup),
+    );
+  };
 
   const executeMergeRequest = (input: {
     readonly cwd: string;
@@ -723,9 +768,12 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
-    getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function (input) {
-      const { host, projectPath } = parseRepositoryLookup(input.repository);
-      return execute({
+    getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function* (input) {
+      const { host, projectPath } = yield* resolveRepositoryLookup(
+        input.cwd,
+        parseRepositoryLookup(input.repository),
+      );
+      return yield* execute({
         cwd: input.cwd,
         ...(host === null ? {} : { callerNamedHost: host }),
         args: [
