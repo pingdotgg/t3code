@@ -26,34 +26,20 @@ declare module "@tanstack/react-router" {
 }
 
 const CITATION_HASH_PREFIX = "assistant-citation=";
-const RESPONSE_HASH_PREFIX = "assistant-response=";
-
-export type AssistantCitationScope = "passage" | "response";
-
-export function assistantCitationScopeFromLocation(href: string): AssistantCitationScope {
-  return href.slice(href.indexOf("#") + 1).startsWith(RESPONSE_HASH_PREFIX)
-    ? "response"
-    : "passage";
-}
 
 /** Base64url keeps router hash normalization from decoding quote whitespace or source IDs. */
-function assistantCitationHash(citation: AssistantCitation, scope: AssistantCitationScope) {
-  const prefix = scope === "response" ? RESPONSE_HASH_PREFIX : CITATION_HASH_PREFIX;
-  return `${prefix}${Base64Url.encode(formatAssistantCitationHref(citation))}`;
+function assistantCitationHash(citation: AssistantCitation) {
+  return `${CITATION_HASH_PREFIX}${Base64Url.encode(formatAssistantCitationHref(citation))}`;
 }
 
 export function assistantCitationFromLocation(href: string) {
   const hashIndex = href.indexOf("#");
   if (hashIndex === -1) return null;
   const hash = href.slice(hashIndex + 1);
-  const prefix =
-    assistantCitationScopeFromLocation(href) === "response"
-      ? RESPONSE_HASH_PREFIX
-      : CITATION_HASH_PREFIX;
-  if (!hash.startsWith(prefix) || hash.length > 140_000) return null;
+  if (!hash.startsWith(CITATION_HASH_PREFIX) || hash.length > 140_000) return null;
   try {
     return pipe(
-      hash.slice(prefix.length),
+      hash.slice(CITATION_HASH_PREFIX.length),
       Base64Url.decodeString,
       Result.getOrThrow,
       parseAssistantCitationHref,
@@ -66,13 +52,7 @@ export function assistantCitationFromLocation(href: string) {
 /** Return paths drop the quote hash so going back does not reveal its source again. */
 export function withoutAssistantCitationHash(href: string) {
   const hashIndex = href.indexOf("#");
-  if (
-    hashIndex === -1 ||
-    ![CITATION_HASH_PREFIX, RESPONSE_HASH_PREFIX].some((prefix) =>
-      href.startsWith(prefix, hashIndex + 1),
-    )
-  )
-    return href;
+  if (hashIndex === -1 || !href.startsWith(CITATION_HASH_PREFIX, hashIndex + 1)) return href;
   return href.slice(0, hashIndex);
 }
 
@@ -83,18 +63,14 @@ function sideChatParentId(sourceThread: SourceThread) {
 }
 
 /** Side chat quotes open on their parent thread, where the side chat is a tab. */
-export function assistantCitationRoute(
-  citation: AssistantCitation,
-  sourceThread: SourceThread,
-  scope: AssistantCitationScope = "passage",
-) {
+export function assistantCitationRoute(citation: AssistantCitation, sourceThread: SourceThread) {
   return {
     to: "/$environmentId/$threadId" as const,
     params: {
       environmentId: citation.environmentId,
       threadId: sideChatParentId(sourceThread) ?? citation.threadId,
     },
-    hash: assistantCitationHash(citation, scope),
+    hash: assistantCitationHash(citation),
     resetScroll: false,
   };
 }
@@ -103,10 +79,9 @@ export function assistantCitationRoute(
 export function assistantCitationNavigation(
   citation: AssistantCitation,
   sourceThread: SourceThread,
-  scope: AssistantCitationScope = "passage",
 ) {
   return {
-    ...assistantCitationRoute(citation, sourceThread, scope),
+    ...assistantCitationRoute(citation, sourceThread),
     state: { assistantCitationActivation: randomUUID() },
   };
 }

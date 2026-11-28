@@ -22,7 +22,6 @@ import {
 import {
   assistantCitationNavigation,
   assistantCitationRoute,
-  type AssistantCitationScope,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
@@ -37,23 +36,20 @@ import { observeAssistantCitationCommentSource } from "./AssistantCitationSource
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
 
-function useCitationSourceLinkProps(
-  citation: AssistantCitation,
-  scope: AssistantCitationScope = "passage",
-) {
+function useCitationSourceLinkProps(citation: AssistantCitation) {
   const navigate = useNavigate();
   const sourceThread = useQuietThreadShell(
     scopeThreadRef(citation.environmentId, citation.threadId),
   );
   return {
-    ...assistantCitationRoute(citation, sourceThread, scope),
+    ...assistantCitationRoute(citation, sourceThread),
     "data-markdown-copy": serializeAssistantCitation(citation),
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      void navigate(assistantCitationNavigation(citation, sourceThread, scope));
+      void navigate(assistantCitationNavigation(citation, sourceThread));
     },
   };
 }
@@ -66,7 +62,6 @@ const flat = (text: string) => text.replace(/\s+/g, " ");
  */
 function ResponseCard({
   citation,
-  scope = "passage",
   copyMarkdown,
   cardCopyMarkdown = copyMarkdown,
   label,
@@ -77,7 +72,6 @@ function ResponseCard({
   trailing,
 }: {
   citation: AssistantCitation;
-  scope?: AssistantCitationScope;
   copyMarkdown: string;
   cardCopyMarkdown?: string;
   label: string;
@@ -87,7 +81,7 @@ function ResponseCard({
   leading: boolean;
   trailing: boolean;
 }) {
-  const linkProps = useCitationSourceLinkProps(citation, scope);
+  const linkProps = useCitationSourceLinkProps(citation);
   return (
     // One copy boundary for the card and its comment, so a copied card carries the comment once.
     <span
@@ -178,7 +172,6 @@ export function ResponseReplyCard({
   return (
     <ResponseCard
       citation={record.citation}
-      scope="response"
       copyMarkdown={copyMarkdown}
       label={gt("Go to the response this replies to: {label}", { label: record.label })}
       title={record.subagents?.map((subagent) => subagent.title).join(", ")}

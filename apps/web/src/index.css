@@ -2134,23 +2134,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @layer base {
-  [data-citation-highlighted="response"] {
-    position: relative;
-    isolation: isolate;
-  }
-  [data-citation-highlighted="response"]::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-    border-radius: var(--radius-row);
-    background-color: color-mix(
-      in oklab,
-      var(--primary) calc(var(--assistant-citation-highlight-opacity) * 100%),
-      transparent
-    );
-  }
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
       in oklab,
