@@ -5728,5 +5728,9 @@
   "f6cf1627f4acc5ef": "Odbiorcy komentarza",
   "eb1fd384ad5919dd": "Notatka wewnętrzna",
   "b45f0b467e9406d0": "Odpowiedz klientowi",
-  "15e5597f8f93ce12": "{start} do {end}"
+  "15e5597f8f93ce12": "{start} do {end}",
+  "784eceb3489793d5": "Do aktualizacji PR",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} few {{count} PR-y} many {{count} PR-ów} other {{count} PR-a}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Odroczone do aktualizacji PR"
 }
