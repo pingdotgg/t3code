@@ -624,9 +624,13 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(
       `  Background service still running ${running}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
     );
+  } else if (status.installed && status.installedBaseDir === undefined) {
+    yield* Console.log(
+      `  A background service definition was found, but its T3 home could not be determined, so it was left unchanged. Check ${status.unitPath}.`,
+    );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
-      `  The background service serves ${status.installedBaseDir ?? "another T3 home"} and was left unchanged.`,
+      `  The background service serves ${status.installedBaseDir} and was left unchanged.`,
     );
   }
   if (foreground !== undefined) {
