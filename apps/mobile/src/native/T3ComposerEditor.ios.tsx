@@ -6,7 +6,7 @@ import { composerContextEditorTokens, composerSkillLabels } from "../lib/compose
 import { composerLineDirections, type ComposerLineDirection } from "../lib/composerTextDirection";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import {
   useCallback,
   useEffect,
@@ -29,7 +29,7 @@ import {
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -165,6 +165,7 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const gt = useGT();
+  const messages = useMessages();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -189,7 +190,7 @@ export function ComposerEditor({
   }
   const bodyText = useComposerTextRole();
   const theme = useUniwindTheme();
-  const fontFamily = FONT_FAMILIES.regular;
+  const fontFamily = useAppearancePreferences().fontFamilies.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
@@ -230,7 +231,7 @@ export function ComposerEditor({
                   : token.type === "citation"
                     ? token.value
                     : basename(token.value).normalize("NFC"),
-          detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
+          detail: token.type === "context" ? composerChipSizeSuffix(record, messages) : "",
           iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
           tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
         };
@@ -245,6 +246,7 @@ export function ComposerEditor({
     modelTokens,
     theme,
     chipTextColor,
+    messages,
   ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind

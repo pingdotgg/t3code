@@ -42,6 +42,15 @@ const isFailedCheck = (check: PullRequestCheck) =>
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
 
+function isReviewAcknowledgement(remark: PullRequestComment): boolean {
+  return (
+    remark.author?.login.toLowerCase().replace(/\[bot\]$/, "") === "coderabbitai" &&
+    /<!-- This is an auto-generated reply by CodeRabbit -->[\s\S]*?<summary>[^\p{L}<]*Actions? performed<\/summary>\s*(?:<dl>\s*<dd>\s*<br>\s*)?(?:Full review|Review) triggered\./u.test(
+      remark.body.slice(0, 1_000),
+    )
+  );
+}
+
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
@@ -138,8 +147,8 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
-    const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // Checks can start and finish between sweeps; a new name in the gate is news.
+    const gateGrew = gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
@@ -154,7 +163,9 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      if (!checksBaseline) {
+      // CI running at the start that has since settled green is news. The start rollup can be
+      // pending only on optional checks, so a passed gate alone is not.
+      if (!checksBaseline || (watch.checksPending === true && settled)) {
         changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       }
       owedChecks =
@@ -186,7 +197,12 @@ export function evaluatePullRequestWatch(
       }
     }
     passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    // Without required checks, told names add up, so a varying check list cannot wake twice.
+    passedChecks = !passedNow
+      ? []
+      : required.length > 0
+        ? gateNames
+        : [...new Set([...told, ...gateNames])];
   }
 
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
@@ -219,7 +235,8 @@ export function evaluatePullRequestWatch(
       remark.author?.login.toLowerCase() !== own
     );
   });
-  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const actionable = fresh.filter((remark) => !isReviewAcknowledgement(remark));
+  if (actionable.length > 0) changes.push({ kind: "remarks", remarks: actionable });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
@@ -342,8 +359,12 @@ function withoutMarkup(body: string): string {
   };
   for (const line of body.split("\n")) {
     if (fence !== undefined) {
-      const closer = line.trim();
-      if (closer.length >= fence.length && closer.replaceAll(fence.charAt(0), "") === "") {
+      const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/.exec(line)?.[1];
+      if (
+        closer !== undefined &&
+        closer.charAt(0) === fence.charAt(0) &&
+        closer.length >= fence.length
+      ) {
         fence = undefined;
       }
       code(line);

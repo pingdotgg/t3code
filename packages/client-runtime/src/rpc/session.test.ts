@@ -452,6 +452,26 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("awaits a reply from a request until the next inbound frame", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      expect(yield* session.awaitingReply).toBe(false);
+
+      yield* Effect.forkChild(session.probe);
+      yield* awaitRequest(socket, 1);
+      expect(yield* session.awaitingReply).toBe(true);
+
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+      expect(yield* session.awaitingReply).toBe(false);
+    }),
+  );
+
   it.effect("closes the websocket when the session scope is released", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -1079,7 +1099,8 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(readyFiber);
       expect(error).toMatchObject({
         reason: "configuration",
-        message: "Connected environment environment-2 does not match environment-1.",
+        message:
+          "This address now runs a different T3 Code install (environment-2, not environment-1). Remove this connection and add it again.",
       });
       expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
       expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");

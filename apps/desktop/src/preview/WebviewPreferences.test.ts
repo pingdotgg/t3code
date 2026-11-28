@@ -25,6 +25,10 @@ describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
     }
   });
 
+  it("keeps the page out of the picker preload's JavaScript world", () => {
+    expect(parsed["contextIsolation"]).toBe("true");
+  });
+
   it("keeps the renderer sandbox enabled (so the page cannot reach Node APIs)", () => {
     expect(parsed["sandbox"]).toBe("true");
   });

@@ -92,21 +92,25 @@ describe("VcsDriverRegistry", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
-      const projectDir = path.join(parentDir, "project");
       yield* fs.makeDirectory(path.join(parentDir, ".git"));
-      yield* fs.makeDirectory(projectDir);
       const calls: string[] = [];
 
       yield* Effect.gen(function* () {
         const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
-        assert.equal((yield* registry.detect({ cwd: projectDir }))?.repository.rootPath, parentDir);
+        for (const [repoRel, cwdRel] of [
+          ["project", "project"],
+          ["..cache", path.join("..cache", "sub")],
+        ] as const) {
+          const nestedRepoDir = path.join(parentDir, repoRel);
+          const cwd = path.join(parentDir, cwdRel);
+          yield* fs.makeDirectory(cwd, { recursive: true });
 
-        yield* fs.makeDirectory(path.join(projectDir, ".git"));
+          assert.equal((yield* registry.detect({ cwd }))?.repository.rootPath, parentDir);
 
-        assert.equal(
-          (yield* registry.detect({ cwd: projectDir }))?.repository.rootPath,
-          projectDir,
-        );
+          yield* fs.makeDirectory(path.join(nestedRepoDir, ".git"));
+
+          assert.equal((yield* registry.detect({ cwd }))?.repository.rootPath, nestedRepoDir);
+        }
       }).pipe(Effect.provide(makeDiskBackedLayer(parentDir, calls)));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );

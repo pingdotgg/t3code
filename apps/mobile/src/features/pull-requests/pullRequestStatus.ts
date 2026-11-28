@@ -149,7 +149,7 @@ export function pullRequestChecksSummary(
   if (required)
     return {
       label: resolve(
-        msg("{count, plural, one {{count} need attention} other {{count} need attention}}", {
+        msg("{count, plural, one {{count} needs attention} other {{count} need attention}}", {
           count: required,
         }),
       ),

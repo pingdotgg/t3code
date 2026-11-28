@@ -28,7 +28,9 @@ Deployment and Clerk configuration live in the [Connect setup runbook](../operat
   compromised relay signing key. Enabling `requireConnectDeviceApproval` shifts trust from the relay
   to approved DPoP key thumbprints: untrusted keys mint credentials that cannot be spent until
   someone with `access:write` approves the key, and revoking a key revokes all of its sessions and
-  pending credentials.
+  pending credentials. Approving admits a device already signed in to the owner's cloud account
+  and returns no credential to the approver, so `access:write` alone is enough, as it is for
+  turning the setting off.
 - **Anti-hijack and anti-SSRF rules.** Managed tunnels expose only the server's own loopback HTTP
   origin (ignoring caller-supplied origins). The relay refuses to relink an active environment ID
   under a different key until unlinked, resolves endpoints only from its own managed allocations,

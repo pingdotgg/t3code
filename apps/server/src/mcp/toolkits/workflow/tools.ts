@@ -10,14 +10,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "store"] as const;
 
-// Wait names and store keys match exactly, so they keep their spaces.
+// Wait names, store keys and channels match exactly, so they keep their spaces.
 const ExactName = Schema.String.check(
   Schema.makeFilter((name: string) => name.trim().length > 0, { expected: "a non-blank string" }),
 );
 
 const WorkflowTool = Tool.make("t3_workflow", {
   description:
-    "Durable workflow runs on this server. start: `workflow`, `input`, `idempotencyKey` (same key, same run). list: runs, by `status`. read: one run and its steps. questions: what runs ask a person. hooks: the URL paths that start runs. store: what workflows keep, under keys starting with `key`; store_set a `key` to `value`; store_delete. signal: wake a wait with `value`, addressed by `runId` and `wait`, or by `workflow` and `channel`; answers a question as `{choice, reason?}`. resume: run a paused run's failed step again. cancel.",
+    "Durable workflow runs on this server. start: `workflow`, `input`, `idempotencyKey` (same key, same run). list: runs, by `status`, `tag` and `subject` (the web address or thread id a run is about). read: one run and its steps. questions: what runs ask a person, by `kind`. hooks: the URL paths that start runs. store: what workflows keep, under keys starting with `key`; store_set a `key` to `value`; store_delete. signal: wake a wait with `value`, addressed by `runId` and `wait`, or by `workflow` and `channel`; answers a question as `{choice, reason?}`. withdraw: end the question `wait` of `runId` unanswered, with an optional `reason`; its run goes on as if the question timed out. resume: run a paused run's failed step again. cancel.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...WORKFLOW_READ_ACTIONS,
@@ -26,6 +26,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
       "signal",
       "resume",
       "cancel",
+      "withdraw",
       "store_set",
       "store_delete",
     ]),
@@ -34,9 +35,12 @@ const WorkflowTool = Tool.make("t3_workflow", {
     idempotencyKey: Schema.optional(TrimmedNonEmptyString),
     runId: Schema.optional(TrimmedNonEmptyString),
     status: Schema.optional(WorkflowRunStatus),
+    tag: Schema.optional(ExactName),
+    subject: Schema.optional(ExactName),
+    kind: Schema.optional(ExactName),
     wait: Schema.optional(ExactName),
     key: Schema.optional(ExactName),
-    channel: Schema.optional(TrimmedNonEmptyString),
+    channel: Schema.optional(ExactName),
     value: Schema.optional(Schema.Json),
     signalId: Schema.optional(
       TrimmedNonEmptyString.annotate({
@@ -55,6 +59,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
       Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.Json })),
     ),
     delivery: Schema.optional(Schema.Literals(["delivered", "buffered"])),
+    withdrawal: Schema.optional(Schema.Literals(["withdrawn", "not_open"])),
   }),
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,

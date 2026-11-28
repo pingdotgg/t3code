@@ -1,6 +1,11 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Formatter, Schema, type SchemaAST, SchemaRepresentation } from "effect"
 import { throws } from "../../utils/assert.ts"
+import { makeModule } from "../../utils/schemaCodegen.ts"
+
+function print(document: SchemaRepresentation.Document): string {
+  return makeModule({ representations: [document.representation], references: document.references }).print()
+}
 
 function assertFilterReviver<T>(input: {
   readonly schema: Schema.Codec<T>
@@ -44,7 +49,9 @@ function assertFilterReviver<T>(input: {
     typeof revivedCheck.annotations?.toJsonSchema,
     input.hasToJsonSchema === false ? "undefined" : "function"
   )
-  assert.strictEqual(typeof revivedCheck.annotations?.toCode, "function")
+  const expected = print(document)
+  assert.strictEqual(print(SchemaRepresentation.fromJson(json)), expected)
+  assert.strictEqual(print(SchemaRepresentation.toRepresentation(revived.ast)), expected)
 }
 
 function assertDeclarationReviver(input: {
@@ -74,7 +81,9 @@ function assertDeclarationReviver(input: {
     (revived.ast.annotations?.representation as { readonly id?: string } | undefined)?.id,
     input.id
   )
-  assert.strictEqual(typeof revived.ast.annotations?.toCode, "function")
+  const expected = print(document)
+  assert.strictEqual(print(SchemaRepresentation.fromJson(json)), expected)
+  assert.strictEqual(print(SchemaRepresentation.toRepresentation(revived.ast)), expected)
 }
 
 describe("SchemaRepresentation built-in string revivers", () => {
