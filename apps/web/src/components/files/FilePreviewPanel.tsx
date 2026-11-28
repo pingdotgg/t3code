@@ -335,7 +335,7 @@ export function WorkspaceBrowserPreview(props: {
   const pdfSaveAction = pdf ? (
     <WorkspacePdfSaveAction
       environmentId={props.environmentId}
-      resource={workspaceDownloadResource(
+      resource={largeFileResource(
         props.threadRef,
         props.absolutePath,
         props.draft ? props.workspaceRoot : null,
@@ -2008,7 +2008,7 @@ function FilePreviewPanelContent({
 }
 
 // A draft has no thread yet, so its download is scoped to the draft's workspace instead.
-function workspaceDownloadResource(
+function largeFileResource(
   threadRef: ScopedThreadRef,
   absolutePath: string,
   draftCwd: string | null,
@@ -2044,7 +2044,7 @@ function LargeFileActions(props: {
   const [saving, setSaving] = useState(false);
   const refreshAssetUrl = useAssetUrlRefresh(
     props.environmentId,
-    workspaceDownloadResource(props.threadRef, props.absolutePath, props.draftCwd),
+    largeFileResource(props.threadRef, props.absolutePath, props.draftCwd),
   );
   const showError = (cause: unknown) => {
     toastManager.add({
@@ -2114,7 +2114,7 @@ export function WorkspaceLargeTextPreview(props: {
   revealRequestId: number;
   wordWrap: boolean;
 }) {
-  const resource = workspaceDownloadResource(props.threadRef, props.absolutePath, props.draftCwd);
+  const resource = largeFileResource(props.threadRef, props.absolutePath, props.draftCwd);
   const gt = useGT();
   const [revision, setRevision] = useState(0);
   const showError = (cause: unknown) => {
