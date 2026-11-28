@@ -14,15 +14,19 @@ const VARIANT_CLASS_NAMES = {
 export function IconButton(props: IconButtonProps) {
   const variant = props.variant ?? "standard";
   const [containerClassName, iconTintClassName] = VARIANT_CLASS_NAMES[variant];
+  const compact = props.size === "compact";
   return (
     <Pressable
+      // Keeps the compact button's touch target at 44 points.
+      hitSlop={compact ? 8 : undefined}
       onPress={props.onPress}
       disabled={props.disabled}
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: Boolean(props.disabled), selected: props.selected }}
       className={cn(
-        "size-12 items-center justify-center",
+        compact ? "size-8" : "size-12",
+        "items-center justify-center",
         props.disabled && variant !== "standard"
           ? "rounded-full bg-subtle-strong"
           : containerClassName,
@@ -30,7 +34,7 @@ export function IconButton(props: IconButtonProps) {
     >
       <SymbolView
         name={props.icon}
-        size={24}
+        size={compact ? 14 : 24}
         tintColorClassName={
           props.disabled
             ? "accent-icon-subtle"

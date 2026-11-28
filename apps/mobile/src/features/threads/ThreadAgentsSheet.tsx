@@ -21,6 +21,7 @@ import { useMemo } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { RowActionSlot } from "../../components/ui/RowActionSlot";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
@@ -199,7 +200,10 @@ function AgentRow(props: {
   return (
     <View className="flex-row items-center">
       {content}
-      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      {/* On iOS the slot stays reserved so running and finished rows share a trailing edge. */}
+      <RowActionSlot>
+        <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      </RowActionSlot>
     </View>
   );
 }

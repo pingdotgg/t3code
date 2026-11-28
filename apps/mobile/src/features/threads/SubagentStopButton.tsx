@@ -14,22 +14,29 @@ import {
   resolveSubagentStopTarget,
 } from "./threadAgentsPresentation";
 
+/** Whether a stop control shows for this subagent, so a feature can reserve its slot only then. */
+export function useSubagentStopAvailable(
+  environmentId: EnvironmentId,
+  subagent: OrchestrationV2Subagent,
+): boolean {
+  const target = resolveSubagentStopTarget(subagent);
+  const canStop = useAtomValue(orchestrationEnvironment.stopWorkflow.permissionAtom(environmentId));
+  return target !== null && canStop;
+}
+
 export function SubagentStopButton(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: OrchestrationV2Subagent;
-  readonly className?: string;
 }) {
   const gt = useGT();
   const messages = useMessages();
   const target = resolveSubagentStopTarget(props.subagent);
-  const canStop = useAtomValue(
-    orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
-  );
+  const available = useSubagentStopAvailable(props.environmentId, props.subagent);
   const stopWorkflow = useAtomCommand(orchestrationEnvironment.stopWorkflow);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
   const [stopping, setStopping] = useState(false);
 
-  if (target === null || !canStop) return null;
+  if (target === null || !available) return null;
 
   const workflow = target.kind === "workflow";
   const label =
@@ -48,10 +55,11 @@ export function SubagentStopButton(props: {
   };
 
   return (
-    <View className={props.className}>
+    <View>
       <IconButton
         icon="stop.fill"
         variant="danger"
+        size="compact"
         accessibilityLabel={
           workflow
             ? stopping

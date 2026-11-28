@@ -10,4 +10,6 @@ export interface IconButtonProps {
   readonly tintColorClassName?: string;
   /** Android only. */
   readonly iconScale?: number;
+  /** iOS only. Compact is a size-8 (28pt) button for dense list rows; default is size-12. */
+  readonly size?: "default" | "compact";
 }

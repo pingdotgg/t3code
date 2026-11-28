@@ -21,11 +21,12 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { Chip } from "../../components/ui/Chip";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
+import { RowActionSlot } from "../../components/ui/RowActionSlot";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
-import { SubagentStopButton } from "./SubagentStopButton";
+import { SubagentStopButton, useSubagentStopAvailable } from "./SubagentStopButton";
 import {
   nextWorkflowSelection,
   resolveSubagentRowPresentation,
@@ -61,6 +62,7 @@ export function ThreadWorkflowGroup(props: {
   const open = rail.find((item) => item.key === selected);
   const label = group.workflow.workflowName ?? group.workflow.title;
   const statusLabel = resolveSubagentRowPresentation(props.subagent, false, m).statusLabel;
+  const stoppable = useSubagentStopAvailable(props.environmentId, props.subagent);
 
   return (
     <View className="my-2">
@@ -90,11 +92,11 @@ export function ThreadWorkflowGroup(props: {
               }
             />
           </RowPressable>
-          <SubagentStopButton
-            environmentId={props.environmentId}
-            subagent={props.subagent}
-            className="mr-2"
-          />
+          {stoppable ? (
+            <RowActionSlot cardEdge>
+              <SubagentStopButton environmentId={props.environmentId} subagent={props.subagent} />
+            </RowActionSlot>
+          ) : null}
         </View>
         {rail.length > 0 ? (
           <ScrollView
