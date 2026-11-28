@@ -246,16 +246,18 @@ export function guessThreadLinkRef(
   return null;
 }
 
-const UNSAFE_CUSTOM_HREF = /[\s<>\\\p{Cc}]/u;
+// A Markdown destination cannot hold these verbatim. v2 ids are written unescaped, so those links
+// become hosted links, which escape; v1 ids may be escaped because their readers also try decoding.
+const UNSAFE_HREF = /[\s<>\\\p{Cc}]/u;
 
-function threadLinkHref(link: ThreadLink): string {
-  if (link.environmentId === null) {
-    return `${V1_PREFIX}${UNSAFE_CUSTOM_HREF.test(link.threadId) ? encodeURIComponent(link.threadId) : link.threadId}`;
+function threadLinkHref({ environmentId, threadId }: ThreadLink): string {
+  if (environmentId === null) {
+    return V1_PREFIX + (UNSAFE_HREF.test(threadId) ? encodeURIComponent(threadId) : threadId);
   }
-  const href = `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
-  return link.environmentId.includes("/") || UNSAFE_CUSTOM_HREF.test(href)
-    ? hostedThreadLink({ environmentId: link.environmentId, threadId: link.threadId })
-    : href;
+  // A v2 link splits at its first slash, so an environment id holding one cannot be written there.
+  return environmentId.includes("/") || UNSAFE_HREF.test(environmentId + threadId)
+    ? hostedThreadLink({ environmentId, threadId })
+    : `${V2_PREFIX}${environmentId}/${threadId}`;
 }
 
 const linkLabel = (label: string | undefined) =>
