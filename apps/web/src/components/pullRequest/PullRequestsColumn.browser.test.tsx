@@ -74,7 +74,7 @@ function CondensedSearchColumn({
 }) {
   const [query, setQuery] = useState("label:bug");
   return (
-    <div style={{ display: "flex", height: 400 }}>
+    <div className="flex h-[400px]">
       <PullRequestsColumn
         refreshing={false}
         onRefresh={() => {}}
@@ -102,7 +102,7 @@ function CondensedSearchColumn({
         titlebarControls={null}
         rightPanelOpen={false}
         maximizedAway={false}
-        listBody={<div style={{ height: 2000 }} />}
+        listBody={<div className="h-[2000px]" />}
         scrollRef={scrollRef}
       />
       <button type="button">Elsewhere</button>
@@ -196,7 +196,7 @@ function HostFilteredColumn({
       titlebarControls={null}
       rightPanelOpen={false}
       maximizedAway={false}
-      listBody={<div style={{ height: 2000 }} />}
+      listBody={<div className="h-[2000px]" />}
       scrollRef={scrollRef}
     />
   );
