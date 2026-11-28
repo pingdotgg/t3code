@@ -1841,37 +1841,45 @@ export function PullRequestDetailPanel({
           {detail ? (
             <>
               {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
-              {stackMenuProps !== null ? (
-                <span className="inline-flex shrink-0 @max-2xs/pr-header:hidden">
-                  <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+              {/* What no longer fits wraps onto a clipped second line: the file count, then the
+                  stat, then the stack. An empty first item lets the first real one wrap too. */}
+              <span className="flex h-5 min-w-0 grow flex-wrap items-center gap-y-1 overflow-clip [overflow-clip-margin:2px]">
+                <span aria-hidden className="h-full" />
+                {stackMenuProps !== null ? (
+                  <span className="me-1.5 inline-flex shrink-0 @max-2xs/pr-header:hidden">
+                    <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                  </span>
+                ) : supportsStackActions && nativeStackQuery.error ? (
+                  <span className="me-1.5 inline-flex shrink-0">
+                    <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
+                      <T>Retry stack lookup</T>
+                    </Button>
+                  </span>
+                ) : null}
+                <span className="ml-auto flex h-lh w-min max-w-max grow flex-row-reverse flex-wrap items-baseline overflow-clip text-caption text-muted-foreground">
+                  <span aria-hidden className="h-full self-start" />
+                  <span
+                    className="order-last me-1.5 inline-flex items-baseline gap-1 tabular-nums"
+                    aria-label={gt(
+                      "{count, plural, one {{formattedCount} changed file} other {{formattedCount} changed files}}",
+                      {
+                        count: detail.changedFiles,
+                        formattedCount: detail.changedFiles.toLocaleString(),
+                      },
+                    )}
+                  >
+                    <FileDiffIcon aria-hidden className="size-3 self-center" />
+                    {detail.changedFiles.toLocaleString()}
+                  </span>
+                  <PullRequestChangeBreakdownStat
+                    environmentId={environmentId}
+                    reference={reference}
+                    additions={detail.additions}
+                    deletions={detail.deletions}
+                    className="shrink-0 font-mono text-caption"
+                    eager
+                  />
                 </span>
-              ) : supportsStackActions && nativeStackQuery.error ? (
-                <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
-                  <T>Retry stack lookup</T>
-                </Button>
-              ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground @max-[30rem]/pr-header:hidden">
-                <span
-                  className="inline-flex items-baseline gap-1 tabular-nums @max-[34rem]/pr-header:hidden"
-                  aria-label={gt(
-                    "{count, plural, one {{formattedCount} changed file} other {{formattedCount} changed files}}",
-                    {
-                      count: detail.changedFiles,
-                      formattedCount: detail.changedFiles.toLocaleString(),
-                    },
-                  )}
-                >
-                  <FileDiffIcon aria-hidden className="size-3 self-center" />
-                  {detail.changedFiles.toLocaleString()}
-                </span>
-                <PullRequestChangeBreakdownStat
-                  environmentId={environmentId}
-                  reference={reference}
-                  additions={detail.additions}
-                  deletions={detail.deletions}
-                  className="shrink-0 font-mono text-caption"
-                  eager
-                />
               </span>
             </>
           ) : null}
