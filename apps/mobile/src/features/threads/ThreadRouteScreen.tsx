@@ -1,5 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentCatalog } from "../../connection/catalog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -117,9 +119,12 @@ import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
 import {
+  THREAD_ROUTE_CONNECT_GRACE_MS,
   threadDetailErrorIsCurrent,
+  threadRouteAwaitsConnection,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
+  threadRouteStartsConnection,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
 import { resumeThread } from "./resume-thread";
@@ -268,6 +273,10 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const { onReconnectEnvironment } = useRemoteConnections();
   const navigation = useNavigation();
   const routeName = useRoute().name;
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const routeCatalogEntry = environmentId ? catalog.entries.get(environmentId) : undefined;
+  const routeEnvironmentEnabled =
+    routeCatalogEntry?.enabled !== false && routeCatalogEntry?.unsupportedReason === undefined;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeThreadKey =
@@ -278,6 +287,48 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     selectedThread === null
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  const routeThreadShown = selectedThread !== null && selectedThreadKey === routeThreadKey;
+  const [shownThreadKey, setShownThreadKey] = useState<string | null>(null);
+  if (routeThreadShown && shownThreadKey !== routeThreadKey) {
+    setShownThreadKey(routeThreadKey);
+  }
+  // Each Reconnect restarts the wait for the environment to deliver the thread.
+  const [connectAttempt, setConnectAttempt] = useState(0);
+  const connectAttemptKey = routeThreadKey === null ? null : `${routeThreadKey}#${connectAttempt}`;
+  const [graceExpiredKey, setGraceExpiredKey] = useState<string | null>(null);
+  // A shown thread that later drops out waits again instead of reusing an earlier timeout.
+  if (routeThreadShown && graceExpiredKey !== null) {
+    setGraceExpiredKey(null);
+  }
+  const graceExpired = connectAttemptKey !== null && graceExpiredKey === connectAttemptKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends the wait for a missing thread's environment once the grace period passes
+  useEffect(() => {
+    if (connectAttemptKey === null || routeThreadShown) return;
+    const timer = setTimeout(
+      () => setGraceExpiredKey(connectAttemptKey),
+      THREAD_ROUTE_CONNECT_GRACE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [connectAttemptKey, routeThreadShown]);
+  const startConnection = useEffectEvent((target: EnvironmentId) => {
+    onReconnectEnvironment(target);
+  });
+  const connectionStartedKey = useRef<string | null>(null);
+  const routeStartsConnection =
+    environmentId !== null &&
+    routeEnvironmentRuntime !== null &&
+    routeEnvironmentEnabled &&
+    !routeThreadShown &&
+    !graceExpired &&
+    threadRouteStartsConnection(routeConnectionState);
+  // A link opened on a resume often finds its environment backing off, so it retries now.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the route environment's connection once per wait while a linked thread is missing
+  useEffect(() => {
+    if (!routeStartsConnection || environmentId === null) return;
+    if (connectionStartedKey.current === connectAttemptKey) return;
+    connectionStartedKey.current = connectAttemptKey;
+    startConnection(environmentId);
+  }, [routeStartsConnection, environmentId, connectAttemptKey]);
   const selectedThreadDetailState = useSelectedThreadDetailState();
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
@@ -303,7 +354,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+  if (routeThreadShown) {
     // ThreadRouteContent draws its own inspector header so it can show the sync status.
     return (
       <InspectorHeaderShownContext value={props.inspectorPresentation !== undefined}>
@@ -329,7 +380,16 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     }),
   });
 
-  if (stillHydrating) {
+  if (
+    stillHydrating ||
+    (routeEnvironmentRuntime !== null &&
+      threadRouteAwaitsConnection({
+        connectionState: routeConnectionState,
+        environmentEnabled: routeEnvironmentEnabled,
+        detailStatus: selectedThreadDetailState.status,
+        graceExpired,
+      }))
+  ) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
@@ -337,8 +397,8 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     routeName === "Thread" &&
     !props.inspectorPresentation &&
     threadRouteOpensDraft({
-      connectionState: routeConnectionState,
       detailStatus: selectedThreadDetailState.status,
+      threadWasShown: shownThreadKey === routeThreadKey,
     })
   ) {
     return <UnavailableThreadDraftRedirect environmentId={environmentId} />;
@@ -351,6 +411,9 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       }
       onAction={() => {
         if (routeEnvironmentRuntime !== null) {
+          // This reconnects itself, so the new wait must not start the connection again.
+          connectionStartedKey.current = `${routeThreadKey}#${connectAttempt + 1}`;
+          setConnectAttempt(connectAttempt + 1);
           onReconnectEnvironment(environmentId);
           return;
         }

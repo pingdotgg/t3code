@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   threadDetailErrorIsCurrent,
+  threadRouteAwaitsConnection,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -95,29 +96,71 @@ describe("threadRouteIsHydrating", () => {
   });
 });
 
-describe("threadRouteOpensDraft", () => {
-  it("keeps the route while a reconnecting environment may still deliver the thread", () => {
-    expect(threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "empty" })).toBe(
-      false,
-    );
-  });
+describe("threadRouteAwaitsConnection", () => {
+  const missing = {
+    connectionState: "available" as const,
+    environmentEnabled: true,
+    detailStatus: "empty" as const,
+    graceExpired: false,
+  };
 
-  it("keeps the route while Reconnect retries a thread that failed to sync", () => {
-    const failedDetail = {
-      ...settled,
-      connectionState: "connecting" as const,
-      detailStatus: "empty" as const,
-      detailHasError: true,
-    };
-    expect(threadRouteIsHydrating(failedDetail)).toBe(false);
-    expect(threadRouteOpensDraft(failedDetail)).toBe(false);
-  });
-
-  it("opens a draft once the thread can't arrive", () => {
+  it("keeps a linked thread loading while its environment has not connected yet", () => {
+    expect(threadRouteAwaitsConnection(missing)).toBe(true);
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "offline" })).toBe(true);
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "reconnecting" })).toBe(true);
     expect(
-      threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),
+      threadRouteAwaitsConnection({
+        ...missing,
+        connectionState: "offline",
+        detailStatus: "cached",
+      }),
     ).toBe(true);
-    expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(true);
+  });
+
+  it("stops waiting once the grace period ends", () => {
+    expect(threadRouteAwaitsConnection({ ...missing, graceExpired: true })).toBe(false);
+    expect(
+      threadRouteAwaitsConnection({
+        ...missing,
+        connectionState: "reconnecting",
+        graceExpired: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not wait for a thread the environment reported deleted", () => {
+    expect(threadRouteAwaitsConnection({ ...missing, detailStatus: "deleted" })).toBe(false);
+  });
+
+  it("does not wait for an environment that won't connect by itself", () => {
+    expect(threadRouteAwaitsConnection({ ...missing, environmentEnabled: false })).toBe(false);
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "error" })).toBe(false);
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "unsupported" })).toBe(false);
+  });
+
+  it("leaves a connecting or connected environment to the hydration check", () => {
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "connecting" })).toBe(false);
+    expect(threadRouteAwaitsConnection({ ...missing, connectionState: "connected" })).toBe(false);
+    expect(
+      threadRouteIsHydrating({ ...settled, connectionState: "connecting", detailStatus: "empty" }),
+    ).toBe(true);
+    expect(threadRouteIsHydrating({ ...settled, detailStatus: "empty" })).toBe(true);
+  });
+});
+
+describe("threadRouteOpensDraft", () => {
+  it("never replaces a linked thread the app hasn't loaded with a draft", () => {
+    expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: false })).toBe(false);
+    expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: false })).toBe(false);
+  });
+
+  it("keeps a shown thread's route unless the environment reported it deleted", () => {
+    expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: true })).toBe(false);
+    expect(threadRouteOpensDraft({ detailStatus: "cached", threadWasShown: true })).toBe(false);
+  });
+
+  it("opens a draft in place of a shown thread that was deleted", () => {
+    expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: true })).toBe(true);
   });
 });
 

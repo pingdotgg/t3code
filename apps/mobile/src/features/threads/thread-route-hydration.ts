@@ -44,18 +44,50 @@ export function threadRouteIsHydrating(input: {
 }
 
 /**
- * Replacing the route with a draft can't be undone, so a thread that may still arrive keeps its
- * route: a reconnecting environment often delivers it moments later, and Reconnect starts a
- * fresh connecting attempt.
+ * How long a route whose thread isn't loaded waits for its environment to come up before it shows
+ * "Thread unavailable". A link opened on a cold start or a resume usually finds the environment
+ * not connected yet; one connection attempt may take up to its 15 s establishment timeout, and
+ * the thread's first snapshot follows within a few seconds.
+ */
+export const THREAD_ROUTE_CONNECT_GRACE_MS = 20_000;
+
+/**
+ * A thread missing from the local snapshot may still arrive once the environment connects and the
+ * thread is fetched by id, so an environment that is not connected yet, or is retrying, holds the
+ * loading screen until the grace period ends. A switched-off or blocked environment won't connect
+ * by itself.
+ */
+export function threadRouteAwaitsConnection(input: {
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly environmentEnabled: boolean;
+  readonly detailStatus: EnvironmentThreadStatus;
+  readonly graceExpired: boolean;
+}): boolean {
+  if (input.detailStatus === "deleted" || input.graceExpired || !input.environmentEnabled) {
+    return false;
+  }
+  return (
+    input.connectionState === "available" ||
+    input.connectionState === "offline" ||
+    input.connectionState === "reconnecting"
+  );
+}
+
+/** An offline or backing-off environment retries now rather than after its backoff. */
+export function threadRouteStartsConnection(connectionState: EnvironmentConnectionPhase): boolean {
+  return connectionState === "offline" || connectionState === "reconnecting";
+}
+
+/**
+ * Replacing the route with a draft can't be undone, so only a thread this route already showed,
+ * and which the environment then reported deleted, opens a new task in its place. A link to a
+ * thread the app hasn't loaded shows "Thread unavailable" instead, so the user can reconnect.
  */
 export function threadRouteOpensDraft(input: {
-  readonly connectionState: EnvironmentConnectionPhase;
   readonly detailStatus: EnvironmentThreadStatus;
+  readonly threadWasShown: boolean;
 }): boolean {
-  if (input.detailStatus === "deleted") {
-    return true;
-  }
-  return input.connectionState !== "reconnecting" && input.connectionState !== "connecting";
+  return input.detailStatus === "deleted" && input.threadWasShown;
 }
 
 /**
