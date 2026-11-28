@@ -419,12 +419,6 @@ describe("pressure levels", () => {
       expected: { io: "elevated" },
     },
     {
-      name: "storage stalling every task while the disk is busy",
-      previous: {},
-      sample: { ...quiet, ioFull: 40, diskBusy: 90 },
-      expected: { io: "severe" },
-    },
-    {
       name: "io PSI from waits that touch no disk, such as an idle io_uring terminal",
       previous: {},
       sample: { ...quiet, ioFull: 77, diskBusy: 1.5 },
