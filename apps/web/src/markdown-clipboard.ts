@@ -578,16 +578,10 @@ function csvCell(value: string): string {
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = tableRows(table);
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row.children].filter(
-      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
-    );
-    if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
-  }
-  return lines.join("\n");
+  // Spanned slots stay as empty fields, so values after a span stay under their headers.
+  return tableGrid(table)
+    .map((row) => Array.from(row, (slot) => csvCell(slot?.text ?? "")).join(","))
+    .join("\n");
 }
 
 // CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
@@ -614,11 +608,8 @@ function padToWidth(text: string, width: number, align: string): string {
   return text + " ".repeat(gap);
 }
 
-/**
- * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
- * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
- */
-export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+/** Each rendered row's cells by column; a spanned slot repeats its cell with empty text. */
+function tableGrid(table: Element): Array<Array<{ text: string; cell: Element }>> {
   // Lay cells onto the grid the table renders, so values after a span stay under their headers.
   // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
   // Row groups in document order, with footers last as rendered; consecutive rows directly in
@@ -667,7 +658,15 @@ export function serializeTableElementForChat(table: Element): MarkdownClipboardP
       }
     });
   }
-  const rows = grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+  return grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  const rows = tableGrid(table);
   if (rows.length === 0) return { text: "", html: "" };
   const columns = Math.max(...rows.map((gridRow) => gridRow.length));
   const texts = rows.map((gridRow) =>
