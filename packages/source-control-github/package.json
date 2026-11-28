@@ -31,6 +31,7 @@
     "@effect/vitest": "catalog:",
     "@t3tools/source-control-testing": "workspace:*",
     "@types/node": "catalog:",
+    "graphql": "16.14.1",
     "vite-plus": "catalog:"
   }
 }
