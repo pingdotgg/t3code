@@ -15,10 +15,10 @@ const SUMMARY_LINE = /^(?:Found \d+ (?:match|file)|No (?:files|matches) found)/i
 const NOTE_LINE = /^\(.*\)$/;
 const FILE_HEADING = /^File: (.+)$/;
 // OpenCode and Gemini put a space after the colon; ripgrep's `--heading` lines start right after it.
-const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
+const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/s;
 const CONTEXT_LINE = /^\s*\d+-/;
-const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
-const COLON_HEADING = /^(\S.*):$/;
+const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/s;
+const COLON_HEADING = /^(\S.*):$/s;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
