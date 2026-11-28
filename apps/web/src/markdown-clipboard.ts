@@ -77,8 +77,9 @@ const CODE_BOUNDARY = "\u0000";
 // An empty code part before a marker the serializer writes keeps escapeBlockStarts off it.
 const BLOCK_GUARD = `${CODE_BOUNDARY}${CODE_BOUNDARY}`;
 // CommonMark/GFM block starts: headings, quotes, lists, rules, setext, fences, table delimiters.
+// Deeper indentation is indented code or a continuation line, where a backslash would show.
 const BLOCK_START =
-  /\u0000[\s\S]*?\u0000|^([ \t]*)(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
+  /\u0000[\s\S]*?\u0000|^( {0,3})(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
 const escapeBlockStart = (match: string, indent?: string, rule?: string) => {
   if (indent === undefined) return match;
   return rule ? `${indent}${rule.replace(/[*_~]/g, "\\$&")}` : `${match}\\`;

@@ -329,6 +329,7 @@ describe("serializeRenderedMarkdownFragment", () => {
       [el("P", "See ", renderedFormula("a\n- b"), " - end"), "See \\(a\n- b\\) - end"],
       [el("DIV", displayMath, "- after"), "\\[\n- x\n\\]\n\n\\- after"],
       [el("P", "See ", el("CODE", "x"), " - not a list"), "See `x` - not a list"],
+      [el("P", "intro", el("BR"), el("BR"), "    - literal"), "intro\n\n    - literal"],
       ...["#123", "-flag", "1.5", "1234567890. ten", "= foo"].map((s) => [el("DIV", s), s]),
       [el("DIV", table), expectedTable],
     ] as Array<[FakeElement, string]>) {
