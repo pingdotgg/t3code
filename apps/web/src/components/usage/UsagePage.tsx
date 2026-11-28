@@ -375,11 +375,13 @@ export function UsagePage() {
         (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
+  // Like the day label, the hour label names the first and last periods shown.
+  const lastHour = hours.at(-1);
   const windowLabel =
-    shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
+    shownHourly && shownWindow.sinceTime !== undefined && lastHour !== undefined
       ? gt("{start} to {end}", {
           start: formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12, locale),
-          end: formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12, locale),
+          end: formatDateTimeShort(lastHour, shownWindow.timeZone, hour12, locale),
         })
       : gt("{start} to {end}", {
           start: formatDayShort(shownWindow.sinceDay, locale),
@@ -601,7 +603,6 @@ export function UsagePage() {
             hours,
             resolution: shownHourly ? "hour" : "day",
             timeZone: shownWindow.timeZone,
-            referenceTime: shownWindow.untilTime,
             hour12,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}
@@ -838,7 +839,6 @@ function UsageOverview({
             hours={hours}
             hourly={merged.hourly}
             metric={metric}
-            referenceTime={shownWindow.untilTime}
             resolution={shownHourly ? "hour" : "day"}
             timeZone={shownWindow.timeZone}
             hour12={hour12}

@@ -33,7 +33,6 @@ describe("UsageModelDialog", () => {
           hours: [],
           resolution: "day",
           timeZone: "UTC",
-          referenceTime: undefined,
           hour12: false,
         }}
         onSetPrice={() => {}}
