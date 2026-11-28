@@ -49,6 +49,7 @@ export function sanitizeDocumentHtml(source: string): string {
       "dd",
       "img",
     ],
+    ADD_ATTR: (attribute, tag) => attribute === "type" && tag === "ol",
     ALLOWED_ATTR: [
       "src",
       "alt",
