@@ -4794,6 +4794,8 @@
   "d506b798402041ab": "Envoyer maintenant",
   "9a62f694ba5c35c5": "Ouverture du fil…",
   "bb24a2960c689a20": "Ce fil n’est pas disponible dans l’instantané mobile actuel.",
+  "4c9b5debaba23cbf": "En attente de connexion",
+  "f7078afe560cef3e": "Impossible de joindre {environment} pour l’instant. Le fil s’ouvrira dès la connexion.",
   "41ca8f475c481866": "Sous-agent de {title}",
   "f3e00e6c416eab38": "Depuis {origin}",
   "bdfb9e7660ab25d3": "Impossible de reprendre le fil",

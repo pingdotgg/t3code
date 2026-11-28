@@ -4800,6 +4800,8 @@
   "d506b798402041ab": "Jetzt senden",
   "9a62f694ba5c35c5": "Thread wird geöffnet…",
   "bb24a2960c689a20": "Dieser Thread ist im aktuellen mobilen Snapshot nicht verfügbar.",
+  "4c9b5debaba23cbf": "Warten auf Verbindung",
+  "f7078afe560cef3e": "Verbindung zu {environment} ist noch nicht möglich. Der Thread wird geöffnet, sobald die Verbindung steht.",
   "41ca8f475c481866": "Subagent von {title}",
   "f3e00e6c416eab38": "Von {origin}",
   "bdfb9e7660ab25d3": "Thread konnte nicht fortgesetzt werden",

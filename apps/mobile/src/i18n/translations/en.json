@@ -4802,6 +4802,8 @@
   "d506b798402041ab": "Send now",
   "9a62f694ba5c35c5": "Opening thread…",
   "bb24a2960c689a20": "This thread is not available in the current mobile snapshot.",
+  "4c9b5debaba23cbf": "Waiting to connect",
+  "f7078afe560cef3e": "Can't reach {environment} yet. The thread opens once it connects.",
   "41ca8f475c481866": "Subagent of {title}",
   "f3e00e6c416eab38": "From {origin}",
   "bdfb9e7660ab25d3": "Could not resume thread",

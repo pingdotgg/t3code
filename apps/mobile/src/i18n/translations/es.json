@@ -4793,6 +4793,8 @@
   "d506b798402041ab": "Enviar ahora",
   "9a62f694ba5c35c5": "Abriendo hilo…",
   "bb24a2960c689a20": "Este hilo no está disponible en la instantánea móvil actual.",
+  "4c9b5debaba23cbf": "Esperando para conectar",
+  "f7078afe560cef3e": "Todavía no se puede acceder a {environment}. El hilo se abre cuando se conecte.",
   "41ca8f475c481866": "Subagente de {title}",
   "f3e00e6c416eab38": "De {origin}",
   "bdfb9e7660ab25d3": "No se pudo reanudar el hilo",

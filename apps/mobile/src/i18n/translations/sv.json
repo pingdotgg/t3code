@@ -4800,6 +4800,8 @@
   "d506b798402041ab": "Skicka nu",
   "9a62f694ba5c35c5": "Öppnar tråden…",
   "bb24a2960c689a20": "Tråden är inte tillgänglig i den aktuella mobilögonblicksbilden.",
+  "4c9b5debaba23cbf": "Väntar på anslutning",
+  "f7078afe560cef3e": "Kan inte nå {environment} än. Tråden öppnas när anslutningen är klar.",
   "41ca8f475c481866": "Subagent till {title}",
   "f3e00e6c416eab38": "Från {origin}",
   "bdfb9e7660ab25d3": "Kunde inte återuppta tråden",
