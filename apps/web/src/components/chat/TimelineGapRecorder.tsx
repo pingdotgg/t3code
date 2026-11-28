@@ -13,6 +13,11 @@ const FIRST_CHECK_MS = 1000;
 const CONFIRM_CHECK_MS = 4000;
 const OPEN_RECHECK_MS = 10_000;
 const MAX_EVENTS = 8;
+// A blank stretch that heals before the delayed checks look is still recorded: the visible list is
+// sampled every SAMPLE_MS and a stretch of FLASH_PX or more lasting FLASH_MS or more is reported.
+const SAMPLE_MS = 50;
+const FLASH_PX = 150;
+const FLASH_MS = 100;
 
 interface RowLayout {
   index: number;
@@ -161,11 +166,10 @@ function findTimelineGaps(rows: readonly MeasuredRow[]): GapFinding[] {
   return findings;
 }
 
-function measure(monitor: Monitor): GapSnapshot | null {
+function visibleList(monitor: Monitor) {
   const list = monitor.list();
   const viewport = list?.getScrollableNode();
   if (!list || !(viewport instanceof HTMLElement) || !viewport.checkVisibility()) return null;
-  const state = list.getState();
   const content = viewport.firstElementChild;
   if (!(content instanceof HTMLElement)) return null;
   const sized =
@@ -173,6 +177,49 @@ function measure(monitor: Monitor): GapSnapshot | null {
       (child): child is HTMLElement =>
         child instanceof HTMLElement && child.style.position === "relative",
     ) ?? content;
+  return { list, viewport, sized };
+}
+
+/** The tallest stretch of the viewport, between the first row's top and the last row's bottom, no mounted row covers. */
+function largestBlankStretch(monitor: Monitor): number | null {
+  const found = visibleList(monitor);
+  if (!found) return null;
+  const { list, viewport, sized } = found;
+  const state = list.getState();
+  const count = state.data.length;
+  if (count === 0) return 0;
+  const view = viewport.getBoundingClientRect();
+  const zoom = viewport.offsetHeight ? view.height / viewport.offsetHeight : 1;
+  const base = sized.getBoundingClientRect().top;
+  const lastTop = state.positionAtIndex(count - 1);
+  const lastSize = state.sizeAtIndex(count - 1);
+  const rowsBottom =
+    lastTop !== undefined && lastSize !== undefined ? lastTop + lastSize : sized.offsetHeight;
+  const top = Math.max(view.top, base + (state.positionAtIndex(0) ?? 0) * zoom);
+  const bottom = Math.min(view.bottom, base + rowsBottom * zoom);
+  if (bottom - top < FLASH_PX * zoom) return 0;
+  const covered: [number, number][] = [];
+  for (const slot of sized.children) {
+    if (!(slot instanceof HTMLElement) || slot.style.position !== "absolute") continue;
+    const row = slot.querySelector<HTMLElement>("[data-timeline-row-id]")?.getBoundingClientRect();
+    if (row && row.height > 0) covered.push([row.top, row.bottom]);
+  }
+  covered.sort((a, b) => a[0] - b[0]);
+  let reached = top;
+  let largest = 0;
+  for (const [rowTop, rowBottom] of covered) {
+    if (rowTop > reached) largest = Math.max(largest, Math.min(rowTop, bottom) - reached);
+    reached = Math.max(reached, rowBottom);
+    if (reached >= bottom) break;
+  }
+  return Math.max(largest, bottom - reached) / zoom;
+}
+
+function measure(monitor: Monitor): GapSnapshot | null {
+  const found = visibleList(monitor);
+  if (!found) return null;
+  const { list, viewport, sized } = found;
+  const state = list.getState();
   const zoom = viewport.offsetHeight
     ? viewport.getBoundingClientRect().height / viewport.offsetHeight
     : 1;
@@ -317,6 +364,10 @@ function confirm(monitor: Monitor, trigger: string, firstIds: Set<string>) {
   };
   report(monitor, "appeared", trigger, { ...snapshot, findings: lasting });
   scheduleRecheck(monitor);
+  announce(monitor);
+}
+
+function announce(monitor: Monitor) {
   if (toastedThreads.has(monitor.threadKey)) return;
   toastedThreads.add(monitor.threadKey);
   const id = toastManager.add({
@@ -362,6 +413,63 @@ function scheduleRecheck(monitor: Monitor) {
   }, OPEN_RECHECK_MS);
 }
 
+/** Reports a blank stretch that lasts FLASH_MS, with the list's state when it appeared and what changed by the time it healed. */
+function sampleBlankStretches(monitor: Monitor) {
+  let blank: {
+    startedAt: number;
+    px: number;
+    data: unknown;
+    events: string[];
+    snapshot: GapSnapshot;
+  } | null = null;
+  const interval = window.setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    const now = performance.now();
+    const px = largestBlankStretch(monitor);
+    if (px !== null && px >= FLASH_PX) {
+      if (blank) {
+        blank.px = Math.max(blank.px, px);
+        return;
+      }
+      const snapshot = measure(monitor);
+      if (snapshot) {
+        const data = monitor.list()?.getState().data;
+        blank = { startedAt: now, px, data, events: [...monitor.events], snapshot };
+      }
+      return;
+    }
+    if (!blank) return;
+    const { startedAt, px: largest, data, events, snapshot } = blank;
+    blank = null;
+    if (now - startedAt < FLASH_MS) return;
+    const list = monitor.list();
+    const state = px === null ? undefined : list?.getState();
+    saveReport({
+      at: new Date().toISOString(),
+      phase: "blank stretch",
+      threadKey: monitor.threadKey,
+      durationMs: Math.round(now - startedAt),
+      largestPx: r1(largest),
+      events,
+      eventsWhileBlank: monitor.events.filter((event) => !events.includes(event)),
+      healedWith: state
+        ? {
+            dataChanged: state.data !== data,
+            dataLength: state.data.length,
+            scrollTop: r1(list?.getScrollableNode()?.scrollTop ?? -1),
+            contentLength: r1(state.contentLength),
+            startBuffered: state.startBuffered,
+            endBuffered: state.endBuffered,
+            isAtEnd: state.isAtEnd,
+          }
+        : "list hidden or gone",
+      ...snapshot,
+    });
+    announce(monitor);
+  }, SAMPLE_MS);
+  return () => window.clearInterval(interval);
+}
+
 function trigger(monitor: Monitor, reason: string) {
   monitor.events = [...monitor.events, `${new Date().toISOString().slice(11, 19)} ${reason}`].slice(
     -MAX_EVENTS,
@@ -402,7 +510,7 @@ export function TimelineGapRecorder(props: {
     foldCollapsing: boolean;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the gap recorder and listens for the window becoming visible
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the gap recorder, samples it while visible and listens for the window becoming visible
   useEffect(() => {
     const monitor: Monitor = {
       threadKey,
@@ -420,7 +528,9 @@ export function TimelineGapRecorder(props: {
       if (document.visibilityState === "visible") trigger(monitor, "window visible");
     };
     document.addEventListener("visibilitychange", onVisibility);
+    const stopSampling = sampleBlankStretches(monitor);
     return () => {
+      stopSampling();
       document.removeEventListener("visibilitychange", onVisibility);
       cancel(monitor);
       monitors.delete(monitor);
