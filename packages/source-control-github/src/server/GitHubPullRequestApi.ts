@@ -2956,7 +2956,11 @@ export const make = Effect.gen(function* () {
         }
         let body: string | undefined;
         let expectedHead: string | undefined;
-        if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
+        if (
+          input.removeAgentCreditsOnMerge === true &&
+          input.mergeMethod !== "rebase" &&
+          !state.isMergeQueueEnabled
+        ) {
           const message = yield* client
             .PullRequestMergeMessage({
               owner,
