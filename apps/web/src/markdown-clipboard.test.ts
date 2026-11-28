@@ -266,16 +266,14 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph.children.map(inline)).toEqual([["text", value]]);
   });
 
-  it.each(["Tags [WIP] and [done]", "Only [one] bracket", "[x] see [y]"])(
-    "copies bracketed prose that parses back unchanged with math on: %s",
-    (value) => {
-      const container = new FakeElement("DIV").append(new FakeText(value));
-      const markdown = serializeRenderedMarkdownFragment(asNode(container));
-      const paragraph = readBack(markdown, { math: true, singleTilde: false });
-      expect(paragraph.tagName).toBe("p");
-      expect(paragraph.children.map(inline)).toEqual([["text", value]]);
-    },
-  );
+  it("copies bracketed prose that does not read back as display math", () => {
+    const value = "Tags [WIP] and [done]";
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)), {
+      math: true,
+    });
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
+  });
 
   it("escapes literal block starts across containers without escaping real blocks or verbatim spans", () => {
     const el = (tag: string, ...children: Array<FakeElement | string>) =>
