@@ -544,17 +544,22 @@ jobs:
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
           $run = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           function Test-Archive {
-            (Invoke-RestMethod -Headers $headers -Uri "$run/artifacts?name=$env:ARTIFACT").total_count -gt 0
+            # The REST list can show an upload before finalization records its digest.
+            $artifacts = (Invoke-RestMethod -Headers $headers -Uri "$run/artifacts?name=$env:ARTIFACT").artifacts
+            $latest = $artifacts | Sort-Object id -Descending | Select-Object -First 1
+            return $latest -and -not $latest.expired -and $latest.digest
           }
           $missingSince = $null
           while ($true) {
             try {
-              if (Test-Archive) {
+              $jobs = Invoke-RestMethod -Headers $headers -Uri "$run/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100"
+              $linux = $jobs.jobs | Where-Object { $_.name.EndsWith($env:LINUX_JOB) } | Select-Object -First 1
+              $upload = $linux.steps | Where-Object { $_.name -eq 'Upload CLI archive' }
+              # A Windows-only rerun can reuse the earlier Linux upload.
+              if ((-not $linux -or $upload.conclusion -eq 'success') -and (Test-Archive)) {
                 Write-Host "$env:ARTIFACT is ready."
                 exit 0
               }
-              $jobs = Invoke-RestMethod -Headers $headers -Uri "$run/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100"
-              $linux = $jobs.jobs | Where-Object { $_.name.EndsWith($env:LINUX_JOB) } | Select-Object -First 1
               if (-not $linux) {
                 # Both jobs start together, so a Linux job still missing after a
                 # few minutes means a renamed or skipped job, not a slow one.
@@ -565,11 +570,6 @@ jobs:
                   exit 1
                 }
               } elseif ($linux.conclusion) {
-                # The upload may have landed between the two requests above.
-                if (Test-Archive) {
-                  Write-Host "$env:ARTIFACT is ready."
-                  exit 0
-                }
                 Write-Host "::error::$env:LINUX_JOB ended ($($linux.conclusion)) without uploading $env:ARTIFACT."
                 exit 1
               }
@@ -586,6 +586,7 @@ jobs:
         with:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
+          github-token: ${{ github.token }}
 
       - name: Build desktop artifact
         shell: bash
