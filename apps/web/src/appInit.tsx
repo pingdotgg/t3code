@@ -101,8 +101,12 @@ function startClientAppearance(): void {
       root.style.setProperty("--glass-opacity", `${settings.glassOpacity}%`);
       if (settings.glassOpacity === 100) {
         root.style.setProperty("--glass-blur", "0px");
+        root.style.setProperty("--glass-backdrop-filter", "none");
+        root.style.setProperty("--dialog-backdrop-filter", "none");
       } else {
         root.style.removeProperty("--glass-blur");
+        root.style.removeProperty("--glass-backdrop-filter");
+        root.style.removeProperty("--dialog-backdrop-filter");
       }
     }
     if (
