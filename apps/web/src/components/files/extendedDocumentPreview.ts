@@ -330,8 +330,19 @@ export async function openDocument(
         const rows: string[][] = [];
         let truncated = false;
         let pendingEmptyRows = 0;
+        // Calc hides rows and columns whose table:visibility is collapse or filter.
+        const shown = (node: XmlNode) =>
+          !["collapse", "filter"].includes(node.attrs["table:visibility"]?.trim() ?? "");
+        const hiddenColumns: boolean[] = [];
+        for (const column of find(table, "table:table-column")) {
+          const count = repeat(column.attrs["table:number-columns-repeated"], 1024);
+          for (let i = 0; i < count && hiddenColumns.length < 1024; i++)
+            hiddenColumns.push(!shown(column));
+        }
         for (const row of find(table, "table:table-row")) {
+          if (!shown(row)) continue;
           const cells: string[] = [];
+          let column = 0;
           for (const cell of row.children.filter((child) =>
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
           )) {
@@ -352,8 +363,9 @@ export async function openDocument(
             if (value && cells.length + count > TABLE_PREVIEW_MAX_COLUMNS) truncated = true;
             for (let i = 0; i < count && cells.length < TABLE_PREVIEW_MAX_COLUMNS; i++) {
               if (value.length > 10_000) throw new PreviewError({ code: "ods-cell-too-large" });
-              cells.push(value);
+              if (!hiddenColumns[column + i]) cells.push(value);
             }
+            column += repeat(cell.attrs["table:number-columns-repeated"], 1024);
           }
           while (cells.at(-1) === "") cells.pop();
           const count = repeat(row.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS + 1);
