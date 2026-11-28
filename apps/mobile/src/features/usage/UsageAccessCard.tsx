@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { usageAccessReadsLabel } from "@t3tools/client-runtime/state/usage-access";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -11,7 +12,7 @@ import {
   type UsageAccessRequest,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -32,28 +33,12 @@ export interface UsageAccessPrompt extends UsageAccessRequest {
   readonly environmentLabel: string;
 }
 
-/** What usage access lets T3 Code read for this agent. Keep in step with web's usage access card. */
-function usageAccessReads(driver: string, gt: ReturnType<typeof useGT>): string {
-  switch (driver) {
-    case "claudeAgent":
-    case "grok":
-      return gt("Session history and sign-in");
-    case "opencode":
-      return gt("Usage database and Go key");
-    case "antigravity":
-      return gt("Conversation history");
-    case "cursor":
-      return gt("Account usage from Cursor");
-    default:
-      return gt("Session history");
-  }
-}
-
 const promptKey = (prompt: UsageAccessPrompt) => `${prompt.environmentId}\0${prompt.instanceId}`;
 
 /** Asks before T3 reads an agent's usage files or sign-in. It stays until every agent is answered. */
 export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageAccessPrompt[] }) {
   const gt = useGT();
+  const messages = useMessages();
   const mutateProviderInstance = useAtomCommand(serverEnvironment.mutateProviderInstance, {
     reportFailure: false,
     reportDefect: false,
@@ -65,13 +50,21 @@ export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageA
   const showEnvironment = new Set(prompts.map((prompt) => prompt.environmentId)).size > 1;
 
   const answer = async (allowSelected: boolean) => {
+    const configs = prompts.map((prompt) =>
+      appAtomRegistry.get(serverEnvironment.configValueAtom(prompt.environmentId)),
+    );
+    // A save rewrites the instance from its saved settings, so it waits until they have loaded.
+    if (configs.some((config) => config === null)) {
+      setError(gt("Could not save usage access"));
+      return;
+    }
     setSaving(true);
     setError(null);
     const results = await Promise.all(
-      prompts.map((prompt) => {
+      prompts.map((prompt, index) => {
         const access: ProviderUsageAccess =
           allowSelected && !declined.has(promptKey(prompt)) ? "allowed" : "denied";
-        const config = appAtomRegistry.get(serverEnvironment.configValueAtom(prompt.environmentId));
+        const config = configs[index];
         return mutateProviderInstance({
           environmentId: prompt.environmentId,
           input: {
@@ -130,9 +123,9 @@ export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageA
               showEnvironment
                 ? gt("{environment} · {detail}", {
                     environment: prompt.environmentLabel,
-                    detail: usageAccessReads(prompt.driver, gt),
+                    detail: usageAccessReadsLabel(prompt.driver, messages),
                   })
-                : usageAccessReads(prompt.driver, gt)
+                : usageAccessReadsLabel(prompt.driver, messages)
             }
             disabled={saving}
             accessory={

@@ -82,7 +82,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         accessRequests: unansweredUsageAccessRequests({
           canAnswer: sessionHasScope(sessionResult, AuthProvidersManageScope),
           summary,
-          providerInstances: presentation.serverConfig?.settings.providerInstances,
+          config: get(serverEnvironment.configValueAtom(environmentId)),
         }),
         error: result._tag === "Failure" ? msg("This environment could not report usage.") : null,
         summary,

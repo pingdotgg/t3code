@@ -1,7 +1,7 @@
 import {
   AuthDiagnosticsReadScope,
   sessionGrantsScope,
-  type ServerSettings,
+  type ServerConfig,
   type SessionGrantInput,
   type UsageAccessRequest,
   type UsageSummary,
@@ -51,15 +51,40 @@ export function resolveUsageAccess(
 
 /**
  * The agents a session can still answer for. A summary lists who was unanswered when its scan
- * began, and a first scan can run long, so answers the settings already hold are left out.
+ * began, and a first scan can run long, so it is checked against the live settings.
  */
 export function unansweredUsageAccessRequests(input: {
   readonly canAnswer: boolean;
   readonly summary: Pick<UsageSummary, "accessRequests"> | null;
-  readonly providerInstances: ServerSettings["providerInstances"] | undefined;
+  /** Null until the environment's settings and provider list have loaded. */
+  readonly config: Pick<ServerConfig, "settings" | "providers"> | null;
 }): readonly UsageAccessRequest[] {
-  if (!input.canAnswer) return [];
+  const { config } = input;
+  // An answer is saved by rewriting the instance from live settings, so nothing is asked before they load.
+  if (!input.canAnswer || config === null) return [];
   return (input.summary?.accessRequests ?? []).filter(
-    (request) => input.providerInstances?.[request.instanceId]?.usageAccess === undefined,
+    (request) =>
+      config.settings.providerInstances[request.instanceId]?.usageAccess === undefined &&
+      // An agent removed or turned off since the scan must not be saved back into settings.
+      config.providers.some(
+        (provider) => provider.instanceId === request.instanceId && provider.enabled,
+      ),
   );
+}
+
+/** What usage access lets T3 Code read for an agent, as the short note beside its switch. */
+export function usageAccessReadsLabel(driver: string, resolve: MFunctionType = mFallback): string {
+  switch (driver) {
+    case "claudeAgent":
+    case "grok":
+      return resolve(msg("Session history and sign-in"));
+    case "opencode":
+      return resolve(msg("Usage database and Go key"));
+    case "antigravity":
+      return resolve(msg("Conversation history"));
+    case "cursor":
+      return resolve(msg("Account usage from Cursor"));
+    default:
+      return resolve(msg("Session history"));
+  }
 }

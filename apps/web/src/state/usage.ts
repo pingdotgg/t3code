@@ -84,7 +84,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         accessRequests: unansweredUsageAccessRequests({
           canAnswer: sessionHasScope(sessionResult, AuthProvidersManageScope),
           summary,
-          providerInstances: presentation.serverConfig?.settings.providerInstances,
+          config: get(serverEnvironment.configValueAtom(environmentId)),
         }),
         isConnected,
         error:

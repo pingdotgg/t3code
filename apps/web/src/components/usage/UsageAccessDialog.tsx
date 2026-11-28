@@ -6,12 +6,13 @@ import {
   withProviderUsageAccess,
 } from "@t3tools/contracts";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { usageAccessReadsLabel } from "@t3tools/client-runtime/state/usage-access";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -61,12 +62,20 @@ function useUsageAccessChoices(prompts: readonly UsageAccessPrompt[], onAnswered
     });
 
   const answer = async (allowSelected: boolean) => {
+    const configs = prompts.map((prompt) =>
+      appAtomRegistry.get(serverEnvironment.configValueAtom(prompt.environmentId)),
+    );
+    // A save rewrites the instance from its saved settings, so it waits until they have loaded.
+    if (configs.some((config) => config === null)) {
+      toastManager.add({ type: "error", title: gt("Could not save usage access") });
+      return;
+    }
     setSaving(true);
     const results = await Promise.all(
-      prompts.map((prompt) => {
+      prompts.map((prompt, index) => {
         const access: ProviderUsageAccess =
           allowSelected && !declined.has(promptKey(prompt)) ? "allowed" : "denied";
-        const config = appAtomRegistry.get(serverEnvironment.configValueAtom(prompt.environmentId));
+        const config = configs[index];
         return mutateProviderInstance({
           environmentId: prompt.environmentId,
           input: {
@@ -111,26 +120,6 @@ function useUsageAccessChoices(prompts: readonly UsageAccessPrompt[], onAnswered
 
 type UsageAccessChoices = ReturnType<typeof useUsageAccessChoices>;
 
-function useShortReads() {
-  const gt = useGT();
-  // Keep in step with UsageAccessReads, which Settings shows in full.
-  return (driver: ProviderDriverKind) => {
-    switch (driver) {
-      case "claudeAgent":
-      case "grok":
-        return gt("Session history and sign-in");
-      case "opencode":
-        return gt("Usage database and Go key");
-      case "antigravity":
-        return gt("Conversation history");
-      case "cursor":
-        return gt("Account usage from Cursor");
-      default:
-        return gt("Session history");
-    }
-  };
-}
-
 function usePromptLabels(prompts: readonly UsageAccessPrompt[]) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   return prompts.map((prompt) => {
@@ -159,7 +148,7 @@ function UsageAccessRows({
   readonly disabled: boolean;
   readonly onToggle: (prompt: UsageAccessPrompt, checked: boolean) => void;
 }) {
-  const shortReads = useShortReads();
+  const m = useMessages();
   const agents = usePromptLabels(prompts);
   const environments = [...new Set(prompts.map((prompt) => prompt.environmentId))];
   return (
@@ -184,7 +173,7 @@ function UsageAccessRows({
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="text-sm font-medium">{label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {shortReads(prompt.driver)}
+                      {usageAccessReadsLabel(prompt.driver, m)}
                     </span>
                   </div>
                   <Switch
