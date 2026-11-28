@@ -309,6 +309,13 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
 
+async function submitProjectAdd(source: string, input: string, draftId?: DraftId) {
+  await act(() => openCommandPalette({ open: "add-project", ...(draftId && { draftId }) }));
+  await page.getByText(source, { exact: true }).click();
+  await page.getByRole("combobox").fill(input);
+  await userEvent.keyboard("{Enter}");
+}
+
 async function startLateProjectAdd(source: string, input: string, draftId?: DraftId) {
   const finished = Promise.withResolvers<void>();
   const created = Promise.withResolvers<typeof createdProject>();
@@ -318,11 +325,7 @@ async function startLateProjectAdd(source: string, input: string, draftId?: Draf
     await finished.promise;
     return { _tag: "Success", value: { projectId: "project-added" } };
   });
-  await act(() => openCommandPalette({ open: "add-project", ...(draftId && { draftId }) }));
-  await page.getByText(source, { exact: true }).click();
-  const search = page.getByRole("combobox");
-  await search.fill(input);
-  await userEvent.keyboard("{Enter}");
+  await submitProjectAdd(source, input, draftId);
   return async () => {
     await act(async () => {
       created.resolve(createdProject);
@@ -377,25 +380,27 @@ it.each(["/", "/?panel=files"])(
   },
 );
 
+const draftEnvironmentId = EnvironmentId.make("local");
+const project = (name: string): EnvironmentProject => ({
+  id: ProjectId.make(name),
+  environmentId: draftEnvironmentId,
+  title: name,
+  workspaceRoot: `/workspace/${name}`,
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-03-01T00:00:00.000Z",
+  updatedAt: "2026-03-01T00:00:00.000Z",
+  scripts: [],
+});
+
 it.each([
   { selection: [], expected: "added" },
   { selection: ["other"], expected: "other" },
   { selection: ["other", "original"], expected: "original" },
 ])("keeps the draft's project selection after switching threads (%j)", async (row) => {
   setup();
-  const environmentId = EnvironmentId.make("local");
+  const environmentId = draftEnvironmentId;
   const draftId = DraftId.make("draft-adding-project");
-  const project = (name: string): EnvironmentProject => ({
-    id: ProjectId.make(name),
-    environmentId,
-    title: name,
-    workspaceRoot: `/workspace/${name}`,
-    repositoryIdentity: null,
-    defaultModelSelection: null,
-    createdAt: "2026-03-01T00:00:00.000Z",
-    updatedAt: "2026-03-01T00:00:00.000Z",
-    scripts: [],
-  });
   const store = useComposerDraftStore.getState();
   store.setProjectDraftThreadId(
     scopeProjectRef(environmentId, ProjectId.make("original")),
@@ -420,7 +425,47 @@ it.each([
     await finish();
 
     expect(screen.router!.state.location.pathname).toBe("/local/another-thread");
+    expect(scopes.openDraft).not.toHaveBeenCalled();
     expect(store.getDraftSession(draftId)?.projectId).toBe(row.expected);
+  } finally {
+    store.clearDraftThread(draftId);
+  }
+});
+
+it.each([
+  { replyOrder: ["older", "newer"], assignments: ["original", "newer"] },
+  { replyOrder: ["newer", "older"], assignments: ["newer", "newer"] },
+] as const)("uses the newer folder selection when replies arrive %j", async (row) => {
+  setup();
+  const draftId = DraftId.make("draft-adding-two-projects");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(
+    scopeProjectRef(draftEnvironmentId, ProjectId.make("original")),
+    draftId,
+  );
+  store.setPrompt(draftId, "Keep this draft");
+  const pending = {
+    older: Promise.withResolvers<{ _tag: "Success"; value: { projectId: string } }>(),
+    newer: Promise.withResolvers<{ _tag: "Success"; value: { projectId: string } }>(),
+  };
+  scopes.addProject
+    .mockReturnValueOnce(pending.older.promise)
+    .mockReturnValueOnce(pending.newer.promise);
+  try {
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    for (const name of ["older", "newer"]) {
+      await submitProjectAdd("Local folder", `/workspace/${name}`, draftId);
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    }
+    for (const [index, name] of row.replyOrder.entries()) {
+      scopes.waitForProject.mockResolvedValue(project(name));
+      await act(async () => {
+        pending[name].resolve({ _tag: "Success", value: { projectId: name } });
+        await pending[name].promise;
+      });
+      expect(store.getDraftSession(draftId)?.projectId).toBe(row.assignments[index]);
+    }
   } finally {
     store.clearDraftThread(draftId);
   }
