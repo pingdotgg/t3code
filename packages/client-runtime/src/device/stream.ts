@@ -1575,6 +1575,12 @@ export function createDeviceStreamClient(
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
     sendKey: (event, phase, usLayout = false) => {
+      if (avcc && platform !== "ios") {
+        // Simlock Android takes HID key places with Android's own modifiers.
+        const usage = hidUsageForCode(event.code);
+        if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
+        return;
+      }
       if (avcc) {
         if (phase === "down") pressIosKey(event, usLayout);
         else releaseIosKey(event);

@@ -49,7 +49,7 @@ describe("native device stream transport", () => {
     vi.unstubAllGlobals();
   });
 
-  function setup(platform: "ios" | "android") {
+  function setup(platform: "ios" | "android", serveSimOnly = false) {
     vi.useFakeTimers();
     vi.stubGlobal("VideoDecoder", vi.fn());
     vi.stubGlobal("EncodedVideoChunk", vi.fn());
@@ -87,6 +87,7 @@ describe("native device stream transport", () => {
     const client = createDeviceStreamClient(
       {
         platform,
+        serveSimOnly,
         deviceId: "test device",
         preferMjpeg: platform === "ios",
         access: {
@@ -213,8 +214,12 @@ describe("native device stream transport", () => {
     client.stop();
   });
 
-  const connectIosKeys = async (usLayout?: boolean, admitted = true) => {
-    const { client, opened } = setup("ios");
+  const connectIosKeys = async (
+    usLayout?: boolean,
+    admitted = true,
+    platform: "ios" | "android" = "ios",
+  ) => {
+    const { client, opened } = setup(platform, platform !== "ios");
     client.start();
     const socket = await opened;
     socket.onopen?.();
@@ -380,6 +385,16 @@ describe("native device stream transport", () => {
     client.sendKey(keyEvent("ControlLeft", "Control"), "up", true);
     setInputUnavailable(false);
     expect(take()).toEqual(["up 4", "up e3"]);
+    client.stop();
+  });
+
+  it("keeps Ctrl and key places for Simlock Android on Windows", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, keyEvent, press } = await connectIosKeys(true, true, "android");
+    client.sendKey(keyEvent("ControlLeft", "Control", { ctrlKey: true }), "down", true);
+    press("KeyQ", "a", { ctrlKey: true });
+    press("KeyQ", "a");
+    expect(take()).toEqual(["down e0", "down 14", "up 14", "down 14", "up 14"]);
     client.stop();
   });
 

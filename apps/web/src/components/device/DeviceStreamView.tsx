@@ -40,7 +40,7 @@ const NO_AX_ATOM = Atom.make(AsyncResult.initial<ReadonlyArray<DeviceAxElement>,
   Atom.withLabel("device-ax-elements:none"),
 );
 const CONTROLS_RAIL_WIDTH = 56;
-const SIMULATOR_COMMAND_KEYS = new Set(["a", "c", "r", "x", "z"]);
+const IOS_COMMAND_KEYS = new Set(["a", "c", "r", "x", "z"]);
 
 function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
   if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
@@ -363,7 +363,10 @@ export function DeviceStreamView(props: {
         }
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.metaKey && !SIMULATOR_COMMAND_KEYS.has(surfaceShortcutKey(event) ?? "")) return;
+          const commandKey = surfaceShortcutKey(event) ?? "";
+          const sendsCommand =
+            props.platform === "ios" ? IOS_COMMAND_KEYS.has(commandKey) : commandKey === "r";
+          if (event.metaKey && !sendsCommand) return;
           // Let browser paste chords fire the paste event.
           if (
             (event.ctrlKey && (event.key === "v" || event.key === "V")) ||
