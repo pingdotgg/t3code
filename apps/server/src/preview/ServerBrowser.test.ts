@@ -458,6 +458,14 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
+const asAgent = (name: string) => ({
+  ...scope,
+  thread: {
+    ...testThread,
+    threadId: ThreadId.make(`browser-test-thread-${name}`),
+    providerSessionId: name,
+  },
+});
 const dependencies = Layer.mergeAll(
   Broker.layer,
   Manager.layer,
@@ -1447,44 +1455,57 @@ it.effect.each([
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("the same thread's next turn can keep using and close the tab it opened", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      // A finished delegate's session is released, so its follow-up turn gets a new MCP credential.
+      const nextTurn = asSession("agent-a-next-turn");
+      const evaluated = yield* broker.invoke({
+        scope: nextTurn,
+        tabId,
+        operation: "evaluate",
+        input: { expression: "location.href" },
+      });
+      expect(evaluated).toBe("evaluated");
+      yield* broker.invoke({
+        scope: nextTurn,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/next-turn" },
+      });
+      expect(contexts[0]!.page.goto).toHaveBeenCalledWith(
+        "http://localhost:5173/next-turn",
+        expect.anything(),
+      );
+      yield* broker.invoke({ scope: nextTurn, tabId, operation: "close", input: {} });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: nextTurn,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).not.toEqual(expect.arrayContaining([expect.objectContaining({ tabId })]));
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
       const foreign = yield* broker
         .invoke<void>({
-          scope: asSession("agent-b"),
+          scope: asAgent("agent-b"),
           tabId,
           operation: "navigate",
           input: { url: "http://localhost:5173/foreign" },
         })
         .pipe(Effect.flip);
-      expect(foreign).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "agentMismatch",
-      });
+      expect(foreign).toMatchObject({ _tag: "PreviewAutomationTabNotFoundError" });
       expect(contexts[0]!.page.goto).not.toHaveBeenCalledWith(
         "http://localhost:5173/foreign",
         expect.anything(),
       );
-      yield* broker.invoke<PreviewAutomationSnapshot>({
-        scope: asSession("agent-b"),
-        tabId,
-        operation: "snapshot",
-        input: {},
-      });
-      const foreignEvaluate = yield* broker
-        .invoke<void>({
-          scope: asSession("agent-b"),
-          tabId,
-          operation: "evaluate",
-          input: { expression: "read()" },
-        })
-        .pipe(Effect.flip);
-      expect(foreignEvaluate).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "agentMismatch",
-      });
       yield* broker.invoke({
         scope,
         operation: "open",
@@ -3926,29 +3947,31 @@ it.effect("preview_open reports a hidden desktop tab it reveals as visible", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a session's own tab stays its default while other sessions' tabs are listed", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const other = yield* broker.invoke<PreviewAutomationStatus>({
-        scope: asSession("agent-b"),
-        operation: "open",
-        input: { reuseExistingTab: false, show: false },
-      });
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "status",
-        input: {},
-      });
-      expect(status.tabId).toBe(tabId);
-      expect(status.tabs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ tabId, owner: "agent", ownedByCaller: true }),
-          expect.objectContaining({ tabId: other.tabId, owner: "agent", ownedByCaller: false }),
-        ]),
-      );
-    }),
-  ).pipe(Effect.provide(layer)),
+it.effect(
+  "a session's own tab stays its default while the thread's other sessions' tabs are listed",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const other = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: asSession("agent-b"),
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "status",
+          input: {},
+        });
+        expect(status.tabId).toBe(tabId);
+        expect(status.tabs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ tabId, owner: "agent", ownedByCaller: true }),
+            expect.objectContaining({ tabId: other.tabId, owner: "agent", ownedByCaller: true }),
+          ]),
+        );
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect(
@@ -4262,9 +4285,15 @@ it.effect.each([
           operation: "open",
           input: { reuseExistingTab: false, show: false },
         });
+      const threadIds = new Set([scope.thread.threadId]);
       for (let index = 1; index < limit - 3; index++) {
-        yield* open(budget === "agent" ? scope : asSession(`other-${Math.floor(index / 8)}`));
+        const target = budget === "agent" ? scope : asAgent(`other-${Math.floor(index / 8)}`);
+        threadIds.add(target.thread.threadId);
+        yield* open(target);
       }
+      const allSessions = Effect.forEach(threadIds, (threadId) => manager.list({ threadId })).pipe(
+        Effect.map((lists) => lists.flatMap((list) => list.sessions)),
+      );
 
       const sessionGate = Promise.withResolvers<void>();
       const launchGate = (contextGate = Promise.withResolvers<void>());
@@ -4309,9 +4338,7 @@ it.effect.each([
         input: { show: false },
       });
       expect(reused.tabId).toBe(tabId);
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(
-        limit - 3,
-      );
+      expect(yield* allSessions).toHaveLength(limit - 3);
 
       sessionGate.resolve();
       for (let count = 0; count < 3; count++) {
@@ -4339,9 +4366,12 @@ it.effect.each([
         });
       }
       yield* Effect.promise(() => resized.promise);
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      const sessions = yield* allSessions;
       for (const session of sessions)
-        yield* browser.attachViewer(viewerInput(session.tabId, false));
+        yield* browser.attachViewer({
+          ...viewerInput(session.tabId, false),
+          threadId: session.threadId,
+        });
       expect(sessions).toHaveLength(limit);
       expect(popup.page.isClosed()).toBe(false);
       expect(rejectedPopup.page.isClosed()).toBe(true);
@@ -4351,7 +4381,9 @@ it.effect.each([
         operation: "status",
         input: {},
       });
-      expect(status.tabs).toHaveLength(limit);
+      expect(status.tabs).toHaveLength(
+        (yield* manager.list({ threadId: scope.thread.threadId })).sessions.length,
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -4425,10 +4457,15 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       yield* Effect.yieldNow;
       const now = vi.spyOn(Date, "now").mockReturnValue(0);
       yield* Effect.addFinalizer(() => Effect.sync(() => now.mockRestore()));
+      const threadIds = new Set<ThreadId>();
+      const listAll = Effect.forEach(threadIds, (threadId) => manager.list({ threadId })).pipe(
+        Effect.map((lists) => lists.flatMap((list) => list.sessions)),
+      );
       const open = (providerSessionId: string) => {
         desktopRendersNext = true;
+        threadIds.add(asAgent(providerSessionId).thread.threadId);
         return broker.invoke<PreviewAutomationStatus>({
-          scope: asSession(providerSessionId),
+          scope: asAgent(providerSessionId),
           operation: "open",
           input: { reuseExistingTab: false, open: false },
         });
@@ -4436,12 +4473,14 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       const opened: Array<string> = [];
       for (let index = 0; index < 32; index++) {
         now.mockReturnValue(index);
-        opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
+        // The first tab is alone in its thread so a read can mark just that tab as used.
+        const agent = index === 0 ? "agent-first" : `agent-${Math.floor(index / 8)}`;
+        opened.push((yield* open(agent)).tabId!);
       }
 
       now.mockReturnValue(100);
       yield* broker.invoke<PreviewAutomationStatus>({
-        scope: asSession("agent-observer"),
+        scope: asAgent("agent-first"),
         operation: "status",
         tabId: PreviewTabId.make(opened[0]!),
         input: {},
@@ -4483,7 +4522,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
         Stream.runHead,
       );
       expect(releasedDesktopTabs).toEqual([opened[2]]);
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      const sessions = yield* listAll;
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
@@ -4508,7 +4547,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       closingPage.unloadGate.resolve();
       const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
       expect(concurrent.every((status) => status.available)).toBe(true);
-      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      const remaining = yield* listAll;
       expect(remaining).toHaveLength(32);
       const closedBeforeReturn = yield* Deferred.make<void>();
       const finishClose = yield* Deferred.make<void>();
@@ -4532,7 +4571,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(takingFreedSlot.available).toBe(true);
       yield* Deferred.succeed(finishClose, undefined);
       expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
+      expect(yield* listAll).toHaveLength(32);
       expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
       expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),
