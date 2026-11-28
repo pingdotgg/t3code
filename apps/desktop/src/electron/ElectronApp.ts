@@ -48,6 +48,9 @@ export class ElectronApp extends Context.Service<
     readonly systemLocale: Effect.Effect<string>;
     readonly preferredSystemLanguages: Effect.Effect<ReadonlyArray<string>>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
+    readonly configureHostResolver: (
+      options: Electron.ConfigureHostResolverOptions,
+    ) => Effect.Effect<void>;
     readonly requestSingleInstanceLock: Effect.Effect<boolean>;
     readonly quit: Effect.Effect<void>;
     readonly exit: (code: number) => Effect.Effect<void>;
@@ -162,6 +165,11 @@ export const make = ElectronApp.of({
     yield* Effect.tryPromise({
       try: () => Electron.app.whenReady(),
       catch: (cause) => new ElectronAppWhenReadyError({ isPackaged, cause }),
+    });
+  }),
+  configureHostResolver: Effect.fn("ElectronApp.configureHostResolver")(function (options) {
+    return Effect.sync(() => {
+      Electron.app.configureHostResolver(options);
     });
   }),
   requestSingleInstanceLock: Effect.sync(() => Electron.app.requestSingleInstanceLock()),

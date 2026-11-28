@@ -422,6 +422,11 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  // Electron enables Chromium's built-in DNS client by default, bypassing OS DNS profiles and split-DNS.
+  yield* electronApp.configureHostResolver({
+    enableBuiltInResolver: false,
+    secureDnsMode: "off",
+  });
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
