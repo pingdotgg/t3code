@@ -2085,6 +2085,7 @@ describe("PullRequestSyncReactor", () => {
         const agent = ThreadId.make("agent");
         yield* Queue.offerAll(fixture.domainEvents, [
           commandRan(agent, "git status && echo 'then git push'", undefined, "status"),
+          commandRan(agent, "echo and then git push", undefined, "mention"),
           // A watch that has not read its checks yet has no answer to forget.
           commandRan(ThreadId.make("unread"), "git push", undefined, "unread-push"),
           commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
@@ -2256,6 +2257,42 @@ describe("PullRequestSyncReactor", () => {
       name: "a create subcommand that does not end its shell word",
       input: "gh pr create#typo; gh pr view --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create after a subshell condition",
+      input: "if (true) then gh pr create --fill; fi",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
+      name: "a create after an arithmetic loop header",
+      input: "for ((i = 0; i < 1; i++)) do gh pr create --fill; done",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
+      name: "a create on a continued line",
+      input: "git push -u origin feature && \\\n  gh pr create --fill",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
+      name: "a create command after a reserved word in another command's arguments",
+      input: "echo example then gh pr create; gh pr view --json url --jq .url",
+      output: "example then gh pr create\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command after a reserved word that follows a command substitution",
+      input: "echo $(true) then gh pr create; gh pr view --json url --jq .url",
+      output: "then gh pr create\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command after an escaped separator",
+      input: "echo example\\;gh pr create; gh pr view --json url --jq .url",
+      output: "example;gh pr create\nhttps://github.com/owner/repository/pull/124",
       linked: [],
     },
     {

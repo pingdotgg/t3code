@@ -55,30 +55,81 @@ const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
 // A link whose host read failed waits a sweep, then twice as long after each further failure.
 const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
-// Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
-// A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
-const COMMAND_START =
-  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+// What may come before a command's name: `NAME=value` assignments and wrappers like `timeout 60`.
+const COMMAND_PREFIX = "(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+// The subcommand must end its shell word: `gh pr create#x` runs another one.
+const COMMAND_END = "(?=$|[\\s;&|)])";
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
       ? []
-      : // The subcommand must end its shell word: `gh pr create#x` runs another one.
-        [
+      : [
           {
             kind,
             command,
-            run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
+            run: new RegExp(`${COMMAND_PREFIX}${command.source}${COMMAND_END}`, "uy"),
           },
         ],
 );
-const createCommandCount = (code: string) =>
-  CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
 // A push, directly or through a stack tool, that can start checks on a linked pull request.
 const PUSH_COMMAND = new RegExp(
-  `${COMMAND_START}(?:git(?:\\s+-[cC]\\s+\\S+)*\\s+push|gh\\s+stack\\s+(?:push|submit)|cafe\\s+stack\\s+submit|jj\\s+git\\s+push)(?=$|[\\s;&|)])`,
-  "u",
+  `${COMMAND_PREFIX}(?:git(?:\\s+-[cC]\\s+\\S+)*\\s+push|gh\\s+stack\\s+(?:push|submit)|cafe\\s+stack\\s+submit|jj\\s+git\\s+push)${COMMAND_END}`,
+  "uy",
 );
+
+// Reserved words the shell reads where a command may start, and after which one still may.
+const COMMAND_KEYWORDS = new Set("if then elif else fi while until do done esac ! { }".split(" "));
+const SHELL_TOKEN = /[^\s;&|()<>`]+|[\n;&|()`]/gu;
+
+/**
+ * Where each command in shell code starts. A create command anywhere else, as in
+ * `echo then gh pr create`, is an argument. A `)` that closes `$(` ends a word of the command
+ * around it; any other `)` closes a subshell, `((` or a `case` pattern, and a command or `then`
+ * may follow it.
+ */
+function commandStarts(code: string): ReadonlyArray<number> {
+  const starts: Array<number> = [];
+  const open: Array<"$(" | "(" | "`" | "[["> = [];
+  let expectsCommand = true;
+  for (const { 0: token, index } of code.matchAll(SHELL_TOKEN)) {
+    const before = code[index - 1] ?? "";
+    if (token === "(") {
+      const substitution = /[$<>]/u.test(before);
+      open.push(substitution ? "$(" : "(");
+      expectsCommand ||= substitution;
+    } else if (token === ")") {
+      const closed = open.at(-1);
+      if (closed === "$(" || closed === "(") open.pop();
+      expectsCommand = closed !== "$(";
+    } else if (token === "`") {
+      expectsCommand = open.at(-1) !== "`";
+      if (expectsCommand) open.push("`");
+      else open.pop();
+    } else if (token === "&") {
+      // `2>&1` and `&>file` redirect; they do not end the command.
+      if (!/[<>]/u.test(before) && code[index + 1] !== ">") expectsCommand = true;
+    } else if (token === "\n" || token === ";" || token === "|") expectsCommand = true;
+    else if (token === "]]" && open.at(-1) === "[[") {
+      open.pop();
+      expectsCommand = true;
+    } else if (expectsCommand && !COMMAND_KEYWORDS.has(token)) {
+      if (token === "[[") open.push("[[");
+      starts.push(index);
+      expectsCommand = false;
+    }
+  }
+  return starts;
+}
+
+/** How many of the commands in shell code `run` matches. */
+function commandCount(code: string, run: RegExp): number {
+  return commandStarts(code).filter((start) => {
+    run.lastIndex = start;
+    return run.test(code);
+  }).length;
+}
+const createCommandCount = (code: string) =>
+  CREATE_COMMANDS.reduce((count, { run }) => count + commandCount(code, run), 0);
 
 // Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
 // `"a "'`b`'" c"`.
@@ -205,7 +256,8 @@ function replaceCarriedText(script: string, replace: (piece: CarriedText) => str
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
   replaceCarriedText(script, ({ start, end, kind }) =>
-    kind === "escape" ? script.slice(start, end) : kind === "heredoc" ? "<<" : "''",
+    // An escaped newline joins two lines. Any other escape is part of a word, never a separator.
+    kind === "heredoc" ? "<<" : script.slice(start, end) === "\\\n" ? "" : "''",
   );
 
 /** A script split at the command separators in its code, leaving carried text intact. */
@@ -221,7 +273,8 @@ function shellSegments(script: string): ReadonlyArray<string> {
   return segments;
 }
 
-const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
+const isPushCommand = (input: string) =>
+  commandCount(shellCode(shellScript(input)), PUSH_COMMAND) > 0;
 
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
@@ -246,7 +299,7 @@ export function changeRequestsCreatedBy(input: string, output: string) {
     .filter((segment) => createCommandCount(shellCode(segment)) === 0)
     .join("\n");
   const creators = new Set(
-    CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
+    CREATE_COMMANDS.filter(({ run }) => commandCount(code, run) > 0).map(({ kind }) => kind),
   );
   const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
   for (const [, url = ""] of output.matchAll(URL_LINE)) {
