@@ -5714,6 +5714,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
       function* (threadId, runIds) {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
+          -- Without planner statistics SQLite would test run_id on every item via the ordinal index.
+          ${runIds === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`}
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
