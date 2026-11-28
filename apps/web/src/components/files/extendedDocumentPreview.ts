@@ -24,7 +24,6 @@ import {
 
 const TABLE_PREVIEW_MAX_ROWS = 500;
 const TABLE_PREVIEW_MAX_COLUMNS = 50;
-const NOTEBOOK_KERNEL_LANGUAGES = new Map<unknown, string>([["python3", "python"]]);
 
 function base64ImageFits(base64: string) {
   return (
@@ -448,7 +447,7 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     String(
       record(metadata.language_info).name ||
         kernelspec.language ||
-        NOTEBOOK_KERNEL_LANGUAGES.get(kernelspec.name) ||
+        (kernelspec.name === "python3" && "python") ||
         "",
     )
       .replaceAll(/[^a-z\d+#-]/gi, "")
