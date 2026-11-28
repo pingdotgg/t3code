@@ -405,7 +405,7 @@ describe("readAntigravityUsage", () => {
             20,
             new Uint8Array(protoBytes(9, [...protoNumber(1, 1537), ...protoNumber(2, 30)])),
           ]);
-          for (const [offset, id] of [1525, 1527].entries()) {
+          for (const [offset, id] of [1525, 1527, 1535].entries()) {
             yield* db.run("INSERT INTO steps VALUES (?, ?)", [
               21 + offset,
               new Uint8Array(
@@ -435,6 +435,7 @@ describe("readAntigravityUsage", () => {
           ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
           ["gemini-4-hydrogen", undefined],
           ["gemini-4-hydrogen", undefined],
+          ["gemini-4-neon", undefined],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -452,6 +453,8 @@ describe("readAntigravityUsage", () => {
             [
               [1532, 19, "gemini-4-neon"],
               [1532, 21, "Gemini 4 Neon (High)"],
+              [1535, 19, "gemini-4-neon"],
+              [1535, 21, "Gemini 4 Neon (XHigh)"],
               [1318, 19, "gemini-3.8-flash"],
               [1318, 21, "Gemini 3.8 Flash (High)"],
             ] as const
@@ -461,7 +464,7 @@ describe("readAntigravityUsage", () => {
               new Uint8Array(protoBytes(1, [...protoNumber(3, id), ...protoText(field, name)])),
             ]);
           }
-          for (const [offset, id] of [1532, 1318].entries()) {
+          for (const [offset, id] of [1532, 1535, 1318].entries()) {
             yield* db.run("INSERT INTO steps VALUES (?, ?)", [
               50 + offset,
               new Uint8Array(protoBytes(9, [...protoNumber(1, id), ...protoNumber(2, 10)])),
@@ -473,7 +476,7 @@ describe("readAntigravityUsage", () => {
       assert.deepStrictEqual(result.errors, []);
       assert.deepStrictEqual(
         records(result).map(({ model, rateModel }) => rateModel ?? model),
-        ["gemini-4-neon", "gemini-3.8-flash"],
+        ["gemini-4-neon", "gemini-4-neon", "gemini-3.8-flash"],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
