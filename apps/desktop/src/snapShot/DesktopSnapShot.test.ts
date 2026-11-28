@@ -111,6 +111,8 @@ const {
     showCount: number;
     resizeCount: number;
     alwaysOnTopCalls: Array<[boolean, string | undefined]>;
+    visibleOnFullScreen: boolean;
+    shownOnFullScreen: Array<boolean>;
   }>,
   focusedWindowMock: vi.fn(),
   getFileIconMock: vi.fn(),
@@ -310,6 +312,8 @@ vi.mock("electron", () => {
         showCount: 0,
         resizeCount: 0,
         alwaysOnTopCalls: [],
+        visibleOnFullScreen: false,
+        shownOnFullScreen: [],
       };
       flashWindows.push(this.state);
     }
@@ -341,7 +345,12 @@ vi.mock("electron", () => {
       this.state.alwaysOnTopCalls.push([flag, level]);
     }
 
+    setVisibleOnAllWorkspaces(visible: boolean, options?: { visibleOnFullScreen?: boolean }) {
+      this.state.visibleOnFullScreen = visible && options?.visibleOnFullScreen === true;
+    }
+
     showInactive() {
+      this.state.shownOnFullScreen.push(this.state.visibleOnFullScreen);
       const shownBounds = transitionShowMock(this.state.bounds);
       if (shownBounds !== undefined) this.state.bounds = shownBounds;
       this.state.showCount += 1;
@@ -781,6 +790,14 @@ it.effect.each(["darwin", "win32"] as const)(
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.promise(() => flying.promise);
         const overlayCount = flashWindows.length;
+        assert.deepEqual(
+          flashWindows.flatMap((window) => window.shownOnFullScreen),
+          flashWindows.map(() => platform === "darwin"),
+        );
+        assert.deepEqual(
+          flashWindows.map((window) => window.options.type),
+          flashWindows.map(() => (platform === "darwin" ? "panel" : undefined)),
+        );
 
         for (let repeat = 0; repeat < 20; repeat++) {
           yield* TestClock.adjust("200 millis");
@@ -808,6 +825,32 @@ it.effect.each(["darwin", "win32"] as const)(
         }),
       ),
     );
+  },
+);
+
+it.effect.each([
+  { platform: "darwin", joinsFullScreenSpace: true },
+  { platform: "win32", joinsFullScreenSpace: false },
+] as const)(
+  "shows the static flash over a full-screen Space on $platform",
+  ({ platform, joinsFullScreenSpace }) => {
+    const fixture = concurrentCaptureFixture(platform, false);
+    fixture.releaseAll();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(fixture.settings);
+        yield* Effect.promise(fixture.trigger);
+        assert.lengthOf(fixture.readyIds, 1);
+        assert.lengthOf(flashWindows, 1);
+        assert.deepEqual(
+          flashWindows[0]!.shownOnFullScreen,
+          [joinsFullScreenSpace],
+          "flash overlay can join the captured app's full-screen Space when shown",
+        );
+        assert.equal(flashWindows[0]!.options.type, joinsFullScreenSpace ? "panel" : undefined);
+      }),
+    ).pipe(Effect.provide(fixture.layer), Effect.ensuring(Effect.sync(fixture.reset)));
   },
 );
 
