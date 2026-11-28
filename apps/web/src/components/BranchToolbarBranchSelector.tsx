@@ -1,4 +1,5 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { contextMenuSourceOf } from "../contextMenuSource";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useRightPanelStore } from "../rightPanelStore";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -421,9 +422,11 @@ export function BranchToolbarBranchSelector({
     const items: ContextMenuItem<"copy-branch-name">[] = [
       { id: "copy-branch-name", label: gt("Copy branch name"), icon: "copy" },
     ];
-    void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
-      if (action === "copy-branch-name") copyBranchName(branchName);
-    });
+    void api.contextMenu
+      .show(items, { x: event.clientX, y: event.clientY }, contextMenuSourceOf(event))
+      .then((action) => {
+        if (action === "copy-branch-name") copyBranchName(branchName);
+      });
   };
 
   const runBranchAction = (action: () => Promise<void>) => {
@@ -505,7 +508,7 @@ export function BranchToolbarBranchSelector({
     }
 
     const selectedBranchName = refName.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(refName.name)
+      ? deriveLocalBranchNameFromRemoteRef(refName.name, refName.remoteName)
       : refName.name;
 
     runBranchAction(async () => {
@@ -631,7 +634,7 @@ export function BranchToolbarBranchSelector({
     if (branchCwd === null) return;
     void refreshLocalStatusForPicker({
       environmentId,
-      input: { cwd: branchCwd, localOnly: true },
+      input: { cwd: branchCwd },
     });
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs listed while the project was cloning are empty; reload them past the server's snapshot when the clone finishes
@@ -685,7 +688,7 @@ export function BranchToolbarBranchSelector({
     if (open && !isBranchMenuOpen && branchCwd !== null) {
       void refreshLocalStatusForPicker({
         environmentId,
-        input: { cwd: branchCwd, localOnly: true },
+        input: { cwd: branchCwd },
       });
     }
     if (!open) {

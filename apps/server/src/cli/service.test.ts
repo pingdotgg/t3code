@@ -288,6 +288,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       const { service, uninstalls } = makeTestService({
         ...status,
         installedBaseDir: input.otherHome ? "/home/me/.t3" : baseDir,
+        ...(input.otherHome ? { otherBaseDir: "/home/me/.t3" } : {}),
       });
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(

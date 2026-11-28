@@ -146,6 +146,7 @@ describe("toActivity", () => {
       ["4", "review-comment", null],
     ]);
     expect(activity.comments[0]?.url).toBe(`https://${HOST}/@TanStack/ai/pull/9#comment-1`);
+    expect(Json.pullUrl(HOST, "%40TanStack/ai", 9)).toBe(`https://${HOST}/@TanStack/ai/pull/9`);
     expect(activity.reviewThreads).toMatchObject([
       { id: "4", path: "a.ts", line: 2, side: "left", isResolved: true },
     ]);

@@ -1,13 +1,16 @@
 import {
+  IssueTrackerConnectionError,
   MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES,
   WS_METHODS,
   issueTrackerBindingScopes,
+  type IssueTrackerBindProjectInput,
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
-  type IssueTrackerKind,
   type IssueTrackerProjectBinding,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -81,6 +84,29 @@ export function issueTrackerDetailText(detail: string, resolve: MFunctionType = 
   return knownTrackerSentence(detail, SERVER_TRACKER_DETAILS, resolve);
 }
 
+const isConnectionError = Schema.is(IssueTrackerConnectionError);
+
+/** Why connecting failed, in the tracker's own words rather than the error's "<kind> connection failed:" prefix. */
+export function issueTrackerConnectFailure(error: unknown): string | null {
+  if (isConnectionError(error)) return error.detail;
+  return error instanceof Error ? error.message : null;
+}
+
+/** Every project's binding, whichever account it was made with. */
+export function issueTrackerBindings(
+  list: IssueTrackerConnectionList | null | undefined,
+): IssueTrackerConnectionList["bindings"] {
+  return { ...list?.bindings, ...list?.accountBindings };
+}
+
+/** Whether a project binding reads through this account of the tracker. */
+function issueTrackerBindingIsFor(
+  binding: IssueTrackerProjectBinding,
+  tracker: Pick<IssueTrackerConnection, "tracker" | "accountId">,
+): boolean {
+  return binding.tracker === tracker.tracker && binding.accountId === tracker.accountId;
+}
+
 /**
  * The line under a tracker's name. A connected tracker lists nothing until a project is linked
  * to one of its scopes, so the line says how many are, and what to do when none is.
@@ -90,23 +116,36 @@ export function issueTrackerSummary(
   bindings: IssueTrackerConnectionList["bindings"],
   resolve: MFunctionType = mFallback,
 ): string {
-  if (!tracker.connected)
+  if (!tracker.connected) {
+    // Mid-sentence case, keeping an acronym: "personal API key", "API token".
+    const credential = tracker.credential.label
+      .split(" ")
+      .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
+      .join(" ");
     return knownTrackerSentence(
-      `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`,
-      [msg("Not connected. Add a personal api key to list its issues.")],
+      `Not connected. Add your ${credential} to list its issues.`,
+      [
+        msg("Not connected. Add your personal API key to list its issues."),
+        msg("Not connected. Add your API token to list its issues."),
+      ],
       resolve,
     );
+  }
   if (tracker.account === null)
     return tracker.detail ?? resolve(msg("The saved credential was rejected."));
-  const linked = Object.values(bindings).filter(
-    (binding) => binding.tracker === tracker.tracker,
+  const linked = Object.values(bindings).filter((binding) =>
+    issueTrackerBindingIsFor(binding, tracker),
   ).length;
   return linked === 0
     ? knownTrackerSentence(
-        `Connected as ${tracker.account} · no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`,
+        `Connected as ${tracker.account} · no projects linked yet. Link one to a ${tracker.displayName} ${tracker.scopeNoun} to list its issues.`,
         [
           msg(
-            "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
+            "Connected as {account} · no projects linked yet. Link one to a Linear team to list its issues.",
+            { account: tracker.account },
+          ),
+          msg(
+            "Connected as {account} · no projects linked yet. Link one to a Jira project to list its issues.",
             { account: tracker.account },
           ),
         ],
@@ -120,22 +159,42 @@ export function issueTrackerSummary(
       );
 }
 
+type TrackerAccount = Pick<IssueTrackerConnection, "tracker" | "accountId">;
+
 export function boundIssueTrackerScopes(
-  tracker: IssueTrackerKind,
+  tracker: TrackerAccount,
   binding: IssueTrackerProjectBinding | undefined,
 ): ReadonlyArray<string> {
-  return binding?.tracker === tracker ? issueTrackerBindingScopes(binding) : [];
+  return binding !== undefined && issueTrackerBindingIsFor(binding, tracker)
+    ? issueTrackerBindingScopes(binding)
+    : [];
 }
 
 export function issueTrackerBindingFor(
-  tracker: IssueTrackerKind,
+  { tracker, accountId }: TrackerAccount,
   current: ReadonlyArray<string>,
   scopes: ReadonlyArray<string>,
 ): IssueTrackerProjectBinding | null {
   const kept = current.filter((key) => scopes.includes(key));
   const [scope, ...additionalScopes] = [...kept, ...scopes.filter((key) => !kept.includes(key))];
   if (scope === undefined) return null;
-  return additionalScopes.length === 0 ? { tracker, scope } : { tracker, scope, additionalScopes };
+  return {
+    tracker,
+    ...(accountId === undefined ? {} : { accountId }),
+    scope,
+    ...(additionalScopes.length === 0 ? {} : { additionalScopes }),
+  };
+}
+
+/** The request that saves a project's picks under this account; an unbind names the account. */
+export function issueTrackerBindInput(
+  projectId: ProjectId,
+  { accountId }: TrackerAccount,
+  binding: IssueTrackerProjectBinding | null,
+): IssueTrackerBindProjectInput {
+  return binding === null && accountId !== undefined
+    ? { projectId, binding, accountId }
+    : { projectId, binding };
 }
 
 export function issueTrackerScopeOptions(
@@ -156,6 +215,6 @@ export function hasIssueTrackerTeams(
 ): boolean {
   return (
     tracker.scopes.length > 0 ||
-    Object.values(bindings).some((binding) => binding.tracker === tracker.tracker)
+    Object.values(bindings).some((binding) => issueTrackerBindingIsFor(binding, tracker))
   );
 }

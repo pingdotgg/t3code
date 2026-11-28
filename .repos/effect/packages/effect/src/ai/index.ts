@@ -139,6 +139,12 @@ export * as ResponseIdTracker from "./ResponseIdTracker.ts"
 
 /**
  * @stability unstable
+ * @since 4.1.6
+ */
+export * as Skill from "./Skill.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Telemetry from "./Telemetry.ts"

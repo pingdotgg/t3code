@@ -564,6 +564,56 @@ export const setHeader: {
 )
 
 /**
+ * Returns a response with the value added to the specified header, keeping any
+ * existing value.
+ *
+ * **When to use**
+ *
+ * Use when several parts of an application each add to a list-valued header,
+ * such as `Link` or `Vary`.
+ *
+ * **Details**
+ *
+ * An existing value is joined with the new one by `", "`, and an empty value
+ * leaves the response unchanged, so formatting an empty list of links is safe.
+ *
+ * **Gotchas**
+ *
+ * Do not append `Set-Cookie` this way; use the cookie APIs instead.
+ *
+ * **Example** (Adding canonical and alternate links)
+ *
+ * ```ts
+ * import { Headers, HttpServerResponse } from "effect/http"
+ *
+ * const withLinks = HttpServerResponse.appendHeader(
+ *   "Link",
+ *   Headers.formatLink([
+ *     { target: "https://example.com/en", rel: ["canonical"] },
+ *     { target: "https://example.com/de", rel: ["alternate"], params: { hreflang: "de" } }
+ *   ])
+ * )
+ * ```
+ *
+ * @see {@link setHeader} to replace a header value
+ *
+ * @stability unstable
+ * @category combinators
+ * @since 4.1.6
+ */
+export const appendHeader: {
+  (key: string, value: string): (self: HttpServerResponse) => HttpServerResponse
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse
+} = dual(
+  3,
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse => {
+    const headers = Headers.append(self.headers, key, value)
+    // makeResponse mutates the headers map in place, so never pass self.headers
+    return headers === self.headers ? self : makeResponse(self, headers)
+  }
+)
+
+/**
  * Returns a response with the specified header removed.
  *
  * @stability unstable

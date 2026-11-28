@@ -436,6 +436,83 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  // A killed `npm view` leaves its partial packument in npm's cache tmp dir.
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "neither a refresh nor the probe timeout kills a slow npm version check or starts another download",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-interrupted-npm-view");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
+        writeExecutable(binaryPath);
+        const spawned = yield* Deferred.make<void>();
+        const download = yield* Deferred.make<void>();
+        let spawns = 0;
+        let downloaded = false;
+        let killedMidDownload = 0;
+        const slowNpmView = ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            spawns++;
+            Deferred.doneUnsafe(spawned, Effect.void);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(spawns),
+              exitCode: Deferred.await(download).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () =>
+                Effect.sync(() => {
+                  if (!downloaded) killedMidDownload++;
+                }),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.fromEffect(Deferred.await(download)).pipe(
+                Stream.as('"1.2.0"'),
+                Stream.encodeText,
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        );
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowNpmView),
+        );
+        const check = enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        );
+
+        const first = yield* Effect.forkChild(check);
+        yield* Deferred.await(spawned);
+        // A provider refresh interrupts the enrichment still in flight.
+        yield* Fiber.interrupt(first);
+        const second = yield* Effect.forkChild(check);
+        yield* Effect.yieldNow;
+        // A slow registry outlasts the probe timeout.
+        yield* TestClock.adjust("1 minute");
+        downloaded = true;
+        yield* Deferred.succeed(download, undefined);
+        const snapshot = yield* Fiber.join(second);
+
+        expect(snapshot.versionAdvisory?.latestVersion).toBe("1.2.0");
+        expect({ spawns, killedMidDownload }).toEqual({ spawns: 1, killedMidDownload: 0 });
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() =>
+            Effect.die("a configured npm lookup must not fall back to public npm"),
+          ),
+        ),
+      ),
+  );
+
   it.effect.skipIf(windowsHost)(
     "does not offer a Vite+ update npm's release-age policy will not install",
     () =>
@@ -502,6 +579,71 @@ it.layer(
           ),
         ),
       ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "gives npm view T3's own lasting npm cache and drops its partial download on interrupt",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-view-cache");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
+        writeExecutable(binaryPath);
+        const npmCacheDir = NodePath.join(tempDir, "t3-caches", "npm");
+        const cacheDirs: Array<unknown> = [];
+        const viewStarted = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) => {
+          const { options } = command as unknown as {
+            readonly options: { readonly env: Record<string, unknown> };
+          };
+          const cacheDir = options.env.npm_config_cache;
+          cacheDirs.push(cacheDir);
+          if (typeof cacheDir === "string") {
+            NodeFS.mkdirSync(NodePath.join(cacheDir, "_cacache", "tmp"), { recursive: true });
+            NodeFS.writeFileSync(NodePath.join(cacheDir, "_cacache", "index"), "");
+            NodeFS.writeFileSync(
+              NodePath.join(cacheDir, "_cacache", "tmp", "partial-packument"),
+              '{"name":"@example/native-package-tool"',
+            );
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.fromEffect(Deferred.succeed(viewStarted, undefined)).pipe(
+                Stream.flatMap(() => Stream.never),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath, env: { PATH: "" }, npmCacheDir },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const fiber = yield* Effect.forkChild(capabilities.lookupLatestVersion!);
+        yield* Deferred.await(viewStarted);
+        yield* Fiber.interrupt(fiber);
+        expect(cacheDirs).toHaveLength(1);
+        const cacheDir = cacheDirs[0] as string;
+        expect(cacheDir.startsWith(npmCacheDir)).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "tmp"))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "index"))).toBe(true);
+      }),
   );
 
   it.effect.skipIf(!symlinksSupported || windowsHost)(
@@ -830,6 +972,61 @@ it.layer(
       isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
     },
   };
+  for (const fixture of [
+    { name: "a launcher outside the prefix's bin", npm: false, alias: true, owner: "claude-code" },
+    { name: "an unreadable registry", npm: true, alias: false, owner: null },
+    { name: "files MacPorts does not own", npm: true, alias: false, owner: "" },
+  ]) {
+    it.effect.skipIf(windowsHost)(`checks MacPorts ownership for ${fixture.name}`, () =>
+      Effect.gen(function* () {
+        const prefix = yield* makeTempDir("t3-macports-owner");
+        const port = NodePath.join(prefix, "bin", "port");
+        writeExecutable(port);
+        const real = fixture.npm
+          ? NodePath.join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+          : NodePath.join(prefix, "share", "claude-code", "claude");
+        const resolved = fixture.alias
+          ? NodePath.join(prefix, ".local", "bin", "claude")
+          : NodePath.join(prefix, "bin", "claude");
+        writeExecutable(real);
+        writeExecutable(resolved);
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+          binaryPath: resolved,
+          resolvedCommandPath: resolved,
+          realCommandPath: real,
+          env: { PATH: "" },
+          platform: "darwin",
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                expect(command).toBe(port);
+                expect(args).toEqual(["provides", resolved, real]);
+                return [resolved, real]
+                  .map((file) =>
+                    fixture.owner
+                      ? `${file} is provided by: ${fixture.owner}\n`
+                      : `${file} is not provided by a MacPorts port.\n`,
+                  )
+                  .join("");
+              },
+              () => (fixture.owner === null ? 1 : 0),
+            ),
+          ),
+        );
+        if (fixture.owner === "") {
+          expect(capabilities.update?.lockKey).toBe(`npm-global:${normalizeCommandPath(prefix)}`);
+        } else {
+          expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe(
+            fixture.owner ? `sudo port upgrade ${fixture.owner}` : undefined,
+          );
+        }
+      }),
+    );
+  }
   const resolveInstall = (input: {
     readonly definition: PackageManagedProviderMaintenanceDefinition;
     readonly resolved: string;

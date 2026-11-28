@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
+
 import {
   legacyThreadPullRequestKey,
   threadPullRequestSearchTerms,
@@ -452,6 +454,61 @@ describe("chain selection and badge state", () => {
     expect(resolveThreadPullRequestChains(links).map((chain) => chain.layers)).toEqual(
       links.map((entry) => [entry]),
     );
+  });
+});
+
+describe("threadSearchPullRequests", () => {
+  const branchPullRequest = {
+    projectId: ProjectId.make("project"),
+    repository: "PingDotGG/T3Code",
+    number: 42,
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+  };
+
+  it("drops a branch PR that duplicates a titled link", () => {
+    expect(
+      threadSearchPullRequests({
+        branchPullRequest,
+        pullRequests: [
+          link(42, {
+            source: "created",
+            snapshot: snapshot({ title: "Fix login crash" }),
+          }),
+        ],
+      }),
+    ).toEqual([
+      {
+        number: 42,
+        title: "Fix login crash",
+        references: ["pingdotgg/t3code#42", "https://github.com/pingdotgg/t3code/pull/42"],
+      },
+    ]);
+  });
+
+  it("keeps a branch PR whose repository and number match a link on another host", () => {
+    expect(
+      threadSearchPullRequests({
+        branchPullRequest,
+        pullRequests: [
+          link(42, {
+            host: "gitlab.com",
+            url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+          }),
+        ],
+      }).flatMap((entry) => entry.references),
+    ).toContain(branchPullRequest.url);
+  });
+
+  it("keeps a branch PR the links do not include", () => {
+    expect(
+      threadSearchPullRequests({
+        branchPullRequest,
+        pullRequests: [link(7, { snapshot: snapshot({ title: "Other change" }) })],
+      }).map((entry) => [entry.number, entry.title]),
+    ).toEqual([
+      [42, null],
+      [7, "Other change"],
+    ]);
   });
 });
 

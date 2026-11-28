@@ -158,6 +158,7 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
     issueLayer ??
       Layer.mock(IssueService.IssueService)({
         detail: () => Effect.succeed(detail),
+        linkMetadata: () => Effect.succeed(detail),
         projectScope: (projectId) =>
           Effect.succeed({
             projectId,
@@ -260,7 +261,7 @@ describe("issue toolkit handlers", () => {
             projectLayer,
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
-              list: Effect.succeed(new Map([[PROJECT_ID, { tracker, scope: "ENG" }]])),
+              list: () => Effect.succeed(new Map([[PROJECT_ID, { tracker, scope: "ENG" }]])),
             }),
             Layer.succeed(
               IssueTrackerRegistry.IssueTrackerRegistry,
@@ -314,9 +315,10 @@ describe("issue toolkit handlers", () => {
             projectLayer,
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
-              list: Effect.succeed(
-                new Map([[PROJECT_ID, { tracker, scope: "ENG", additionalScopes: ["OPS"] }]]),
-              ),
+              list: () =>
+                Effect.succeed(
+                  new Map([[PROJECT_ID, { tracker, scope: "ENG", additionalScopes: ["OPS"] }]]),
+                ),
             }),
             Layer.succeed(
               IssueTrackerRegistry.IssueTrackerRegistry,

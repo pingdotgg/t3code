@@ -12,6 +12,7 @@ import type {
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -99,6 +100,11 @@ export interface ThreadRunSummary {
   readonly providerStartingLabel?: string;
   /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
   readonly providerStartingLabelMsg?: string;
+  /** The starting provider, so clients can show its logo beside the label. */
+  readonly providerStarting?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  };
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -162,6 +168,8 @@ export interface EnvironmentThreadShell {
   readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
+  /** The workflow run this thread is an agent step of, if it is one. */
+  readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -314,6 +322,7 @@ export function presentThreadShell(
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
+    workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,
@@ -374,16 +383,6 @@ export function scopeThreadShell(
   thread: OrchestrationV2ThreadShell,
 ): EnvironmentThreadShell {
   return presentThreadShell(environmentId, thread);
-}
-
-const THREAD_PROVIDER_STACK_LIMIT = 3;
-
-export function resolveThreadProviderStack(
-  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
-): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
-  return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }
 
 /**

@@ -40,6 +40,7 @@ const workspaceFiles = [
   "packages/provider-kiro/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/issue-tracker-jira/package.json",
   "packages/issue-tracker-linear/package.json",
   "packages/secret-provider-core/package.json",
   "packages/secret-provider-definitions/package.json",
@@ -68,11 +69,12 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     NodeFS.cpSync(sourcePath, destinationPath);
   }
 
-  const mobileDependencies = NodePath.resolve(repoRoot, "apps/mobile/deps");
-  if (NodeFS.existsSync(mobileDependencies)) {
-    NodeFS.cpSync(mobileDependencies, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
-      recursive: true,
-    });
+  // Fork tarballs that file: dependencies install from.
+  for (const forks of ["apps/mobile/deps", "apps/web/deps"]) {
+    const source = NodePath.resolve(repoRoot, forks);
+    if (NodeFS.existsSync(source)) {
+      NodeFS.cpSync(source, NodePath.resolve(targetRoot, forks), { recursive: true });
+    }
   }
 
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
