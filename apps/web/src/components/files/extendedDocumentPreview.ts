@@ -111,6 +111,19 @@ async function odfHtml(
       `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
     );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
+  // Writer's hidden-text and hidden-paragraph fields hide their text, or paragraph, while
+  // text:is-hidden is true; a paragraph stays visible if any of its fields shows it.
+  const fieldHidden = (field: XmlNode) =>
+    /^\s*(?:true|1)\s*$/.test(field.attrs["text:is-hidden"] ?? "");
+  if (node.name === "text:hidden-text") {
+    const value = node.attrs["text:string-value"];
+    if (fieldHidden(node)) return "";
+    if (value !== undefined) return hidden ? "" : pipe(value, escape, boundedMarkup);
+  }
+  if (node.name === "text:p" || node.name === "text:h") {
+    const fields = find(node, "text:hidden-paragraph");
+    if (fields.length && fields.every(fieldHidden)) return "";
+  }
   if (node.name === "text:note") {
     const mark = `<sup>${escape(find(node, "text:note-citation", "text:note-body").map(text).join(""))}</sup>`;
     const [body] = find(node, "text:note-body");
