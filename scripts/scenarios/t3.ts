@@ -331,23 +331,20 @@ export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string
 export const test = base.extend<{ t3: T3 }>({
   t3: async ({ app, browser }, use) => {
     const { state, cleanup, trackProject } = makeState(T3_HOME);
-    try {
-      await use({
-        ...state,
-        trackProject,
-        open: async (target = "/") => {
-          const baseUrl = app.baseUrl ?? "";
-          await browser.setCookies(await runPromise(signIn(baseUrl)));
-          await app.open(
-            typeof target === "string"
-              ? target
-              : `/${await runPromise(environmentId(baseUrl))}/${target.threadId}`,
-          );
-        },
-      });
-    } finally {
-      await runPromise(cleanup);
-    }
+    await use({
+      ...state,
+      trackProject,
+      open: async (target = "/") => {
+        const baseUrl = app.baseUrl ?? "";
+        await browser.setCookies(await runPromise(signIn(baseUrl)));
+        await app.open(
+          typeof target === "string"
+            ? target
+            : `/${await runPromise(environmentId(baseUrl))}/${target.threadId}`,
+        );
+      },
+    });
+    await runPromise(cleanup);
   },
 });
 
