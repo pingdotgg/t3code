@@ -6,6 +6,27 @@ declare const stringEvents: Queue.Dequeue<string, never>
 declare const objectEvents: Queue.Dequeue<{ readonly tick: number }, never>
 
 describe("Prompt", () => {
+  it("all checks symbol fields and accepts object type aliases", () => {
+    const key = Symbol()
+    type Fields = {
+      text: Prompt.Prompt<string>
+      [key]: Prompt.Prompt<number>
+    }
+    const fields: Fields = { text: Prompt.String({ message: "Text" }), [key]: Prompt.Int({ message: "Number" }) }
+    expect(Prompt.all(fields)).type.toBe<Prompt.Prompt<{ text: string; [key]: number }>>()
+    type IndexedFields = {
+      [key: string]: Prompt.Prompt<number>
+    }
+    const indexed: IndexedFields = { value: fields[key] }
+    expect(Prompt.all(indexed)).type.toBe<Prompt.Prompt<{ [key: string]: number }>>()
+    expect(Prompt.all([fields.text, fields[key]])).type.toBe<Prompt.Prompt<[string, number]>>()
+    expect(Prompt.all(new Set([fields[key]]))).type.toBe<Prompt.Prompt<Array<number>>>()
+    expect(Prompt.all).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Prompt.all).type.not.toBeCallableWith(42)
+    expect(Prompt.all).type.not.toBeCallableWith("value")
+    expect(Prompt.all).type.not.toBeCallableWith({ text: fields.text, [key]: 42 })
+  })
+
   it("allows select messages to be omitted but requires an autocomplete message", () => {
     const options = { choices: [{ title: "First", value: "first" }] }
     expect(Prompt.Select).type.toBeCallableWith(options)

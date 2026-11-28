@@ -19,7 +19,7 @@ import { act, render } from "../../test/render";
 import { makeThreadFixture } from "../test-fixtures";
 import { SidebarSearchResultRow } from "./sidebar/SidebarThreadRow";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
@@ -128,6 +128,7 @@ it("keeps focus in the search box when a click picks a search result", async () 
           searchQuery="invoice"
           onHighlight={() => {}}
           onSelect={onSelect}
+          onContextMenu={() => {}}
           onFileDropThreads={() => {}}
         />
       </ul>
@@ -137,6 +138,6 @@ it("keeps focus in the search box when a click picks a search result", async () 
   await userEvent.click(search);
   await userEvent.click(screen.getByRole("option"));
   expect(onSelect).toHaveBeenCalledOnce();
-  // Picking clears the results; a focused result would drop focus, and its recovery scrolls the list.
+  // A focused result would take focus from the search box, and its recovery scrolls the list.
   await expect.element(search).toHaveFocus();
 });

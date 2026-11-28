@@ -100,6 +100,17 @@ const decodeFxSubagentResult = Schema.decodeUnknownOption(
   ),
 );
 const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+const decodeFxToolError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        message: Schema.optional(Schema.String),
+        code: Schema.optional(Schema.String),
+        details: Schema.optional(Schema.Struct({ error: Schema.optional(Schema.String) })),
+      }),
+    }),
+  ),
+);
 
 /**
  * fx clips ACP tool results to 199 bytes and hook content to 64 KiB, so a long
@@ -159,6 +170,12 @@ export function extractFxSubagentUpdate(
   const hooks = Option.getOrUndefined(decodeHookStateMeta(tool.data.meta))?.[HOOK_STATE_META_KEY];
   const text = Option.getOrUndefined(decodeFxToolContent(tool.data.content))?.[0]?.content.text;
   const outcome = text === undefined ? undefined : fxSubagentOutcome(text);
+  // A failed call carries fx's error envelope, e.g. `Cancelled` after Stop.
+  const failure = Option.getOrUndefined(
+    text === undefined ? Option.none() : decodeFxToolError(text),
+  )?.error;
+  const acpResult =
+    outcome?.result ?? failure?.details?.error ?? failure?.message ?? failure?.code ?? text ?? null;
   if (hooks !== undefined) {
     const status = hookedSubagentStatus(tool, hooks);
     return {
@@ -169,7 +186,7 @@ export function extractFxSubagentUpdate(
         status === "running"
           ? null
           : hooks.output === undefined
-            ? (outcome?.result ?? text ?? null)
+            ? acpResult
             : fxSubagentReply({ ...hooks, output: hooks.output }),
     };
   }
@@ -185,7 +202,7 @@ export function extractFxSubagentUpdate(
     ...update,
     childSessionId: null,
     status,
-    result: status === "running" ? null : (outcome?.result ?? text ?? null),
+    result: status === "running" ? null : acpResult,
   };
 }
 

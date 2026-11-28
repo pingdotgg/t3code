@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Exit from "effect/Exit";
 import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
@@ -24,6 +25,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendRecoveryProcess from "./DesktopBackendRecoveryProcess.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -37,8 +39,31 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import { m } from "../i18n/messages.ts";
 
-const { logWarning: logBackendPoolWarning } =
+const { logInfo: logBackendPoolInfo, logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
+
+const makeRecovery = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const supported =
+    environment.platform === "linux" ||
+    (environment.platform === "darwin" && environment.isPackaged);
+  if (!supported) return undefined;
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  return DesktopBackendRecoveryProcess.make({
+    appDataDirectory: environment.appDataDirectory,
+    stateDir: environment.stateDir,
+    onRecovery: (pid) =>
+      runFork(logBackendPoolInfo("recovering a backend left by a previous desktop", { pid })),
+    onError: (operation) =>
+      runFork(logBackendPoolWarning("desktop backend recovery failed", { operation })),
+  });
+});
+
+export const recoverLocalBackend = makeRecovery.pipe(
+  Effect.flatMap((recovery) =>
+    recovery === undefined ? Effect.void : Effect.promise((signal) => recovery.recover(signal)),
+  ),
+);
 
 const decodeServerRuntime = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ pid: Schema.Number, port: Schema.Number })),
@@ -126,7 +151,8 @@ export const layer = Layer.effect(
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const { primaryBackendStartup } = yield* DesktopState.DesktopState;
+    const { primaryBackendStartup, databaseMigrationProgress } = yield* DesktopState.DesktopState;
+    const recovery = yield* makeRecovery;
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
@@ -226,6 +252,16 @@ export const layer = Layer.effect(
       // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
+      ...(recovery === undefined
+        ? {}
+        : {
+            trackProcess: (pid) =>
+              Effect.promise(() => recovery.track(pid)).pipe(
+                Effect.map((forget) =>
+                  forget === undefined ? Effect.void : Effect.promise(forget),
+                ),
+              ),
+          }),
       // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl, pid) =>
         FiberHandle.run(updateMarkerWait, releaseUpdateMarker(httpBaseUrl, pid)).pipe(
@@ -241,6 +277,7 @@ export const layer = Layer.effect(
         ),
       onStartupFailure: (failure) =>
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
+      onMigrationProgress: (progress) => Ref.set(databaseMigrationProgress, progress),
       onShutdown: () =>
         FiberHandle.clear(updateMarkerWait).pipe(
           Effect.andThen(desktopWindow.handleBackendNotReady),

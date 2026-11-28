@@ -6,6 +6,7 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   type AuthSessionState,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -28,7 +29,13 @@ import {
   usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
-import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  environmentSession,
+  readEnvironmentCanConfigureRelay,
+  readEnvironmentScope,
+  useEnvironmentCanConfigureRelay,
+  useEnvironmentScope,
+} from "~/state/session";
 import {
   type T3ConnectAccountPageUrl,
   useT3ConnectAccountPage,
@@ -52,6 +59,15 @@ type OnboardingStep = "publish" | "devices";
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
+function canPublishOnEnvironment(id: EnvironmentId | null): boolean {
+  return (
+    id !== null &&
+    readEnvironmentScope(id, AuthRelayReadScope) &&
+    readEnvironmentScope(id, AuthRelayWriteScope) &&
+    readEnvironmentCanConfigureRelay(id)
+  );
+}
+
 function ConfiguredConnectOnboardingDialog() {
   // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -73,12 +89,13 @@ function ConfiguredConnectOnboardingDialog() {
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(primaryEnvironmentId),
   );
-  const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
-  const canWriteRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
+  const canConfigureRelay = useEnvironmentCanConfigureRelay(primaryEnvironmentId);
   // A policy that turns Connect off leaves nothing to publish; reaching other devices still works.
   const connectAllowed =
     managedCapabilityDenial(usePrimaryManagedPolicy(), "connect") === undefined;
-  const canManageRelay = canReadRelay && canWriteRelay && connectAllowed;
+  const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
+  const canWriteRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
+  const canManageRelay = canReadRelay && canWriteRelay && canConfigureRelay && connectAllowed;
   const canRequireDeviceApproval = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
   const deviceApprovalRequired =
     usePrimaryEnvironment()?.serverConfig?.settings.requireConnectDeviceApproval === true;
@@ -189,11 +206,7 @@ function ConfiguredConnectOnboardingDialog() {
       setIsApplying(false);
       if (!saved) return;
     }
-    if (
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-    ) {
+    if (!canPublishOnEnvironment(primaryEnvironmentId)) {
       setStep("devices");
       return;
     }
@@ -253,13 +266,7 @@ function ConfiguredConnectOnboardingDialog() {
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
                 const next = steps[index];
-                if (
-                  next === "publish" &&
-                  (primaryEnvironmentId === null ||
-                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
-                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
-                )
-                  return;
+                if (next === "publish" && !canPublishOnEnvironment(primaryEnvironmentId)) return;
                 if (next) setStep(next);
               }}
             />
@@ -280,20 +287,10 @@ function ConfiguredConnectOnboardingDialog() {
               tunnelLimit={controller.tunnelLimit}
               onOpenAccountPage={leaveForAccountPage}
               onExposeEnvironmentChange={(enabled) => {
-                if (
-                  primaryEnvironmentId !== null &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                )
-                  setExposeEnvironment(enabled);
+                if (canPublishOnEnvironment(primaryEnvironmentId)) setExposeEnvironment(enabled);
               }}
               onPublishAgentActivityChange={(enabled) => {
-                if (
-                  primaryEnvironmentId !== null &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) &&
-                  readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-                )
-                  setPublishAgentActivity(enabled);
+                if (canPublishOnEnvironment(primaryEnvironmentId)) setPublishAgentActivity(enabled);
               }}
             />
           ) : (

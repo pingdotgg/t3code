@@ -35,7 +35,6 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
     const cached = readComposerImageThumbnail(file);
     if (file.size <= MAX_COMPRESSIBLE_SOURCE_BYTES && !isHeicImageFile(file) && !cached) {
       localUrl = URL.createObjectURL(file);
-      // oxlint-disable-next-line react/set-state-in-effect -- the blob URL is created and revoked by this effect
       setPreview({ file, src: localUrl });
     }
     if (cached === undefined) {

@@ -1,0 +1,21 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'com.t3tools.previewtunnel'
+version = '0.0.0'
+
+android {
+  namespace 'expo.modules.t3previewtunnel'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "androidx.webkit:webkit:${rootProject.ext.has('webkitVersion') ? rootProject.ext.get('webkitVersion') : '1.14.0'}"
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
