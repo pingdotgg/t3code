@@ -102,3 +102,50 @@ it.effect("pages through rows that share an update instant by excluding those al
     assert.isFalse(last.truncated);
   }),
 );
+
+it.effect("pushes only the viewer down as the author, for the authored tab and by name", () =>
+  Effect.gen(function* () {
+    const urls: string[] = [];
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                urls.push(decodeURIComponent(url));
+                return Effect.succeed({
+                  body: url.startsWith("/user")
+                    ? JSON.stringify({ uuid: "{u-1}", display_name: "Bilal" })
+                    : JSON.stringify({ values: [] }),
+                  truncated: false,
+                });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const list = (involvement: "all" | "authored", author?: string) =>
+      provider.listChangeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "bitbucket.org",
+        state: "open",
+        involvement,
+        viewer: "Bilal",
+        limit: 10,
+        ...(author === undefined ? {} : { filters: { author } }),
+      });
+
+    yield* list("authored");
+    assert.include(urls.at(-1), 'author.uuid = "{u-1}"');
+
+    yield* list("all", "bilal");
+    assert.include(urls.at(-1), 'author.uuid = "{u-1}"');
+
+    urls.length = 0;
+    yield* list("all", "ana");
+    assert.isFalse(urls.some((url) => url.startsWith("/user")));
+    assert.isFalse(urls.some((url) => url.includes("author.")));
+  }),
+);
