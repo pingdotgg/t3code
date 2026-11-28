@@ -69,6 +69,7 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      renderMarkdown?: true;
       attachment?: ChatFileAttachment;
       /** Deepest workspace path retained for navigating back down after moving up. */
       folderTrail?: string;
@@ -198,7 +199,13 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    line?: number,
+    renderMarkdown?: boolean,
+  ) => void;
+  clearFileMarkdownPreview: (ref: ScopedThreadRef, surfaceId: string, requestId: number) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
     ref: ScopedThreadRef,
@@ -313,12 +320,14 @@ const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  renderMarkdown?: boolean,
 ): RightPanelSurface => ({
   id: `file:${relativePath}`,
   kind: "file",
   relativePath,
   revealLine,
   revealRequestId,
+  ...(renderMarkdown ? { renderMarkdown: true } : {}),
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -412,6 +421,12 @@ export function pullRequestSurface(target: {
 const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
   if (surface.kind !== "pull-request" || surface.revealUrl === undefined) return surface;
   const { revealUrl: _pending, ...rest } = surface;
+  return rest;
+};
+
+const withoutTransientOpenState = (surface: RightPanelSurface): RightPanelSurface => {
+  if (surface.kind !== "file" || !surface.renderMarkdown) return withoutReveal(surface);
+  const { renderMarkdown: _temporary, ...rest } = surface;
   return rest;
 };
 
@@ -1008,7 +1023,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
-      openFile: (ref, requestedPath, line) =>
+      openFile: (ref, requestedPath, line, renderMarkdown) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             if (requestedPath === ".") {
@@ -1030,6 +1045,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               ++lastFileRevealRequestId,
+              renderMarkdown,
             );
             return {
               ...current,
@@ -1042,6 +1058,19 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [...withoutStandaloneExplorer, surface],
             };
           }),
+        ),
+      clearFileMarkdownPreview: (ref, surfaceId, requestId) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.kind === "file" &&
+              surface.id === surfaceId &&
+              surface.revealRequestId === requestId
+                ? withoutTransientOpenState(surface)
+                : surface,
+            ),
+          })),
         ),
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
         set((state) =>
@@ -1424,7 +1453,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : [
                   [
                     threadKey,
-                    { ...threadState, surfaces: threadState.surfaces.map(withoutReveal) },
+                    {
+                      ...threadState,
+                      surfaces: threadState.surfaces.map(withoutTransientOpenState),
+                    },
                   ],
                 ],
           ),
@@ -1465,7 +1497,7 @@ useRightPanelStore.subscribe((next, previous) => {
       ...removed.filter((surface) => surface.id !== before.activeSurfaceId),
       ...removed.filter((surface) => surface.id === before.activeSurfaceId),
     ];
-    for (const surface of closedInOrder.map(withoutReveal)) {
+    for (const surface of closedInOrder.map(withoutTransientOpenState)) {
       if (
         surface.kind === "terminal" ||
         (surface.kind === "preview" && surface.resourceId !== null)

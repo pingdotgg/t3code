@@ -167,9 +167,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "device");
   };
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
-  const openFileSurface = (relativePath: string) => {
+  const openFileSurface = (relativePath: string, renderMarkdown?: boolean) => {
     if (!activeThreadRef || !activeProject) return;
-    useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    useRightPanelStore
+      .getState()
+      .openFile(activeThreadRef, relativePath, undefined, renderMarkdown);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {

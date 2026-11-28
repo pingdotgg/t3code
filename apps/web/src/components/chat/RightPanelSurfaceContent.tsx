@@ -59,7 +59,7 @@ interface RightPanelFileProps {
   readonly workspaceRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly pendingSurfaceIds: ReadonlySet<string>;
-  readonly onOpenFile: (relativePath: string) => void;
+  readonly onOpenFile: (relativePath: string, renderMarkdown?: boolean) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
@@ -293,6 +293,14 @@ export function RightPanelSurfaceContent(props: {
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
             revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
             onOpenFile={files.onOpenFile}
+            {...(surface.kind === "file" && surface.renderMarkdown
+              ? {
+                  dismissMarkdownPreview: () =>
+                    useRightPanelStore
+                      .getState()
+                      .clearFileMarkdownPreview(threadRef, surface.id, surface.revealRequestId),
+                }
+              : {})}
             onNavigateFolder={(relativePath, folderTrail, keepSource) =>
               useRightPanelStore
                 .getState()
