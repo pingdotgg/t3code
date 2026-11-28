@@ -319,6 +319,20 @@ describe("thread links", () => {
     for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
       expect(threadLinkRefs(escaped, local)).toEqual([]);
     }
+    const indented = "    <t3-thread://v2/local/demo>\n\nSee <t3-thread://v2/local/prose>";
+    expect(threadLinkRefs(indented, local)).toEqual([ref("local", "prose")]);
+    expect(relabelThreadLinks(indented, local, () => "New")).toBe(
+      "    <t3-thread://v2/local/demo>\n\nSee [New](t3-thread://v2/local/prose)",
+    );
+    expect(relabelThreadLinks("\t<t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      "\t<t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks(">     <t3-thread://v2/local/demo>", local, () => "New")).toBe(
+      ">     <t3-thread://v2/local/demo>",
+    );
+    expect(relabelThreadLinks("Intro\n    <t3-thread://v2/local/prose>", local, () => "New")).toBe(
+      "Intro\n    [New](t3-thread://v2/local/prose)",
+    );
   });
 
   it("ends code where CommonMark does, so a link after it stays live", () => {
