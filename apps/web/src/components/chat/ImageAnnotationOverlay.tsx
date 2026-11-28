@@ -218,6 +218,7 @@ export function ImageAnnotationOverlay({
 
   const onPointerDown = (event: PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0 || saving || activeStrokeRef.current) return;
+    doneButtonRef.current?.focus({ preventScroll: true });
     event.preventDefault();
     const { x, y, scale } = toViewPoint(event);
     if (tool === "erase") {
