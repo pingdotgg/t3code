@@ -3124,6 +3124,32 @@ describe("v2 run and attempt history", () => {
         .map((row) => row.kind === "message" && row.showAssistantMeta),
     ).toEqual([false, false, true]);
 
+    const zenHookRows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        ...timelineEntries.slice(0, 4),
+        hook,
+        ...timelineEntries.slice(4, -1),
+        secondAnswer,
+        secondHook,
+        timelineEntries.at(-1)!,
+      ],
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      toolCallVisibility: "zen",
+    });
+    expect(
+      zenHookRows
+        .map((row) => row.id)
+        .filter((id) => id.startsWith("assistant-") || id.startsWith("stop-hook")),
+    ).toEqual([
+      "assistant-thought-entry",
+      "stop-hook",
+      "assistant-second-entry",
+      "stop-hook-2",
+      "assistant-final-entry",
+    ]);
+
     const expandedRows = deriveMessagesTimelineRows({
       timelineEntries,
       expandedRunIds: new Set(["turn-1" as never]),

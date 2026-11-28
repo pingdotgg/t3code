@@ -1208,6 +1208,14 @@ function feedEntryFoldRunId(entry: ThreadFeedEntry, runlessKey: RunId | null): R
     : null;
 }
 
+function isStopHookNotice(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "notification" &&
+    item.source.kind === "system" &&
+    item.summary === CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY
+  );
+}
+
 function finalAnswerIds(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
   const ids = new Set<MessageId>();
   for (const entry of feed) {
@@ -1298,12 +1306,7 @@ function deriveThreadFeedRunFolds(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
-      if (
-        item.type === "notification" &&
-        item.source.kind === "system" &&
-        item.summary === CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY &&
-        item.runId === runId
-      ) {
+      if (isStopHookNotice(item) && item.runId === runId) {
         const answerId = terminalAssistantMessageIdByRun.get(runId);
         if (answerId !== undefined) stopHookAssistantMessageIds.add(answerId);
       }
@@ -1660,6 +1663,7 @@ function zenAnswerMessageIds(
   let userMessages = 0;
   let awaitingReply = false;
   let candidate: MessageId | null = null;
+  let lastReply: ThreadFeedMessage | null = null;
   let answeringFrom = answering ? start : feed.length;
   for (let index = start; index < feed.length; index += 1) {
     const entry = feed[index]!;
@@ -1668,6 +1672,15 @@ function zenAnswerMessageIds(
       entry.activities.every((activity) => activity.workEntry.itemType === "reasoning")
     ) {
       continue;
+    }
+    if (
+      lastReply !== null &&
+      entry.type === "activity-group" &&
+      entry.activities.some(
+        ({ projectedItem: { item } }) => isStopHookNotice(item) && item.runId === lastReply?.runId,
+      )
+    ) {
+      keptAnswers.add(lastReply.id);
     }
     const reply =
       entry.type === "message" && entry.message.role === "assistant" ? entry.message : null;
@@ -1678,6 +1691,7 @@ function zenAnswerMessageIds(
       userMessages += 1;
       awaitingReply = isSteerMessage(entry.message);
     } else if (reply !== null) {
+      lastReply = reply;
       replies.push({ message: reply, index });
       lastReplyByResponse.set(reply.runId ?? `runless:${userMessages}`, reply.id);
       if (awaitingReply) {

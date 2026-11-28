@@ -1514,6 +1514,7 @@ function workShownAsFinalAnswerOnly(
     work.questionAnswer !== undefined ||
     timelineEntryIsCompaction(entry) ||
     timelineEntryStartsResponse(entry) ||
+    timelineEntryIsStopHook(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
@@ -1603,6 +1604,7 @@ function timelineRowEntries(
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
+    const stopHookAnswerIds = deriveStopHookAnswerIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
         return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
@@ -1613,6 +1615,7 @@ function timelineRowEntries(
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
+        stopHookAnswerIds.has(message.id) ||
         (terminalIds.has(message.id) &&
           index < answeringFrom &&
           (answeringRunId === null || message.runId !== answeringRunId))

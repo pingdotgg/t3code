@@ -958,6 +958,28 @@ describe("buildThreadFeed", () => {
       "local:thread-1:stop-hook-2",
       "message-assistant",
     ]);
+    expect(
+      deriveThreadFeedPresentation(
+        hookFeed,
+        latestRun,
+        new Set(),
+        new Set(),
+        null,
+        false,
+        undefined,
+        {
+          toolCallVisibility: "zen",
+          revealedMessageId: null,
+        },
+      ).map((entry) => entry.id),
+    ).toEqual([
+      "message-user",
+      "message-middle",
+      "local:thread-1:stop-hook",
+      "message-second",
+      "local:thread-1:stop-hook-2",
+      "message-assistant",
+    ]);
 
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
     expect(expanded.map((entry) => entry.type)).toEqual([
