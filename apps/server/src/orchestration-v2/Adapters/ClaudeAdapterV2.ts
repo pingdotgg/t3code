@@ -5736,6 +5736,14 @@ interface ActiveClaudeTurnContext {
   executedModel: string | undefined;
 }
 
+// A started prompt is in Claude's transcript under its own uuid, even with no reply,
+// unless Claude merged queued steers into it.
+const claudeTranscriptCursor = (context: ActiveClaudeTurnContext): string | null =>
+  context.nativeMessageCursor ??
+  (context.promptStarted && context.steerUuids.size === 0 && context.input.resume !== true
+    ? context.promptUuid
+    : null);
+
 interface ActiveClaudeProviderRetry {
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
@@ -7865,7 +7873,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           runAttemptId: input.context.input.attemptId,
           nativeTurnRef: {
             driver: CLAUDE_PROVIDER,
-            nativeId: input.context.nativeMessageCursor ?? input.context.nativeTurnId,
+            nativeId: claudeTranscriptCursor(input.context) ?? input.context.nativeTurnId,
             strength: "weak",
           },
           ordinal: input.context.providerTurnOrdinal,
@@ -10610,7 +10618,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     : yield* owedWakeTasksForNativeThread(nativeThreadId);
                 // A stopped turn that wrote to the transcript moved past the pinned head.
                 const clearConversationHead =
-                  (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
+                  (input.status === "completed" ||
+                    claudeTranscriptCursor(input.context) !== null) &&
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
                 const goal =
                   nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
