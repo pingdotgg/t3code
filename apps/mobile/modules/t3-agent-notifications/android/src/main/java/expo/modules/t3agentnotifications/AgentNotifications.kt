@@ -161,7 +161,8 @@ object AgentNotifications {
       )
       val visibleThread = threadOnScreen
       val onScreen = resumed && visibleThread != null && data["alert_path"] == visibleThread
-      if (!onScreen) {
+      val current = advanceThreadAlert(prefs, data)
+      if (!onScreen && current) {
         postAlert(context, scheme, data, alertId)
       }
       prefs.edit().remove("seenAlerts").putString(
@@ -169,7 +170,7 @@ object AgentNotifications {
         (seen.takeLast(63) + alertId).joinToString("\n")
       ).apply()
       // Android drops posts to a blocked channel, so that alert shows nothing.
-      return !onScreen && (
+      return !onScreen && current && (
         Build.VERSION.SDK_INT < 26 ||
           manager(context).getNotificationChannel(ALERT_CHANNEL)?.importance !=
           NotificationManager.IMPORTANCE_NONE
@@ -204,6 +205,26 @@ object AgentNotifications {
       .build()
     manager(context).notify(tag, id, notification)
     postGroupSummary(context, scheme, group, data)
+  }
+
+  // updated_at is when the relay read the thread's current state, so unlike the turn's own
+  // time it never moves backward: a push stamped earlier than the thread's last alert is late.
+  private fun advanceThreadAlert(prefs: SharedPreferences, data: Map<String, String>): Boolean {
+    val group = data["alert_group"]?.takeIf { it.isNotBlank() }
+    val at = data["updated_at"]?.toLongOrNull()
+    if (group == null || at == null) return true
+    val times = prefs.getString("threadAlertTimes", null)?.lines().orEmpty()
+      .mapNotNull { line ->
+        val parts = line.split('\t', limit = 2)
+        parts.getOrNull(1)?.let { key -> parts[0].toLongOrNull()?.let { key to it } }
+      }
+      .toMap()
+    val late = at < (times[group] ?: Long.MIN_VALUE)
+    if (!late) {
+      val kept = (times - group).entries.toList().takeLast(63).map { "${it.value}\t${it.key}" }
+      prefs.edit().putString("threadAlertTimes", (kept + "$at\t$group").joinToString("\n")).apply()
+    }
+    return !late
   }
 
   private fun postGroupSummary(

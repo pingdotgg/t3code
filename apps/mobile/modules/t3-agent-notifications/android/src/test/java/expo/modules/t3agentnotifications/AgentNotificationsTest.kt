@@ -154,11 +154,18 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 
   @Test
   fun repeatedThreadAlertsReplaceOneNotificationAndClear() {
+    val earlier = (System.currentTimeMillis() - 1000).toString()
+    val late = mapOf("alert_body" to "Late", "updated_at" to earlier)
     AgentNotifications.receive(context, update("first", false))
     AgentNotifications.receive(context, update("second", false) + ("alert_body" to "Failed"))
+    AgentNotifications.receive(context, update("late", false) + late)
 
-    val alert = manager.activeNotifications.single().notification
-    assertEquals("Failed", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    val alert = manager.activeNotifications.single()
+    val text = alert.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    assertEquals("Failed", text)
+    manager.cancel(alert.tag, alert.id)
+    AgentNotifications.receive(context, update("late-after-swipe", false) + late)
+    assertTrue(manager.activeNotifications.isEmpty())
 
     AgentNotifications.clear(context)
     assertTrue(manager.activeNotifications.isEmpty())
@@ -167,7 +174,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   @Test
   fun groupedAlertDisplaysEveryThreadAndRetriesStaySilent() {
     val titles = (1..5).map { "Thread $it " + "x".repeat(111) }.joinToString(", ")
-    val grouped = update("group-completion", false) + mapOf(
+    // The relay omits alert_group when one alert covers several threads.
+    val grouped = update("group-completion", false) - "alert_group" + mapOf(
       "alert_title" to "5 agents finished",
       "alert_body" to titles,
       "alert_path" to "/",
@@ -187,7 +195,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 
   @Test
   fun foregroundGroupForOtherThreadsAlertsOnceAcrossBackgroundRetry() {
-    val grouped = update("group-attention", true) + mapOf(
+    val grouped = update("group-attention", true) - "alert_group" + mapOf(
       "alert_title" to "2 agents need attention",
       "alert_body" to "First thread, Second thread",
       "alert_path" to "/",
