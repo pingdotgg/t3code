@@ -350,3 +350,19 @@ describe("Azure DevOps issue scope", () => {
     ).toBeNull();
   });
 });
+
+describe("Azure DevOps media", () => {
+  it("claims work item attachments, which load only with a credential", () => {
+    const media = makeSourceControlDefinitionRegistry([definition]).mediaUrl;
+    expect(
+      media(
+        "https://acme.visualstudio.com/0d4f3c1e-6b1a-4c3e-9a51-1f0b7c2d9e11/_apis/wit/attachments/9a858b34-9e29-4e25-98f0-c12e4d355206?fileName=image.png",
+      ),
+    ).toMatchObject({ fileName: "image.png" });
+    expect(
+      media(
+        "https://dev.azure.com/acme/0d4f3c1e-6b1a-4c3e-9a51-1f0b7c2d9e11/_apis/wit/attachments/9a858b34-9e29-4e25-98f0-c12e4d355206?fileName=image.png",
+      ),
+    ).toMatchObject({ fileName: "image.png" });
+  });
+});
