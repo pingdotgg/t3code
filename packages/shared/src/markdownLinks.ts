@@ -638,8 +638,8 @@ function visitMarkdownLines(
       const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
       if (indent >= 4) {
         if (!paragraph && !closedContainer) indentedCode = true;
-        // A fence shown inside indented code still hides its lines from the inline span scan.
-        // Inside a paragraph an indented line is text, where only backticks can open a code span.
+        // A fence shown inside indented code still hides its lines from the code span scan. Inside
+        // a paragraph an indented line is text, where only a backtick run opens code (a span).
         if (opener && (!paragraph || opener[0] === "`")) {
           fence = { marker: opener, indented: true };
           visit(line, start, "fenced");
