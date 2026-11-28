@@ -414,7 +414,7 @@ const make = Effect.gen(function* () {
             // A transcript can change after the import. A thread without runs holds only
             // imported history, so it takes the changed messages; record the transcript
             // only once the thread holds exactly its messages. A deleted thread comes back
-            // as a new import would create it.
+            // as a new import would create it, or as it was when its T3 runs still hold it.
             const result = yield* threadCommands.withLock(
               threadId,
               Effect.gen(function* () {
@@ -431,7 +431,23 @@ const make = Effect.gen(function* () {
                 );
                 if (!restoring && changed.length === 0 && stored.length === thread.messages.length)
                   return null;
-                if (runs.length > 0 || stored.length > thread.messages.length) return false;
+                if (runs.length > 0 || stored.length > thread.messages.length) {
+                  if (!restoring) return false;
+                  const at = yield* DateTime.now;
+                  yield* eventSink.write({
+                    events: [
+                      {
+                        id: yield* idAllocator.allocate.event({ threadId }),
+                        type: "thread.created",
+                        threadId,
+                        providerInstanceId: storedThread.providerInstanceId,
+                        occurredAt: at,
+                        payload: { ...storedThread, deletedAt: null, updatedAt: at },
+                      },
+                    ],
+                  });
+                  return "undeleted" as const;
+                }
                 const events: Array<OrchestrationV2DomainEvent> = [
                   ...(restoring
                     ? [
@@ -469,6 +485,8 @@ const make = Effect.gen(function* () {
               }),
             );
             if (result === false) return false;
+            importedThreadIds.add(threadId);
+            if (result === "undeleted") return true;
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);

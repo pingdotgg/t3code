@@ -706,6 +706,70 @@ it.effect("re-import leaves an import thread that has runs at its stored message
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("re-import brings back a deleted import thread that has runs as it was", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const first = candidate(CODEX_MODEL_SELECTION, "deleted-after-t3-run");
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:run`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RunId.make(`${threadId}:run`),
+            threadId,
+            ordinal: 1,
+            providerInstanceId: thread.providerInstanceId,
+            modelSelection: thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${threadId}:prompt`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          occurredAt: now,
+          payload: { ...thread, title: "Renamed in T3", deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+    const continued = candidate(CODEX_MODEL_SELECTION, first.source.providerSessionId);
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue outside T3", createdAt: timestamp },
+      { role: "assistant", text: "Native continuation", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    const records = yield* projections.getThreadRecords(threadId, ["messages", "runs"]);
+    expect({
+      deletedAt: records.thread.deletedAt,
+      title: records.thread.title,
+      runs: records.runs.length,
+      messages: records.messages.map((message) => message.text),
+    }).toEqual({ deletedAt: null, title: "Renamed in T3", runs: 1, messages: ["Fix it", "Fixed"] });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("re-import brings back an imported thread deleted from the same project", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
