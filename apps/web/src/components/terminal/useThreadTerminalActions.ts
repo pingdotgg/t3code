@@ -16,7 +16,11 @@ import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
-import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -56,12 +60,12 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     threadRef !== null && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
 
   // Server lists lag and colliding ids share a PTY; without read access, suffix ids to avoid unseen sessions.
-  const allocateTerminalId = () => {
+  const allocateTerminalId = (panelRef: ScopedThreadRef) => {
     const drawer = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       threadRef,
     );
-    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, panelRef);
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
       ...drawer.terminalIds,
@@ -101,7 +105,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     if (!threadRef || !canWrite() || !project) return null;
     const location = input.location ?? defaultLaunchLocation();
     if (!location) return null;
-    const terminalId = input.terminalId ?? allocateTerminalId();
+    const panelRef = rightPanelHostRef(threadRef);
+    const terminalId = input.terminalId ?? allocateTerminalId(panelRef);
     const onOpened = input.place(terminalId);
     const result = openTerminalCommand({
       environmentId: threadRef.environmentId,
@@ -126,10 +131,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         if (input.terminalId === undefined) {
           useTerminalUiStateStore.getState().discardTerminalPlacement(threadRef, terminalId);
           const panel = useRightPanelStore.getState();
-          const surface = selectThreadRightPanelState(panel.byThreadKey, threadRef).surfaces.find(
+          const surface = selectThreadRightPanelState(panel.byThreadKey, panelRef).surfaces.find(
             (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
           );
-          if (surface) panel.closeTerminal(threadRef, surface.id, terminalId);
+          if (surface) panel.closeTerminal(panelRef, surface.id, terminalId);
         }
         if (input.reportRejection !== false) {
           toastManager.add(
@@ -160,8 +165,9 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         // Mount the new pane immediately. Keep the surviving panes' layout until the open succeeds.
         if (surfaceId !== undefined) {
           const panel = useRightPanelStore.getState();
+          const panelRef = rightPanelHostRef(threadRef);
           panel.splitTerminal(threadRef, surfaceId, terminalId, null);
-          return () => panel.setTerminalSplitDirection(threadRef, surfaceId, terminalId, direction);
+          return () => panel.setTerminalSplitDirection(panelRef, surfaceId, terminalId, direction);
         }
         const drawer = useTerminalUiStateStore.getState();
         drawer.splitTerminal(threadRef, terminalId, null);
