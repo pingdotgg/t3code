@@ -3,6 +3,14 @@ import UIKit
 
 private final class WorkspaceTabBar: UITabBar {
   var onContentLayout: ((CGRect) -> Void)?
+  var onAddPointerInteraction: ((UIPointerInteraction) -> Void)?
+
+  override func addInteraction(_ interaction: any UIInteraction) {
+    super.addInteraction(interaction)
+    if let pointerInteraction = interaction as? UIPointerInteraction {
+      onAddPointerInteraction?(pointerInteraction)
+    }
+  }
 
   override func layoutSubviews() {
     super.layoutSubviews()
@@ -40,6 +48,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private let composeButton = UIButton(type: .system)
   private lazy var tabBarTrailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
   private var itemsByTab: [String: UITabBarItem] = [:]
+  private let disabledPointerInteractions = NSHashTable<UIPointerInteraction>.weakObjects()
   var tabs = ["threads", "pullRequests", "issues", "usage", "settings"] {
     didSet { if tabs != oldValue { updateItems() } }
   }
@@ -84,6 +93,10 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     // UIKit's floating row changes with window geometry. Follow its laid-out items
     // instead of estimating their position from a second set of safe-area updates.
     tabBar.onContentLayout = { [weak self] frame in self?.layoutCompose(alongside: frame) }
+    tabBar.onAddPointerInteraction = { [weak self] interaction in
+      guard let self, self.window == nil else { return }
+      self.disablePointerInteraction(interaction)
+    }
     composeButton.accessibilityLabel = "New chat"
     composeButton.addAction(UIAction { [weak self] _ in self?.onCompose() }, for: .touchUpInside)
     composeButton.isHidden = true
@@ -151,9 +164,43 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     return tabBar.hitTest(convert(point, to: tabBar), with: event)
   }
 
+  override func willMove(toWindow newWindow: UIWindow?) {
+    // UIKit's floating UITabBar leaves its pointer interaction's hover driver active after the bar
+    // leaves the window; the next hover update builds UIPreviewTarget(container: tabBar) and aborts.
+    if newWindow == nil {
+      disableTabBarPointerInteractions()
+    }
+    super.willMove(toWindow: newWindow)
+  }
+
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    if window != nil {
+      restorePointerInteractions()
+    } else {
+      disableTabBarPointerInteractions()
+    }
     updateSelection()
+  }
+
+  private func disableTabBarPointerInteractions() {
+    for case let interaction as UIPointerInteraction in tabBar.interactions {
+      disablePointerInteraction(interaction)
+    }
+  }
+
+  private func disablePointerInteraction(_ interaction: UIPointerInteraction) {
+    guard interaction.isEnabled else { return }
+    interaction.isEnabled = false
+    disabledPointerInteractions.add(interaction)
+  }
+
+  private func restorePointerInteractions() {
+    // Skip interactions UIKit removed or moved while the bar was detached.
+    for interaction in disabledPointerInteractions.allObjects where interaction.view === tabBar {
+      interaction.isEnabled = true
+    }
+    disabledPointerInteractions.removeAllObjects()
   }
 
   // Give symbols and bitmap assets the same image box; UIKit otherwise scales symbols independently.
