@@ -120,6 +120,8 @@ const { Children, Nothing } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Nothing: () => null,
 }));
+vi.mock("../../components/ui/Menu", () => ({ Menu: Children }));
+vi.mock("./useFileProjectScripts", () => ({ useFileProjectScripts: () => () => undefined }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
   View: Children,
