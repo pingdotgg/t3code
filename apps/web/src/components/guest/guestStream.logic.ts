@@ -83,15 +83,27 @@ export type GuestHistoryPageLoaded = {
   readonly page: OrchestrationV2ThreadHistoryPage;
 };
 
+/** The guest removed a message the owner chose not to send from their page. */
+export type GuestMessageCleared = {
+  readonly type: "message-cleared";
+  readonly id: GuestMessageId;
+};
+
 /**
  * Applies the share's stream: its thread items go through the reducer every stream-only view of a
  * thread shares, and the share's own state is tracked beside it.
  */
 export function applyGuestStreamEvent(
   state: GuestStreamState,
-  event: GuestStreamEvent | GuestHistoryPageLoaded,
+  event: GuestStreamEvent | GuestHistoryPageLoaded | GuestMessageCleared,
 ): GuestStreamState {
   switch (event.type) {
+    case "message-cleared": {
+      if (!state.awaitingRowIds.has(event.id)) return state;
+      const awaitingRowIds = new Set(state.awaitingRowIds);
+      awaitingRowIds.delete(event.id);
+      return { ...state, awaitingRowIds };
+    }
     case "history-page": {
       const next = applyThreadHistoryPage(state, event.cursor, event.page);
       if (next === state) return state;
@@ -137,8 +149,8 @@ export function applyGuestStreamEvent(
 /**
  * The guest's messages to show after the transcript, oldest first. Pending ones always show. A
  * sent or dismissed one shows only while it awaits a row (see `awaitingRowIds`): a queued send, or
- * a dismissal to report. The transcript is a bounded window, so any other resolved message is old
- * history, not something to place at the end.
+ * a dismissal to report until the guest clears it. The transcript is a bounded window, so any other
+ * resolved message is old history, not something to place at the end.
  */
 export function unplacedGuestMessages(
   messages: ReadonlyArray<ThreadGuestMessage>,

@@ -327,6 +327,7 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
         projection={stream.projection}
         awaitingRowIds={stream.awaitingRowIds}
         historyControls={historyControls}
+        onClearMessage={(id) => dispatch({ type: "message-cleared", id })}
       />
     );
   }
@@ -406,11 +407,13 @@ function GuestThread({
   projection,
   awaitingRowIds,
   historyControls,
+  onClearMessage,
 }: {
   readonly view: GuestShareView;
   readonly projection: OrchestrationV2ThreadProjection;
   readonly awaitingRowIds: GuestStreamState["awaitingRowIds"];
   readonly historyControls: MessagesTimelineHistoryControls | undefined;
+  readonly onClearMessage: (id: ThreadGuestMessage["id"]) => void;
 }) {
   // Files load through the guest route.
   const [attachmentUrls] = useState(() => createGuestAttachmentUrls(shareId));
@@ -448,7 +451,11 @@ function GuestThread({
               <ol className="chat-content-lane flex flex-col gap-4 pb-4">
                 {unplaced.map((message) => (
                   <li key={message.id}>
-                    <UnplacedGuestMessage shareId={shareId} message={message} />
+                    <UnplacedGuestMessage
+                      shareId={shareId}
+                      message={message}
+                      onClear={() => onClearMessage(message.id)}
+                    />
                   </li>
                 ))}
               </ol>
@@ -491,9 +498,11 @@ const openExpandedImage = (preview: ExpandedImagePreview) => {
 function UnplacedGuestMessage({
   shareId,
   message,
+  onClear,
 }: {
   readonly shareId: GuestShareView["shareId"];
   readonly message: ThreadGuestMessage;
+  readonly onClear: () => void;
 }) {
   // A dismissed message's files are deleted, so only their names remain.
   const served = message.status !== "dismissed";
@@ -518,7 +527,19 @@ function UnplacedGuestMessage({
         />
         {message.text ? <span>{message.text}</span> : null}
       </div>
-      <p className="me-1 text-2xs text-muted-foreground">{m(STATUS_LABEL[message.status])}</p>
+      <div className="flex items-center gap-1">
+        <p className="me-1 text-2xs text-muted-foreground">{m(STATUS_LABEL[message.status])}</p>
+        {message.status === "dismissed" ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={gt("Clear message")}
+            onClick={onClear}
+          >
+            <XIcon />
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
