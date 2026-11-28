@@ -133,7 +133,11 @@ export const make = Effect.gen(function* () {
     const timers = yield* FiberMap.make<ThreadId>();
     yield* forkParked(
       Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-        event.type === "run.updated" && event.payload.status === "completed"
+        event.type === "run.updated" &&
+        (event.payload.status === "completed" ||
+          // A message still queued when the run completed blocked that run's check; removing or
+          // steering it is the last event, so it re-arms the timer for the completed run.
+          (event.payload.status === "cancelled" && event.payload.startedAt === null))
           ? FiberMap.run(timers, event.threadId, compactWhenDue(event.threadId, event.payload.id))
           : Effect.void,
       ),
