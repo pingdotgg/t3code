@@ -1462,14 +1462,12 @@ it.effect.each([
     workspace: { type: "existing_worktree", worktreePath: "/wt/task" },
     expected: "task-branch",
   },
-  { name: "the project root", workspace: { type: "root" }, expected: "main" },
   {
     name: "a worktree whose branch lookup fails",
     workspace: { type: "existing_worktree", worktreePath: "/wt/broken" },
     expected: null,
   },
 ] as const)("a launch in $name that names no branch records branch $expected", (testCase) => {
-  const checkedOut: Record<string, string> = { "/wt/task": "task-branch", "/repo": "main" };
   const harness = makeHarness({
     git: {
       currentBranch: (cwd) =>
@@ -1482,7 +1480,7 @@ it.effect.each([
                 detail: "Failed to read the checked-out branch.",
               }),
             )
-          : Effect.succeed(checkedOut[cwd] ?? null),
+          : Effect.succeed(cwd === "/wt/task" ? "task-branch" : null),
     },
   });
   return Effect.gen(function* () {
