@@ -479,7 +479,7 @@ const scrollVisualViewportExpression = (x: number, y: number) => `(() => {
   const style = root.getAttribute("style");
   root.style.setProperty("scroll-padding", "0px", "important");
   const probe = document.createElement("div");
-  probe.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;margin:0;scroll-margin:0;direction:ltr;writing-mode:horizontal-tb;visibility:hidden;pointer-events:none";
+  probe.style.cssText = "transition:none !important;position:absolute;left:0;top:0;width:1px;height:1px;margin:0;scroll-margin:0;direction:ltr;writing-mode:horizontal-tb;visibility:hidden;pointer-events:none";
   root.append(probe);
   const origin = probe.getBoundingClientRect();
   probe.style.left = ${x} - origin.left + "px";
