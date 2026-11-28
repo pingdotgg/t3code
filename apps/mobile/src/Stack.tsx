@@ -728,7 +728,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
-      options: pageRoute({ header: "solid" }),
+      options: pageRoute({ header: "solid", spansRail: true }),
     }),
     ThreadInspectorFullscreen: createNativeStackScreen({
       screen: FullscreenThreadRouteScreen,
