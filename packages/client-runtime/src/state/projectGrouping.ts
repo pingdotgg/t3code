@@ -87,6 +87,19 @@ export function selectGroupDefaultProject<
   return projects.find(isRepositoryRootProject) ?? projects[0];
 }
 
+/**
+ * The members a group's icon falls back to, in order, when its representative has no icon.
+ * A repository root often has none while a project nested in it does.
+ */
+export function groupIconFallbacks<
+  TProject extends Pick<EnvironmentProject, "environmentId" | "id">,
+>(members: ReadonlyArray<TProject>, representative: Pick<TProject, "environmentId" | "id">) {
+  return members.filter(
+    (member) =>
+      member.environmentId !== representative.environmentId || member.id !== representative.id,
+  );
+}
+
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
   return `${environmentId}:${normalizeProjectPathForComparison(cwd)}`;
 }

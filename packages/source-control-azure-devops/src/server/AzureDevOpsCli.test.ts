@@ -692,8 +692,14 @@ describe("primaryRemoteUrl", () => {
         `upstream\t${azure("upstream")[1]} (fetch)\nupstream\t${azure("upstream")[1]} (push)\n`,
       "https://tfs.example.com/p/_git/r",
     ],
+    [
+      remotes(["origin", "https://dev.azure.com/acme/My Project/_git/My Repo"]),
+      "https://dev.azure.com/acme/My Project/_git/My Repo",
+    ],
+    [remotes(["backup", "/Users/alice/My Repos/app"], azure("origin")), azure("origin")[1]],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
+    [remotes(["origin", "https://dev.azure.com/acme/My\tProject/_git/Repo"]), null],
   ])("picks the scoping remote from %j", (output, url) => {
     expect(primaryRemoteUrl(output)).toBe(url);
   });

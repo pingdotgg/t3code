@@ -413,9 +413,10 @@ function parseCheckoutRemotes(output: string) {
   const fetch = new Map<string, string>();
   const push = new Map<string, string>();
   for (const line of output.split("\n")) {
-    if (line.trim().length === 0) continue;
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(.+?)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/u.exec(line.trim());
+    const match = /^(\S+)\t(\S+(?: +\S+)*?) \((fetch|push)\)(?: \[[^[\]]+\])?$/u.exec(trimmed);
     if (!match?.[1] || !match[2]) return null;
     const urls = match[3] === "fetch" ? fetch : push;
     if (!urls.has(match[1])) urls.set(match[1], match[2]);

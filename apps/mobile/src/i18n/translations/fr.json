@@ -909,6 +909,7 @@
   "9f70c78508f05cc5": "Ce soir",
   "1b9d249ecc4cc532": "Demain",
   "f3e58d0c7a119551": "La semaine prochaine",
+  "fd551a92f829316d": "Indéfiniment",
   "26dd8a65fa8bd045": "maintenant",
   "7ac52df3f6b0a072": "{minutes} min",
   "8ebe1f516687cb93": "{hours} h",
@@ -4022,6 +4023,8 @@
   "b18d8b097eb4a3c2": "vue d’ensemble",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "supprimer le projet",
+  "a71afe1099a59acd": "épingler",
+  "2d3005e2cd158d2d": "projets épinglés",
   "3358b338bb494339": "langue",
   "a3ff3275026d0318": "paramètres régionaux",
   "bbcff924e7734cee": "traduction",
@@ -4656,6 +4659,7 @@
   "e20b3174f3fd3877": "Modifier le message en attente",
   "4fd8927b7afc2a92": "Copier le message",
   "36e4b8d2db087296": "Créer un fork depuis cette réponse",
+  "ae3b63552e352863": "Partager la réponse",
   "9f25f4ea2965cbf9": "Impossible de confirmer la duplication",
   "e57f98ddc8003b13": "Reconnectez-vous et vérifiez la liste des fils avant de réessayer.",
   "3b3c6d42d7b877c7": "Fil dupliqué",
@@ -5720,5 +5724,12 @@
   "f6cf1627f4acc5ef": "Visibilité du commentaire",
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
-  "15e5597f8f93ce12": "{start} à {end}"
+  "15e5597f8f93ce12": "{start} à {end}",
+  "872bf68b2e05f055": "{count, plural, one {{count} fichier consulté masqué} other {{count} fichiers consultés masqués}}",
+  "f538b8016f5ca2f3": "Masquer les fichiers consultés",
+  "be348514e8486295": "Aucun fichier non consulté chargé pour l’instant",
+  "6b7765835778dc77": "Tous les fichiers sont masqués",
+  "bd2cfcb7be24cd38": "Les fichiers consultés sont masqués dans cette revue.",
+  "6ae1484aa5bd2bc8": "Afficher les fichiers consultés",
+  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}"
 }
