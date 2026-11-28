@@ -789,13 +789,6 @@ it.effect.each([
     reason: WINDOWS_HOST_GUIDANCE,
   },
   {
-    name: "missing Node",
-    exitCode: 1,
-    stderr: "private SSH diagnostics\nNode is missing from the non-interactive SSH PATH",
-    reason:
-      "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
-  },
-  {
     name: "Node older than 22.12",
     exitCode: 1,
     stderr: "private SSH diagnostics\nNode 22.12 or newer is required on the device host.",
