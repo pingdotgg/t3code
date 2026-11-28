@@ -147,7 +147,7 @@ export function newestCliReleaseVersion(
   for (const release of releases) {
     if (release.draft) continue;
     const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
-    if (version === undefined) continue;
+    if (version === undefined || (channel === "stable" && version.includes("-"))) continue;
     if (cliReleaseChannelOf(version) === channel) return version;
   }
   return undefined;
