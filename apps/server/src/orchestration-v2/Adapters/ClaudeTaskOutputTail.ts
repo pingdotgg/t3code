@@ -13,13 +13,19 @@ const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
 
-/** Claude Code's per-user temp root, or none where it has no uid (Windows). */
+/** Claude Code's per-user temp root, or none when this host cannot tell where it is. */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
   cwd: string | null,
   platform: NodeJS.Platform,
 ): string | undefined {
+  if (platform === "win32") {
+    // Windows has no uid, so the folder is a plain `claude`. The base is TEMP and nothing else:
+    // Claude Code ignores TMP and TMPDIR there, and without TEMP it picks a default we cannot see.
+    const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || environment?.TEMP;
+    return base ? path.resolve(cwd ?? ".", base, "claude") : undefined;
+  }
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
   // Claude Code's macOS build falls back to /tmp and ignores the TMPDIR that
