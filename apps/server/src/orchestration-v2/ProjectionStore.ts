@@ -59,6 +59,7 @@ import {
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
+  isProviderNativeSubagentThread,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -1280,6 +1281,7 @@ type ShellThreadRow = {
   readonly worktree_path: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
+  readonly native_root_status: string | null;
   readonly latest_run_requested_at: string | null;
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
@@ -1908,6 +1910,10 @@ export function threadShellFromProjection(
   const activityRun =
     runs.filter(isActivityRunForShell).toSorted((left, right) => right.ordinal - left.ordinal)[0] ??
     null;
+  const nativeRoot =
+    latestRun === null && isProviderNativeSubagentThread(projection.thread)
+      ? projection.nodes.findLast((node) => node.kind === "root_turn" && node.runId === null)
+      : undefined;
   const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
   let pendingRuntimeRequest = pendingRuntimeRequestSummary(
     projection.runtimeRequests
@@ -2024,7 +2030,7 @@ export function threadShellFromProjection(
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
-    status: latestRun?.status ?? "idle",
+    status: latestRun?.status ?? shellStatusFromStoredRunStatus(nativeRoot?.status ?? null),
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -2184,6 +2190,8 @@ function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2S
   switch (status) {
     case null:
       return "idle";
+    case "pending":
+      return "queued";
     case "preparing":
     case "queued":
     case "starting":
@@ -8564,6 +8572,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               json_extract(t.payload_json, '$.worktreePath') AS worktree_path,
               presented.run_id AS latest_run_id,
               presented.status AS latest_run_status,
+              CASE WHEN presented.run_id IS NULL
+                AND json_extract(t.payload_json, '$.creationSource') = 'provider'
+                AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+              THEN (
+                SELECT node.status FROM orchestration_v2_projection_nodes node
+                WHERE node.thread_id = t.thread_id AND node.run_id IS NULL AND node.kind = 'root_turn'
+                ORDER BY COALESCE(node.started_at, '') DESC, node.node_id DESC
+                LIMIT 1
+              ) END AS native_root_status,
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
@@ -9370,7 +9387,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             ? null
             : yield* decodeTurnItemPayload(row.terminal_failure_payload_json);
         let latestRunId = row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
-        let latestRunStatus = shellStatusFromStoredRunStatus(row.latest_run_status);
+        let latestRunStatus = shellStatusFromStoredRunStatus(
+          row.latest_run_status ?? row.native_root_status,
+        );
         let latestRunRequestedAt =
           row.latest_run_requested_at === null
             ? null
@@ -9814,6 +9833,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             t.thread_id IN (
               SELECT r.thread_id FROM orchestration_v2_projection_runs r
               WHERE r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            )
+            OR (
+              json_extract(t.payload_json, '$.creationSource') = 'provider'
+              AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+              AND EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_nodes node
+                WHERE node.thread_id = t.thread_id AND node.run_id IS NULL AND node.kind = 'root_turn'
+                  AND node.status IN ('pending', 'starting', 'running', 'waiting')
+              )
             )
             OR t.thread_id IN (
               SELECT request.thread_id FROM orchestration_v2_projection_runtime_requests request
