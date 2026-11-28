@@ -220,7 +220,7 @@ export const listRecentGmail = Effect.fn("GmailApi.listRecentGmail")(
     grant: GmailGrant,
     op: GmailReadOperation,
     client: GmailClientRegistration,
-  ): Effect.fn.Return<ReadonlyArray<GmailMessageSummary>, GmailApiError> {
+  ): Effect.fn.Return<ReadonlyArray<GmailMessageSummary>, GmailApiError, HttpClient.HttpClient> {
     if (
       (op.folder !== "inbox" && op.folder !== "spam") ||
       !Number.isInteger(op.limit) ||
