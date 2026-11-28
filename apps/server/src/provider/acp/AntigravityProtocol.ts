@@ -5,12 +5,22 @@ import type {
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
+  MAX_TOOL_OUTPUT_IMAGES,
+} from "@t3tools/shared/toolOutput";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
+import {
+  ACP_RAW_INPUT_PATH_KEYS,
+  acpChangedPathsOfToolCall,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
 import {
   extractMcpToolCallIdentity,
   type AcpToolCallState,
@@ -167,6 +177,36 @@ export function extractAntigravityUserInputQuestion(
   };
 }
 
+const isAskQuestionForm = Schema.is(
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+);
+const isAskQuestionField = Schema.is(
+  Schema.Struct({ title: Schema.String, description: Schema.optional(Schema.String) }),
+);
+
+/** agy's ask_question puts each question in its field's title and a count in the message. */
+export const extractAntigravityElicitationForm: NonNullable<
+  AcpAdapterV2Flavor["extractElicitationForm"]
+> = (request) => {
+  if (request.mode !== "form" || !isAskQuestionForm(request.requestedSchema)) return undefined;
+  const form = parseElicitationForm(request.requestedSchema, request.message);
+  if (form === undefined) return undefined;
+  const { properties } = request.requestedSchema;
+  return {
+    questions: form.questions.map((question, index) => {
+      const field = properties[question.id];
+      if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
+        return question;
+      }
+      return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
+    }),
+    respond: (answers) => {
+      const content = form.content(answers);
+      return content === undefined ? { action: "cancel" } : { action: "accept", content };
+    },
+  };
+};
+
 export function makeAntigravityUserInputResponse(
   request: EffectAcpSchema.RequestPermissionRequest,
   answers: ProviderUserInputAnswers,
@@ -236,7 +276,17 @@ export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEX
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
+  images: number;
 }
+
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+const isKeptImageData = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH &&
+  value.length % 4 === 0 &&
+  BASE64_PATTERN.test(value);
 
 function sanitizeToolValue(
   value: unknown,
@@ -278,6 +328,12 @@ function sanitizeToolValue(
   const entries: Array<readonly [string, unknown]> = [];
   for (const [key, entry] of Object.entries(value)) {
     if (budget.nodes <= 0) break;
+    // Screenshot tools return their result as image bytes; keep them outside the text budget.
+    if (value.type === "image" && key === "data" && budget.images > 0 && isKeptImageData(entry)) {
+      budget.images -= 1;
+      entries.push([key, entry]);
+      continue;
+    }
     if (
       (value.type === "image" && (key === "data" || key === "blob")) ||
       (key === "blob" &&
@@ -295,7 +351,11 @@ function sanitizeToolValue(
 }
 
 export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
-  return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
+  return sanitizeToolValue(
+    payload,
+    { nodes: 512, text: 64_000, images: MAX_TOOL_OUTPUT_IMAGES },
+    0,
+  );
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
@@ -380,17 +440,38 @@ export function makeAntigravityReadRepair() {
   };
 }
 
+const omitToolSummary = (record: Record<string, unknown>): Record<string, unknown> => {
+  if (!("toolSummary" in record)) return record;
+  const { toolSummary: _toolSummary, ...rest } = record;
+  return rest;
+};
+
+const stripProxyArgumentsToolSummary = (
+  record: Record<string, unknown>,
+): Record<string, unknown> => {
+  let next = omitToolSummary(record);
+  if (
+    typeof next.name === "string" &&
+    Predicate.isObject(next.arguments) &&
+    !Array.isArray(next.arguments) &&
+    "toolSummary" in next.arguments
+  ) {
+    next = {
+      ...next,
+      arguments: omitToolSummary(next.arguments as Record<string, unknown>),
+    };
+  }
+  return next;
+};
+
 function stripAntigravityToolSummary(value: unknown): unknown {
   if (!Predicate.isObject(value) || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  let next: Record<string, unknown> = record;
-  if ("toolSummary" in next) {
-    const { toolSummary: _toolSummary, ...rest } = next;
-    next = rest;
-  }
-  if (Predicate.isObject(next.Arguments) && "toolSummary" in next.Arguments) {
-    const { toolSummary: _toolSummary, ...args } = next.Arguments;
-    next = { ...next, Arguments: args };
+  let next = stripProxyArgumentsToolSummary(value as Record<string, unknown>);
+  if (Predicate.isObject(next.Arguments) && !Array.isArray(next.Arguments)) {
+    const strippedArgs = stripProxyArgumentsToolSummary(next.Arguments as Record<string, unknown>);
+    if (strippedArgs !== next.Arguments) {
+      next = { ...next, Arguments: strippedArgs };
+    }
   }
   return next;
 }
@@ -428,6 +509,34 @@ function withoutT3McpToolSummary(
   return stripAntigravityToolSummary(rawInput);
 }
 
+/** Stands in for a content entry the size limits removed or cut, so its paths read as unknown. */
+const UNREAD_TOOL_CONTENT = { type: "_t3_unknown", originalType: "unread", raw: null } as const;
+
+function namesSamePaths(
+  sent: { readonly content: ReadonlyArray<unknown> },
+  kept: { readonly content: ReadonlyArray<unknown> },
+): boolean {
+  const sentPaths = acpChangedPathsOfToolCall(sent);
+  const keptPaths = acpChangedPathsOfToolCall(kept);
+  if (sentPaths === "unknown" || keptPaths === "unknown") return sentPaths === keptPaths;
+  return (
+    sentPaths.length === keptPaths.length &&
+    sentPaths.every((path, index) => path === keptPaths[index])
+  );
+}
+
+/** The bounded raw input with each path the agent sent put back, or blanked when it is too long. */
+function withSentRawInputPaths(sent: unknown, bounded: unknown): unknown {
+  if (!Predicate.isObject(sent) || !Predicate.isObject(bounded)) return bounded;
+  const paths: Record<string, string> = {};
+  for (const key of ACP_RAW_INPUT_PATH_KEYS) {
+    const path = sent[key];
+    if (path === undefined || path === null || path === bounded[key]) continue;
+    paths[key] = typeof path === "string" && path.length <= TOOL_TEXT_LIMIT ? path : "";
+  }
+  return { ...bounded, ...paths };
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
@@ -435,12 +544,16 @@ export function normalizeAntigravitySessionUpdate(
   if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
     return notification;
   }
-  const contentBudget = { nodes: 512, text: 32_000 };
+  const contentBudget = { nodes: 512, text: 32_000, images: MAX_TOOL_OUTPUT_IMAGES };
   const content = update.content?.flatMap((entry) => {
     const decoded = Option.getOrUndefined(
       decodeToolCallContent(sanitizeToolValue(entry, contentBudget, 0)),
     );
-    return decoded === undefined ? [] : [decoded];
+    const kept = decoded === undefined ? [] : [decoded];
+    // The size limits may drop an entry or cut its path; what is left is not the whole change.
+    return namesSamePaths({ content: [entry] }, { content: kept })
+      ? kept
+      : [...kept, UNREAD_TOOL_CONTENT];
   });
   const meta = sanitizeAntigravityToolPayload(update._meta);
   return {
@@ -449,7 +562,12 @@ export function normalizeAntigravitySessionUpdate(
       ...update,
       ...(typeof update.title === "string" ? { title: boundText(update.title) } : {}),
       ...(update.rawInput !== undefined
-        ? { rawInput: sanitizeAntigravityToolPayload(withoutT3McpToolSummary(update)) }
+        ? {
+            rawInput: withSentRawInputPaths(
+              update.rawInput,
+              sanitizeAntigravityToolPayload(withoutT3McpToolSummary(update)),
+            ),
+          }
         : {}),
       ...(update.rawOutput !== undefined
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }

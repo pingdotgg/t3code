@@ -60,6 +60,10 @@ export const compile = (path: string, redactedParams: ReadonlyArray<string>): Te
   return ambiguous ? parts.map((part) => typeof part === "string" ? part : { name: part.name, redacted: true }) : parts
 }
 
+/** @internal */
+export const allParamNames = (path: string): ReadonlyArray<string> =>
+  compile(path, []).flatMap((part) => typeof part === "string" ? [] : [part.name])
+
 const countCaptures = (regex: string): number => {
   try {
     return new RegExp(regex + "|").exec("")!.length - 1

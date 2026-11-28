@@ -41,9 +41,12 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { formatDiagnosticsDuration } from "./DiagnosticsSettings.logic";
+import {
+  formatDiagnosticsDuration,
+  formatProcessName,
+  formatShortProcessName,
+} from "./DiagnosticsSettings.logic";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
@@ -51,6 +54,7 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { TelemetryExportSettings } from "./TelemetryExportSettings";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -89,20 +93,18 @@ function StatBlock({
       <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-widest text-muted-foreground/70">
         <span className="min-w-0 truncate">{label}</span>
         {tooltip ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
-                  aria-label={`${label} details`}
-                >
-                  <InfoIcon className="size-3" />
-                </button>
-              }
-            />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                aria-label={`${label} details`}
+              >
+                <InfoIcon className="size-3" />
+              </button>
+            }
+            label={tooltip}
+          />
         ) : null}
       </div>
       <div
@@ -209,43 +211,30 @@ function TraceIdCell({ traceId }: { traceId: string }) {
 
   return (
     <div className="flex w-full min-w-0 max-w-full items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="min-w-0 flex-1 truncate font-mono text-2xs">
-              {shortenTraceId(traceId)}
-            </span>
-          }
-        />
-        <TooltipPopup side="top" variant="code">
-          {traceId}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon-micro"
-              variant="ghost-muted"
-              aria-label={copied ? gt("Copied trace ID") : gt("Copy trace ID")}
-              onClick={() => copyToClipboard(traceId)}
-            >
-              <CopyIcon className="size-3" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="top">{copied ? gt("Copied") : gt("Copy full trace ID")}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span className="min-w-0 flex-1 truncate font-mono text-2xs">
+            {shortenTraceId(traceId)}
+          </span>
+        }
+        label={traceId}
+        variant="code"
+      />
+      <SharedTooltipTrigger
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={copied ? gt("Copied trace ID") : gt("Copy trace ID")}
+            onClick={() => copyToClipboard(traceId)}
+          >
+            <CopyIcon className="size-3" />
+          </Button>
+        }
+        label={copied ? gt("Copied") : gt("Copy full trace ID")}
+      />
     </div>
   );
-}
-
-function formatProcessName(command: string): string {
-  const firstToken = command.trim().split(/\s+/)[0];
-  if (!firstToken) return command;
-  const normalized = firstToken.replace(/^['"]|['"]$/g, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  return segments.at(-1) ?? normalized;
 }
 
 function formatProcessType(
@@ -293,14 +282,11 @@ function ProcessNameCell({
         <span className="size-5 shrink-0" aria-hidden="true" />
       )}
       <span className="size-1.5 shrink-0 rounded-full bg-success/80" />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+        label={process.command}
+        variant="code"
+      />
     </div>
   );
 }
@@ -425,14 +411,11 @@ function ProcessDiagnosticsTable({
                   {formatBytes(process.rssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="block truncate">{process.command}</span>}
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="block truncate">{process.command}</span>}
+                    label={process.command}
+                    variant="code"
+                  />
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground">
                   {process.pid}
@@ -462,11 +445,6 @@ const RESOURCE_HISTORY_WINDOWS = [
   { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
 ] as const;
 
-function formatShortProcessName(command: string): string {
-  const name = formatProcessName(command);
-  return name.length > 42 ? `${name.slice(0, 39)}...` : name;
-}
-
 function ResourceHistoryProcessNameCell({
   process,
   visualDepth,
@@ -494,14 +472,11 @@ function ResourceHistoryProcessNameCell({
           process.isServerRoot ? "bg-warning/90" : "bg-success/80",
         )}
       />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+        label={process.command}
+        variant="code"
+      />
     </div>
   );
 }
@@ -525,36 +500,33 @@ function ProcessResourceHistoryChart({
           const peakHeight = Math.max(2, (bucket.maxCpuPercent / maxCpuPercent) * 100);
           const averageHeight = Math.max(2, (bucket.avgCpuPercent / maxCpuPercent) * 100);
           return (
-            <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
-              <TooltipTrigger
-                render={
-                  <div className="flex h-full min-w-1 flex-1 items-end">
-                    <div className="relative h-full w-full">
-                      <span className="sr-only">
-                        {gt("Average CPU {average}%, peak CPU {peak}%", {
-                          average: bucket.avgCpuPercent.toFixed(1),
-                          peak: bucket.maxCpuPercent.toFixed(1),
-                        })}
-                      </span>
-                      <div
-                        className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
-                        style={{ height: `${peakHeight}%` }}
-                      />
-                      <div
-                        className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/60 transition-colors"
-                        style={{ height: `${averageHeight}%` }}
-                      />
-                    </div>
+            <SharedTooltipTrigger
+              key={DateTime.formatIso(bucket.startedAt)}
+              render={
+                <div className="flex h-full min-w-1 flex-1 items-end">
+                  <div className="relative h-full w-full">
+                    <span className="sr-only">
+                      {gt("Average CPU {average}%, peak CPU {peak}%", {
+                        average: bucket.avgCpuPercent.toFixed(1),
+                        peak: bucket.maxCpuPercent.toFixed(1),
+                      })}
+                    </span>
+                    <div
+                      className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
+                      style={{ height: `${peakHeight}%` }}
+                    />
+                    <div
+                      className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/60 transition-colors"
+                      style={{ height: `${averageHeight}%` }}
+                    />
                   </div>
-                }
-              />
-              <TooltipPopup side="top">
-                {gt("Avg {average}%, peak {peak}%", {
-                  average: bucket.avgCpuPercent.toFixed(1),
-                  peak: bucket.maxCpuPercent.toFixed(1),
-                })}
-              </TooltipPopup>
-            </Tooltip>
+                </div>
+              }
+              label={gt("Avg {average}%, peak {peak}%", {
+                average: bucket.avgCpuPercent.toFixed(1),
+                peak: bucket.maxCpuPercent.toFixed(1),
+              })}
+            />
           );
         })}
       </div>
@@ -687,14 +659,11 @@ function ProcessResourceHistoryTable({
                   {formatBytes(process.maxRssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="block truncate">{process.command}</span>}
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="block truncate">{process.command}</span>}
+                    label={process.command}
+                    variant="code"
+                  />
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
                   {process.pid}
@@ -755,22 +724,20 @@ function DiagnosticsRefreshButton({
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            disabled={isPending}
-            onClick={onClick}
-            aria-label={label}
-          >
-            <RefreshIcon refreshing={isPending} />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          disabled={isPending}
+          onClick={onClick}
+          aria-label={label}
+        >
+          <RefreshIcon refreshing={isPending} />
+        </Button>
+      }
+      label={label}
+    />
   );
 }
 
@@ -1151,28 +1118,28 @@ function DiagnosticsSettingsBody() {
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    disabled={
-                      !canOpenHostEditor ||
-                      !observability?.logsDirectoryPath ||
-                      isOpeningLogsDirectory
-                    }
-                    onClick={openLogsDirectory}
-                    aria-label={gt("Open logs folder")}
-                  >
-                    <FolderOpenIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">
-                <T>Open logs folder</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  disabled={
+                    !canOpenHostEditor ||
+                    !observability?.logsDirectoryPath ||
+                    isOpeningLogsDirectory
+                  }
+                  onClick={openLogsDirectory}
+                  aria-label={gt("Open logs folder")}
+                >
+                  <FolderOpenIcon />
+                </Button>
+              }
+              label={
+                <>
+                  <T>Open logs folder</T>
+                </>
+              }
+            />
             <DiagnosticsRefreshButton
               isPending={isPending}
               label={gt("Refresh trace diagnostics")}

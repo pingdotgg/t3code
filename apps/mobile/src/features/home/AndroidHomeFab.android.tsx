@@ -12,7 +12,7 @@ import {
   type AndroidHomeFabLayout as SharedAndroidHomeFabLayout,
 } from "./AndroidHomeFab.shared";
 import { useWorkspaceState } from "../../state/workspace";
-import { FabScrollContext } from "./FabScrollContext";
+import { FabScrollContext, FabTopContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -55,17 +55,25 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     scrollState.current = next;
   };
 
+  const showFab =
+    !props.disabled &&
+    (!props.sidebar || floatingTabsEnabled) &&
+    state.hasConnections &&
+    layoutWidth !== null;
+  const fabPosition = androidHomeFabPosition(insets.bottom, props.sidebar);
+  // Floating navigation already reports its row, FAB included, through bottomClearance.
+  const fabTop = showFab && !floatingTabsEnabled ? fabPosition.bottom + size : undefined;
+
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
   // Floating navigation shares this row; Material split views put New thread in the rail.
   return (
     <View className="flex-1" onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}>
       <WorkspaceTabsContext value={context}>
-        <FabScrollContext value={onScroll}>{props.children}</FabScrollContext>
+        <FabScrollContext value={onScroll}>
+          <FabTopContext value={fabTop}>{props.children}</FabTopContext>
+        </FabScrollContext>
       </WorkspaceTabsContext>
-      {!props.disabled &&
-      (!props.sidebar || floatingTabsEnabled) &&
-      state.hasConnections &&
-      layoutWidth !== null ? (
+      {showFab ? (
         <ScrollComposeButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           size={size}
@@ -78,7 +86,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
                   right: FLOATING_TABS.edge,
                   bottom: insets.bottom + FLOATING_TABS.bottom,
                 }
-              : androidHomeFabPosition(insets.bottom, props.sidebar)
+              : fabPosition
           }
         />
       ) : null}

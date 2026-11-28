@@ -715,6 +715,24 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates a missing Azure CLI config directory from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            AZURE_CONFIG_DIR: "/Users/me/.local/share/azure",
+          }),
+      });
+
+      assert.equal(env.AZURE_CONFIG_DIR, "/Users/me/.local/share/azure");
+    }),
+  );
+
   it.effect.each([
     {
       name: "hydrates both Android SDK names when neither is inherited",

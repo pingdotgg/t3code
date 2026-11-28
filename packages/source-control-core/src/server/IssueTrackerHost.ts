@@ -7,7 +7,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
-import type { IssueTrackerApi, IssueTrackerError } from "./IssueTracker.ts";
+import type { IssueTrackerApi, IssueTrackerCredential, IssueTrackerError } from "./IssueTracker.ts";
 
 export class IssueTrackerHost extends Context.Service<
   IssueTrackerHost,
@@ -16,7 +16,7 @@ export class IssueTrackerHost extends Context.Service<
       /** Read fresh on each call, so a credential saved in Settings applies without a restart. */
       readonly get: (
         tracker: IssueTrackerKind,
-      ) => Effect.Effect<Option.Option<string>, IssueTrackerError>;
+      ) => Effect.Effect<Option.Option<IssueTrackerCredential>, IssueTrackerError>;
     };
   }
 >()("@t3tools/source-control-core/server/IssueTrackerHost") {}

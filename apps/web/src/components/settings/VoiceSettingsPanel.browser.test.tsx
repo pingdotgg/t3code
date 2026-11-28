@@ -516,7 +516,7 @@ it.each([
   },
 );
 
-it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
+it("caps progress while downloading, recovers from a failed poll, and reports a failed initial load", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-progress"),
     label: "Test environment",
@@ -538,6 +538,7 @@ it("recovers from a failed download progress poll without notifying, but reports
     supportsLanguageDetection: false,
     active: false,
     state: "downloading",
+    downloaded: 100,
   };
   const status = {
     supported: true,
@@ -553,17 +554,17 @@ it("recovers from a failed download progress poll without notifying, but reports
     gpuDevices: [],
   };
   const unavailable = () => new Response(null, { status: 503 });
+  const installed = deferred<Response>();
   const readModels = vi
-    .fn((_withBenchmarks: boolean) => unavailable())
-    .mockImplementationOnce(() => Response.json({ models: [model] }))
-    .mockImplementationOnce(unavailable)
-    .mockImplementationOnce(() => Response.json({ models: [{ ...model, state: "installed" }] }));
+    .fn(async (_withBenchmarks: boolean) => unavailable())
+    .mockResolvedValueOnce(Response.json({ models: [model] }))
+    .mockResolvedValueOnce(unavailable())
+    .mockImplementationOnce(() => installed.promise);
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
     if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
-    if (url.pathname === "/api/voice/models")
-      return Promise.resolve(readModels(url.searchParams.has("benchmarks")));
+    if (url.pathname === "/api/voice/models") return readModels(url.searchParams.has("benchmarks"));
     return fetch(input, init);
   });
   using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
@@ -576,6 +577,10 @@ it("recovers from a failed download progress poll without notifying, but reports
         </SettingsScopeProvider>
       );
       await using screen = await render(panel("first"));
+      const progress = screen.getByRole("progressbar", { name: "Tiny download progress" });
+      await expect.element(progress).toHaveAttribute("aria-valuenow", "99");
+      expect(progress.element().querySelector("div")?.style.width).toBe("99%");
+      installed.resolve(Response.json({ models: [{ ...model, state: "installed" }] }));
       await expect.element(screen.getByRole("button", { name: "Use model" })).toBeVisible();
       expect(readModels.mock.calls.map(([withBenchmarks]) => withBenchmarks)).toEqual([
         true,
@@ -589,6 +594,66 @@ it("recovers from a failed download progress poll without notifying, but reports
           expect.objectContaining({ title: "Could not load transcription models" }),
         ),
       );
+    },
+  );
+});
+
+it("holds the Language row while the model status loads, and drops it if loading fails", async () => {
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-language-loading"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const status = {
+    supported: true,
+    state: "ready",
+    modelId: "tiny",
+    model: "Tiny",
+    size: 100,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: true,
+    acceleration: "cpu",
+    benchmarkTier: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  };
+  const pending = [Promise.withResolvers<Response>(), Promise.withResolvers<Response>()];
+  let requests = 0;
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return pending[requests++]!.promise;
+    if (url.pathname === "/api/voice/models") return Promise.resolve(Response.json({ models: [] }));
+    return fetch(input, init);
+  });
+  using _notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
+  await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    async () => {
+      const panel = (key: string) => (
+        <SettingsScopeProvider search={{}} onChange={() => {}}>
+          <VoiceSettingsPanel key={key} />
+        </SettingsScopeProvider>
+      );
+      await using screen = await render(panel("first"));
+      const checking = screen.getByText("Checking which languages the model supports…");
+      await expect.element(checking).toBeVisible();
+      pending[0]!.resolve(Response.json(status));
+      await expect
+        .element(screen.getByRole("combobox", { name: "Transcription language" }))
+        .toBeVisible();
+      await expect.element(checking).not.toBeInTheDocument();
+
+      await screen.rerender(panel("reopened"));
+      await expect.element(checking).toBeVisible();
+      pending[1]!.resolve(new Response(null, { status: 503 }));
+      await expect.element(checking).not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("combobox", { name: "Transcription language" }))
+        .not.toBeInTheDocument();
     },
   );
 });

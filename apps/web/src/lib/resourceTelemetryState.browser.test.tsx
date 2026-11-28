@@ -10,9 +10,11 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { initializeI18n } from "../i18n/initializeI18n";
 import { act, render } from "../../test/render";
 
 const monitor = vi.hoisted(() => ({
@@ -73,6 +75,8 @@ const startError = "The resource monitor is not available.";
 const historyError = "Resource history could not start.";
 
 function setup({ retryFails = false, holdRetry = false } = {}) {
+  // GTProvider leaves its locale in a cookie; this sets it back to English.
+  initializeI18n(() => {});
   const readAt = DateTime.makeUnsafe(0);
   const aggregate = {
     processCount: 0,
@@ -310,4 +314,65 @@ describe("resource monitor retry", () => {
       .element(screen.getByRole("button", { name: "Refresh resource telemetry" }))
       .toBeEnabled();
   });
+});
+
+it.each([
+  [1, 0, "1 start · 0 exits"],
+  [2, 1, "2 starts · 1 exit"],
+])(
+  "pluralizes process starts and exits independently (%i, %i)",
+  async (processStarts, processExits, detail) => {
+    using fixture = setup();
+    const { groups } = fixture.snapshot;
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(
+      AsyncResult.success({
+        ...fixture.snapshot,
+        groups: { ...groups, allT3: { ...groups.allT3, processStarts, processExits } },
+      }),
+    ).pipe(Atom.keepAlive);
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    const processDetail = screen.getByText(/^\d+ starts? · \d+ exits?$/);
+    await expect.element(processDetail).toBeVisible();
+    expect(processDetail.element().textContent).toBe(detail);
+  },
+);
+
+it("shows process counts, I/O totals and the process scan in German", async () => {
+  using fixture = setup();
+  const { groups, health } = fixture.snapshot;
+  const liveTelemetry = Atom.make<AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>>(
+    AsyncResult.success({
+      ...fixture.snapshot,
+      groups: {
+        ...groups,
+        backend: { ...groups.backend, processCount: 3 },
+        electron: { ...groups.electron, processCount: 1 },
+        allT3: { ...groups.allT3, ioReadBytes: 512, ioWriteBytes: 300 },
+      },
+      health: { ...health, scannedProcessCount: 40, retainedProcessCount: 12 },
+    }),
+  ).pipe(Atom.keepAlive);
+  monitor.telemetry.mockImplementation(() => liveTelemetry);
+  const translations = await getTranslationsSnapshot("de");
+
+  await using screen = await render(
+    <GTProvider locale="de" translations={translations}>
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>
+    </GTProvider>,
+  );
+  await expect.element(screen.getByText("3 Prozesse", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1 Prozess", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("512 B beobachtet", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("300 B beobachtet", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("12/40 gespeichert", { exact: true })).toBeVisible();
 });

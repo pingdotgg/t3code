@@ -988,6 +988,25 @@ describe("OpenRouterLanguageModel", () => {
   })
 
   describe("streamText", () => {
+    it.effect("retains the serving provider when the final usage chunk omits it", () =>
+      Effect.gen(function*() {
+        const chunk = { id: "response-1", object: "chat.completion.chunk", model: "openai/gpt-4o", created: 1 } as const
+        const parts = yield* LanguageModel.streamText({ prompt: "Hello" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenRouterLanguageModel.model(chunk.model)),
+          Effect.provide(makeStreamTestLayer([
+            {
+              ...chunk,
+              provider: "OpenAI",
+              choices: [{ index: 0, delta: { content: "Hello" }, finish_reason: "stop" }]
+            },
+            { ...chunk, choices: [], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }
+          ]))
+        )
+
+        strictEqual(parts.find((part) => part.type === "finish")?.metadata.openrouter?.provider, "OpenAI")
+      }))
+
     describe("usage", () => {
       it.effect("treats streamed reasoning tokens as disjoint when they exceed completion tokens", () =>
         Effect.gen(function*() {

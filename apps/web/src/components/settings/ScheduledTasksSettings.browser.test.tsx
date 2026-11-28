@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -13,10 +13,12 @@ import {
   ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { initializeI18n } from "~/i18n/initializeI18n";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
@@ -71,8 +73,20 @@ const state = vi.hoisted(() => ({
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
+type TaskList = { readonly tasks: ReadonlyArray<ScheduledTask>; readonly timeZone: string };
+// The list each machine streams when several are in scope; unset machines are still loading.
+const taskLists = new Map<string, Atom.Writable<AsyncResult.AsyncResult<TaskList>>>();
+function taskList(id: string) {
+  const existing = taskLists.get(id);
+  if (existing) return existing;
+  const created = Atom.make<AsyncResult.AsyncResult<TaskList>>(AsyncResult.initial());
+  taskLists.set(id, created);
+  return created;
+}
 
 function setup() {
+  // GTProvider leaves its locale in a cookie; this sets it back to English.
+  initializeI18n(() => {});
   state.connected = true;
   state.tasksLoaded = true;
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
@@ -82,6 +96,7 @@ function setup() {
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   permissions.clear();
+  taskLists.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
   permissions.set("", Atom.make(false));
@@ -100,6 +115,7 @@ function environment() {
   return {
     environmentId,
     label: "Laptop",
+    entry: { target: { _tag: "PrimaryConnectionTarget" } },
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
       ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
@@ -140,6 +156,8 @@ vi.mock(import("../../state/server"), async (original) => {
         run: state.remove,
       },
       providersValueAtom: (() => state.providers) as never,
+      scheduledTasksLive: (({ environmentId }: { environmentId: string }) =>
+        taskList(environmentId)) as never,
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         run: state.upsert,
@@ -346,6 +364,35 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Secondary");
   });
 
+  it("waits for every machine before saying there are no tasks", async () => {
+    setup();
+    state.secondary = true;
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    registry.set(taskList(secondaryId), AsyncResult.success({ tasks: [], timeZone: "UTC" }));
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("status", { name: "Loading scheduled tasks…" }))
+      .toBeVisible();
+    await expect.element(screen.getByText("No scheduled tasks")).not.toBeInTheDocument();
+
+    await act(() =>
+      registry.set(
+        taskList(environmentId),
+        AsyncResult.success({ tasks: [task], timeZone: "UTC" }),
+      ),
+    );
+    await expect.element(screen.getByText("Review issues")).toBeVisible();
+    await expect.element(screen.getByText("No scheduled tasks")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("status", { name: "Loading scheduled tasks…" }))
+      .not.toBeInTheDocument();
+  });
+
   it("keeps the permitted representative as the creation target", async () => {
     setup();
     state.secondary = true;
@@ -408,6 +455,47 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it.each([
+    { locale: "en", one: "minute", other: "minutes" },
+    { locale: "de", one: "Minute", other: "Minuten" },
+  ])(
+    "labels intervals of 1, 15 and 1.5 as $one or $other in $locale",
+    async ({ locale, one, other }) => {
+      setup();
+      const translations = await getTranslationsSnapshot(locale);
+      await using _screen = await render(
+        <GTProvider locale={locale} translations={translations}>
+          <ScheduledTasksSettings taskId={task.id} />
+        </GTProvider>,
+      );
+      const interval = page.elementLocator(document.getElementById("scheduled-task-interval")!);
+      const unit = () =>
+        document.getElementById("scheduled-task-interval")?.parentElement?.nextElementSibling;
+
+      await expect.element(interval).toHaveValue(1);
+      expect(unit()?.textContent).toBe(one);
+      await userEvent.fill(interval, "15");
+      await expect.poll(() => unit()?.textContent).toBe(other);
+      await userEvent.fill(interval, "1.5");
+      await expect.poll(() => unit()?.textContent).toBe(other);
+    },
+  );
+
+  it("names the Delete action in the UI language", async () => {
+    setup();
+    const translations = await getTranslationsSnapshot("de");
+    await using screen = await render(
+      <GTProvider locale="de" translations={translations}>
+        <ScheduledTasksSettings />
+      </GTProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Aktionen für Review issues" }));
+
+    await expect
+      .element(page.getByRole("menuitem", { name: "Löschen", exact: true }))
+      .toBeVisible();
   });
 
   it("keeps a new task's draft when the user clicks outside the editor", async () => {

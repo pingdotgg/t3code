@@ -59,7 +59,7 @@ import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import type { usePullRequestFileFilter } from "../pull-requests/usePullRequestFileFilter";
+import type { useHideTestFilesPreference } from "../pull-requests/usePullRequestFileFilter";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
@@ -68,7 +68,7 @@ function ReviewHeader(
     readonly showChangedFilesToggle: boolean;
     readonly selectedRepositoryKey: string | null;
     readonly onSelectRepository: (key: string | null) => void;
-    readonly fileFilter: ReturnType<typeof usePullRequestFileFilter>;
+    readonly fileFilter: ReturnType<typeof useHideTestFilesPreference>;
     readonly onSelectSection: (sectionId: string) => void;
     readonly onReturnToThread: () => void;
   },

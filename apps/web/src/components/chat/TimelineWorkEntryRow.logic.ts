@@ -4,6 +4,7 @@ import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -207,6 +208,15 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
 // or reference definition beyond this prefix remains unresolved by the parser.
 export const THOUGHT_PREVIEW_SOURCE_MAX_LENGTH = 8_192;
 export const THOUGHT_PREVIEW_MAX_LENGTH = 2_048;
+
+export function sliceThoughtPreviewSource(text: string): string {
+  return text.slice(
+    0,
+    splitsSurrogatePair(text, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH)
+      ? THOUGHT_PREVIEW_SOURCE_MAX_LENGTH - 1
+      : THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+  );
+}
 
 const thoughtPreviews = new Map<string, MarkdownExtensions>();
 

@@ -87,4 +87,21 @@ describe("KeyValueStore / layerFileSystem", () => {
     }).pipe(
       Effect.provide(NodeFileSystem.layer)
     ))
+
+  it.effect("string values keep a leading U+FEFF", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const value = "\uFEFFhello"
+
+      yield* Effect.gen(function*() {
+        const store = yield* KeyValueStore.KeyValueStore
+        yield* store.set("bom", value)
+        assert.strictEqual(yield* store.get("bom"), value)
+      }).pipe(
+        Effect.provide(KeyValueStore.layerFileSystem(directory).pipe(Layer.provide(platformLayer)))
+      )
+    }).pipe(
+      Effect.provide(NodeFileSystem.layer)
+    ))
 })

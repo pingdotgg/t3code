@@ -63,10 +63,10 @@ import {
   useSidebar,
   useSidebarVisibility,
 } from "./ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -393,25 +393,24 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       data-sidebar-control=""
     >
       {showSidebar ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <SidebarTrigger
-                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-                className={cn(
-                  "pointer-events-auto",
-                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-                )}
-                aria-label={gt("Toggle main sidebar")}
-              />
-            }
-          />
-          <TooltipPopup side="bottom">
-            {shortcutLabel
+        <SharedTooltipTrigger
+          render={
+            <SidebarTrigger
+              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+              className={cn(
+                "pointer-events-auto",
+                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+              )}
+              aria-label={gt("Toggle main sidebar")}
+            />
+          }
+          label={
+            shortcutLabel
               ? gt("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
-              : gt("Toggle main sidebar")}
-          </TooltipPopup>
-        </Tooltip>
+              : gt("Toggle main sidebar")
+          }
+          side="bottom"
+        />
       ) : null}
     </div>
   );

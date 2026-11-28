@@ -81,8 +81,9 @@ export const makeDeviceHubOperations = (options: {
   readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Android gates listing AVDs, which the hub does not report until they boot. */
   readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
+  /** Gates listing AVDs, which the hub does not report until they boot. Phones need only adb. */
+  readonly avdsAvailable?: Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const { token } = options;
@@ -200,10 +201,14 @@ export const makeDeviceHubOperations = (options: {
     const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
     const androidAvailable = yield* options.platformAvailable("android");
+    const avdsAvailable =
+      androidAvailable && (yield* options.avdsAvailable ?? Effect.succeed(true));
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
         !(!androidAvailable && error.message.startsWith("[android-utils] ")) &&
+        // Without emulator tooling, avdmanager is expected to be missing.
+        !(!avdsAvailable && error.message.startsWith(AVDMANAGER_LIST_FAILED)) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -227,6 +232,8 @@ export const makeDeviceHubOperations = (options: {
           devices.push(...adbDevices);
         }
       }
+    }
+    if (avdsAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {

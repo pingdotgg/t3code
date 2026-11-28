@@ -36,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2523,10 +2524,22 @@ describe("OrchestratorMcpService provider resolution", () => {
               { id: "agent", values: ["build"], default: "build" },
             ],
           },
-          { id: "gpt-4" },
+          { id: "gpt-4", favorite: true },
           { id: "gpt-3" },
           { id: "my-alpha" },
         ]);
+      }),
+    );
+
+    it.effect("marks which listed models are the user's favorites", () =>
+      Effect.gen(function* () {
+        const favorites = (yield* capabilitiesWith()).providers.map((provider) =>
+          provider.models
+            .filter((entry) => "favorite" in entry && entry.favorite === true)
+            .map((entry) => entry.id),
+        );
+        // gpt-3 is the caller's model and my-alpha/oc-custom are custom: listed, but not favorites.
+        assert.deepEqual(favorites, [["gpt-4"], ["oc/m10"]]);
       }),
     );
   });
@@ -3666,6 +3679,50 @@ describe("OrchestratorMcpService provider resolution", () => {
             );
           assert.equal(promptedCommits[0]?.commandId, promptedCommits[1]?.commandId);
 
+          for (const [index, titleCase] of [
+            {
+              prompt: "Review the auth flow\n\nPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\rPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\u2028Pay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: `\n\n  ${"a".repeat(80)}  \nmore`,
+              expected: "a".repeat(80),
+            },
+            {
+              title: "Auth review",
+              prompt: "Review the auth flow\nmore",
+              expected: "Auth review",
+            },
+            {
+              title: "Auth review\nIgnore this",
+              prompt: "Review the auth flow",
+              expected: "Auth review",
+            },
+          ].entries()) {
+            const created = yield* service.createThreads(scope, {
+              threads: [
+                {
+                  ...request.threads[0]!,
+                  ...(titleCase.title === undefined ? {} : { title: titleCase.title }),
+                  prompt: titleCase.prompt,
+                },
+              ],
+              clientRequestId: `first-line-title-${index}`,
+            });
+            const projection = yield* orchestrator.getThreadProjection(
+              created.threads[0]!.threadId,
+            );
+            assert.equal(projection.thread.title, titleCase.expected);
+          }
+
           yield* settings.updateSettings({
             projectSettingsOverrides: {
               [projectId]: {
@@ -3774,9 +3831,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                     parentRunId: run.id,
                     parentNodeId: run.rootNodeId!,
                     task: input.task,
+                    ...(input.title === undefined ? {} : { title: input.title }),
                     driver: ProviderDriverKind.make("remote"),
                     modelSelection: run.modelSelection,
-                    remoteChild,
+                    remoteChild: { ...remoteChild, title: input.title ?? "MCP parent" },
                     completionWake: "settled_only",
                   });
                   const parent = yield* orchestrator.getThreadProjection(parentThreadId);
@@ -3834,6 +3892,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const call = yield* service
             .delegateTask(scope, {
               task: "Review the change.",
+              title: "Review change\nIgnore this",
               ...(placement === "remote"
                 ? { target: { environmentId: remoteChild.environmentId } }
                 : {}),
@@ -3847,6 +3906,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           const parent = yield* orchestrator.getThreadProjection(parentThreadId);
           const task = parent.subagents.find((subagent) => subagent.origin === "app_owned");
           assert.equal(task?.status, "running");
+          assert.equal(task?.title, "Review change");
+          if (placement === "remote") assert.equal(task?.remoteChild?.title, "Review change");
           assert.equal(
             task?.completionWake,
             "always",
@@ -4550,6 +4611,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         prompt: `${"a".repeat(78)}😀 rest`,
         title: `${"a".repeat(78)}😀`,
       },
+      ...[
+        ["CR", "\r"],
+        ["Unicode line separator", "\u2028"],
+        ["Unicode paragraph separator", "\u2029"],
+      ].map(([label, newline]) => ({
+        name: `stops at a ${label}`,
+        prompt: `Review merge${newline}Check changelog`,
+        title: "Review merge",
+      })),
     ])("a prompt-derived title $name", ({ prompt, title }) =>
       Effect.gen(function* () {
         const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
@@ -4567,6 +4637,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
+        );
+      }),
+    );
+
+    it.effect("an explicit title stops at the first line break", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          title: "Review merge\nIgnore this",
+          prompt: "Check the build",
+          schedule,
+        });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.title),
+          ["Review merge"],
         );
       }),
     );
@@ -5072,6 +5168,122 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
         }
       }),
+  );
+
+  it.effect("a task may pick the agent's own mode only from a full-access parent", () =>
+    Effect.gen(function* () {
+      const agentId = ProviderInstanceId.make("acp-agent");
+      const mode = [{ id: "_t3/session-mode", value: "yolo" }] as const;
+      const delegateFrom = (
+        runtimeMode: "approval-required" | "full-access",
+        held: ReadonlyArray<{ readonly id: string; readonly value: unknown }> | undefined,
+      ) => {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: agentId,
+          model: "default",
+          status: "running",
+          result: null,
+        };
+        const parent = () =>
+          parentProjection(commands.length > 0 ? [task] : [], {
+            instanceId: agentId,
+            model: "default",
+            ...(held === undefined ? {} : { options: held }),
+          });
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? { ...parent(), thread: { ...parent().thread, runtimeMode } }
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: agentId,
+                driver: ProviderDriverKind.make("acpRegistry"),
+                model: "default",
+              }),
+              models: [
+                {
+                  slug: "default",
+                  name: "Default",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "_t3/session-mode",
+                        label: "Mode",
+                        type: "select",
+                        role: "mode",
+                        options: [
+                          { id: "ask", label: "Ask" },
+                          { id: "yolo", label: "YOLO" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ]),
+          adapterRegistryLayer([agentId]),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        return Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const outcome = yield* service
+            .delegateTask(scope, {
+              task: "Review the change.",
+              target: yield* decodeTarget({ options: mode }),
+              mode: "async",
+              clientRequestId: `mode-${runtimeMode}-${held === undefined ? "new" : "held"}`,
+            })
+            .pipe(Effect.exit);
+          return { outcome, commands };
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      };
+
+      const refused = yield* delegateFrom("approval-required", undefined);
+      assert.isTrue(Exit.isFailure(refused.outcome));
+      assert.include(JSON.stringify(refused.outcome), "runtime_mode_escalation_denied");
+      assert.lengthOf(refused.commands, 0);
+
+      // A parent already running in that mode hands it on; a full-access parent may pick it.
+      for (const allowed of [
+        yield* delegateFrom("approval-required", mode),
+        yield* delegateFrom("full-access", undefined),
+      ]) {
+        assert.isTrue(Exit.isSuccess(allowed.outcome), JSON.stringify(allowed.outcome));
+        assert.deepEqual(
+          (allowed.commands[0] as { modelSelection: { options: unknown } }).modelSelection.options,
+          mode,
+        );
+      }
+    }),
   );
 
   it.effect("accepts the inherited options it reports back as a delegate target", () =>

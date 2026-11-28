@@ -84,6 +84,7 @@ import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { Button } from "../ui/button";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { type ServerClientSessionRecord } from "~/environments/primary";
@@ -148,6 +149,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import {
   CloudLinkRow,
   CloudRemoteEnvironmentRows,
+  LocalEnvironmentMcpUrlRow,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
@@ -1258,25 +1260,25 @@ function ConnectionsSettingsContent({
       control={
         !desktopBridge &&
         (currentAuthPolicy === "remote-reachable" || currentAuthPolicy === "loopback-browser") ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="inline-flex">
-                  <Switch
-                    checked={isLocalBackendNetworkAccessible}
-                    disabled
-                    aria-label={gt("Enable network access")}
-                  />
-                </span>
-              }
-            />
-            <TooltipPopup side="top">
-              <T>
-                Network exposure changes restart the backend and must be controlled where the server
-                process is launched.
-              </T>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <span className="inline-flex">
+                <Switch
+                  checked={isLocalBackendNetworkAccessible}
+                  disabled
+                  aria-label={gt("Enable network access")}
+                />
+              </span>
+            }
+            label={
+              <>
+                <T>
+                  Network exposure changes restart the backend and must be controlled where the
+                  server process is launched.
+                </T>
+              </>
+            }
+          />
         ) : undefined
       }
     />
@@ -1410,6 +1412,9 @@ function ConnectionsSettingsContent({
                       }
                 }
               />
+            ) : null}
+            {isPrimaryAccess && accessEnvironment ? (
+              <LocalEnvironmentMcpUrlRow entry={accessEnvironment.entry} />
             ) : null}
             {accessServerConfig?.environment.capabilities.previewTunnelSetting ? (
               <SettingsRow

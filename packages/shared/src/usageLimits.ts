@@ -48,18 +48,6 @@ export function exhaustedUsageWindow(
       const auto = exhausted.find((window) => window.id === "autoPercentUsed");
       return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
     }
-    case "antigravity": {
-      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
-      return exhausted.find((window) => {
-        const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
-        return (
-          pool === undefined ||
-          family === undefined ||
-          pool === family ||
-          (pool === "3p" && (family === "claude" || family === "gpt"))
-        );
-      });
-    }
     case "codex": {
       // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
       const hasPlanWindows = windows.some(
@@ -520,6 +508,7 @@ export interface LimitPoolWindow {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
+  readonly paceRemainingPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -554,16 +543,6 @@ function hasDuplicateCursorTotal(pool: LimitPool): boolean {
 }
 
 export function displayLimitWindows(pool: LimitPool) {
-  if (pool.driver === "antigravity") {
-    return [...pool.windows].sort(
-      (left, right) =>
-        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
-        left.id
-          .replace(/-(5h|weekly|quota)$/, "")
-          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
-        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
-    );
-  }
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
@@ -768,6 +747,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceRemainingPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
       resets,
     };
   });
@@ -860,6 +840,11 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
+// A hub that could not be read may route any driver. An HTTP quota source never lists accounts
+// here, so its failure says nothing about which providers have limits.
+const unreadableHub = (source: UsageLimitSourceSnapshots[number]) =>
+  source.kind === "cliproxy" && source.error !== undefined && source.accounts.length === 0;
+
 export function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
@@ -869,8 +854,7 @@ export function hasProviderUsageLimits(
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
     sources.some(
       (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
+        source.accounts.some((account) => account.driver === driver) || unreadableHub(source),
     )
   );
 }
@@ -882,9 +866,7 @@ export function sameUsageLimitCommandCoverage(
   const coverage = (sources: UsageLimitSourceSnapshots) =>
     new Set(
       sources.flatMap((source) =>
-        source.error !== undefined && source.accounts.length === 0
-          ? ["*"]
-          : source.accounts.map((account) => String(account.driver)),
+        unreadableHub(source) ? ["*"] : source.accounts.map((account) => String(account.driver)),
       ),
     );
   const before = coverage(previous);
@@ -901,9 +883,7 @@ export function withUsageLimitsCommands(
     ...providersWithLimits(providers).map((provider) => provider.driver),
     ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
   ]);
-  const unreadableSource = sources.some(
-    (source) => source.error !== undefined && source.accounts.length === 0,
-  );
+  const unreadableSource = sources.some(unreadableHub);
   return providers.map((provider) => {
     if (!unreadableSource && !supportedDrivers.has(provider.driver)) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [
@@ -932,24 +912,6 @@ export function instanceHubs(
 ): UsageLimitSourceSnapshots {
   const endpoint = provider.auth.endpoint;
   return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
-}
-
-// Antigravity meters Gemini Argon, Gemini Carbon, other Gemini, and Claude/GPT models apart.
-function antigravityQuotaFamily(id: string) {
-  if (!id.startsWith("gemini")) return "shared";
-  return id.includes("argon") ? "argon" : id.includes("carbon") ? "carbon" : "gemini";
-}
-
-/** Each Antigravity quota blocks only the models it meters. */
-export function antigravityWindowLimitsModel(
-  window: Pick<ServerProviderUsageWindow, "id">,
-  model: string | null,
-): boolean {
-  // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
-  const base = model?.slice(model.lastIndexOf("/") + 1);
-  // An alias such as "fast" may route to either quota, so both hold it back.
-  if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
-  return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */

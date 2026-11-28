@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   DEFAULT_VARIANT_CHOICE_ID,
@@ -219,8 +221,12 @@ export interface OpenCodeInventory {
 
 export type OpenCodeSlashCommand = Pick<Command, "name" | "description" | "source" | "hints">;
 
-export const loadOpenCodeCommands = (client: OpencodeClient) =>
-  runOpenCodeSdk("command.list", (signal) => client.command.list(undefined, { signal })).pipe(
+export const loadOpenCodeCommands = (client: OpencodeClient, requestSignal?: AbortSignal) =>
+  runOpenCodeSdk("command.list", (signal) =>
+    client.command.list(undefined, {
+      signal: requestSignal === undefined ? signal : AbortSignal.any([signal, requestSignal]),
+    }),
+  ).pipe(
     Effect.map((result): ReadonlyArray<OpenCodeSlashCommand> =>
       (result.data ?? []).map(({ name, description, source, hints }) => ({
         name,
@@ -430,38 +436,51 @@ function isOpenCodeNativeFilePart(input: {
   );
 }
 
-export function toOpenCodeFileParts(input: {
-  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
-  readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
-}): Array<FilePartInput> {
-  const parts: Array<FilePartInput> = [];
+export const toOpenCodeFileParts = Effect.fn("OpenCodeRuntime.toOpenCodeFileParts")(
+  function* (input: {
+    readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+    readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    readonly fileSystem: FileSystem.FileSystem;
+  }) {
+    const parts: Array<FilePartInput> = [];
 
-  for (const attachment of input.attachments ?? []) {
-    if (
-      attachment.type === "file" &&
-      "source" in attachment &&
-      attachment.source?._tag === "pasted-text"
-    ) {
-      continue;
-    }
-    if (!isOpenCodeNativeFilePart(attachment)) {
-      continue;
-    }
-    const attachmentPath = input.resolveAttachmentPath(attachment);
-    if (!attachmentPath) {
-      continue;
+    for (const attachment of input.attachments ?? []) {
+      if (
+        attachment.type === "file" &&
+        "source" in attachment &&
+        attachment.source?._tag === "pasted-text"
+      ) {
+        continue;
+      }
+      if (!isOpenCodeNativeFilePart(attachment)) {
+        continue;
+      }
+      const attachmentPath = input.resolveAttachmentPath(attachment);
+      if (!attachmentPath) {
+        continue;
+      }
+
+      // OpenCode inlines the file under `mime`; Anthropic rejects a type that disagrees with the bytes.
+      const sniffedMimeType = OPENCODE_NATIVE_IMAGE_MIMES.has(
+        attachment.mimeType.trim().toLowerCase(),
+      )
+        ? yield* input.fileSystem.stream(attachmentPath, { bytesToRead: 12 }).pipe(
+            Stream.runCollect,
+            Effect.map((chunks) => imageMimeTypeFromBytes(Buffer.concat(chunks))),
+            Effect.orElseSucceed(() => null),
+          )
+        : null;
+      parts.push({
+        type: "file",
+        mime: sniffedMimeType ?? attachment.mimeType,
+        filename: attachment.name,
+        url: NodeURL.pathToFileURL(attachmentPath).href,
+      });
     }
 
-    parts.push({
-      type: "file",
-      mime: attachment.mimeType,
-      filename: attachment.name,
-      url: NodeURL.pathToFileURL(attachmentPath).href,
-    });
-  }
-
-  return parts;
-}
+    return parts;
+  },
+);
 
 export function toOpenCodePermissionReply(
   decision: ProviderApprovalDecision,

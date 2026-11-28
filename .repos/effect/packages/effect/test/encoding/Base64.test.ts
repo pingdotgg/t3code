@@ -1,8 +1,8 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it, vi } from "@effect/vitest"
 import { Result } from "effect"
 import * as Base64 from "effect/encoding/Base64"
 import type * as EncodingError from "effect/encoding/EncodingError"
-import { describeWithFallback } from "../utils/encoding.ts"
+import { describeWithFallback, describeWithoutNatives } from "../utils/encoding.ts"
 
 describeWithFallback("Base64", () => {
   it("encodes and decodes binary subarrays with and without padding", () => {
@@ -168,6 +168,22 @@ describeWithFallback("Base64", () => {
       // Long enough for size-gated decoders
       const long = `${"Zm9v".repeat(64)}Zm9${char}`
       assertFailure(long, long, `Invalid character ${char}`)
+    }
+  })
+})
+
+describeWithoutNatives("Base64 Buffer fallback", () => {
+  it("encodes and decodes with Buffer", () => {
+    const bytes = Uint8Array.from({ length: 96 }, (_, i) => (i * 151) & 0xff)
+    const encoded = btoa(String.fromCharCode(...bytes))
+    const from = vi.spyOn(Buffer, "from")
+    try {
+      assert.strictEqual(Base64.encode(bytes), encoded)
+      assert.strictEqual(from.mock.calls.length, 1)
+      assert.deepStrictEqual(Result.getOrThrow(Base64.decode(encoded)), bytes)
+      assert.strictEqual(from.mock.calls.length, 2)
+    } finally {
+      from.mockRestore()
     }
   })
 })

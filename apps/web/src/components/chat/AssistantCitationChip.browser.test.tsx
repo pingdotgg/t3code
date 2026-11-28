@@ -7,13 +7,86 @@ import {
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
 
-const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  observeSource: vi.fn(),
+  dispose: vi.fn(),
+  transcribeCalls: 0,
+  transcript: null as Promise<string> | null,
+}));
+const environment = vi.hoisted(() => ({
+  environmentId: "environment",
+  serverConfig: {
+    environment: { capabilities: { voiceTranscription: true, cloudVoiceTranscription: false } },
+  },
+}));
+const preparedConnection = vi.hoisted(() => ({
+  environmentId: "environment",
+  label: "environment",
+}));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+  usePreparedConnection: ((environmentId: string | null) =>
+    environmentId === preparedConnection.environmentId
+      ? Option.some(preparedConnection)
+      : Option.none()) as never,
+}));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: ((environmentId: string | null) =>
+    environmentId === environment.environmentId ? environment : null) as never,
+}));
+vi.mock(import("../../speech/runEnvironmentSpeech"), () => ({
+  runEnvironmentSpeech: Effect.runPromise as never,
+}));
+vi.mock(import("@t3tools/client-runtime/voice-input"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  getEnvironmentSpeechStatus: (() =>
+    Effect.succeed({
+      supported: true,
+      state: "ready",
+      modelId: "test-model",
+      model: "Test",
+      size: 1,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      acceleration: "auto",
+      benchmarkTier: "accelerated",
+      modelUnloadTimeout: "min_15",
+      gpuDevices: [],
+    })) as never,
+}));
+vi.mock(import("../../speech/browserVoiceInput"), () => ({
+  createAppleSpeechVoiceInputPlatform: vi.fn() as never,
+  createBrowserVoiceInputPlatform: (() => ({
+    recorder: {
+      uri: "blob:recording",
+      prepareToRecordAsync: async () => {},
+      record() {},
+      stop: async () => {},
+    },
+    transcriber: {
+      prepare: async () => ({
+        locale: "en",
+        transcribe: async () => {
+          mocks.transcribeCalls += 1;
+          return mocks.transcript ?? "dictated comment";
+        },
+      }),
+    },
+    cancelRecording() {},
+    deleteRecording() {},
+  })) as never,
+}));
 vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
   ...(await importOriginal()),
   observeAssistantCitationCommentSource: mocks.observeSource,
@@ -51,6 +124,13 @@ function setup() {
   return { sourceAnchor, [Symbol.dispose]: () => source.remove() };
 }
 
+function useDictation() {
+  chooseAudioDestination({ kind: "environment", environmentId: citation.environmentId });
+  chooseTranscriptCleanup(false);
+  mocks.transcribeCalls = 0;
+  mocks.transcript = null;
+}
+
 function mount(
   sourceAnchor: AssistantCitationSourceAnchor | undefined,
   onSave: () => boolean,
@@ -65,7 +145,12 @@ function mount(
       />
     );
   }
-  return render(<Composer />);
+  return render(
+    <>
+      <Composer />
+      <button type="button">Outside</button>
+    </>,
+  );
 }
 
 const textarea = () =>
@@ -245,5 +330,39 @@ describe("citation comment popup position", () => {
     const rect = popup()!.getBoundingClientRect();
     expect(rect.left).toBeGreaterThanOrEqual(0);
     expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
+
+describe("citation comment dictation", () => {
+  async function startDictation(onSave: () => boolean) {
+    using _source = setup();
+    useDictation();
+    const screen = await mount(undefined, onSave);
+    await page.getByRole("button", { name: "Start voice input" }).click();
+    await expect.element(page.getByRole("button", { name: "Finish voice input" })).toBeVisible();
+    return screen;
+  }
+
+  it("keeps the dictation when the box is clicked away while recording", async () => {
+    const onSave = vi.fn(() => true);
+    await using _screen = await startDictation(onSave);
+
+    await page.getByRole("button", { name: "Outside" }).click();
+
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledWith("dictated comment"));
+  });
+
+  it("keeps the dictation when the box is clicked away while transcribing", async () => {
+    const onSave = vi.fn(() => true);
+    await using _screen = await startDictation(onSave);
+    let finish!: (text: string) => void;
+    mocks.transcript = new Promise((resolve) => (finish = resolve));
+    await page.getByRole("button", { name: "Finish voice input" }).click();
+    await vi.waitFor(() => expect(mocks.transcribeCalls).toBe(1));
+
+    await page.getByRole("button", { name: "Outside" }).click();
+    finish("dictated comment");
+
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledWith("dictated comment"));
   });
 });

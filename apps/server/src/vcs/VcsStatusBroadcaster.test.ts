@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ByteSize from "effect/ByteSize";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -11,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Scheduler from "effect/Scheduler";
@@ -82,6 +84,8 @@ function layerTestFor(state: {
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
   worktreeStamp?: string | null;
+  recheckPollStamp?: Effect.Effect<string | null>;
+  digestReads?: Array<string | undefined>;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -143,10 +147,33 @@ function layerTestFor(state: {
             : (state.beforeCurrentBranch ?? Effect.void).pipe(
                 Effect.andThen(Effect.sync(() => state.currentLocalStatus.refName)),
               ),
-        readLocalStatusRefSnapshot: () =>
+        readStatusRefreshRefs: () =>
           Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
+        readStatusPoll: (_cwd, branch) =>
+          Effect.sync(() =>
+            state.refSnapshot === null
+              ? null
+              : {
+                  inputStamp: state.refSnapshot ?? "refs",
+                  inputStampAfterLookup:
+                    state.recheckPollStamp ?? Effect.succeed(state.refSnapshot ?? "refs"),
+                  details: {
+                    isRepo: state.currentLocalStatus.isRepo,
+                    branch,
+                    hasPrimaryRemote: state.currentLocalStatus.hasPrimaryRemote,
+                    defaultBranch: null,
+                    isDefaultBranch: state.currentLocalStatus.isDefaultRef,
+                    upstreamRef: null,
+                    hasUpstream: false,
+                    aheadCount: 0,
+                    behindCount: 0,
+                    aheadOfDefaultCount: 0,
+                  },
+                },
+          ),
         readRefSnapshot: (_cwd, refs) =>
           Effect.sync(() => {
+            state.digestReads?.push(refs);
             const localRefs =
               refs ?? (state.refSnapshot === undefined ? "refs" : state.refSnapshot);
             return localRefs === null || state.worktreeStamp === null
@@ -974,7 +1001,8 @@ describe("VcsStatusBroadcaster", () => {
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(localStatus),
             currentBranch: () => Effect.succeed(localStatus.refName),
-            readLocalStatusRefSnapshot: () => Effect.succeed("refs"),
+            readStatusRefreshRefs: () => Effect.succeed("refs"),
+            readStatusPoll: () => Effect.succeed(null),
             readRefSnapshot: () => Effect.succeed("refs"),
             remoteStatus: () => Effect.succeed(remoteStatus),
             invalidateLocalStatus: () => Effect.void,
@@ -1072,7 +1100,8 @@ describe("VcsStatusBroadcaster", () => {
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
-          readLocalStatusRefSnapshot: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
+          readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
             Effect.gen(function* () {
@@ -1120,7 +1149,8 @@ describe("VcsStatusBroadcaster", () => {
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
-          readLocalStatusRefSnapshot: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
+          readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
             Effect.gen(function* () {
@@ -1175,7 +1205,8 @@ describe("VcsStatusBroadcaster", () => {
               return state.currentLocalStatus;
             }),
           currentBranch: () => Effect.succeed(state.currentLocalStatus.refName),
-          readLocalStatusRefSnapshot: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
+          readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
             Effect.suspend(() => {
@@ -1426,6 +1457,29 @@ describe("VcsStatusBroadcaster", () => {
       yield* TestClock.adjust("30 seconds");
       yield* Queue.take(remoteUpdates);
       assert.equal(state.localStatusCalls, localCalls + 1);
+
+      const lookupStarted = yield* Deferred.make<void>();
+      const finishLookup = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(lookupStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishLookup)),
+      );
+      state.recheckPollStamp = Effect.sync(() => state.refSnapshot ?? null);
+      state.currentRemoteStatus = baseRemoteStatus;
+      const tick = yield* TestClock.adjust("30 seconds").pipe(Effect.forkScoped);
+      yield* Deferred.await(lookupStarted);
+      state.refSnapshot = "base-moved-during-lookup";
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        branchChanges: { baseRef: "origin/main", insertions: 1, deletions: 0 },
+      };
+      yield* Deferred.succeed(finishLookup, undefined);
+      yield* Fiber.join(tick);
+      yield* Queue.take(remoteUpdates);
+      assert.equal(state.localStatusCalls, localCalls + 2);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        state.currentLocalStatus.branchChanges,
+      );
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
@@ -1566,7 +1620,7 @@ describe("VcsStatusBroadcaster", () => {
               }),
             currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             invalidateRemoteStatus: () => Effect.void,
-            readLocalStatusRefSnapshot: () => Effect.sync(() => refSnapshot),
+            readStatusRefreshRefs: () => Effect.sync(() => refSnapshot),
             readRefSnapshot: () => Effect.sync(() => refSnapshot),
             remoteStatus: () =>
               Deferred.succeed(fetchStarted, undefined).pipe(
@@ -1606,6 +1660,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
+      digestReads: [],
     };
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -1663,9 +1718,11 @@ describe("VcsStatusBroadcaster", () => {
 
       state.localStatusCalls = 0;
       state.refSnapshot = null;
+      delete state.beforeRemoteStatus;
       const unreadable = yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.localStatusCalls, 2);
       assert.isUndefined(unreadable.refsDigest);
+      assert.deepStrictEqual(state.digestReads, ["refs", "refs", "refs", "moved"]);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
@@ -2004,7 +2061,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("a terminal commit clears a local-only subscriber's Changes totals", () =>
+  it.live("a terminal commit or soft reset refreshes local-only Changes totals", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2035,8 +2092,10 @@ describe("VcsStatusBroadcaster", () => {
       yield* Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const clean = yield* Deferred.make<void>();
+        const restored = yield* Deferred.make<void>();
         const subscribed = yield* Deferred.make<void>();
         let latest: VcsStatusResult | null = null;
+        let cleared = false;
         // The collapsed repository row in Thread Details subscribes like this.
         yield* Stream.runForEach(
           broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
@@ -2044,7 +2103,16 @@ describe("VcsStatusBroadcaster", () => {
             Effect.gen(function* () {
               latest = applyGitStatusStreamEvent(latest, event);
               yield* Deferred.succeed(subscribed, undefined);
-              if (latest.workingTree.files.length === 0) yield* Deferred.succeed(clean, undefined);
+              if (latest.workingTree.files.length === 0) {
+                cleared = true;
+                yield* Deferred.succeed(clean, undefined);
+              } else if (
+                cleared &&
+                latest.workingTree.insertions === 40 &&
+                latest.workingTree.files.length === 1
+              ) {
+                yield* Deferred.succeed(restored, undefined);
+              }
             }),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(subscribed);
@@ -2060,8 +2128,107 @@ describe("VcsStatusBroadcaster", () => {
 
         const result = yield* Deferred.await(clean).pipe(Effect.timeoutOption("3 seconds"));
         assert.isTrue(Option.isSome(result), "the row kept the committed change counts");
+
+        // What `git reset --soft` does: HEAD and index stay put; HEAD.lock unlinks after the ref moves.
+        state.currentLocalStatus = dirty;
+        const origHeadLock = path.join(gitDir, "ORIG_HEAD.lock");
+        yield* fs.writeFileString(origHeadLock, "88a38bfa\n");
+        yield* fs.rename(origHeadLock, path.join(gitDir, "ORIG_HEAD"));
+        const headLock = path.join(gitDir, "HEAD.lock");
+        yield* fs.writeFileString(headLock, "");
+        yield* fs.writeFileString(refLock, "4b825dc6\n");
+        yield* fs.rename(refLock, path.join(gitDir, "refs", "heads", "main"));
+        yield* fs.remove(headLock);
+
+        yield* Deferred.await(restored);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a terminal checkout or soft reset in a reftable repository refreshes local status",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const commonDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-reftable-watch-" });
+        const gitDir = path.join(commonDir, "worktrees", "feature");
+        const headPath = path.join(gitDir, "HEAD");
+        const headReftableDir = path.join(gitDir, "reftable");
+        const commonReftableDir = path.join(commonDir, "reftable");
+        const headTablesList = path.join(headReftableDir, "tables.list");
+        const commonTablesList = path.join(commonReftableDir, "tables.list");
+        yield* fs.makeDirectory(headReftableDir, { recursive: true });
+        yield* fs.makeDirectory(commonReftableDir, { recursive: true });
+        yield* fs.writeFileString(headPath, "ref: refs/heads/.invalid\n");
+        yield* fs.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+        yield* fs.writeFileString(headTablesList, "0x000000000001-0x000000000001-00000001.ref\n");
+        yield* fs.writeFileString(commonTablesList, "0x000000000001-0x000000000001-00000001.ref\n");
+        const dirty: VcsStatusLocalResult = {
+          ...baseLocalStatus,
+          isDefaultRef: false,
+          refName: "topic",
+          hasWorkingTreeChanges: true,
+          workingTree: {
+            files: [{ path: "lib.txt", insertions: 40, deletions: 0 }],
+            insertions: 40,
+            deletions: 0,
+          },
+        };
+        const state: Parameters<typeof layerTestFor>[0] = {
+          currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+          currentRemoteStatus: null,
+          localStatusCalls: 0,
+          remoteStatusCalls: 0,
+          localInvalidationCalls: 0,
+          remoteInvalidationCalls: 0,
+          headPath,
+        };
+
+        yield* Effect.gen(function* () {
+          const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+          const subscribed = yield* Deferred.make<void>();
+          const switched = yield* Deferred.make<void>();
+          const restored = yield* Deferred.make<void>();
+          let latest: VcsStatusResult | null = null;
+          yield* Stream.runForEach(
+            broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+            (event) =>
+              Effect.gen(function* () {
+                latest = applyGitStatusStreamEvent(latest, event);
+                yield* Deferred.succeed(subscribed, undefined);
+                if (latest.refName === "topic" && latest.workingTree.files.length === 0) {
+                  yield* Deferred.succeed(switched, undefined);
+                } else if (
+                  latest.refName === "topic" &&
+                  latest.workingTree.insertions === 40 &&
+                  latest.workingTree.files.length === 1
+                ) {
+                  yield* Deferred.succeed(restored, undefined);
+                }
+              }),
+          ).pipe(Effect.forkScoped);
+          yield* Deferred.await(subscribed);
+
+          // Per-worktree HEAD moves atomically replace <headDir>/reftable/tables.list.
+          state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "topic" };
+          const headTablesLock = path.join(headReftableDir, "tables.list.lock");
+          yield* fs.writeFileString(headTablesLock, "0x000000000001-0x000000000002-00000002.ref\n");
+          yield* fs.rename(headTablesLock, headTablesList);
+          yield* Deferred.await(switched);
+
+          // Linked-worktree soft resets without a HEAD reflog (core.logAllRefUpdates=false before
+          // worktree creation) only rewrite commondir/reftable/tables.list.
+          state.currentLocalStatus = dirty;
+          const commonTablesLock = path.join(commonReftableDir, "tables.list.lock");
+          yield* fs.writeFileString(
+            commonTablesLock,
+            "0x000000000001-0x000000000003-00000003.ref\n",
+          );
+          yield* fs.rename(commonTablesLock, commonTablesList);
+          yield* Deferred.await(restored);
+        }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a terminal checkout updates the branch before pending detailed status completes", () =>
@@ -2486,6 +2653,212 @@ describe("VcsStatusBroadcaster", () => {
     }),
   );
 
+  const fakeDirectoryInfo: FileSystem.File.Info = {
+    type: "Directory",
+    mtime: Option.none(),
+    atime: Option.none(),
+    birthtime: Option.none(),
+    dev: 0n,
+    ino: Option.none(),
+    mode: 0o755,
+    nlink: Option.none(),
+    uid: Option.none(),
+    gid: Option.none(),
+    rdev: Option.none(),
+    size: ByteSize.bytes(0),
+    blksize: Option.none(),
+    blocks: Option.none(),
+  };
+
+  it.effect(
+    "a reftable HEAD watch filters non-update events, survives reftable removal, and closes all watches when gitDir is removed",
+    () =>
+      Effect.gen(function* () {
+        const commonDir = "/repo/.git";
+        const gitDir = `${commonDir}/worktrees/feature`;
+        const headReftableDir = `${gitDir}/reftable`;
+        const commonReftableDir = `${commonDir}/reftable`;
+        const headEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+        const headReftableEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+        const headReftablePulls = yield* Queue.unbounded<void>();
+        const commonReftableEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+        const headClosed = yield* Deferred.make<void>();
+        const headReftableClosed = yield* Deferred.make<void>();
+        const commonReftableClosed = yield* Deferred.make<void>();
+        let gitDirExists = true;
+        let headReftableExists = true;
+        let branchReads = 0;
+        const state: Parameters<typeof layerTestFor>[0] = {
+          currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+          currentRemoteStatus: null,
+          localStatusCalls: 0,
+          remoteStatusCalls: 0,
+          localInvalidationCalls: 0,
+          remoteInvalidationCalls: 0,
+          headPath: `${gitDir}/HEAD`,
+          branchRead: () =>
+            Effect.sync(() => {
+              branchReads += 1;
+              return state.currentLocalStatus.refName;
+            }),
+          fileSystem: FileSystem.makeNoop({
+            realPath: (target) => Effect.succeed(target),
+            exists: (target) =>
+              Effect.succeed(
+                target === gitDir
+                  ? gitDirExists
+                  : target === headReftableDir
+                    ? headReftableExists
+                    : true,
+              ),
+            readFileString: (target) =>
+              target === `${gitDir}/commondir`
+                ? Effect.succeed("../..\n")
+                : Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "FileSystem",
+                      method: "readFileString",
+                    }),
+                  ),
+            stat: (target) =>
+              target === headReftableDir || target === commonReftableDir
+                ? Effect.succeed(fakeDirectoryInfo)
+                : Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "FileSystem",
+                      method: "stat",
+                    }),
+                  ),
+            watch: (target, options) => {
+              if (target === headReftableDir) {
+                return Stream.fromEffectRepeat(
+                  Queue.offer(headReftablePulls, undefined).pipe(
+                    Effect.andThen(Queue.take(headReftableEvents)),
+                  ),
+                ).pipe(
+                  Stream.onStart(Effect.sync(() => options?.onReady?.())),
+                  Stream.ensuring(Deferred.succeed(headReftableClosed, undefined)),
+                );
+              }
+              const queue = target === commonReftableDir ? commonReftableEvents : headEvents;
+              const closed = target === commonReftableDir ? commonReftableClosed : headClosed;
+              return Stream.fromQueue(queue).pipe(
+                Stream.onStart(Effect.sync(() => options?.onReady?.())),
+                Stream.ensuring(Deferred.succeed(closed, undefined)),
+              );
+            },
+          }),
+        };
+
+        yield* Effect.gen(function* () {
+          const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+          const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+          assert.deepEqual(yield* branches, [{ refName: "main", isRepo: true }]);
+          assert.strictEqual(branchReads, 1);
+
+          // Drain ignored events before mutating the branch so a broken filter cannot hide behind coalescing.
+          yield* Queue.take(headReftablePulls);
+          yield* Queue.offer(headReftableEvents, { _tag: "Update", path: "tables.list.lock" });
+          yield* Queue.take(headReftablePulls);
+          yield* Queue.offer(headReftableEvents, { _tag: "Remove", path: "tables.list" });
+          yield* Queue.take(headReftablePulls);
+          assert.strictEqual(branchReads, 1);
+
+          state.currentLocalStatus = { ...baseLocalStatus, refName: "topic" };
+          yield* Queue.offer(headReftableEvents, { _tag: "Update", path: "tables.list" });
+          assert.deepEqual(yield* branches, [{ refName: "topic", isRepo: true }]);
+          assert.strictEqual(branchReads, 2);
+
+          // Removing reftable/ alone (e.g. migration to files) keeps the HEAD/index watch alive.
+          headReftableExists = false;
+          yield* Queue.offer(headReftableEvents, { _tag: "Remove", path: headReftableDir });
+          yield* Deferred.await(headReftableClosed);
+          state.currentLocalStatus = { ...baseLocalStatus, refName: "migrated" };
+          yield* Queue.offer(headEvents, { _tag: "Update", path: "HEAD" });
+          assert.deepEqual(yield* branches, [{ refName: "migrated", isRepo: true }]);
+
+          // Removing the worktree gitDir closes both head and shared commondir/reftable watches.
+          gitDirExists = false;
+          yield* Queue.offer(headEvents, { _tag: "Remove", path: gitDir });
+          yield* Deferred.await(headClosed);
+          yield* Deferred.await(commonReftableClosed);
+        }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+      }),
+  );
+
+  it.effect("a reftable watch failure between stat and watch keeps HEAD tracking alive", () =>
+    Effect.gen(function* () {
+      const commonDir = "/repo/.git";
+      const gitDir = `${commonDir}/worktrees/feature`;
+      const headReftableDir = `${gitDir}/reftable`;
+      const commonReftableDir = `${commonDir}/reftable`;
+      const headEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: `${gitDir}/HEAD`,
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          readFileString: (target) =>
+            target === `${gitDir}/commondir`
+              ? Effect.succeed("../..\n")
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFileString",
+                  }),
+                ),
+          stat: (target) =>
+            target === headReftableDir || target === commonReftableDir
+              ? Effect.succeed(fakeDirectoryInfo)
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "stat",
+                  }),
+                ),
+          watch: (target, options) => {
+            if (target === headReftableDir) {
+              return Stream.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "watch",
+                }),
+              );
+            }
+            if (target === commonReftableDir) {
+              return Stream.die(new Error("ENOENT: reftable removed before fs.watch"));
+            }
+            return Stream.fromQueue(headEvents).pipe(
+              Stream.onStart(Effect.sync(() => options?.onReady?.())),
+            );
+          },
+        }),
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+        assert.deepEqual(yield* branches, [{ refName: "main", isRepo: true }]);
+
+        // Both optional reftable watches failed at startup; HEAD tracking still works.
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "after-failure" };
+        yield* Queue.offer(headEvents, { _tag: "Update", path: "HEAD" });
+        assert.deepEqual(yield* branches, [{ refName: "after-failure", isRepo: true }]);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
+  );
+
   it.effect("releases remote demand while passive observers remain", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
@@ -2508,6 +2881,7 @@ describe("VcsStatusBroadcaster", () => {
               return state.currentLocalStatus;
             }),
           currentBranch: () => Effect.succeed(state.currentLocalStatus.refName),
+          readStatusPoll: () => Effect.succeed(null),
           remoteStatus: () =>
             Effect.sync(() => {
               state.remoteStatusCalls += 1;

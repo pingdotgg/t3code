@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  trimAsciiWhitespace,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
@@ -45,6 +46,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { parseGitfileTarget } from "./worktreeContainer.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -321,14 +323,16 @@ function isTextContentBlock(block: typeof TranscriptContentBlock.Type): boolean 
   return block.type === "text" || block.type === "input_text" || block.type === "output_text";
 }
 
+const trimBlankLines = (text: string) => text.replace(/^\s*\n/, "").trimEnd();
+
 function extractText(
   content: string | ReadonlyArray<typeof TranscriptContentBlock.Type> | undefined,
 ): string {
-  if (typeof content === "string") return content.trim();
+  if (typeof content === "string") return trimBlankLines(content);
   if (content === undefined) return "";
   return content
     .filter(isTextContentBlock)
-    .map((block) => block.text?.trim() ?? "")
+    .map((block) => trimBlankLines(block.text ?? ""))
     .filter((text) => text.length > 0)
     .join("\n");
 }
@@ -420,10 +424,36 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
+// Where the run of sticky `block` matches at the start of `text` ends.
+function leadingBlocksEnd(text: string, block: RegExp): number {
+  let end = 0;
+  while (block.test(text)) {
+    end = block.lastIndex;
+  }
+  return end;
+}
+
 // Claude Code records its own UI as user turns: slash commands, `!` shell runs and
 // their output, task notifications. Keep what the user typed, as they typed it.
-const CLAUDE_UI_OUTPUT =
-  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+function claudeUiOutputEnd(text: string): number {
+  return leadingBlocksEnd(
+    text,
+    /<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y,
+  );
+}
+
+// Shell payloads can print closing tags verbatim, so a complete envelope is
+// judged by its outer tags; prose after a quoted block stays visible.
+function isClaudeShellOutput(text: string): boolean {
+  if (text.startsWith("<bash-stderr>")) return text.endsWith("</bash-stderr>");
+  if (!text.startsWith("<bash-stdout>")) return false;
+  return (
+    text.endsWith("</bash-stdout>") ||
+    (text.endsWith("</bash-stderr>") && /<\/bash-stdout>\s*<bash-stderr>/.test(text))
+  );
+}
+
+const CLAUDE_COMMAND_BLOCK = /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y;
 
 /**
  * A slash command as typed. Its arguments may name the thread; a bare command
@@ -431,6 +461,7 @@ const CLAUDE_UI_OUTPUT =
  */
 function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
   if (!/^<command-(?:name|message)>/.test(text)) return null;
+  if (leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK) !== text.length) return null;
   const name =
     /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
     `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
@@ -440,10 +471,24 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
 
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
-  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  const outputEnd = claudeUiOutputEnd(text);
+  if (
+    outputEnd === text.length ||
+    // Only Claude writes task notifications, sometimes with trailing markup of its own.
+    text.startsWith("<task-notification>") ||
+    isClaudeShellOutput(text) ||
+    /^\[Request interrupted by user(?: for tool use)?\]$/.test(text)
+  ) {
+    return { text: "", titleText: "" };
+  }
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
   if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
-  return claudeCommand(text) ?? { text, titleText: text };
+  return (
+    claudeCommand(text) ?? {
+      text,
+      titleText: text.slice(outputEnd || leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK)),
+    }
+  );
 }
 
 function claudeVisibleText(record: DecodedTranscriptRecord) {
@@ -598,7 +643,7 @@ function parseAgentSessionRecords(
         const turnId = codexTurnId(record.payload.internal_chat_message_metadata_passthrough);
         const text = extractText(record.payload.content);
         if (turnId !== null && text.length > 0) {
-          responseUsersInTurn.push({ index: recordIndex, turnId, text });
+          responseUsersInTurn.push({ index: recordIndex, turnId, text: text.trim() });
         }
       }
     }
@@ -1108,8 +1153,8 @@ export const make = Effect.gen(function* () {
     const pointerTexts = yield* readGitFiles(pointers.map(({ gitPath }) => gitPath));
     const linkedWorktrees: Array<{ directory: string; gitDir: string }> = [];
     for (const { directory, gitPath } of pointers) {
-      const target = /^gitdir:\s*(.+)$/m.exec(pointerTexts.get(gitPath) ?? "")?.[1]?.trim();
-      if (target === undefined || target.length === 0) {
+      const target = parseGitfileTarget(pointerTexts.get(gitPath) ?? "");
+      if (target === undefined) {
         identities.set(directory, { _tag: "NotGit" });
         continue;
       }
@@ -1507,14 +1552,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const file = yield* fileSystem.open(indexPath, { flag: "r" });
         const size = Number((yield* file.stat).size);
-        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES);
+        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES - 1);
         yield* file.seek(BigInt(start), "start");
         const bytes = yield* file.readAlloc(size - start);
         const contents = Option.match(bytes, {
           onNone: () => "",
           onSome: (value) => new TextDecoder().decode(value),
         });
-        // A tail read can start mid-record.
+        // A tail read starts one byte early so a preceding newline keeps the first complete record.
         return parseCodexThreadNames(
           start > 0 ? contents.slice(contents.indexOf("\n") + 1) : contents,
         );
@@ -2182,7 +2227,7 @@ export const make = Effect.gen(function* () {
         const head = (yield* readGitFiles([headPath])).get(headPath) ?? "";
         worktree = {
           path: resolved,
-          branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
+          branch: /^ref: refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(head))?.[1] ?? null,
         };
       }
       worktreesByDirectory.set(resolved, worktree);

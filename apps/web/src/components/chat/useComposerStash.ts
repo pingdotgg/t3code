@@ -104,6 +104,13 @@ export function useComposerStash(input: {
     threadDraftTarget?: ChatComposerProps["composerDraftTarget"],
   ) => ReadonlyMap<string, string>;
   readonly expandMobileComposer: () => void;
+  /** Set while the composer edits a queued message: stashing moves that message to the stash. */
+  readonly editingQueuedMessage?: {
+    /** False when the queued message has attachments or context records the stash cannot hold. */
+    readonly canMoveToStash: boolean;
+    /** Ends the edit and removes the queued message once its text is stashed. */
+    readonly onMovedToStash: () => void;
+  } | null;
 }) {
   const {
     environmentId,
@@ -130,6 +137,7 @@ export function useComposerStash(input: {
     setComposerTrigger,
     importContextRecords,
     expandMobileComposer,
+    editingQueuedMessage,
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -597,13 +605,14 @@ export function useComposerStash(input: {
     stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
+    const movedQueuedMessage = editingQueuedMessage ?? null;
     const entryId = randomUUID();
     const stashAndEncode = async () => {
       // Ordering matters in both directions: writing before clearing means a
       // crash or closed tab mid-encode still leaves the prompt recoverable,
       // while clearing before the async image work means edits typed during
       // encoding are not wiped.
-      const { evicted, written, durable } = stashEntryToQueue({
+      const { full, written, durable } = stashEntryToQueue({
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
@@ -615,9 +624,21 @@ export function useComposerStash(input: {
         ...(stashedRecords.length > 0 ? { records: stashedRecords } : {}),
       });
 
-      // If it was rejected (quota) the store has already rolled itself back,
-      // so leave the composer untouched rather than making it the second
-      // casualty of a reload.
+      // A full or rejected write kept nothing, so leave the composer untouched.
+      if (full) {
+        toastManager.add({
+          type: "warning",
+          title: m(msg("Stash is full")),
+          description: m(
+            msg(
+              "The stash holds {max} prompts. Restore or delete one to make room; the composer was left as-is.",
+              { max: MAX_STASH_ENTRIES },
+            ),
+          ),
+          data: { hideCopyButton: true },
+        });
+        return;
+      }
       if (!written) {
         toastManager.add({
           type: "error",
@@ -664,26 +685,8 @@ export function useComposerStash(input: {
       setComposerCursor(0);
       setComposerTrigger(null);
       pulseStashBadge();
-
-      if (evicted) {
-        for (const file of evicted.files ?? []) {
-          releasePersistedAttachmentUpload({
-            id: file.id,
-            environmentId: file.environmentId,
-            attachmentId: file.attachmentId,
-          });
-        }
-        toastManager.add({
-          type: "warning",
-          title: m(msg("Oldest stashed prompt discarded")),
-          description: m(
-            msg("The stash holds {max} prompts; the oldest was removed to make room.", {
-              max: MAX_STASH_ENTRIES,
-            }),
-          ),
-          data: { hideCopyButton: true },
-        });
-      }
+      // The stash now holds the edited text; leaving the message queued would still send it.
+      movedQueuedMessage?.onMovedToStash();
 
       // Images are re-encoded for the stash rather than stored verbatim: the
       // composer allows up to 10MB per image, but localStorage gives the whole
@@ -780,6 +783,7 @@ export function useComposerStash(input: {
       return;
     }
     if (projectSelectionRequired || activePendingProgress !== null) return;
+    if (editingQueuedMessage && !editingQueuedMessage.canMoveToStash) return;
     void stashCurrentPromptStable();
   });
   // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save

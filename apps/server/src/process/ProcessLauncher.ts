@@ -1,26 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - IPC and timer callbacks implement the spawner boundary, as in the native spawner.
-import * as NodeChildProcess from "node:child_process";
-import * as NodeEvents from "node:events";
-import type * as NodeNet from "node:net";
-import type * as NodeStream from "node:stream";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as NonBlockingSpawner from "./NonBlockingSpawner.ts";
-import type { LauncherEvent, LauncherSpawnRequest } from "./processLauncherWorker.ts";
-
-// A launcher that misses either is treated as hung; neither happens to a healthy one.
-const READY_TIMEOUT = "10 seconds";
-const SPAWN_REPLY_TIMEOUT = "10 seconds";
 
 /**
  * Exposes the active Linux process-launcher helper PID so callers such as port discovery can
@@ -32,366 +19,56 @@ export class ProcessLauncher extends Context.Reference<{
   defaultValue: () => ({ currentPid: Effect.undefined }),
 }) {}
 
-/** A child of the launcher, presented to the native spawner as a Node ChildProcess. */
-class HostedChild
-  extends NodeEvents.EventEmitter
-  implements NodeChildProcessSpawner.SpawnedChildProcess
-{
-  pid: number | undefined;
-  exitCode: number | null = null;
-  signalCode: NodeJS.Signals | null = null;
-  stdin: NodeStream.Writable | null = null;
-  stdout: NodeStream.Readable | null = null;
-  stderr: NodeStream.Readable | null = null;
-  readonly stdio: Array<NodeStream.Readable | NodeStream.Writable | null | undefined> = [];
-  referenced = true;
-  /** Its pipes are handed over and the native spawner owns it. */
-  started = false;
-  /** No longer awaited: its spawn failed, timed out or it exited. */
-  settled = false;
-  readonly launcher: Launcher;
-  /** The fds requested as pipes, each of which must arrive before the child counts as started. */
-  readonly pipes: ReadonlyArray<number>;
-
-  constructor(launcher: Launcher, stdio: NodeChildProcess.SpawnOptions["stdio"]) {
-    super();
-    this.launcher = launcher;
-    this.pipes = stdioModes(stdio).flatMap((mode, fd) => (isPipe(mode) ? [fd] : []));
-  }
-
-  kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
-    if (this.pid === undefined || this.exitCode !== null || this.signalCode !== null) return false;
-    try {
-      process.kill(this.pid, signal);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  ref(): void {
-    this.referenced = true;
-    syncRef(this.launcher);
-  }
-
-  unref(): void {
-    this.referenced = false;
-    syncRef(this.launcher);
-  }
-
-  fail(error: Error): void {
-    this.settled = true;
-    this.emit("error", error);
-  }
-
-  exit(code: number | null, signal: NodeJS.Signals | null): void {
-    this.settled = true;
-    this.exitCode = code;
-    this.signalCode = signal;
-    // Node destroys stdin at exit and drains output nobody reads, so pipes never hold a child.
-    this.stdin?.destroy();
-    this.emit("exit", code, signal);
-    process.nextTick(() => {
-      for (const stream of [this.stdout, this.stderr]) {
-        if (
-          stream &&
-          stream.listenerCount("data") === 0 &&
-          stream.listenerCount("readable") === 0
-        ) {
-          stream.resume();
-        }
-      }
-    });
-  }
-}
-
-const stdioModes = (stdio: NodeChildProcess.SpawnOptions["stdio"]) =>
-  typeof stdio === "string" || stdio === undefined ? Array<typeof stdio>(3).fill(stdio) : stdio;
-
-const isPipe = (mode: unknown) =>
-  mode === undefined || mode === null || mode === "pipe" || mode === "overlapped";
-
-// The launcher's own stdin and stdout are /dev/null, so only pipes and "ignore" mean the same there.
-const isHostable = (stdio: NodeChildProcess.SpawnOptions["stdio"]) =>
-  stdioModes(stdio).every((mode) => isPipe(mode) || mode === "ignore");
-
-interface Launcher {
-  readonly worker: NodeChildProcess.ChildProcess;
-  readonly children: Map<number, HostedChild>;
-  readonly ready: Deferred.Deferred<boolean>;
-  closed: boolean;
-  /** Counts messages from the launcher, so a slow server is not mistaken for a hung launcher. */
-  heard: number;
-}
-
-const syncRef = (launcher: Launcher) => {
-  if ([...launcher.children.values()].some((child) => child.referenced)) {
-    launcher.worker.channel?.ref();
-  } else {
-    launcher.worker.channel?.unref();
-  }
-};
-
-const killGroup = (pid: number) => {
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    // The group is already gone.
-  }
-};
-
-const launcherArguments = Effect.fn("ProcessLauncher.launcherArguments")(function* () {
-  // A single executable has no sibling script, so it hosts the launcher as a hidden subcommand.
-  if (yield* HostProcess.IsExecutable) return ["__process-launcher"];
-  const path = yield* Path.Path;
-  const fromSource = import.meta.url.endsWith(".ts");
-  return [
-    ...(fromSource ? ["--experimental-strip-types"] : []),
-    yield* path
-      .fromFileUrl(
-        new URL(fromSource ? "../process-launcher.ts" : "./process-launcher.mjs", import.meta.url),
-      )
-      .pipe(Effect.orDie),
-  ];
-});
-
 // On Linux, libuv forks the whole server for every spawn and blocks the event loop while the
 // kernel copies its page tables, so commands are launched by a small long-lived helper instead.
-// The helper passes each child's pipes back, so the native spawner keeps all of its semantics.
-export const make = Effect.fn("ProcessLauncher.make")(function* (
-  replyTimeout: Duration.Input = SPAWN_REPLY_TIMEOUT,
-) {
-  const fallback = yield* ChildProcessSpawner.ChildProcessSpawner;
-  if ((yield* HostProcess.Platform) !== "linux") {
-    return Context.make(ChildProcessSpawner.ChildProcessSpawner, fallback).pipe(
-      Context.add(ProcessLauncher, { currentPid: Effect.undefined }),
-    );
-  }
+export const make = Effect.fn("ProcessLauncher.make")(function* (responseTimeout?: Duration.Input) {
+  const fallback = Context.make(
+    ChildProcessSpawner.ChildProcessSpawner,
+    yield* ChildProcessSpawner.ChildProcessSpawner,
+  ).pipe(Context.add(ProcessLauncher, { currentPid: Effect.undefined }));
+  if ((yield* HostProcess.Platform) !== "linux") return fallback;
 
-  const executablePath = yield* HostProcess.ExecutablePath;
-  const args = yield* launcherArguments();
-  let current: Launcher | undefined;
-  // A launcher that never starts will not start next time either; stop forking for it.
-  let unavailable = false;
-  let warned = false;
-  let shutDown = false;
-  let nextId = 0;
-
-  const close = (launcher: Launcher, hung = false) => {
-    if (launcher.closed) return;
-    launcher.closed = true;
-    if (current === launcher) current = undefined;
-    const ready = Deferred.isDoneUnsafe(launcher.ready);
-    if (!ready) unavailable = true;
-    Deferred.doneUnsafe(launcher.ready, Exit.succeed(false));
-    const error = new Error(
-      hung ? "The process launcher did not respond." : "The process launcher exited.",
-    );
-    for (const child of launcher.children.values()) {
-      if (child.settled) continue;
-      if (child.pid !== undefined) killGroup(child.pid);
-      if (child.started) {
-        child.exit(null, "SIGKILL");
-      } else {
-        for (const stream of child.stdio) stream?.destroy();
-        child.fail(error);
-      }
-    }
-    launcher.children.clear();
-    if (launcher.worker.connected) launcher.worker.disconnect();
-    // A started launcher kills its children and exits once disconnected; a hung one never reads that.
-    if (hung || !ready) launcher.worker.kill("SIGKILL");
-  };
-
-  const onEvent = (
-    launcher: Launcher,
-    event: LauncherEvent,
-    socket: NodeNet.Socket | undefined,
-  ) => {
-    launcher.heard++;
-    if (event.type === "ready") {
-      Deferred.doneUnsafe(launcher.ready, Exit.succeed(true));
-      return;
-    }
-    const child = launcher.children.get(event.id);
-    if (child === undefined) {
-      socket?.destroy();
-      return;
-    }
-    switch (event.type) {
-      case "stdio":
-        if (child.settled) socket?.destroy();
-        else if (socket) {
-          child.stdio[event.fd] = socket;
-          if (event.fd === 0) {
-            // Unlike Node's own stdin pipe this socket also reads, and an unread write resets it.
-            socket.on("error", () => {});
-            child.stdin = socket;
-          } else if (event.fd === 1) child.stdout = socket;
-          else if (event.fd === 2) child.stderr = socket;
-        }
-        break;
-      case "pid":
-        child.pid = event.pid;
-        break;
-      case "spawn":
-        // A lost handle would otherwise read as a command that printed nothing.
-        if (child.pipes.some((fd) => child.stdio[fd] == null)) {
-          if (child.pid !== undefined) killGroup(child.pid);
-          for (const stream of child.stdio) stream?.destroy();
-          child.fail(new Error("The process launcher did not hand over the command's pipes."));
-          break;
-        }
-        child.started = true;
-        child.emit("spawn");
-        break;
-      case "exit":
-        launcher.children.delete(event.id);
-        syncRef(launcher);
-        if (!child.settled) child.exit(event.code, event.signal);
-        break;
-      case "error":
-        if (child.pid !== undefined || child.settled) break;
-        launcher.children.delete(event.id);
-        syncRef(launcher);
-        child.fail(Object.assign(new Error(event.error.message), event.error));
-        break;
-    }
-  };
-
-  const launch = (): Launcher | undefined => {
-    if (unavailable || shutDown) return undefined;
-    if (current !== undefined) return current;
-    const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
-    delete env.NODE_OPTIONS;
-    // `node --watch` children would report their imports over the launcher's IPC channel.
-    delete env.WATCH_REPORT_DEPENDENCIES;
-    let worker: NodeChildProcess.ChildProcess;
-    try {
-      worker = NodeChildProcess.spawn(executablePath, args, {
-        cwd: "/",
-        env,
-        stdio: ["ignore", "ignore", "inherit", "ipc"],
-      });
-    } catch {
-      // Node throws some errnos, such as ENOMEM, instead of emitting "error".
-      unavailable = true;
-      return undefined;
-    }
-    const launcher: Launcher = {
-      worker,
-      children: new Map(),
-      ready: Deferred.makeUnsafe(),
-      closed: false,
-      heard: 0,
-    };
-    worker.unref();
-    worker.channel?.unref();
-    worker.on("message", (event: LauncherEvent, socket: NodeNet.Socket | undefined) =>
-      onEvent(launcher, event, socket),
-    );
-    worker.on("error", () => close(launcher));
-    worker.once("disconnect", () => close(launcher));
-    worker.once("exit", () => close(launcher));
-    current = launcher;
-    return launcher;
-  };
-
-  const spawnProcess = (
-    command: string,
-    commandArgs: ReadonlyArray<string>,
-    options: NodeChildProcess.SpawnOptions,
-  ): NodeChildProcessSpawner.SpawnedChildProcess => {
-    const launcher = current;
-    // Lost or replaced between the readiness check and the spawn; rare enough to fork for.
-    if (
-      launcher === undefined ||
-      launcher.closed ||
-      !Deferred.isDoneUnsafe(launcher.ready) ||
-      !isHostable(options.stdio)
-    ) {
-      return NodeChildProcess.spawn(command, [...commandArgs], options);
-    }
-    const id = ++nextId;
-    const child = new HostedChild(launcher, options.stdio);
-    launcher.children.set(id, child);
-    syncRef(launcher);
-    const request: LauncherSpawnRequest = {
-      type: "spawn",
-      id,
-      command,
-      args: commandArgs,
-      // The launcher runs in `/` with its own environment; children inherit the server's.
-      options: { ...options, cwd: options.cwd ?? process.cwd(), env: options.env ?? process.env },
-    };
-    launcher.worker.send(request, (error) => {
-      if (error) close(launcher);
-    });
-    // The native spawner waits for the reply uninterruptibly, so a hung launcher must not hold it.
-    // Hung means silent for a whole window; replies queued behind a busy server count once read.
-    const watch = (heard: number) =>
-      setTimeout(
-        () =>
-          setImmediate(() => {
-            if (child.started || child.settled) return;
-            if (launcher.heard === heard) close(launcher, true);
-            else watch(launcher.heard);
-          }),
-        Duration.toMillis(replyTimeout),
-      ).unref();
-    watch(launcher.heard);
-    return child;
-  };
-
-  // The trampoline keeps a hung cwd or PATH entry from stalling the launcher, and with it every command.
+  const helper = NodeChildProcessSpawner.layerProxyProcess({
+    executable: yield* HostProcess.ExecutablePath,
+    // A single executable cannot run `-e`, so it hosts the helper as a hidden subcommand of bin.ts.
+    args: (yield* HostProcess.IsExecutable) ? ["__process-launcher"] : undefined,
+    env: {
+      ...(yield* HostProcess.Environment),
+      ELECTRON_RUN_AS_NODE: "1",
+      NODE_OPTIONS: undefined,
+      // `node --watch` children would report their imports over the helper's IPC channel.
+      WATCH_REPORT_DEPENDENCIES: undefined,
+    },
+    responseTimeout,
+  });
+  // The trampoline keeps a hung cwd or PATH entry from stalling the helper, and with it every command.
   // Fresh: the server has already built this layer around the forking spawner.
-  const hosted = Context.get(
-    yield* Layer.build(
-      Layer.fresh(NonBlockingSpawner.layer).pipe(
-        Layer.provide(NodeChildProcessSpawner.layerWithSpawn(spawnProcess)),
+  const launched = Layer.fresh(NonBlockingSpawner.layer).pipe(Layer.provideMerge(helper));
+  return yield* Layer.build(launched).pipe(
+    Effect.map((context) => {
+      const proxy = Context.get(context, NodeChildProcessSpawner.ProxyProcess);
+      return Context.make(
+        ChildProcessSpawner.ChildProcessSpawner,
+        Context.get(context, ChildProcessSpawner.ChildProcessSpawner),
+      ).pipe(
+        Context.add(ProcessLauncher, {
+          currentPid: Effect.map(proxy.currentPid, Option.getOrUndefined),
+        }),
+      );
+    }),
+    Effect.catch((error) =>
+      Effect.as(
+        Effect.logWarning("The process launcher did not start; commands fork the server.", error),
+        fallback,
       ),
     ),
-    ChildProcessSpawner.ChildProcessSpawner,
-  );
-
-  const warnUnavailable = Effect.suspend(() => {
-    if (!unavailable || warned || shutDown) return Effect.void;
-    warned = true;
-    return Effect.logWarning("The process launcher did not start; commands fork the server.");
-  });
-
-  const isReady = Effect.suspend(() => {
-    const launcher = launch();
-    if (launcher === undefined) return Effect.as(warnUnavailable, false);
-    return Deferred.await(launcher.ready).pipe(
-      Effect.timeoutOption(READY_TIMEOUT),
-      Effect.map(Option.getOrElse(() => false)),
-      Effect.tap((ready) => {
-        if (ready) return Effect.void;
-        close(launcher);
-        return warnUnavailable;
-      }),
-    );
-  });
-
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      shutDown = true;
-      if (current) close(current);
-    }),
-  );
-  // Start while the server is still small; the launcher's own fork is the last full-size one.
-  launch();
-  const spawner = ChildProcessSpawner.make((command) =>
-    Effect.flatMap(isReady, (ready) => (ready ? hosted : fallback).spawn(command)),
-  );
-  return Context.make(ChildProcessSpawner.ChildProcessSpawner, spawner).pipe(
-    Context.add(ProcessLauncher, { currentPid: Effect.sync(() => current?.worker.pid) }),
   );
 });
 
-/** Replaces the ChildProcessSpawner in context, which stays the fallback when the launcher cannot start. */
-export const layer = Layer.effectContext(make());
-
-/** The server's one spawner: memoized, so every build site shares a single launcher. */
-export const layerServer = layer.pipe(Layer.provide(NonBlockingSpawner.layer));
+/**
+ * The server's one spawner: memoized, so every build site shares a single launcher. The provided
+ * spawner stays the fallback when the launcher cannot start.
+ */
+export const layerServer = Layer.effectContext(make()).pipe(
+  Layer.provide(NonBlockingSpawner.layer),
+);

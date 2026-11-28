@@ -1,3 +1,4 @@
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1324,7 +1325,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.andThen(
               Effect.suspend(() => {
                 item.flushScheduled = false;
-                return item.completed ? Effect.void : emitStreamItem(turn, item, true);
+                // Gemini sends an empty text part on tool-use steps; publishing it would leave an empty message.
+                return item.completed || item.text.length === 0
+                  ? Effect.void
+                  : emitStreamItem(turn, item, true);
               }),
             ),
             Effect.forkIn(scope),
@@ -1490,9 +1494,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const output = piToolOutput(resultRecord, toolName);
+        // Pi strips @ only at the start of the raw argument, before preview trimming.
         const readPath =
           toolName === "read"
-            ? (recordString(args, "path") ?? recordString(args, "file_path"))?.trim()
+            ? (recordString(args, "path") ?? recordString(args, "file_path"))
+                ?.replace(/^@/, "")
+                .trim()
             : undefined;
         const viewedImagePath =
           readPath &&
@@ -3419,7 +3426,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             images.push({
               type: "image",
               data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
+              mimeType: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
             });
           }
         }
@@ -4032,6 +4039,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const isCurrentFile = (file: string) =>
                     currentFile != null &&
                     path.resolve(cwd, file) === path.resolve(cwd, currentFile);
+                  const targetPath =
+                    targetFile === undefined ? undefined : path.resolve(cwd, targetFile);
+                  const isTargetFile = (file: string | null | undefined) =>
+                    file != null && path.resolve(cwd, file) === targetPath;
                   const boundaryFile =
                     firstBoundary.type === "nothing"
                       ? undefined
@@ -4045,7 +4056,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   if (
                     targetFile !== undefined &&
                     boundaryFile != null &&
-                    path.resolve(cwd, boundaryFile) !== path.resolve(cwd, targetFile)
+                    !isTargetFile(boundaryFile)
                   ) {
                     // A previous fork can carry the checkpoint into the session with the discard boundary.
                     const listing =
@@ -4165,17 +4176,26 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       );
                     }
                   }
-                  let forkEntryId: string | undefined;
-                  if (boundary.type !== "nothing") {
-                    forkEntryId = yield* piForkEntry(
-                      boundary,
-                      rollbackInput.providerThread.createdAt,
-                      switchedTo === undefined ? readCurrentEntries : readEntries,
-                    );
-                  } else if (switchedTo === undefined && recoveredLegacySource === undefined) {
+                  const leftTargetFile =
+                    target !== null &&
+                    isTargetFile(sourceFile) &&
+                    rollbackInput.providerThreadTurns.some((turn) => {
+                      const file = turn.nativeThreadRef?.nativeId;
+                      return turn.ordinal > target.ordinal && file != null && !isTargetFile(file);
+                    });
+                  const verifySource =
+                    leftTargetFile || (boundary.type === "nothing" && switchedTo !== undefined);
+                  if (
+                    boundary.type === "nothing" &&
+                    !verifySource &&
+                    recoveredLegacySource === undefined
+                  ) {
                     return piThreadSnapshot(state.providerThread);
-                  } else {
-                    const listing = piSessionListing(yield* request({ type: "get_entries" }));
+                  }
+                  let forkEntryId: string | undefined;
+                  let sourceEntries = switchedTo === undefined ? readCurrentEntries : readEntries;
+                  if (recoveredLegacySource !== undefined) {
+                    const listing = piSessionListing(yield* sourceEntries);
                     const completedAt = target?.completedAt;
                     const retained =
                       listing !== null && targetId !== undefined
@@ -4188,18 +4208,68 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     if (
                       listing === null ||
                       retained === undefined ||
-                      (recoveredLegacySource !== undefined &&
-                        !piSameHistory(
-                          listing,
-                          retained.headId,
-                          recoveredLegacySource.listing,
-                          recoveredLegacySource.retained.headId,
-                        ))
+                      !piSameHistory(
+                        listing,
+                        retained.headId,
+                        recoveredLegacySource.listing,
+                        recoveredLegacySource.retained.headId,
+                      )
                     )
                       return yield* protocolError(
                         "Pi rollback could not verify the retained session head",
                       );
                     forkEntryId = retained.forkEntryId;
+                  } else if (verifySource) {
+                    const data = yield* sourceEntries;
+                    sourceEntries = Effect.succeed(data);
+                    const listing = piSessionListing(data);
+                    // Without a captured checkpoint prompt, verify back to an earlier retained
+                    // prompt in the same file or to the root if none was captured.
+                    const anchorId =
+                      targetId ??
+                      piTurnEntryId(
+                        rollbackInput.providerThreadTurns
+                          .filter(
+                            (turn) =>
+                              target !== null &&
+                              turn.ordinal < target.ordinal &&
+                              isTargetFile(turn.nativeThreadRef?.nativeId) &&
+                              piTurnEntryId(turn) !== undefined,
+                          )
+                          .sort((a, b) => b.ordinal - a.ordinal)[0],
+                      ) ??
+                      null;
+                    const walk =
+                      listing !== null && (anchorId === null || listing.entries.has(anchorId))
+                        ? walkPiBranch(listing.entries, listing.leafId, anchorId)
+                        : null;
+                    if (listing === null || walk?.reachedStop !== true)
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    // A handoff can leave a prompt before the next recorded turn in this file.
+                    for (const id of [...walk.userEntryIds].reverse()) {
+                      if (boundary.type === "entry" && id === boundary.entryId) {
+                        forkEntryId = id;
+                        break;
+                      }
+                      const timestamp = listing.entries.get(id)?.timestamp;
+                      if (timestamp == null || target?.completedAt == null)
+                        return yield* protocolError(
+                          "Pi rollback could not verify the retained session head",
+                        );
+                      if (timestamp >= DateTime.toEpochMillis(target.completedAt)) {
+                        forkEntryId = id;
+                        break;
+                      }
+                    }
+                  }
+                  if (forkEntryId === undefined && boundary.type !== "nothing") {
+                    forkEntryId = yield* piForkEntry(
+                      boundary,
+                      rollbackInput.providerThread.createdAt,
+                      sourceEntries,
+                    );
                   }
                   if (forkEntryId !== undefined) {
                     const forkData = yield* lifecycleRequest({

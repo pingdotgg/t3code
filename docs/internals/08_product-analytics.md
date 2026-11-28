@@ -1,8 +1,8 @@
 # Product analytics
 
 The server owns analytics delivery, opt-out, and identity for every connected client. Clients never
-load the PostHog browser SDK, PostHog person profiles stay disabled, and visiting hosted web without
-an authenticated connection does not count as product use.
+load an analytics browser SDK, and visiting hosted web without an authenticated connection does not
+count as product use.
 
 ## Identity
 

@@ -472,30 +472,63 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "rejects draft media symlinks escaping the workspace or targeting disallowed types",
+    "rejects draft media symlinks targeting disallowed types",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-symlink-" });
-        const root = path.join(directory, "workspace");
-        yield* fs.makeDirectory(root);
-        const outside = path.join(directory, "outside.mp4");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-symlink-" });
         const secret = path.join(root, "secret.txt");
-        yield* fs.writeFileString(outside, "outside bytes");
         yield* fs.writeFileString(secret, "private bytes");
-        for (const [name, target] of [
-          ["escape.mp4", outside],
-          ["disguised.wav", secret],
+        yield* fs.symlink(secret, path.join(root, "disguised.wav"));
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "draft-workspace-file", cwd: root, path: "disguised.wav" },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetPreviewTypeValidationError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves only the target file through a folder linked in from outside the workspace",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linked-folder-" });
+        const root = path.join(directory, "workspace");
+        const outside = path.join(directory, "files");
+        yield* fs.makeDirectory(root);
+        yield* fs.makeDirectory(path.join(outside, "specs"), { recursive: true });
+        yield* fs.writeFileString(path.join(outside, "specs", "diagram.png"), "png bytes");
+        yield* fs.writeFileString(path.join(outside, "specs", "page.html"), "<p>page</p>");
+        yield* fs.writeFileString(path.join(outside, "specs", "style.css"), "p {}");
+        yield* fs.symlink(outside, path.join(root, "_files"));
+
+        for (const resource of [
+          {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "_files/specs/diagram.png",
+          },
+          { _tag: "draft-workspace-file", cwd: root, path: "_files/specs/diagram.png" },
+          {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "_files/specs/page.html",
+          },
         ] as const) {
-          yield* fs.symlink(target, path.join(root, name));
-          const error = yield* issueAssetUrl({
-            resource: { _tag: "draft-workspace-file", cwd: root, path: name },
-            workspaceRoot: root,
-          }).pipe(Effect.flip);
-          expect(["AssetWorkspaceAssetNotFoundError", "AssetPreviewTypeValidationError"]).toContain(
-            error._tag,
-          );
+          const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const token = suffix.slice(0, separator);
+          const fileName = path.basename(resource.path);
+          expect(yield* resolveAsset(token, fileName)).toMatchObject({
+            kind: "file",
+            path: yield* fs.realPath(path.join(outside, "specs", fileName)),
+          });
+          // The grant covers the one file, never its neighbours.
+          expect(yield* resolveAsset(token, "style.css")).toBeNull();
         }
       }).pipe(Effect.provide(layerTest)),
   );
@@ -707,6 +740,42 @@ describe("AssetAccess", () => {
         expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
       }
       expect(resolved).toEqual([path.resolve(`${share}/a.png`)]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Windows' native realpath fails with ENOENT on some removable drives (an exFAT USB
+  // drive) whose files Node can still stat, open and resolve with the JS realpath.
+  it.effect("previews a readable media file when the native realpath cannot resolve it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-no-native-realpath-" }),
+      );
+      const filePath = path.join(directory, "preview-test.jpg");
+      yield* fs.writeFileString(filePath, "media");
+      const nativeRealPathFails = FileSystem.FileSystem.of({
+        ...fs,
+        realPath: (requestedPath) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "realPath",
+              pathOrDescriptor: requestedPath,
+            }),
+          ),
+      });
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, nativeRealPathFails));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+          Effect.provideService(FileSystem.FileSystem, nativeRealPathFails),
+        ),
+      ).toMatchObject({ kind: "file", path: filePath });
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1136,7 +1205,8 @@ describe("AssetAccess", () => {
             target: path.join(reportsDirectory, ".cache", "hidden.css"),
             allowed: false,
           },
-          { name: "shared.css", target: path.join(root, "shared.css"), allowed: true },
+          { name: "shared.css", target: path.join(root, "shared.css"), allowed: false },
+          { name: "local.css", target: path.join(reportsDirectory, "real.css"), allowed: true },
         ];
         for (const { name, target } of dependencies) {
           yield* fs.writeFileString(target, "fixture");
@@ -1160,6 +1230,64 @@ describe("AssetAccess", () => {
             expect(resolved).toBeNull();
           }
         }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves an HTML preview's files from the page's own folder only",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const site = path.join(root, "site");
+        for (const directory of ["site/img", "src", "templates"]) {
+          yield* fs.makeDirectory(path.join(root, directory), { recursive: true });
+        }
+        for (const name of [
+          "site/page.html",
+          "site/app.js",
+          "site/img/logo.png",
+          "src/main.js",
+          "templates/page.html",
+        ]) {
+          yield* fs.writeFileString(path.join(root, name), "fixture");
+        }
+        yield* fs.symlink(path.join(root, "src", "main.js"), path.join(site, "main.js"));
+        yield* fs.symlink(path.join(root, "src"), path.join(site, "vendor"));
+        yield* fs.symlink(path.join(site, "app.js"), path.join(site, "alias.js"));
+        yield* fs.symlink(
+          path.join(root, "templates", "page.html"),
+          path.join(site, "linked.html"),
+        );
+
+        const tokenFor = Effect.fn(function* (entry: string) {
+          const result = yield* issueAssetUrl({
+            resource: {
+              _tag: "workspace-file",
+              threadId: ThreadId.make("thread-1"),
+              path: path.join(site, entry),
+            },
+            workspaceRoot: root,
+          });
+          const suffix = result.relativeUrl.slice(ASSET_ROUTE_PREFIX.length + 1);
+          return suffix.slice(0, suffix.indexOf("/"));
+        });
+        const token = yield* tokenFor("page.html");
+        for (const name of ["page.html", "app.js", "alias.js", "img/logo.png"]) {
+          expect(yield* resolveAsset(token, name), name).toMatchObject({ kind: "file" });
+        }
+        for (const name of ["main.js", "vendor/main.js", "linked.html"]) {
+          expect(yield* resolveAsset(token, name), name).toBeNull();
+        }
+
+        // The opened page may itself be a link; the files it loads still come from its folder.
+        const linkedToken = yield* tokenFor("linked.html");
+        expect(yield* resolveAsset(linkedToken, "linked.html")).toMatchObject({
+          path: yield* fs.realPath(path.join(root, "templates", "page.html")),
+        });
+        expect(yield* resolveAsset(linkedToken, "app.js")).toMatchObject({ kind: "file" });
+        expect(yield* resolveAsset(linkedToken, "main.js")).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1709,6 +1837,28 @@ describe("AssetAccess", () => {
       expect(
         yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
       ).toMatchObject({ kind: "file", path: attachmentPath, download: true });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ignores a client-named document type for image attachments", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000003";
+      const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFile(attachmentPath, screenshotPng);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "attachment", attachmentId, mimeType: "text/html" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: attachmentPath });
     }).pipe(Effect.provide(layerTest)),
   );
   it.effect("issues project favicon capabilities with a signed fallback", () =>

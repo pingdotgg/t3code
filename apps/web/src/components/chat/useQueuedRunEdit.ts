@@ -213,6 +213,7 @@ function useEditQueuedRunCommand() {
 export function useQueuedRunEdit(input: {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
+  readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly threadDraftTarget: ComposerThreadTarget;
   readonly activeThreadId: ThreadId | null;
   readonly serverProjection: ThreadStructure | null;
@@ -222,6 +223,7 @@ export function useQueuedRunEdit(input: {
   const {
     environmentId,
     routeThreadRef,
+    currentRouteThreadKeyRef,
     threadDraftTarget,
     activeThreadId,
     serverProjection,
@@ -230,6 +232,7 @@ export function useQueuedRunEdit(input: {
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
   const promoteQueuedRun = useAtomCommand(threadEnvironment.promoteQueuedRun);
+  const cancelQueuedRun = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -252,6 +255,17 @@ export function useQueuedRunEdit(input: {
       : attachmentContextIdsForRecord(editing.context, attachment).filter((contextId) =>
           originalReferencedContextIds!.has(contextId),
         );
+  // A stash entry holds only the draft, so it must hold everything a save would keep: thread and
+  // machine records and the referenced reply live in the draft; any other kept record does not.
+  const canMoveEditToStash =
+    editing !== null &&
+    editing.existingAttachments.length === 0 &&
+    (editing.context?.records ?? []).every(
+      (record) =>
+        isDraftOwnedRecord(record) ||
+        "attachmentId" in record ||
+        (record.kind === "response" && originalReferencedContextIds!.has(record.contextId)),
+    );
   const editingAttachments =
     editing === null
       ? null
@@ -274,7 +288,9 @@ export function useQueuedRunEdit(input: {
           }));
 
   const focusComposerSoon = () => {
-    window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
+    window.requestAnimationFrame(() => {
+      if (currentRouteThreadKeyRef.current === editKey) composerRef.current?.focusAtEnd();
+    });
   };
   const clearEditDraft = (runId: RunId) => {
     const target = queuedRunEditDraftId(routeThreadRef, runId);
@@ -392,6 +408,12 @@ export function useQueuedRunEdit(input: {
     clearEditDraft(editing.runId);
     queuedRunEdits.end(editKey);
     focusComposerSoon();
+  });
+  const removeEditedRun = useStableCallback(() => {
+    if (editing === null) return;
+    const { threadId, runId } = editing;
+    cancelEdit();
+    void cancelQueuedRun({ environmentId, input: { threadId, runId } });
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
     const removed = editing?.existingAttachments.find(
@@ -541,10 +563,12 @@ export function useQueuedRunEdit(input: {
     if (error !== null) return;
     if (changedAfterSave) return;
     releaseDraftAttachments(newAttachments);
-    promptRef.current = "";
     clearEditDraft(editing.runId);
-    composerRef.current?.resetCursorState();
-    focusComposerSoon();
+    if (currentRouteThreadKeyRef.current === editKey) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState();
+      focusComposerSoon();
+    }
     // A plain submit means "Update queued message"; only the opposite-action shortcut or
     // modifier-click asks to steer, as it does for a new follow-up.
     if (submission?.submissionIntent === "alternate" && submission.dispatchMode === "steer") {
@@ -561,6 +585,8 @@ export function useQueuedRunEdit(input: {
     removedEditingAttachments,
     beginEdit,
     cancelEdit,
+    canMoveEditToStash,
+    removeEditedRun,
     removeEditingAttachment,
     restoreEditingAttachment,
     saveEdit,

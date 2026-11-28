@@ -28,11 +28,11 @@ import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "./providerDriverMeta";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
@@ -318,25 +318,25 @@ function AcpRegistryAgentRow({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {aboutUrl ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    aria-label={gt("About {name}", { name: agent.name })}
-                    render={<a href={aboutUrl} target="_blank" rel="noreferrer" />}
-                  >
-                    <ExternalLinkIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup>
-                <T>
-                  About <Var>{agent.name}</Var>
-                </T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={gt("About {name}", { name: agent.name })}
+                  render={<a href={aboutUrl} target="_blank" rel="noreferrer" />}
+                >
+                  <ExternalLinkIcon />
+                </Button>
+              }
+              label={
+                <>
+                  <T>
+                    About <Var>{agent.name}</Var>
+                  </T>
+                </>
+              }
+            />
           ) : null}
           <Button
             aria-label={

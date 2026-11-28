@@ -10,12 +10,17 @@ describe("isJsonToolText", () => {
     ['[{"threadId":"thread-1"}]', true],
     ['{\n\n  "status": "completed"\n}', true],
     ['{\n  "count": 1\n}\n\n{\n  "count": 2\n}', true],
+    ['{"id":1}\n{"id":2}', true],
+    ['{"id":1}\n{"id":-9007199254740993}', true],
     ["false", true],
     ["null", true],
     ["42", true],
     ['"completed"', true],
     ['{"partial":', false],
     ['{"count":1}\n\nFinished.', false],
+    ['{"count":1}\nFinished.', false],
+    ['{"id":1}\n{"id":', false],
+    ["1\n2\n3", false],
     ["No output.", false],
     ["", false],
   ] as const)("classifies %j as JSON: %s", (text, expected) => {
@@ -120,18 +125,20 @@ describe("tool text output formatting", () => {
     '{"id":1}\n{"id":-9007199254740993}',
     '{"id":9.007199254740993e15}',
     '{"id":1e309}',
+    '{"ratio":1e-400}',
   ])("keeps %j as returned when parsing would change a number", (text) => {
     expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
   });
 
-  it.each(['{"id":42,"note":"12345678901234567890"}', '{"ratio":0.1234567890123456789}'])(
-    "still pretty-prints %j",
-    (text) => {
-      expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
-        JSON.stringify(JSON.parse(text), null, 2),
-      );
-    },
-  );
+  it.each([
+    '{"id":42,"note":"12345678901234567890"}',
+    '{"ratio":0.1234567890123456789}',
+    '{"ratio":0.00e-400}',
+  ])("still pretty-prints %j", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+      JSON.stringify(JSON.parse(text), null, 2),
+    );
+  });
 });
 
 describe("MCP app tool output", () => {

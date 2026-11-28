@@ -725,6 +725,21 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     distribution === "npx" && platform === "win32"
       ? packageInstallRoot(agent, distribution)
       : path.join(packageInstallRoot(agent, distribution), "bin");
+  const isSamePath = Effect.fn("AcpRegistryCatalog.isSamePath")(function* (
+    left: string,
+    right: string,
+  ) {
+    const normalize = (value: string) =>
+      platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (normalize(left) === normalize(right)) return true;
+    const leftReal = yield* fileSystem.realPath(left).pipe(Effect.option);
+    const rightReal = yield* fileSystem.realPath(right).pipe(Effect.option);
+    return (
+      Option.isSome(leftReal) &&
+      Option.isSome(rightReal) &&
+      normalize(leftReal.value) === normalize(rightReal.value)
+    );
+  });
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
   interface RegistryCacheState {
     readonly index: AcpRegistryIndex | undefined;
@@ -1386,6 +1401,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       agent: AcpRegistryAgent,
       packageSpec: string,
       managerPath: string,
+      managedPrefix: string,
       environment: NodeJS.ProcessEnv,
     ) {
       const packageIdentity = parseNpxPackageSpec(packageSpec);
@@ -1394,14 +1410,23 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed" as const,
       } as const;
-      const globalRoot = yield* runCommand(managerPath, ["root", "--global"], commandOptions).pipe(
-        Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)),
-      );
-      const globalPrefix = yield* runCommand(
+      const prefixArgs = ["--prefix", managedPrefix];
+      const globalRoot = yield* runCommand(
         managerPath,
-        ["prefix", "--global"],
+        ["root", "--global", ...prefixArgs],
         commandOptions,
       ).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
+      const globalPrefix = yield* runCommand(
+        managerPath,
+        ["prefix", "--global", ...prefixArgs],
+        commandOptions,
+      ).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
+      if (!(yield* isSamePath(globalPrefix, managedPrefix))) {
+        return yield* new AcpRegistryError({
+          reason: "install_failed",
+          detail: `'${managerPath}' reported global prefix ${globalPrefix} instead of T3's managed prefix ${managedPrefix}. It may be a shim that ignores --prefix; put a real npm first on PATH.`,
+        });
+      }
       const packageRoot = path.join(globalRoot, ...packageIdentity.name.split("/"));
       const manifestPath = path.join(packageRoot, "package.json");
       const manifestInfo = yield* fileSystem.stat(manifestPath).pipe(Effect.option);
@@ -1537,7 +1562,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
     const discover =
       distribution === "npx"
-        ? () => discoverNpmGlobalPackage(agent, packageSpec, managerPath, packageEnvironment)
+        ? () =>
+            discoverNpmGlobalPackage(
+              agent,
+              packageSpec,
+              managerPath,
+              packageRoot,
+              packageEnvironment,
+            )
         : () => discoverUvGlobalPackage(agent, packageSpec, managerPath, packageEnvironment);
     const existing = yield* discover();
     if (Option.isSome(existing)) {
@@ -1548,11 +1580,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
-      yield* runCommand(managerPath, ["install", "--global", packageSpec], {
-        env: installEnvironment,
-        timeout: PACKAGE_INSTALL_TIMEOUT,
-        truncatedOutputReason: "install_failed",
-      });
+      yield* runCommand(
+        managerPath,
+        ["install", "--global", packageSpec, "--prefix", packageRoot],
+        {
+          env: installEnvironment,
+          timeout: PACKAGE_INSTALL_TIMEOUT,
+          truncatedOutputReason: "install_failed",
+        },
+      );
     } else {
       yield* runCommand(managerPath, ["tool", "install", "--force", packageSpec], {
         env: installEnvironment,
@@ -1566,6 +1602,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         agent,
         packageSpec,
         managerPath,
+        packageRoot,
         packageEnvironment,
       );
       if (Option.isNone(installed)) {
