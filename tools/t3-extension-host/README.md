@@ -84,8 +84,8 @@ Optional files in `%APPDATA%\t3-extension-host\`:
 | `ignoreProjects` | `[]` | T3 project titles to ignore completely, e.g. `["No project"]` |
 | `reconnectDiscordSeconds` | `30` | Retry Discord automatically if it wasn't running when T3 started (`0` to disable) |
 | `discordClientId` | `null` | Application ID of your own Discord application. Discord shows that application's name (for example "T3 Code") instead of "Visual Studio Code". Language images keep working |
-| `discordLargeImages` | Moon, sparkle, speech bubble, `"language"` | Large image per mode (see below). `"language"` uses the file-type icon. Values are image links, or VS Code Discord Presence image names such as `"ts"` |
-| `discordSmallImage` | Round T3 Code logo on the same background color as that mode's large image (black while editing) | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
+| `discordLargeImages` | Moon, sparkle and speech bubble on black, in Discord Presence's style; `"language"` while editing | Large image per mode (see below). `"language"` uses the file-type icon. Values are image links, or VS Code Discord Presence image names such as `"ts"` |
+| `discordSmallImage` | Round T3 Code logo on black, matching the black large images | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
 | `discordSmallText` | `"T3 Code · {model}"` (`"T3 Code"` when idle) | Hover text of the small image: one text, or one per mode |
 | `discordLanguageImages` | `{}` | Your own file-type images, keyed by file extension (`".ts"`) or language ID (`"typescript"`). Files without an entry keep Discord Presence's icon |
 | `discordPresenceImages` | `discord-assets/presence` on the fork | Where the 205 Discord Presence images live, recolored onto black (file-type icons such as `ts`, `python`, `vue`). `""` uses Discord Presence's original colored versions |

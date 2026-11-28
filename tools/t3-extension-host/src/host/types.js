@@ -73,7 +73,8 @@ function decode(value) {
 
 class Uri {
   constructor(scheme, authority, uriPath, query, fragment) {
-    this.scheme = scheme;
+    if (scheme && typeof scheme === 'object') ({ scheme, authority, path: uriPath, query, fragment } = scheme);
+    this.scheme = scheme || 'file';
     this.authority = authority || '';
     this.path = uriPath || '/';
     this.query = query || '';

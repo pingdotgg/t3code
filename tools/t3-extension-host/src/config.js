@@ -56,9 +56,9 @@ const DEFAULTS = {
   reconnectDiscordSeconds: 30,
   discordClientId: null,
   discordSmallImage: {
-    idle: `${ASSETS_URL}/t3-circle-idle-512.png`,
-    working: `${ASSETS_URL}/t3-circle-working-512.png`,
-    waiting: `${ASSETS_URL}/t3-circle-waiting-512.png`,
+    idle: `${ASSETS_URL}/t3-circle-512.png`,
+    working: `${ASSETS_URL}/t3-circle-512.png`,
+    waiting: `${ASSETS_URL}/t3-circle-512.png`,
     editing: `${ASSETS_URL}/t3-circle-512.png`,
   },
   discordSmallText: {
@@ -68,9 +68,9 @@ const DEFAULTS = {
     editing: 'T3 Code · {model}',
   },
   discordLargeImages: {
-    idle: `${ASSETS_URL}/state-idle-512.png`,
-    working: `${ASSETS_URL}/state-working-512.png`,
-    waiting: `${ASSETS_URL}/state-waiting-512.png`,
+    idle: `${ASSETS_URL}/t3-idle.png`,
+    working: `${ASSETS_URL}/t3-working.png`,
+    waiting: `${ASSETS_URL}/t3-waiting.png`,
     editing: 'language',
   },
   discordLanguageImages: {},

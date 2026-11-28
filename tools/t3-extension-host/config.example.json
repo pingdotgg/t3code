@@ -18,17 +18,17 @@
   // Modes: idle, working, waiting (the agent needs your answer), editing. Only list what you change.
   // "language" uses the file-type icon; image names like "ts" use Discord Presence's images.
   "discordLargeImages": {
-    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-idle-512.png",
-    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-working-512.png",
-    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/state-waiting-512.png",
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-idle.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-working.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-waiting.png",
     "editing": "language"
   },
   // One image or text for every mode, or one per mode.
-  // The defaults match each large image's background color.
+  // The defaults use the black round T3 logo, matching the black large images.
   "discordSmallImage": {
-    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-idle-512.png",
-    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-working-512.png",
-    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-waiting-512.png",
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
     "editing": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png"
   },
   "discordSmallText": { "idle": "T3 Code", "working": "T3 Code · {model}", "waiting": "T3 Code · {model}", "editing": "T3 Code · {model}" },
