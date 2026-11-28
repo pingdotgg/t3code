@@ -14,6 +14,7 @@ import {
   type ModelSelection,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { Atom } from "effect/reactivity";
@@ -21,7 +22,7 @@ import { useState, type FormEvent } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { m } from "~/i18n/messages";
-import { getCustomModelOptionsByInstance } from "~/modelSelection";
+import { getCustomModelOptionsByInstance, selectsPlanAgent } from "~/modelSelection";
 import { providerInstanceEntriesFor } from "~/providerInstances";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { botFilesEnvironment } from "~/state/botFiles";
@@ -48,6 +49,7 @@ import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { TraitsPicker } from "./TraitsPicker";
 
 const newBotEnvironmentAtom = Atom.make<EnvironmentId | null>(null).pipe(
   Atom.keepAlive,
@@ -107,6 +109,7 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
   const shownInstanceId =
     selection?.instanceId ?? instanceEntries[0]?.instanceId ?? ("" as ProviderInstanceId);
   const shownModel = selection?.model ?? "";
+  const shownEntry = instanceEntries.find((entry) => entry.instanceId === shownInstanceId);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -232,18 +235,37 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
               <Label>
                 <T>Model</T>
               </Label>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={pending}
-                activeInstanceId={shownInstanceId}
-                model={shownModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) => setPicked({ instanceId, model })}
-              />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={pending}
+                  activeInstanceId={shownInstanceId}
+                  model={shownModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setPicked(createModelSelection(instanceId, model))
+                  }
+                />
+                {selection !== null && shownEntry !== undefined ? (
+                  <TraitsPicker
+                    provider={shownEntry.driverKind}
+                    models={shownEntry.models}
+                    model={shownModel}
+                    modelOptions={selection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    includePlanAgent={selectsPlanAgent(selection.options)}
+                    disabled={pending}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setPicked(createModelSelection(shownInstanceId, shownModel, options))
+                    }
+                  />
+                ) : null}
+              </div>
             </div>
             {error === null ? null : (
               <p className="text-destructive text-xs" role="alert">
