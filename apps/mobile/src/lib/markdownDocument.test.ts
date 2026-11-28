@@ -5,6 +5,7 @@ import {
   markdownForNativeRendering,
   markdownWithFileEmbeds,
   markdownWithTextDirection,
+  parseMarkdownDocument,
 } from "./markdownDocument";
 
 const BOM = "\uFEFF";
@@ -38,5 +39,22 @@ describe("a leading byte-order mark", () => {
       "Intro text\n\n| a | c |\n|---|---|\n| [./a|b.ts](<./a|b.ts>) | b |",
     );
     expect(render(`${BOM}${markdown}`)).toBe(`${BOM}${render(markdown)}`);
+  });
+});
+
+describe("single tildes", () => {
+  const prose = "Latency is around 10~20ms (about 80~90% faster), saved under com~apple~CloudDocs.";
+  const deletes = (markdown: string) =>
+    JSON.stringify(parseMarkdownDocument(markdown)).match(/"type":"delete"/g)?.length ?? 0;
+  const unescapedSingleTildes = /(?<![\\~])~(?!~)/;
+
+  it("do not parse as strikethrough", () => {
+    expect(deletes(prose)).toBe(0);
+    expect(deletes("Real ~~strike~~ here.")).toBe(1);
+  });
+
+  it("reach the native renderer escaped, so md4c cannot strike them", () => {
+    expect(render(prose)).not.toMatch(unescapedSingleTildes);
+    expect(render("Real ~~strike~~ here.")).toContain("~~strike~~");
   });
 });
