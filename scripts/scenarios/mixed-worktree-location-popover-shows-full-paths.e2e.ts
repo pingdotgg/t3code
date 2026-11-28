@@ -75,6 +75,8 @@ test(
       await browser.keyboard.press("Tab");
       await expect(value).toBeFocused();
       await shows("layer-value-focus");
+      // A value that fits gets neither a tooltip nor a tab stop.
+      await expect(browser.locator('li span:text-is("Empty")')).not.toHaveAttribute("tabindex");
     } finally {
       await server.stop();
     }
