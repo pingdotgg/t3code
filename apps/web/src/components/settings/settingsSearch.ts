@@ -313,7 +313,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-overview",
     title: msg("Project overview"),
     to: "/settings/projects",
-    searchTerms: [msg("name icon emoji image checkout remove delete")],
+    searchTerms: [
+      msg("Pin"),
+      msg("Pinned projects come first in project pickers."),
+      msg("name icon emoji image checkout remove delete"),
+    ],
   },
   {
     id: "default-model",
