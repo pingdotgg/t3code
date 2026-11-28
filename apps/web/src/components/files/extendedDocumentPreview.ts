@@ -81,6 +81,7 @@ async function odfHtml(
   inRepeatedRow = false,
   list: [string, number] = ["", 0],
   inOrderedList = false,
+  listEnds = new Map<string, number>(),
 ): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
@@ -157,6 +158,7 @@ async function odfHtml(
       repeatedRow,
       nextList,
       numberingLevel !== undefined,
+      listEnds,
     );
   const tags: Record<string, string> = {
     "text:p": "p",
@@ -178,8 +180,26 @@ async function odfHtml(
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
+  // A list split by a paragraph continues the one it names, or the last one in its style and level.
+  const styleKey = `${nextList[0]}\n${nextList[1]}`;
+  const continueKey =
+    node.attrs["text:continue-list"] ??
+    (node.attrs["text:continue-numbering"] === "true" ? styleKey : undefined);
+  const continuedFrom = numberingLevel && continueKey ? listEnds.get(continueKey) : undefined;
+  const start =
+    continuedFrom === undefined
+      ? odfListStart(tag === "li" && inOrderedList ? node : numberingLevel)
+      : continuedFrom + 1;
+  if (numberingLevel) {
+    let last = (start ?? 1) - 1;
+    for (const item of node.children)
+      if (item.name === "text:list-item") last = odfListStart(item) ?? last + 1;
+    listEnds.set(styleKey, last);
+    if (node.attrs["xml:id"]) listEnds.set(node.attrs["xml:id"], last);
+  }
   let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
+  const format = numberingLevel?.attrs["style:num-format"] ?? "";
+  if (/^[aAiI]$/.test(format)) attributes += ` type="${format}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [

@@ -789,17 +789,41 @@ Third}`;
     { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
     { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
     { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+    { styleStart: "3", itemStart: undefined, format: "I", expected: '<ol start="3" type="I"><li>' },
+    { styleStart: "1", itemStart: undefined, format: "a", expected: '<ol start="1" type="a"><li>' },
   ])(
     "keeps ODT list numbers for style start $styleStart and item start $itemStart",
-    async ({ styleStart, itemStart, expected }) => {
+    async ({ styleStart, itemStart, format = "1", expected }) => {
       const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
       const content =
         '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
-        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="${format}" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
         `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
       const result = await openDocument(new JSZip().file("content.xml", content), "odt");
       if (result.type !== "document") throw new Error("Expected document");
       expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
+
+  it.each([
+    { continued: 'text:continue-numbering="true"', expected: '<ol start="3">' },
+    { continued: 'text:continue-list="list1"', expected: '<ol start="3">' },
+    { continued: "", expected: "<ol>" },
+  ])(
+    "numbers a continued ODT list after the paragraph that splits it ($continued)",
+    async ({ continued, expected }) => {
+      // LibreOffice splits a numbered list around a plain paragraph and marks the second part as continued.
+      const list = (id: string, items: string[], attrs = "") =>
+        `<text:list xml:id="${id}" ${attrs} text:style-name="Steps">${items.map((item) => `<text:list-item><text:p>${item}</text:p></text:list-item>`).join("")}</text:list>`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">' +
+        '<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style></office:automatic-styles>' +
+        `<office:body><office:text>${list("list1", ["Review", "Send"])}<text:p>Wait for a reply.</text:p>${list("list2", ["Merge", "Deploy"], continued)}</office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(
+        `<ol><li><p>Review</p></li><li><p>Send</p></li></ol><p>Wait for a reply.</p>${expected}<li><p>Merge</p></li><li><p>Deploy</p></li></ol>`,
+      );
     },
   );
 

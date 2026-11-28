@@ -1496,11 +1496,13 @@ describe("document output sanitization", () => {
   it("preserves table content and raster data while removing scripts and network resources", () => {
     const wrapped = "data:image/png;base64,iVBORw0K\nGgo=\n";
     const html = sanitizeDocumentHtml(
-      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
+      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5" type="i"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.querySelector("td")?.textContent).toBe("Research");
-    expect(doc.querySelector("ol")?.outerHTML).toBe('<ol start="5"><li value="4">Step</li></ol>');
+    expect(doc.querySelector("ol")?.outerHTML).toBe(
+      '<ol start="5" type="i"><li value="4">Step</li></ol>',
+    );
     expect([...doc.images].map((image) => image.getAttribute("src"))).toEqual([
       "data:image/png;base64,iVBORw0KGgo=",
       wrapped.trim(),

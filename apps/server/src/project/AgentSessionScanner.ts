@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  trimAsciiWhitespace,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
@@ -2225,7 +2226,7 @@ export const make = Effect.gen(function* () {
         const head = (yield* readGitFiles([headPath])).get(headPath) ?? "";
         worktree = {
           path: resolved,
-          branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
+          branch: /^ref: refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(head))?.[1] ?? null,
         };
       }
       worktreesByDirectory.set(resolved, worktree);
