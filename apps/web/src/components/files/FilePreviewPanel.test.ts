@@ -180,12 +180,34 @@ describe("document preview contents", () => {
     [
       "nested table cells",
       String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
-      "Inner A\tInner B\t\t",
+      "Inner A\tInner B\t",
     ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
+  it("shows RTF footnotes after the page text", () => {
+    // LibreOffice Writer marks the footnote destination with \*; Word does not.
+    const libreOffice = String.raw`{\rtf1\ansi{\pard The north region}{{\super \chftn{\*\footnote \chftn\pard\plain \s24\fi-340\li340{
+\tab Hold the obsolete value apart.}
+}}
+}{
+ is ready.}
+\par }`;
+    const word = String.raw`{\rtf1\ansi\pard The shipment left.{\cs16\super \chftn }{\footnote \pard\plain \s15 {\cs16\super \chftn } Inspect the seals.} Finance booked revenue.\par}`;
+    const html = (source: string) => {
+      const result = openRtf(bytes(source));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages[0]!.html;
+    };
+    expect(html(libreOffice)).toBe(
+      "<p data-rtf-whitespace>The north region<sup>1</sup> is ready.<br></p><hr><p data-rtf-whitespace><sup>1</sup>\tHold the obsolete value apart.</p>",
+    );
+    expect(html(word)).toBe(
+      "<p data-rtf-whitespace>The shipment left.<sup>1</sup> Finance booked revenue.<br></p><hr><p data-rtf-whitespace><sup>1</sup> Inspect the seals.</p>",
+    );
   });
 
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
@@ -196,6 +218,42 @@ describe("document preview contents", () => {
       expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
+
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\pard Before table\par
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1\cell\row
+\pard After table\par
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before table<br>Item\tQuantity\t<br>Bolts\tFour\t<br>After table<br></p>",
+    );
+  });
+
+  it.each([
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
 
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
@@ -662,6 +720,42 @@ Third}`;
     ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
+  it("removes saved terminal cursor and erase sequences from notebook output", () => {
+    const result = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [
+                    "\u001b[?25lepoch 1\u001b[K\n",
+                    "\u001b[Aepoch 2\u001b[",
+                    "2K\u001b[?25h\n",
+                  ],
+                },
+                {
+                  output_type: "execute_result",
+                  data: { "text/plain": "\u001b[1Gready\u001b[0K" },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: "epoch 1\nepoch 2\n" },
+      { kind: "text", text: "ready" },
+    ]);
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",
@@ -694,16 +788,25 @@ Third}`;
   });
 
   it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const inlineShape =
+      '<draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Recount on Monday</text:p></draw:text-box></draw:frame>';
     const archive = new JSZip().file(
       "content.xml",
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
         '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
         '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        `<table:table-row><table:table-cell><text:p>Plums</text:p></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Low<text:s/><text:span>${inlineShape}stock</text:span></text:p></text:list-item></text:list></table:table-cell></table:table-row>` +
+        `<table:table-row><table:table-cell><text:p>Figs</text:p></table:table-cell><table:table-cell office:value-type="string" office:string-value="Available"><text:p>${inlineShape}</text:p><text:p>${inlineShape}</text:p></table:table-cell></table:table-row>` +
         "</table:table></office:spreadsheet></office:body></office:document-content>",
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
-    expect(result.sheets[0]!.rows).toEqual([["Apples", "42"], ["Pears"]]);
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Apples", "42"],
+      ["Pears"],
+      ["Plums", "Low stock"],
+      ["Figs", "Available"],
+    ]);
   });
 
   it("reads an ODS time cell that has no display paragraph", async () => {
@@ -761,6 +864,38 @@ Third}`;
       if (gap === 2) expect(result.sheets[0]!.rows[3]).toEqual(["", "", "Last"]);
     },
   );
+
+  it("hides ODS sheets whose table style sets table:display to false", async () => {
+    const ns =
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta1" style:family="table"><style:table-properties table:display="true"/></style:style>' +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '<style:style style:name="ta_extref" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        "</office:automatic-styles><office:body><office:spreadsheet>" +
+        '<table:table table:name="Summary" table:style-name="ta1"><table:table-row><table:table-cell><text:p>Visible</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Private" table:style-name="ta2"><table:table-row><table:table-cell><text:p>Secret</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Notes"><table:table-row><table:table-cell><text:p>Plain</text:p></table:table-cell></table:table-row></table:table>' +
+        `<table:table table:name="'file:///rates.ods'#Rates" table:style-name="ta_extref"><table:table-source table:mode="copy-results-only" table:table-name="Rates"/><table:table-row><table:table-cell><text:p>Cached</text:p></table:table-cell></table:table-row></table:table>` +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets.map((sheet) => sheet.name)).toEqual(["Summary", "Notes"]);
+    expect(result.sheets[0]!.rows).toEqual([["Visible"]]);
+    const hiddenOnly = new JSZip().file(
+      "content.xml",
+      `<office:document-content ${ns}><office:automatic-styles>` +
+        '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>' +
+        '</office:automatic-styles><office:body><office:spreadsheet><table:table table:name="Only" table:style-name="ta2"/></office:spreadsheet></office:body></office:document-content>',
+    );
+    await expect(openDocument(hiddenOnly, "ods")).rejects.toMatchObject({
+      _tag: "PreviewError",
+      code: "ods-sheet-count",
+    });
+  });
 
   const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
   const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
@@ -1045,7 +1180,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><center><p>Archive <strike>draft</strike> edition</p></center><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -1062,6 +1197,7 @@ Third}`;
     expect(first.html).toContain(
       '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
     );
+    expect(first.html).toContain("<center><p>Archive <strike>draft</strike> edition</p></center>");
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",

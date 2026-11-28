@@ -1319,22 +1319,6 @@ const make = Effect.gen(function* () {
         Effect.succeed({ keep: cleanupFailureReason(error), force: false, bytes: null }),
       ),
     );
-    const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
-          SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
-          FROM orchestration_v2_projection_threads t
-          JOIN projection_projects p ON p.project_id = t.project_id
-          WHERE t.deleted_at IS NOT NULL
-        `.pipe(NodeSqliteClient.readOnly);
-    const deletedThreads = (yield* Effect.forEach(deletedRows, (row) =>
-      decodeCleanupThread(row.payload_json).pipe(
-        Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
-      ),
-    )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
-    const snapshot = yield* readThreads();
-    const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
-    // Failures are cached too, so one broken repository costs one fetch per sweep.
-    const refreshedDefaultRefs = new Map<string, Map<string, Exit.Exit<void, GitCommandError>>>();
-    const defaultBranches = new Map<string, string | null>();
     // Threads may store one checkout through different symlinked spellings; compare real paths.
     // Keys are only compared, never opened, so they take pathKey's Windows case folding.
     const canonicalPaths = new Map<string, string>();
@@ -1347,6 +1331,36 @@ const make = Effect.gen(function* () {
       canonicalPaths.set(resolved, key);
       return key;
     });
+    const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
+          SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
+          FROM orchestration_v2_projection_threads t
+          JOIN projection_projects p ON p.project_id = t.project_id
+          WHERE t.deleted_at IS NOT NULL
+        `.pipe(NodeSqliteClient.readOnly);
+    // A deleted thread without a branch owns only a scratch folder; any other path is not its own.
+    const deletedThreads = yield* Effect.filter(
+      yield* Effect.forEach(deletedRows, (row) =>
+        decodeCleanupThread(row.payload_json).pipe(
+          Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
+        ),
+      ),
+      (thread) =>
+        thread.worktreePath === null
+          ? Effect.succeed(false)
+          : thread.branch !== null
+            ? Effect.succeed(true)
+            : canonical(thread.worktreePath).pipe(
+                Effect.map(
+                  (key) =>
+                    scratchRoot !== null && pathKey(path.dirname(key)) === pathKey(scratchRoot),
+                ),
+              ),
+    );
+    const snapshot = yield* readThreads();
+    const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
+    // Failures are cached too, so one broken repository costs one fetch per sweep.
+    const refreshedDefaultRefs = new Map<string, Map<string, Exit.Exit<void, GitCommandError>>>();
+    const defaultBranches = new Map<string, string | null>();
     // A cwd in a deleted folder cannot be resolved, so stored spellings are compared too.
     const occupies = Effect.fnUntraced(function* (
       worktreePaths: ReadonlyArray<string>,

@@ -132,7 +132,7 @@ describe("threadRepositoryScopes", () => {
     ]);
   });
 
-  it("names an unlabelled repository after its folder and handles Windows paths", () => {
+  it("names an unlabelled repository after its folder on Windows and POSIX", () => {
     const [repository] = threadRepositoryScopes({
       checkpointScopes: [
         scope("scope-root", "C:\\Work\\Wrapper"),
@@ -145,11 +145,55 @@ describe("threadRepositoryScopes", () => {
         checkpointScopes: [scope("scope-root", "C:\\work"), scope("scope-api", "D:\\api", {})],
       })[0],
     ).not.toHaveProperty("relativePath");
+    expect(
+      threadRepositoryScopes({
+        checkpointScopes: [
+          scope("scope-root", "/work/task"),
+          scope("scope-api", String.raw`/work/task\outside`, {}),
+        ],
+      })[0],
+    ).toMatchObject({ name: String.raw`task\outside` });
   });
 });
 
 describe("threadRepositorySections", () => {
   const changed = threadChangedRepositories({ checkpoints, checkpointScopes: scopes });
+
+  it("does not mistake a POSIX backslash for a task-folder separator", () => {
+    const sibling = String.raw`/work/task\outside`;
+    const child = "/work/task/outside";
+    const literalChild = String.raw`/work/task/\\repo`;
+    const sections = threadRepositorySections({
+      changed: [
+        {
+          scopeId: CheckpointScopeId.make("scope-sibling"),
+          name: "api",
+          cwd: sibling,
+          repositoryPath: sibling,
+        },
+        {
+          scopeId: CheckpointScopeId.make("scope-child"),
+          name: "api",
+          cwd: child,
+          repositoryPath: child,
+        },
+        {
+          scopeId: CheckpointScopeId.make("scope-literal-child"),
+          name: "repo",
+          cwd: literalChild,
+          repositoryPath: literalChild,
+        },
+      ],
+      pinned: [],
+      threadCwd: "/work/task",
+      showAll: false,
+      taskFolder: { root: "/work/task", repositories: [] },
+    });
+    expect(sections.visible).toEqual([
+      { key: child, name: "api", cwd: child, origin: "changed" },
+      { key: literalChild, name: "repo", cwd: literalChild, origin: "changed" },
+    ]);
+  });
 
   it("orders changed repositories by their latest turn, newest first", () => {
     expect(changed.map((entry) => entry.cwd)).toEqual([
@@ -411,13 +455,15 @@ describe("rewindFileRestore", () => {
 
 describe("isRelativePathInsideFolder", () => {
   it.each([
-    ["api", true],
-    ["..api", true],
-    ["../api", false],
-    ["..", false],
-    ["D:/api", false],
-  ])("%j is inside: %j", (relativePath, inside) => {
-    expect(isRelativePathInsideFolder(relativePath)).toBe(inside);
+    ["api", undefined, true],
+    ["..api", undefined, true],
+    ["../api", undefined, false],
+    ["..", undefined, false],
+    ["D:/api", undefined, false],
+    [String.raw`\\repo`, "/work/task", true],
+    [String.raw`\\repo`, String.raw`C:\work\task`, false],
+  ])("%j relative to %j is inside: %j", (relativePath, folder, inside) => {
+    expect(isRelativePathInsideFolder(relativePath, folder)).toBe(inside);
   });
 });
 
@@ -435,6 +481,26 @@ describe("worktree repository selection", () => {
       { repositoryPath: "/work/wrapper/web", name: "web", relativePath: "web" },
       { repositoryPath: "/work/wrapper/services/api", name: "api", relativePath: "services/api" },
       { repositoryPath: "/work/shared", name: "shared" },
+    ]);
+  });
+
+  it("does not mistake a POSIX backslash for a project-folder separator", () => {
+    const sibling = String.raw`/work/task\outside`;
+    const child = "/work/task/outside";
+    const literalChild = String.raw`/work/task/\\repo`;
+    expect(
+      worktreeRepositoryChoices({
+        projectRoot: "/work/task",
+        folders: [
+          { path: sibling, name: "api", state: "git" },
+          { path: child, name: "api", state: "git" },
+          { path: literalChild, name: "repo", state: "git" },
+        ],
+      }),
+    ).toEqual([
+      { repositoryPath: sibling, name: "api" },
+      { repositoryPath: child, name: "api", relativePath: "outside" },
+      { repositoryPath: literalChild, name: "repo", relativePath: String.raw`\\repo` },
     ]);
   });
 

@@ -25,6 +25,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -2070,7 +2071,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             parts.push({
               type: "image",
               base64Data: Buffer.from(bytes).toString("base64"),
-              mediaType: attachment.mimeType,
+              mediaType: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
             });
           }
         if (!parts.length) return yield* protocolError("Muse needs text or an image");

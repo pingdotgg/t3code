@@ -25,6 +25,7 @@ import {
   parseClaudeWorkflowRunHandles,
 } from "./claudeWorkflowProgress.ts";
 
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { pastedUrl } from "@t3tools/shared/oauthCallback";
 import {
@@ -3628,11 +3629,15 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     if (retainedBytes > input.pdfReservation.budget.remainingBytes) continue;
     input.pdfReservation.budget.pending.bytes += retainedBytes;
     input.pdfReservation.bytes += retainedBytes;
+    const sniffedMimeType = imageMimeTypeFromBytes(bytes);
     const block: ClaudeUserContentBlock = {
       type: "image",
       source: {
         type: "base64",
-        media_type: attachment.mimeType,
+        media_type:
+          sniffedMimeType !== null && isSupportedClaudeImageMimeType(sniffedMimeType)
+            ? sniffedMimeType
+            : attachment.mimeType,
         data: Buffer.from(bytes).toString("base64"),
       },
     };
