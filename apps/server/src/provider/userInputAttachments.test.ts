@@ -1154,18 +1154,17 @@ describe("question answer paths", () => {
           expected: ["Encoded question mark chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
         },
-        {
+        ...["My%20Book/book%201.opf", "./My%20Book/draft/../book%201.opf"].map((packagePath) => ({
           ext: "epub",
           parts: {
-            "META-INF/container.xml":
-              '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
+            "META-INF/container.xml": `<container><rootfile full-path="${packagePath}"/></container>`,
             "My Book/book 1.opf":
               '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
             "My Book/ch1.xhtml": "<html><p>Percent-encoded rootfile chapter text.</p></html>",
           },
           expected: ["Percent-encoded rootfile chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
-        },
+        })),
         {
           ext: "epub",
           parts: {
@@ -1554,6 +1553,31 @@ describe("question answer paths", () => {
           },
           expected: [],
           exact: "Default style combination",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x"><w:body>',
+              '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:t>Old routing</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="RetiredChild"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Emphasis"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>Visible run override</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Current"/></w:pPr><w:r><w:t>Current instructions</w:t></w:r></w:p>',
+              '<w:p><w:pPr><x:pStyle x:val="Retired"/></w:pPr><w:r><w:t>Extension style reference</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">',
+              '<w:style w:type="paragraph" w:styleId="Retired"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="RetiredChild"><w:basedOn w:val="Retired"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="Current"><w:rPr><x:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i/></w:rPr></w:style>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: ["Visible run override\nCurrent instructions\nExtension style reference"],
+          absent: ["Old routing", "Old badge rules"],
         },
         {
           ext: "docx",
