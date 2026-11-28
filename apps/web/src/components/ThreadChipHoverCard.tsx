@@ -75,6 +75,9 @@ export function ThreadChipHoverCard(props: {
           <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
         </div>
       ) : null}
+      {shell?.settledOverride === "settled" ? (
+        <div className="text-muted-foreground">{gt("Settled", { $context: "thread status" })}</div>
+      ) : null}
       {props.unreadable ? (
         <div className="flex min-w-0 items-start gap-2 text-warning">
           <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
