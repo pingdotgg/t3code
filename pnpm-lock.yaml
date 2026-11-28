@@ -1980,6 +1980,9 @@ importers:
       effect:
         specifier: 4.1.6
         version: 4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.6

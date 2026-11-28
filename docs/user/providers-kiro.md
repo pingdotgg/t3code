@@ -15,6 +15,10 @@ Run the [Kiro CLI](https://kiro.dev/docs/cli/) (V3 engine) in T3 Code with your 
 - **Models**: Listed from your signed-in Kiro account (defaults to `auto` unless your account/org sets another). Supported models expose a **Reasoning** effort selector.
 - **Custom agents**: Pick built-in agents (e.g. Spec, Plan) or user agents from `~/.kiro/agents` in the **Agent** selector next to the model (refresh provider after adding/removing agents). Project `.kiro/agents` are not listed yet. The thread's model takes precedence over an agent's `model` field.
 
+## Skills
+
+Kiro skills appear in the `/` and `$` menus, loaded from `~/.kiro/skills`, `.kiro/skills` in the thread's folder, and your Kiro account's cloud skills as Kiro last synced them to this machine. As in Kiro, a parent folder's `.kiro/skills` is not read, and a skill needs a valid `name` and a `description` in its `SKILL.md`. On a name collision, a project skill wins over `~/.kiro/skills`, which wins over a cloud skill.
+
 ## Permission modes
 
 - **Supervised**: Prompts for writes and commands, disables Kiro Autopilot, and asks you to review file changes at the end of a turn.
