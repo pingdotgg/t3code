@@ -104,6 +104,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
+import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -961,7 +962,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -1059,6 +1060,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
+  // Closing the picker from the shortcut skips Base UI's keyboard close, so it restores no focus itself.
+  const projectScopeReturnFocusRef = useRef<HTMLElement | null>(null);
+  const projectScopeEscapeFocusRef = useRef<HTMLElement | null>(null);
+  const projectScopeTriggerRef = useRef<HTMLButtonElement>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
@@ -3021,6 +3026,59 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       handleThreadContextMenu(threadRef, position, source, true),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the project filter with the shortcut dispatcher, so the composer yields a rebound chord, and with desktop menu actions forwarded from previews
+  useEffect(() => {
+    if (projectGroups.length === 0) return;
+    const toggleProjectFilter = () => {
+      if (!projectScopeMenuState.open) {
+        if (isMobile) setOpenMobile(true);
+        else if (!sidebarOpen) setSidebarOpen(true);
+        suppressNextScopeChangeRef.current = false;
+        projectScopeEscapeFocusRef.current = null;
+        const { activeElement } = document;
+        projectScopeReturnFocusRef.current =
+          activeElement instanceof HTMLElement && activeElement !== document.body
+            ? activeElement
+            : null;
+        dispatchProjectScopeMenu({ type: "open-changed", open: true });
+        return;
+      }
+      dispatchProjectScopeMenu({ type: "open-changed", open: false });
+      const returnFocus = projectScopeReturnFocusRef.current;
+      projectScopeReturnFocusRef.current = null;
+      // The mobile sheet stays open, so focus must stay inside it.
+      const target = !isMobile && returnFocus?.isConnected ? returnFocus : null;
+      target?.focus();
+      if (document.activeElement !== target) projectScopeTriggerRef.current?.focus();
+    };
+    const disposers = [
+      registerCommands(
+        {
+          "sidebar.projectFilter": (event) => {
+            if (event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) return false;
+            event.preventDefault();
+            event.stopPropagation();
+            toggleProjectFilter();
+          },
+        },
+        { context: () => threadShortcutContext(routeThreadRef) },
+      ),
+      registerMenuAction("sidebar.projectFilter", toggleProjectFilter),
+    ];
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [
+    isMobile,
+    projectGroups.length,
+    projectScopeMenuState.open,
+    projectScopeReturnFocusRef,
+    routeThreadRef,
+    setOpenMobile,
+    setSidebarOpen,
+    sidebarOpen,
+  ]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -3122,6 +3180,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? shortcutLabelForCommand(keybindings, "chat.newLocal")
       : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const projectScopeLabel =
+    scopedProjectGroups.length > 0
+      ? gt("Projects: {projects}", {
+          projects: scopedProjectGroups.map((project) => project.displayName).join(", "),
+        })
+      : gt("Projects");
+  const projectScopeShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.projectFilter");
   return (
     <SidebarFolderDrop>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -3142,6 +3207,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   open={projectScopeMenuState.open}
                   onOpenChange={(open, eventDetails) => {
                     if (eventDetails.isCanceled) return;
+                    // Only Escape hands the shortcut's saved focus target to finalFocus.
+                    projectScopeEscapeFocusRef.current =
+                      eventDetails.reason === "escape-key"
+                        ? projectScopeReturnFocusRef.current
+                        : null;
+                    projectScopeReturnFocusRef.current = null;
                     if (open) suppressNextScopeChangeRef.current = false;
                     dispatchProjectScopeMenu({ type: "open-changed", open });
                   }}
@@ -3173,16 +3244,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }}
                 >
                   <ComboboxTrigger
+                    ref={projectScopeTriggerRef}
                     render={
                       <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroups.length > 0
-                            ? gt("Projects: {projects}", {
-                                projects: scopedProjectGroups
-                                  .map((project) => project.displayName)
-                                  .join(", "),
+                        label={projectScopeLabel}
+                        tooltip={
+                          projectScopeShortcutLabel
+                            ? gt("{label} ({shortcut})", {
+                                label: projectScopeLabel,
+                                shortcut: projectScopeShortcutLabel,
                               })
-                            : gt("Projects")
+                            : projectScopeLabel
                         }
                       />
                     }
@@ -3226,7 +3298,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     align="start"
                     collisionAvoidance={{ side: "flip", align: "shift" }}
                     className="w-[min(18rem,var(--available-width))] overflow-hidden"
-                    finalFocus={(closeType) => closeType === "keyboard"}
+                    finalFocus={(closeType) => {
+                      const returnFocus = projectScopeEscapeFocusRef.current;
+                      projectScopeEscapeFocusRef.current = null;
+                      if (!returnFocus) return closeType === "keyboard";
+                      if (isMobile || !returnFocus.isConnected) {
+                        return projectScopeTriggerRef.current;
+                      }
+                      // Base UI would move focus into a non-tabbable target's first tabbable child.
+                      returnFocus.focus();
+                      return document.activeElement === returnFocus
+                        ? false
+                        : projectScopeTriggerRef.current;
+                    }}
                     render={<TooltipScrollDismissArea holdPositionOnExit />}
                   >
                     <ComboboxSearchInput
