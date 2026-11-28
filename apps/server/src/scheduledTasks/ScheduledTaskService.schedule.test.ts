@@ -401,13 +401,18 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
         latestRunId: limitedRun.id,
         usageLimitResetAt: "2026-07-01T09:12:00.000Z",
       } as never);
+      const nextRunAtOf = service
+        .list()
+        .pipe(
+          Effect.map(({ tasks }) =>
+            Date.parse(tasks.find((listed) => listed.id === task.id)?.nextRunAt ?? ""),
+          ),
+        );
+      const dueBeforeLimit = yield* nextRunAtOf;
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrences).toBe(0);
-      const limited = (yield* service.list()).tasks.find((listed) => listed.id === task.id);
-      expect(Date.parse(limited?.nextRunAt ?? "")).toBeGreaterThan(
-        Date.parse(raced?.nextRunAt ?? ""),
-      );
+      expect(yield* nextRunAtOf).toBeGreaterThan(dueBeforeLimit);
 
       // Switching the thread to another account lets the next occurrence send.
       yield* Ref.update(shell, (current) => ({

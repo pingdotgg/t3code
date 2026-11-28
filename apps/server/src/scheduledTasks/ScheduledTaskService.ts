@@ -899,8 +899,7 @@ export const layer = Layer.effect(
           shell?.status !== "failed" ||
           shell.lastErrorClass !== "usage_limit" ||
           shell.latestRunId === null ||
-          !shell.usageLimitResetAt ||
-          Date.parse(shell.usageLimitResetAt) <= DateTime.toEpochMillis(now)
+          !(Date.parse(shell.usageLimitResetAt ?? "") > DateTime.toEpochMillis(now))
         )
           return false;
         const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"]);
