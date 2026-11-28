@@ -864,6 +864,29 @@ describe("save file", () => {
   });
 });
 
+describe("workspace image previews", () => {
+  it("omits the word-wrap toggle on SVG image previews", async () => {
+    using _settings = setup();
+    const contents = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>';
+    state.file = {
+      relativePath: "icon.svg",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    state.assetUrl = {
+      _tag: "Success",
+      url: `data:image/svg+xml,${encodeURIComponent(contents)}`,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    await using screen = await render(filePreview("icon.svg"));
+    await expect.element(screen.getByRole("img", { name: "icon.svg" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /word wrap/i }))
+      .not.toBeInTheDocument();
+  });
+});
+
 describe("rendered Markdown select all", () => {
   it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();
