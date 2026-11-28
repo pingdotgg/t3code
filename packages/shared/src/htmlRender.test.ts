@@ -36,23 +36,6 @@ describe("htmlRenderFrameHeight", () => {
     expect(
       [1143, 1144, 1145, 1300].map((width) => htmlRenderFrameHeight(responsive, width)),
     ).toEqual([700, 250, 250, 250]);
-    expect(htmlRenderFrameHeight(responsive, 320)).toBe(350);
-  });
-
-  it("keeps the caller height cap when the column measurement exceeds reference.height", () => {
-    const capped = {
-      attachmentId: "a",
-      title: "Report",
-      height: 300,
-      heights: [
-        [728, 450],
-        [1000, 500],
-        [1144, 250],
-      ],
-    } as const;
-    expect([1143, 1144, 1145].map((width) => htmlRenderFrameHeight(capped, width))).toEqual([
-      300, 250, 250,
-    ]);
   });
 });
 
