@@ -160,6 +160,8 @@ interface HarnessOptions {
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly git?: Partial<GitManager.GitManager["Service"]>;
   readonly managedPolicy?: Parameters<typeof ServerSettings.layerTest>[1];
+  /** Call as an outside MCP client (OAuth), which has no calling thread. */
+  readonly external?: boolean;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -239,7 +241,23 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        options.external === true
+          ? {
+              ...invocation(capabilities),
+              requestNamespace: "client:session-1",
+              thread: undefined,
+              client: {
+                sessionId: "session-1",
+                label: "ChatGPT",
+                access: "full-access",
+                linked: false,
+                linkExpiresAt: undefined,
+              },
+            }
+          : invocation(capabilities),
+      ),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
@@ -984,6 +1002,32 @@ describe("source control tools", () => {
       });
       expect(asked).toMatchObject([
         { host: "dev.azure.com", repository: "contoso/project/_git/repo", number: 123 },
+      ]);
+    }),
+  );
+
+  it.effect("reads a PR and its CI logs for an outside MCP client with no calling thread", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        external: true,
+        thread: null,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+          checkLogs: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as([])),
+        },
+      });
+      const read = yield* harness.call("pull_request_read", {
+        repository: "T3Tools/T3Code",
+        number: 42,
+      });
+      expect(read).toMatchObject({ repository: "t3tools/t3code", number: 42 });
+      const logs = yield* harness.call("ci_logs", { repository: "T3Tools/T3Code", number: 42 });
+      expect(logs).toMatchObject({ number: 42, checks: [] });
+      expect(asked).toMatchObject([
+        { projectId: PROJECT_ID, repository: "t3tools/t3code", number: 42 },
+        { projectId: PROJECT_ID, repository: "t3tools/t3code", number: 42 },
       ]);
     }),
   );
