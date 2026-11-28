@@ -171,10 +171,11 @@ export function unloadedOlderSettledCount(input: {
   for (const scope of input.scopes) {
     const older = input.olderSettled(scope.environmentId);
     if (older === null) continue;
+    let scopeUnloaded = 0;
     if (scope.projectIds === null) {
-      for (const count of older.counts.values()) unloaded += count;
+      for (const count of older.counts.values()) scopeUnloaded += count;
     } else {
-      for (const projectId of scope.projectIds) unloaded += older.counts.get(projectId) ?? 0;
+      for (const projectId of scope.projectIds) scopeUnloaded += older.counts.get(projectId) ?? 0;
     }
     for (const thread of input.threads) {
       if (
@@ -182,11 +183,12 @@ export function unloadedOlderSettledCount(input: {
         (scope.projectIds === null || scope.projectIds.includes(thread.source.projectId)) &&
         isOlderSettledThreadShell(thread.source, older.beforeMs)
       ) {
-        unloaded -= 1;
+        scopeUnloaded -= 1;
       }
     }
+    unloaded += Math.max(0, scopeUnloaded);
   }
-  return Math.max(0, unloaded);
+  return unloaded;
 }
 
 /**

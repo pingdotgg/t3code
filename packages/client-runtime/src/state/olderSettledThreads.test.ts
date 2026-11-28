@@ -204,6 +204,22 @@ it("counts older threads the client does not hold, once", () => {
       ],
     }),
   ).toBe(18);
+  // A stale count on one environment cannot subtract from another environment's unloaded rows.
+  const otherEnvironment = EnvironmentId.make("env-b");
+  const staleAndCurrent = (id: EnvironmentId): OlderSettled => ({
+    ...older,
+    counts: id === environmentId ? new Map() : new Map([[other, 3]]),
+  });
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: staleAndCurrent,
+      scopes: [
+        { environmentId, projectIds: null },
+        { environmentId: otherEnvironment, projectIds: null },
+      ],
+      threads: [{ source: row("stale-old", { settledDay: 10 }), environmentId }],
+    }),
+  ).toBe(3);
 });
 
 describe("wantedOlderSettledPages", () => {
