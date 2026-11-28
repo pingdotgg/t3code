@@ -2006,7 +2006,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
   // an empty pending list and a finished reply above Stop.
   it.effect("settles a silent background command after the post-settle hold timeout", () =>
     Effect.gen(function* () {
-      const { command, offers, startTurn, until, throughPromptSettled } =
+      const { session, command, offers, startTurn, until, throughPromptSettled, runtimeDies } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
       const prompt = yield* throughPromptSettled;
@@ -2032,6 +2032,255 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.isTrue(
         commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
         "the silent command is no longer left as live activity on a settled run",
+      );
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "idle release must keep agy alive");
+      assert.isFalse(
+        yield* session.hasPendingBackgroundWork!,
+        "a pin the user cannot stop must not block provider switches",
+      );
+      yield* runtimeDies;
+      assert.isFalse(yield* session.keepsIdleSessionAlive!, "a dead runtime cannot wake");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("pins both silent commands and continues on their independent wakes", () =>
+    Effect.gen(function* () {
+      const commands = ["call_fetch", "call_tests"].map(
+        (toolCallId): EffectAcpSchema.SessionUpdate => ({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          kind: "execute",
+          title: `node ${toolCallId}.mjs`,
+          rawInput: { CommandLine: `node ${toolCallId}.mjs`, WaitMsBeforeAsync: 10000 },
+          status: "in_progress",
+        }),
+      );
+      const { session, offers, startTurn, send, usage, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: commands,
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      yield* TestClock.adjust("31 minutes");
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "both commands outlive the idle window");
+      assert.lengthOf(offers, 0, "elapsed time alone cannot start a continuation");
+
+      // The first wake has no task id. It must run without dropping either command's pin.
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The fetch finished." },
+      });
+      assert.lengthOf(offers, 1);
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_fetch",
+        status: "completed",
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(JSON.stringify(yield* throughTerminal), "The fetch finished.");
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the second command is still running");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_tests",
+        status: "failed",
+      });
+      assert.lengthOf(offers, 2);
+      yield* offers[1]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(3, true);
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The tests failed." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(JSON.stringify(yield* throughTerminal), "The tests failed.");
+      assert.isFalse(yield* session.keepsIdleSessionAlive!, "all command pins have cleared");
+      assert.lengthOf(offers, 2);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("releases the pin of a terminal-only command when its terminal exits", () =>
+    Effect.gen(function* () {
+      const { session, send, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the running terminal is pinned");
+
+      yield* send({
+        sessionUpdate: "terminal_update",
+        terminalId: "term_build",
+        exitStatus: { exitCode: 0 },
+      });
+      assert.isFalse(yield* session.keepsIdleSessionAlive!, "an exited terminal releases its pin");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("releases a terminal-only command's pin when a tool links the terminal later", () =>
+    Effect.gen(function* () {
+      const { session, send, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the running terminal is pinned");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_build",
+        kind: "execute",
+        title: "make build",
+        status: "in_progress",
+        content: [{ type: "terminal", terminalId: "term_build" }],
+      });
+      yield* send({
+        sessionUpdate: "terminal_update",
+        terminalId: "term_build",
+        exitStatus: { exitCode: 0 },
+      });
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a later link must not keep the synthetic command's pin",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("releases a linked command's pin when its terminal exits without a tool status", () =>
+    Effect.gen(function* () {
+      const { session, send, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              rawInput: { CommandLine: "make build", WaitMsBeforeAsync: 10000 },
+              status: "in_progress",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the linked command is pinned");
+
+      yield* send({
+        sessionUpdate: "terminal_update",
+        terminalId: "term_build",
+        exitStatus: { exitCode: 0 },
+      });
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "the command's only terminal has exited",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not pin a linked command whose terminal already exited", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              rawInput: { CommandLine: "make build", WaitMsBeforeAsync: 10000 },
+              status: "in_progress",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+            {
+              sessionUpdate: "terminal_update",
+              terminalId: "term_build",
+              exitStatus: { exitCode: 0 },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a command whose terminal exited is not left running",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("drops command pins when the inactivity watchdog retires the agent", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, until, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the running command is pinned");
+
+      // The next prompt never answers, so the watchdog quarantines this agent for a restart.
+      yield* startTurn(2, false);
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a retired agent cannot deliver the command's wake",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not pin a terminal-only command whose terminal exited after a late link", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+            {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              status: "completed",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            {
+              sessionUpdate: "terminal_update",
+              terminalId: "term_build",
+              exitStatus: { exitCode: 0 },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "the synthetic command's terminal exited before the hold expired",
       );
     }).pipe(Effect.provide(layerSession)),
   );

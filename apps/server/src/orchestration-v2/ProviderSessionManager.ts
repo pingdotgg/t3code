@@ -1696,6 +1696,11 @@ export const layerWithOptions = (
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 )) ||
+            (probedRuntime.keepsIdleSessionAlive === undefined
+              ? false
+              : yield* probedRuntime.keepsIdleSessionAlive.pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                )) ||
             // Closing now would skip the archive of a child whose parent has not taken its result.
             Option.isSome(
               yield* Effect.findFirst(entry.idleThreadUnloads.values(), ({ threadId }) =>
