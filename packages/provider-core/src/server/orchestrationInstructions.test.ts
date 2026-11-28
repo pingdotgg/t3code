@@ -35,7 +35,7 @@ describe("T3 device instructions", () => {
     // agent-device's DEVICE_IN_USE advice is to rerun with the owner's --session or close it first.
     assert.include(
       T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-      "follow its advice once, but never reuse or close another session; if it still fails,",
+      "follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails,",
     );
   });
 
@@ -96,5 +96,12 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+    const withProxy = t3AcpPromptWithInstructions({
+      prompt: "Render a chart.",
+      state: { ...state, toolExposure: "deferred-proxy" },
+    });
+    assert.include(withProxy, "including `delegate_task`");
+    assert.include(withProxy, "tool_call({ name, arguments })");
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "tool_call(");
   });
 });

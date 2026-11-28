@@ -89,8 +89,17 @@ export async function connectLinkedEnvironment(options: {
   if (pairing === null) return { type: "manual", label: options.label, host: null };
   const { label, urls } = pairing;
   // Asked together, taken in the linking environment's order of preference.
-  const answers = await Promise.all(urls.map((url) => options.reaches(url)));
-  const host = urls.find((_, index) => answers[index]) ?? null;
+  const probes = urls.map((url) =>
+    options.reaches(url).then(
+      (reached) => (reached ? url : null),
+      () => null,
+    ),
+  );
+  let host: string | null = null;
+  for (const probe of probes) {
+    host = await probe;
+    if (host !== null) break;
+  }
   if (pairing.type === "unsupported") {
     return { type: "manual", label, host: host ?? urls[0] ?? null };
   }

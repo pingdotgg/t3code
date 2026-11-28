@@ -34,6 +34,8 @@ export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttach
   readonly previewUri: string;
   readonly fileUri?: string;
   readonly dataUrl?: string;
+  /** Every paste is stored under a new file name, so only this tells a repeated paste apart. */
+  readonly contentDigest?: string;
   readonly uploadedAttachmentId?: string;
   readonly uploadEnvironmentId?: EnvironmentId;
 }
@@ -148,7 +150,13 @@ export async function persistComposerAttachmentFile(
   const { Directory, File, FileMode, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
-  const destination = new File(directory, `${uuidv4()}-${safeComposerAttachmentName(name)}`);
+  const prefix = `${uuidv4()}-`;
+  // The basename is ASCII. Keep its tail for the extension within the 255-byte filesystem limit.
+  const nameBudget = 255 - prefix.length;
+  const destination = new File(
+    directory,
+    prefix + safeComposerAttachmentName(name).slice(-nameBudget),
+  );
   const source = new File(uri);
   const sourceSize = source.size;
   if (
@@ -225,6 +233,7 @@ async function ownedComposerImageAttachment(input: {
   readonly fileUri: string;
   readonly name: string;
   readonly mimeType: string;
+  readonly contentDigest?: string;
 }): Promise<DraftComposerImageAttachment> {
   try {
     const { File } = await import("expo-file-system");
@@ -686,12 +695,16 @@ export async function convertPastedImagesToAttachments(input: {
         continue;
       }
       const name = `pasted-image.${mimeType.split("/")[1] ?? "png"}`;
+      const { CryptoDigestAlgorithm, digestStringAsync } = await import("expo-crypto");
+      const contentDigest = await digestStringAsync(CryptoDigestAlgorithm.SHA256, base64);
       const fileUri = await persistComposerAttachmentFile(
         sourceUri,
         name,
         PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
       );
-      attachments.push(await ownedComposerImageAttachment({ fileUri, name, mimeType }));
+      attachments.push(
+        await ownedComposerImageAttachment({ fileUri, name, mimeType, contentDigest }),
+      );
     } catch (cause) {
       console.warn("Failed to read pasted image", uri, cause);
       error = m(msg("Could not read a pasted image."));

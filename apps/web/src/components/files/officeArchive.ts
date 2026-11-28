@@ -1,7 +1,9 @@
+import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import JSZip from "jszip";
 import { checkZipDirectory } from "@t3tools/client-runtime/zip/directory";
 import { SaxesParser } from "saxes";
 import { externalUrl } from "./office/links";
+import { columnDigitWidth } from "./office/sheet-sizing";
 
 import {
   OFFICE_PREVIEW_MAX_BYTES,
@@ -44,7 +46,7 @@ function xmlParser() {
   return parser;
 }
 
-function officeXmlDecoder(bytes: Uint8Array) {
+export function officeXmlDecoder(bytes: Uint8Array) {
   if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0x3c && bytes[1] === 0))
     return new TextDecoder("utf-16le");
   if ((bytes[0] === 0xfe && bytes[1] === 0xff) || (bytes[0] === 0 && bytes[1] === 0x3c))
@@ -260,13 +262,7 @@ function boundedWorksheet(
     }
   >();
   let dataStart = 0;
-  let dataTag = 0;
-  let dataPrefix = "";
-  let dataNamespace = "";
   let dataEnd = 0;
-  let defaultWidth: number | undefined;
-  let gridlines: boolean | undefined;
-  const sizedColumns: { min: number; max: number }[] = [];
   let emptyData = false;
   let depth = 0;
   let row = 0;
@@ -317,34 +313,8 @@ function boundedWorksheet(
           hidden: attribute("hidden"),
         },
       );
-    // The engine draws gridlines on every sheet, so the first view's choice travels beside the bytes.
-    if (depth === 3 && tag.local === "sheetView" && gridlines === undefined) {
-      const shown = attribute("showGridLines");
-      gridlines = shown !== "0" && shown !== "false";
-    }
-    if (depth === 2 && tag.local === "sheetFormatPr") {
-      const width = Number(attribute("defaultColWidth") ?? Number.NaN);
-      if (width >= 0 && width <= 255) defaultWidth = width;
-    }
-    if (depth === 3 && tag.local === "col") {
-      const hidden = attribute("hidden");
-      const min = Number(attribute("min") ?? 1);
-      const max = Number(attribute("max") ?? min);
-      if (
-        (attribute("width") !== undefined || hidden === "1" || hidden === "true") &&
-        Number.isInteger(min) &&
-        Number.isInteger(max)
-      )
-        sizedColumns.push({ min, max });
-    }
     if (depth === 2 && tag.local === "sheetData") {
       dataStart = parser.position;
-      dataTag = xml.lastIndexOf("<", parser.position - 1);
-      dataPrefix = tag.prefix ? `${tag.prefix}:` : "";
-      dataNamespace = tag.uri
-        .replaceAll("&", "&amp;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("<", "&lt;");
       emptyData = tag.isSelfClosing;
     }
     // A dimension past the limits loses nothing by itself; the cells past them say whether content is lost.
@@ -411,7 +381,11 @@ function boundedWorksheet(
       const end = cell.selfClosing ? cell.start : xml.lastIndexOf("<", parser.position - 1);
       const raw = cell.opening + xml.slice(cell.start, end) + `</${cell.name}>`;
       const shown = cell.shared ? (strings[Number(cell.value)] ?? "") : cell.text || cell.value;
-      const kept = shown.slice(0, Math.min(4096, budget.remaining));
+      let limit = Math.min(4096, budget.remaining);
+      const before = shown.charCodeAt(limit - 1);
+      const after = shown.charCodeAt(limit);
+      if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) limit--;
+      const kept = shown.slice(0, limit);
       budget.remaining -= kept.length;
       if (kept.length < shown.length) {
         truncated = true;
@@ -485,28 +459,10 @@ function boundedWorksheet(
         return tag;
       },
     );
-  // The engine sizes columns without a width at Excel's 8.43 characters and ignores `defaultColWidth`, so the
-  // columns it covers get that width spelled out. A second `<cols>` is valid: the schema allows any number.
-  let defaultColumns = "";
-  if (defaultWidth !== undefined) {
-    let next = 1;
-    for (const span of sizedColumns.toSorted((a, b) => a.min - b.min)) {
-      if (span.min > next)
-        defaultColumns += `<${dataPrefix}col min="${next}" max="${Math.min(span.min - 1, OFFICE_PREVIEW_MAX_COLUMNS)}" width="${defaultWidth}"/>`;
-      next = Math.max(next, span.max + 1);
-      if (next > OFFICE_PREVIEW_MAX_COLUMNS) break;
-    }
-    if (next <= OFFICE_PREVIEW_MAX_COLUMNS)
-      defaultColumns += `<${dataPrefix}col min="${next}" max="${OFFICE_PREVIEW_MAX_COLUMNS}" width="${defaultWidth}"/>`;
-    if (defaultColumns)
-      defaultColumns = `<${dataPrefix}cols xmlns${dataPrefix ? `:${dataPrefix.slice(0, -1)}` : ""}="${dataNamespace}">${defaultColumns}</${dataPrefix}cols>`;
-  }
-  const head = (part: string) =>
-    metadata(part.slice(0, dataTag) + defaultColumns + part.slice(dataTag));
   return {
     xml: emptyData
-      ? head(xml)
-      : `${head(xml.slice(0, dataStart))}${[...rows]
+      ? metadata(xml)
+      : `${metadata(xml.slice(0, dataStart))}${[...rows]
           .sort(([a], [b]) => a - b)
           .map(
             ([line, values]) =>
@@ -517,74 +473,51 @@ function boundedWorksheet(
           )
           .join("")}${metadata(xml.slice(dataEnd))}`,
     truncated,
-    gridlines: gridlines ?? true,
   };
 }
 
-/**
- * A stylesheet as Excel reads it, in the terms the engine understands. The engine takes a number format id under 164 as
- * Excel's built-in one, though workbooks define their own there (Excel writes its locale formats 5 to 8 that way), so
- * those move to free ids. It also reads `<u val="…">` as a boolean, which loses every named underline but the bare one.
- */
-function engineStyles(xml: string) {
-  const name = (local: string) => `<((?:[\\w.-]+:)?)${local}\\b`;
-  const blocks = new Map<string, { start: number; end: number }>();
+function workbookColumnDigitWidth(xml: string) {
+  const blocks = new Set<string>();
+  const fonts: { family?: string; points?: number }[] = [];
+  let fontId: number | undefined;
+  let section: string | undefined;
   const parser = xmlParser();
   let depth = 0;
   parser.on("opentag", (tag) => {
     if (++depth > 64) throw new PreviewError({ code: "workbook-xml-nesting" });
-    if (depth !== 2 || !["numFmts", "cellStyleXfs", "cellXfs"].includes(tag.local)) return;
-    if (blocks.has(tag.local)) throw new PreviewError({ code: "workbook-duplicate-styles" });
-    blocks.set(tag.local, {
-      start: xml.lastIndexOf("<", parser.position - 1),
-      end: parser.position,
-    });
-  });
-  parser.on("closetag", (tag) => {
     if (depth === 2) {
-      const block = blocks.get(tag.local);
-      if (block) block.end = parser.position;
+      section = tag.local;
+      if (["numFmts", "cellStyleXfs", "cellXfs"].includes(section)) {
+        if (blocks.has(section)) throw new PreviewError({ code: "workbook-duplicate-styles" });
+        blocks.add(section);
+      }
     }
+    if (section === "fonts") {
+      if (depth === 3 && tag.local === "font") fonts.push({});
+      const font = fonts.at(-1);
+      if (depth === 4 && font) {
+        const value = tag.attributes.val?.value;
+        if (tag.local === "name" && value !== undefined)
+          font.family = value.replace(/_x([a-f0-9]{4})_/gi, (_, code) =>
+            String.fromCharCode(Number.parseInt(code, 16)),
+          );
+        if (tag.local === "sz") font.points = Number(value);
+      }
+    }
+    if (depth === 3 && section === "cellXfs" && tag.local === "xf" && fontId === undefined) {
+      const apply = tag.attributes.applyFont?.value;
+      fontId =
+        apply === undefined || ["1", "true", "on"].includes(apply)
+          ? Number(tag.attributes.fontId?.value)
+          : 0;
+    }
+  });
+  parser.on("closetag", () => {
     depth--;
   });
   parser.write(xml).close();
-  const id = /(numFmtId\s*=\s*)(["'])(\d+)\2/g;
-  const moved = new Map<number, number>();
-  const formatBlock = blocks.get("numFmts");
-  const formats = formatBlock ? xml.slice(formatBlock.start, formatBlock.end) : "";
-  const used = new Set([...formats.matchAll(id)].map((match) => Number(match[3])));
-  let next = 164;
-  const renumber = (part: string, assign: boolean) =>
-    part.replace(id, (attribute: string, key: string, quote: string, value: string) => {
-      const number = Number(value);
-      if (assign && number < 164 && !moved.has(number)) {
-        while (used.has(next)) next++;
-        if (next > 65535) throw new PreviewError({ code: "workbook-number-formats" });
-        moved.set(number, next++);
-      }
-      const to = moved.get(number);
-      return to === undefined ? attribute : `${key}${quote}${to}${quote}`;
-    });
-  const numberedFormats = renumber(formats, true);
-  const parts: string[] = [];
-  let offset = 0;
-  for (const [local, block] of blocks) {
-    parts.push(
-      xml.slice(offset, block.start),
-      local === "numFmts" ? numberedFormats : renumber(xml.slice(block.start, block.end), false),
-    );
-    offset = block.end;
-  }
-  parts.push(xml.slice(offset));
-  return parts
-    .join("")
-    .replace(
-      new RegExp(
-        `${name("u")}\\s+val\\s*=\\s*(["'])(?:single|double|singleAccounting|doubleAccounting)\\2\\s*(?:/>|>\\s*</\\1u\\s*>)`,
-        "g",
-      ),
-      "<$1u/>",
-    );
+  const font = fonts[fontId ?? 0] ?? fonts[0];
+  return columnDigitWidth(font?.family, font?.points);
 }
 
 async function boundWorkbook(archive: JSZip) {
@@ -598,10 +531,16 @@ async function boundWorkbook(archive: JSZip) {
   relationships.on("opentag", (tag) => {
     if (tag.local !== "Relationship") return;
     const type = tag.attributes.Type?.value;
-    const path = new URL(
-      tag.attributes.Target?.value ?? "",
-      "https://docx.invalid/xl/workbook.xml",
-    ).pathname.slice(1);
+    const target = tag.attributes.Target?.value ?? "";
+    // Resolve as the engine does: literal ZIP names split on `/`, never URL syntax or escapes.
+    const segments = target.startsWith("/") ? [] : ["xl"];
+    for (const segment of target.split("/")) {
+      if (segment === "..") segments.pop();
+      else if (segment && segment !== ".") segments.push(segment);
+    }
+    const external = tag.attributes.TargetMode?.value.toLowerCase() === "external";
+    // The engine reads an external worksheet from its default part, so leave it unresolved to refuse it.
+    const path = external && type?.endsWith("/worksheet") ? "" : segments.join("/");
     if (type?.endsWith("/worksheet")) paths.set(tag.attributes.Id?.value ?? "", path);
     else if (/\/(?:chartsheet|dialogsheet|xlMacrosheet|xlIntlMacrosheet)$/.test(type ?? ""))
       otherSheets.add(tag.attributes.Id?.value ?? "");
@@ -613,21 +552,15 @@ async function boundWorkbook(archive: JSZip) {
     .write((await archive.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "")
     .close();
   const sheetPaths: string[] = [];
-  // Every sheet in workbook order, as the engine indexes them; chart sheets have no worksheet path.
-  const sheetOrder: (string | undefined)[] = [];
   const workbook = xmlParser();
   workbook.on("opentag", (tag) => {
     if (tag.local !== "sheet") return;
     const id = Object.values(tag.attributes).find((attribute) => attribute.local === "id")?.value;
-    if (otherSheets.has(id ?? "")) {
-      sheetOrder.push(undefined);
-      return;
-    }
+    if (otherSheets.has(id ?? "")) return;
     const path = paths.get(id ?? "");
     if (!path || sheetPaths.length === 100)
       throw new PreviewError({ code: "workbook-sheet-count" });
     sheetPaths.push(path);
-    sheetOrder.push(path);
   });
   workbook.write((await archive.file("xl/workbook.xml")?.async("string")) ?? "").close();
   const theme = (await archive.file(themePath)?.async("string")) ?? "";
@@ -640,7 +573,7 @@ async function boundWorkbook(archive: JSZip) {
     minor: typeface("minorFont", "Calibri"),
   };
   const styles = await archive.file(stylesPath)?.async("string");
-  if (styles) archive.file(stylesPath, engineStyles(styles));
+  const digitWidth = styles ? workbookColumnDigitWidth(styles) : columnDigitWidth();
   const strings: string[] = [];
   const shared = await archive.file(sharedPath)?.async("string");
   if (shared) {
@@ -663,19 +596,17 @@ async function boundWorkbook(archive: JSZip) {
     parser.write(shared).close();
   }
   const budget = { remaining: 1024 * 1024, cells: 0 };
-  const bounded = new Map<string, { truncated: boolean; gridlines: boolean }>();
+  let truncated = false;
   for (const path of new Set(sheetPaths)) {
     const file = archive.file(path);
     if (!file) throw new PreviewError({ code: "workbook-missing-sheet" });
     const sheet = boundedWorksheet(await file.async("string"), strings, budget);
     archive.file(path, sheet.xml);
-    bounded.set(path, sheet);
+    truncated ||= sheet.truncated;
   }
   return {
-    sheets: sheetOrder.map(
-      (path) => (path && bounded.get(path)) || { truncated: false, gridlines: true },
-    ),
-    themeFonts,
+    truncated,
+    view: { themeFonts, digitWidth },
   };
 }
 
@@ -715,6 +646,11 @@ function wordPartTypes() {
   return {
     roles,
     relationships,
+    svg(path: string) {
+      if (path === "[Content_Types].xml" || path.endsWith(".rels")) return false;
+      const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
+      return /^image\/svg\+xml$/i.test(overrides.get(path) ?? defaults.get(extension) ?? "");
+    },
     binary(path: string) {
       const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
       const type = overrides.get(path) ?? defaults.get(extension) ?? "";
@@ -755,13 +691,13 @@ function wordPartTypes() {
         const external =
           attr("TargetMode").toLowerCase() === "external" ||
           /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(attr("Target"));
-        const folder = path === "_rels/.rels" ? "" : path.replace(/_rels\/[^/]+\.rels$/, "");
-        // Preserve archive URL resolution, including literal query/fragment
-        // characters in ZIP names rather than silently classifying another file.
-        const target = new URL(attr("Target"), `https://docx.invalid/${folder}`)
-          .toString()
-          .slice("https://docx.invalid/".length);
         if (!external) {
+          const folder = path === "_rels/.rels" ? "" : path.replace(/_rels\/[^/]+\.rels$/, "");
+          // Preserve archive URL resolution, including literal query/fragment
+          // characters in ZIP names rather than silently classifying another file.
+          const target = new URL(attr("Target"), `https://docx.invalid/${folder}`)
+            .toString()
+            .slice("https://docx.invalid/".length);
           if (
             !WORD_BINARY_PARTS.has(role) &&
             role !== "hyperlink" &&
@@ -1026,7 +962,13 @@ async function wordExpansion(
       }
       if (tag.local === "altChunk") cost.bytes = Infinity;
       if (tag.local !== "blip" && tag.local !== "imagedata") return;
-      const target = parts.relationships.get(path)?.get(attr("embed") || attr("id"));
+      // VML imagedata also carries an unprefixed shape `id`; only `r:id` names the relationship.
+      const relId =
+        attr("embed") ||
+        Object.values(tag.attributes).find(
+          (a) => a.local === "id" && a.uri === WORD_RELATIONSHIP.slice(0, -1),
+        )?.value;
+      const target = parts.relationships.get(path)?.get(relId ?? "");
       if (target) {
         cost.media += mediaSizes.get(target) ?? OFFICE_PREVIEW_MAX_BYTES + 1;
         cost.images.add(target);
@@ -1135,17 +1077,24 @@ async function wordExpansion(
 
 // Stream each entry before handing it to an engine. A tiny compressed archive
 // must not turn into an unbounded allocation on the UI thread.
-export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
+export async function boundedArchive(
+  input: Extract<OfficeWorkerRequest, { type: "open" }>,
+  password?: string,
+) {
   const { bytes } = input;
   const spreadsheet = input.kind === "xlsx";
+  const openDocument = input.kind === "odt" || input.kind === "ods" || input.kind === "odp";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new PreviewError({ code: "file-too-large" });
-  checkZipDirectory(bytes);
-  const source = await JSZip.loadAsync(bytes).catch(() => {
-    throw new PreviewError({ code: "office-invalid" });
-  });
+  const entryLimit = input.kind === "epub" ? 8192 : 2048;
+  const { encrypted } = checkZipDirectory(bytes, entryLimit);
+  const source = encrypted
+    ? await readEncryptedOfficeArchive(bytes, entryLimit, password)
+    : await JSZip.loadAsync(bytes).catch(() => {
+        throw new PreviewError({ code: "office-invalid" });
+      });
   const allEntries = Object.values(source.files);
-  if (allEntries.length > 2048) throw new PreviewError({ code: "office-too-many-entries" });
+  if (allEntries.length > entryLimit) throw new PreviewError({ code: "office-too-many-entries" });
   const entries = allEntries.filter((entry) => !entry.dir);
   if (
     input.kind === "docx" &&
@@ -1170,6 +1119,7 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
   for (const entry of entries) {
     const document = input.kind === "docx" && entry.name === "word/document.xml";
     const media = input.kind === "docx" && partTypes.binary(entry.name);
+    const isXmlEntry = entry.name.toLowerCase().endsWith(".xml");
     const chunks: Uint8Array[] = [];
     const sections = document ? wordSections() : null;
     let decoder: TextDecoder | undefined;
@@ -1223,7 +1173,7 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
             total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES) ||
             (spreadsheet && total > Math.max(bytes.byteLength * 200, 8 * 1024 * 1024)) ||
             (!document &&
-              (spreadsheet || media || entry.name.endsWith(".xml")) &&
+              (spreadsheet || media || isXmlEntry) &&
               length > (spreadsheet ? 64 * 1024 * 1024 : 8 * 1024 * 1024))
           ) {
             stream.pause();
@@ -1269,13 +1219,19 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
         continue;
       }
       costs.set(entry.name, cost);
+      if (roles?.size === 1 && roles.has("image") && partTypes.svg(entry.name))
+        mediaSizes.set(entry.name, Math.ceil((content.length * 4) / 3));
       archive.file(entry.name, xml);
     } else {
       if (input.kind === "docx" && partTypes.roles.get(entry.name)?.has("font")) {
         continue;
       }
       if (media) mediaSizes.set(entry.name, Math.ceil((content.length * 4) / 3));
-      archive.file(entry.name, /\.(?:xml|rels)$/i.test(entry.name) ? officeXml(content) : content);
+      // OpenDocument can store ciphertext in an XML part, including content.xml.
+      archive.file(
+        entry.name,
+        !openDocument && /\.(?:xml|rels)$/i.test(entry.name) ? officeXml(content) : content,
+      );
     }
   }
   if (word) {
@@ -1323,11 +1279,25 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
   return { archive, word, workbook };
 }
 
+async function readEncryptedOfficeArchive(
+  bytes: ArrayBuffer,
+  maxEntries: number,
+  password?: string,
+) {
+  const archive = new JSZip();
+  const files = await boundedZip(bytes, OFFICE_PREVIEW_MAX_BYTES, { password, maxEntries });
+  for (const [path, file] of files) {
+    if (!file.directory) archive.file(path, file.bytes, { createFolders: false });
+  }
+  return archive;
+}
+
 export async function prepareOffice(
   bytes: ArrayBuffer,
   kind: Extract<OfficeWorkerRequest, { type: "open" }>["kind"],
+  password?: string,
 ) {
-  const result = await boundedArchive({ type: "open", kind, bytes });
+  const result = await boundedArchive({ type: "open", kind, bytes }, password);
   const root =
     kind === "docx"
       ? "word/document.xml"
@@ -1374,14 +1344,8 @@ export async function prepareOffice(
   }
   return {
     bytes: await result.archive.generateAsync({ type: "arraybuffer", compression: "STORE" }),
-    truncated:
-      result.word?.truncated || result.workbook?.sheets.some((sheet) => sheet.truncated) || false,
-    view: result.workbook && {
-      hiddenGridlines: result.workbook.sheets.flatMap((sheet, index) =>
-        sheet.gridlines ? [] : [index],
-      ),
-      themeFonts: result.workbook.themeFonts,
-    },
+    truncated: result.word?.truncated || result.workbook?.truncated || false,
+    view: result.workbook?.view,
   };
 }
 

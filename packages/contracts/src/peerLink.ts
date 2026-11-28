@@ -63,7 +63,11 @@ export type PeerLinkCreateInput = typeof PeerLinkCreateInput.Type;
 export const PeerLinkRemoveInput = Schema.Struct({ environmentId: EnvironmentId });
 export type PeerLinkRemoveInput = typeof PeerLinkRemoveInput.Type;
 
-export const PeerLinkRemoveResult = Schema.Struct({ removed: Schema.Boolean });
+export const PeerLinkRemoveResult = Schema.Struct({
+  removed: Schema.Boolean,
+  // Whether the peer ended the link's session. Older servers never ask it to.
+  endedThere: Schema.optionalKey(Schema.Boolean),
+});
 export type PeerLinkRemoveResult = typeof PeerLinkRemoveResult.Type;
 
 /** Why linking or calling a peer failed, in words a user can act on. */

@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -106,6 +107,30 @@ describe("makeRunOutcomeRecorder", () => {
       };
       assert.strictEqual(histogramSum("t3_run_queue_wait"), 30_000);
       assert.strictEqual(histogramSum("t3_run_duration"), 600_000);
+    }),
+  );
+
+  it.effect("labels a run on Antigravity's default model with the default's family", () =>
+    Effect.gen(function* () {
+      const record = commitWith(makeRunOutcomeRecorder(() => Effect.succeed(false)));
+      // `antigravity-default` is what a thread stores when it stays on Antigravity's default, Gemini 4 Neon.
+      yield* record([
+        runUpdated(1, "antigravity", {
+          id: RunId.make("run:metrics:antigravity-default"),
+          status: "completed",
+          startedAt: at("2026-10-19T12:00:30.000Z"),
+          completedAt: at("2026-10-19T12:01:30.000Z"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("antigravity"),
+            model: "antigravity-default",
+          },
+        }),
+      ]);
+
+      const counter = (yield* runSnapshots("antigravity")).find(
+        (snapshot) => snapshot.id === "t3_runs_total",
+      );
+      assert.strictEqual(counter?.attributes?.["modelFamily"], "gemini");
     }),
   );
 
@@ -223,9 +248,10 @@ describe("EventSink run outcomes", () => {
       const layer = EventSink.layer.pipe(
         Layer.provideMerge(pausedLookup),
         Layer.provideMerge(
-          Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-            Layer.provideMerge(SqlitePersistence.layerMemory),
-          ),
+          Layer.mergeAll(
+            EventStore.layer,
+            ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+          ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
         ),
       );
 

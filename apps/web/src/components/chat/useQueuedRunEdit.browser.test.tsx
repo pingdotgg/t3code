@@ -1,13 +1,16 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ChatAttachmentId,
+  ComposerContextId,
   MessageId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useImperativeHandle, type RefObject } from "react";
+import { useImperativeHandle, useLayoutEffect, useRef, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -28,11 +31,13 @@ import { deriveComposerSendState } from "../ChatView.logic";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
+import type { ChatComposerHandle } from "./ChatComposer";
 import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
+  readonly modelSelection?: { readonly instanceId: ProviderInstanceId; readonly model: string };
   readonly activeAttemptId?: string;
 }
 
@@ -112,11 +117,22 @@ const RUN = RunId.make("run-1");
 type HookResult = ReturnType<typeof useQueuedRunEdit>;
 
 function projection(runs: ReadonlyArray<RunStatus>, messages: ReadonlyArray<unknown>) {
-  return { runs, messages } as unknown as ThreadStructure;
+  return {
+    runs,
+    messages,
+    thread: {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "current-model" },
+    },
+  } as unknown as ThreadStructure;
 }
 
 function setRuns(ref: ScopedThreadRef, status: string) {
   appAtomRegistry.set(mocks.threadRuns(runsKey(ref)), [{ id: RUN, status }]);
+}
+
+interface ComposerRefs {
+  readonly promptRef: RefObject<string>;
+  readonly composerRef: Parameters<typeof useQueuedRunEdit>[0]["composerRef"];
 }
 
 function Harness(props: {
@@ -124,15 +140,28 @@ function Harness(props: {
   readonly runStatus: string;
   readonly hookRef: RefObject<HookResult | null>;
   readonly messages: ReadonlyArray<unknown>;
+  readonly composer?: ComposerRefs | undefined;
 }) {
+  const threadKey = scopedThreadKey(props.threadRef);
+  const currentRouteThreadKeyRef = useRef<string | null>(threadKey);
+  useLayoutEffect(() => {
+    currentRouteThreadKeyRef.current = threadKey;
+    return () => {
+      currentRouteThreadKeyRef.current = null;
+    };
+  }, [threadKey]);
   const result = useQueuedRunEdit({
     environmentId: ENV,
     routeThreadRef: props.threadRef,
+    currentRouteThreadKeyRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
-    serverProjection: projection([{ id: RUN, status: props.runStatus }], props.messages),
-    promptRef: { current: "" },
-    composerRef: { current: null },
+    serverProjection: projection(
+      [{ id: RUN, status: props.runStatus, modelSelection: savedContent("").modelSelection }],
+      props.messages,
+    ),
+    promptRef: props.composer?.promptRef ?? { current: "" },
+    composerRef: props.composer?.composerRef ?? { current: null },
   });
   useImperativeHandle(props.hookRef, () => result);
   const draft = useComposerThreadDraft(result.draftTarget);
@@ -167,10 +196,17 @@ function view(
   runStatus: string,
   hook: { current: HookResult | null },
   messages: ReadonlyArray<unknown> = [],
+  composer?: ComposerRefs,
 ) {
   return (
     <AppAtomRegistryProvider>
-      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} messages={messages} />
+      <Harness
+        threadRef={threadRef}
+        runStatus={runStatus}
+        hookRef={hook}
+        messages={messages}
+        composer={composer}
+      />
     </AppAtomRegistryProvider>
   );
 }
@@ -205,6 +241,7 @@ async function beginChangedEdit(hook: { current: HookResult | null }) {
 }
 
 const savedContent = (prompt: string) => ({
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   prompt,
   images: [],
   files: [],
@@ -219,6 +256,62 @@ const promptOf = (ref: ScopedThreadRef) =>
   useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
 
 describe("useQueuedRunEdit", () => {
+  it.each([
+    { navigation: "switches before the reply", resets: false, focuses: false },
+    { navigation: "switches before the frame", resets: true, focuses: false },
+    { navigation: "stays on thread", resets: true, focuses: true },
+  ])("finishes a successful queued edit when the user $navigation", async (scenario) => {
+    const { hook } = setup();
+    const requested = Promise.withResolvers<void>();
+    const reply = Promise.withResolvers<{ readonly _tag: "Success" }>();
+    mocks.editQueuedRun.mockImplementation(() => {
+      requested.resolve();
+      return reply.promise;
+    });
+    const focusAtEnd = vi.fn();
+    const resetCursorState = vi.fn();
+    const composer: ComposerRefs = {
+      promptRef: { current: "changed" },
+      composerRef: { current: null },
+    };
+    await using screen = await render(view(THREAD_A, "queued", hook, [], composer));
+    const frames: FrameRequestCallback[] = [];
+    using _frame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return 0;
+    });
+    await beginChangedEdit(hook);
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(0);
+    });
+    composer.composerRef.current = {
+      focusAtEnd,
+      resetCursorState,
+    } as unknown as ChatComposerHandle;
+
+    const setThreadError = vi.fn();
+    const saved = requireHook(hook).saveEdit(savedContent("changed"), setThreadError);
+    await requested.promise;
+    const openOtherThread = async () => {
+      await screen.rerender(view(THREAD_B, "queued", hook, [], composer));
+      composer.promptRef.current = "other thread draft";
+    };
+    if (scenario.navigation === "switches before the reply") await openOtherThread();
+    reply.resolve({ _tag: "Success" });
+    await act(() => saved);
+    expect(setThreadError).toHaveBeenCalledExactlyOnceWith(THREAD_A.threadId, null);
+    expect(resetCursorState).toHaveBeenCalledTimes(Number(scenario.resets));
+
+    if (scenario.navigation === "switches before the frame") await openOtherThread();
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(0);
+    });
+    expect(focusAtEnd).toHaveBeenCalledTimes(Number(scenario.focuses));
+    expect(composer.promptRef.current).toBe(
+      scenario.navigation === "stays on thread" ? "" : "other thread draft",
+    );
+  });
+
   it.each(["", "Ultrathink:\n"])(
     "opens attachment-only edits without the placeholder and preserves effort on save (%j)",
     async (prefix) => {
@@ -363,22 +456,83 @@ describe("useQueuedRunEdit", () => {
     expect(draft?.environmentContexts).toEqual([machine]);
   });
 
-  it("saves only the thread mentions still in the edited message", async () => {
+  it("saves only the thread mentions and attachments still in the edited message", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const kept = threadContextRecord(THREAD_B, "Kept");
     const removed = threadContextRecord(THREAD_A, "Removed");
+    const removedImageId = ChatAttachmentId.make("server-image-removed");
+    const keptFileId = ChatAttachmentId.make("server-file-kept");
+    const removedImageContextId = ComposerContextId.make("image_local-removed");
+    const keptFileContextId = ComposerContextId.make("file_local-kept");
+    const removedImage = {
+      type: "image" as const,
+      id: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFile = {
+      type: "file" as const,
+      id: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const removedImageRecord = {
+      version: 1 as const,
+      kind: "image" as const,
+      contextId: removedImageContextId,
+      label: "image.png",
+      attachmentId: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFileRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: keptFileContextId,
+      label: "legacy.pdf",
+      attachmentId: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
     const messageId = MessageId.make("message-1");
-    const text = [kept, removed]
-      .map((record) => formatInlineContextReference(threadContextReference(record)))
-      .join(" and ");
-    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    const text = [
+      formatInlineContextReference(threadContextReference(kept)),
+      formatInlineContextReference(threadContextReference(removed)),
+      formatInlineContextReference({
+        kind: "image",
+        contextId: removedImageContextId,
+        label: "image.png",
+      }),
+    ].join(" and ");
+    const messages = [
+      {
+        id: messageId,
+        text,
+        context: { version: 1, records: [kept, removed, removedImageRecord, keptFileRecord] },
+      },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId,
+        text,
+        attachments: [removedImage, keptFile],
+      }),
+    );
     const target = requireHook(hook).draftTarget;
-    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+    await act(() => {
+      useComposerDraftStore.getState().setThreadContexts(target, [kept]);
+      requireHook(hook).removeEditingAttachment(removedImageId);
+    });
 
     const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(draft?.prompt).not.toContain(removedImageContextId);
     await requireHook(hook).saveEdit(
       { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
       () => {},
@@ -387,7 +541,11 @@ describe("useQueuedRunEdit", () => {
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+          text: draft?.prompt,
+          edit: expect.objectContaining({
+            attachments: [keptFile],
+            context: { version: 1, records: [keptFileRecord, kept] },
+          }),
         }),
       }),
     );
@@ -576,3 +734,41 @@ describe("useQueuedRunEdit", () => {
     ).toBe("newer");
   });
 });
+
+it.each([false, true])(
+  "pins a following queued message only after a model pick: %s",
+  async (pick) => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    await using _screen = await render(
+      view(THREAD_A, "queued", hook, [
+        { id: MessageId.make("message-1"), followsThreadSelection: true },
+      ]),
+    );
+    await beginChangedEdit(hook);
+    const selection = { instanceId: ProviderInstanceId.make("codex"), model: "chosen-model" };
+    const target = requireHook(hook).draftTarget;
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.activeProvider).toBeNull();
+    if (pick)
+      await act(() =>
+        useComposerDraftStore.getState().setModelSelection(target, selection, { explicit: true }),
+      );
+    await requireHook(hook).saveEdit(
+      { ...savedContent("changed"), modelSelection: selection },
+      () => {},
+    );
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining(
+          pick ? { modelSelection: selection } : { threadId: THREAD_A.threadId },
+        ),
+      }),
+    );
+    if (!pick)
+      expect(mocks.editQueuedRun.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          input: expect.not.objectContaining({ modelSelection: expect.anything() }),
+        }),
+      );
+  },
+);
