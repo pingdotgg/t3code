@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 import {
   matchComposerEnvironmentItems,
+  matchComposerProjectItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
@@ -34,7 +35,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useVisibleThreadShells } from "~/state/entities";
+import { useProjects, useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
@@ -126,6 +127,7 @@ export function useComposerMenuItems({
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
+  const projects = useProjects();
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
   useThreadSearch(
@@ -240,6 +242,15 @@ export function useComposerMenuItems({
           modelOptionsByInstance: modelMentions.modelOptionsByInstance,
           query: composerTrigger.query,
         }),
+        ...matchComposerProjectItems({
+          projects,
+          environmentId,
+          query: composerTrigger.query,
+        }).map((item) => ({
+          ...item,
+          pathKind: "directory" as const,
+          searchTarget: { environmentId, cwd: gitCwd, query: composerTrigger.query.trim() },
+        })),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
