@@ -769,7 +769,10 @@ export function applyReviewDiffMetadata(
   const stats = new Map(selectedSection.files.map((file) => [file.path, file]));
   const files = previewDiff.files.map((file) => {
     const stat = stats.get(file.path);
-    return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+    // An unchanged file keeps its identity; the whole-file loaders are kept per file object.
+    return stat && (stat.additions !== file.additions || stat.deletions !== file.deletions)
+      ? { ...file, additions: stat.additions, deletions: stat.deletions }
+      : file;
   });
   return { ...previewDiff, ...totals, files, fileCount: selectedSection.files.length, notice };
 }

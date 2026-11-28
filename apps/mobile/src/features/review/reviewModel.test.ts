@@ -422,5 +422,12 @@ describe("applyReviewDiffMetadata", () => {
     expect(result.files[0]?.additions).toBe(4000);
     expect(result.notice).toContain("Counts include all changes");
     expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
+    const unchanged = applyReviewDiffMetadata(parsed, {
+      truncated: false,
+      files: [{ path: "large.txt", previousPath: null, additions: 1, deletions: 1 }],
+    });
+    expect(
+      "files" in unchanged && "files" in parsed && unchanged.files[0] === parsed.files[0],
+    ).toBe(true);
   });
 });
