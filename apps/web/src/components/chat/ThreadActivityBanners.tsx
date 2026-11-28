@@ -21,7 +21,6 @@ import {
   CircleStopIcon,
   GitBranchIcon,
   MessageCircleIcon,
-  ShieldQuestionIcon,
   TargetIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -48,7 +47,11 @@ export function extensionStatusBannerItem(
   };
 }
 
-/** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
+/**
+ * Subagents and side chats asking the user a question, unless the parent is itself waiting on
+ * them. Their approvals are answered from the card above the composer; a line for those here
+ * would come and go with each approval and move the conversation.
+ */
 export function childInputNowItem(
   input: {
     readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
@@ -58,35 +61,35 @@ export function childInputNowItem(
   },
   resolve: MessageResolver = m,
 ): (ThreadNowItem & { readonly waitingLabel: string }) | null {
-  const { childThreadInputs, onOpenThread } = input;
-  const first = childThreadInputs[0];
+  const { onOpenThread } = input;
+  const asking = input.childThreadInputs.filter((child) => child.hasPendingUserInput);
+  const first = asking[0];
   if (!first || input.parentAwaitingUser) return null;
   return {
     id: `child-input:${first.id}`,
     // The only line at the end of the timeline that needs you gets the info color.
-    icon: first.hasPendingApprovals ? (
-      <ShieldQuestionIcon className="text-info-foreground" />
-    ) : (
-      <MessageCircleIcon className="text-info-foreground" />
+    icon: <MessageCircleIcon className="text-info-foreground" />,
+    title: childThreadInputsTitle(
+      asking.map((child) => ({ lineage: child.lineage, hasPendingApprovals: false })),
+      resolve,
     ),
-    title: childThreadInputsTitle(childThreadInputs, resolve),
-    waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
+    waitingLabel: asking.every((child) => child.lineage.sideChat === true)
       ? resolve(msg("Side chat waiting"))
       : resolve(msg("Subagent waiting")),
-    description: childThreadInputs.map((child, index) => (
+    description: asking.map((child, index) => (
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
         <span className="whitespace-nowrap">
           <InlineButton tone="muted" onClick={() => onOpenThread(child.id, child.environmentId)}>
             {child.title}
           </InlineButton>
-          {index < childThreadInputs.length - 1 ? "," : null}
+          {index < asking.length - 1 ? "," : null}
         </span>
       </Fragment>
     )),
     actions: (
       <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
-        {first.hasPendingApprovals ? <T>Open approval</T> : <T>Open question</T>}
+        <T>Open question</T>
       </InlineButton>
     ),
   };

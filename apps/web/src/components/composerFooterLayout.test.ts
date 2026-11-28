@@ -4,6 +4,7 @@ import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
+  resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 
 describe("context strip labels and resting composer controls", () => {
@@ -92,5 +93,18 @@ describe("progressive composer controls", () => {
         previous = next;
       }
     }
+  });
+});
+
+describe("resolveScrollToEndClearance", () => {
+  const input = {
+    overlayHeight: 140,
+    mainSurfaceTop: 100,
+    button: { left: 300, right: 400 },
+    attachments: [{ top: 60, left: 0, right: 200 }],
+  };
+
+  it("lifts the button over floating approvals, which span the lane", () => {
+    expect(resolveScrollToEndClearance({ ...input, floatingHeight: 96 })).toBe(236);
   });
 });

@@ -2472,6 +2472,10 @@ export default function ChatView(props: ChatViewProps) {
     );
     const button =
       composerOverlayElement?.parentElement?.querySelector<HTMLElement>("[data-scroll-to-end]");
+    const floatingHeight =
+      composerOverlayElement?.querySelector<HTMLElement>(
+        '[data-chat-composer-child-approvals="true"]',
+      )?.offsetHeight ?? 0;
     const clearance =
       composerOverlayElement && mainSurface && button
         ? resolveScrollToEndClearance({
@@ -2484,8 +2488,9 @@ export default function ChatView(props: ChatViewProps) {
               ),
               (element) => element.getBoundingClientRect(),
             ),
+            floatingHeight,
           })
-        : nextHeight;
+        : nextHeight + floatingHeight;
     setScrollToEndClearance(clearance);
   };
   const publishComposerOverlayHeightStable = useStableCallback(publishComposerOverlayHeight);
@@ -2517,8 +2522,16 @@ export default function ChatView(props: ChatViewProps) {
     const stack = isDraftHeroState
       ? composerOverlayElement.querySelector<HTMLElement>('[data-chat-composer-stack="true"]')
       : null;
+    // Floating approvals leave the overlay's size alone but still lift the scroll-to-end button.
+    const floatingApprovals = composerOverlayElement.querySelector<HTMLElement>(
+      '[data-chat-composer-child-approvals="true"]',
+    );
     return observeResize(
-      stack ? [composerOverlayElement, stack] : composerOverlayElement,
+      [
+        composerOverlayElement,
+        ...(stack ? [stack] : []),
+        ...(floatingApprovals ? [floatingApprovals] : []),
+      ],
       updateHeight,
     );
   }, [
@@ -3856,7 +3869,14 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <ChildThreadApprovals threadRef={activeThreadRef} />
+                    {/* Floats over the timeline: growing the composer would change the timeline's
+                        end inset and move the conversation the user is reading. */}
+                    <div
+                      data-chat-composer-child-approvals="true"
+                      className="absolute inset-x-0 bottom-full"
+                    >
+                      <ChildThreadApprovals threadRef={activeThreadRef} />
+                    </div>
                     <div className="relative">
                       <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                         <ComposerSurface.Host

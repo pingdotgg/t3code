@@ -63,11 +63,12 @@ function threadInput(threadId: string, branch: string) {
 
 type ThreadInput = ReturnType<typeof threadInput>;
 
+// Each child asks a question; an approval of its own is answered from the floating card.
 it.each([
   { remote: false, approval: false, link: "Open question" },
   { remote: true, approval: false, link: "Open question" },
   { remote: true, approval: false, link: "Child" },
-  { remote: true, approval: true, link: "Open approval" },
+  { remote: true, approval: true, link: "Open question" },
 ])("opens the child in its environment ($remote, $link)", async ({ remote, approval, link }) => {
   setup();
   const parent = threadInput("parent", "main");
@@ -78,6 +79,7 @@ it.each([
       environmentId: childEnvironmentId,
       title: "Child",
       hasPendingApprovals: approval,
+      hasPendingUserInput: true,
       lineage: { sideChat: false },
     } as EnvironmentThreadShell,
   ];

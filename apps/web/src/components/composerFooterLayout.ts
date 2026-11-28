@@ -129,7 +129,10 @@ export function resolveScrollToEndClearance(input: {
   mainSurfaceTop: number;
   button: { left: number; right: number };
   attachments: ReadonlyArray<{ top: number; left: number; right: number }>;
+  /** Approvals floating above the overlay span the lane, so the button clears all of them. */
+  floatingHeight: number;
 }): number {
+  if (input.floatingHeight > 0) return Math.ceil(input.overlayHeight + input.floatingHeight);
   let contentTop = input.mainSurfaceTop;
   let top = contentTop;
   for (const attachment of input.attachments) {
