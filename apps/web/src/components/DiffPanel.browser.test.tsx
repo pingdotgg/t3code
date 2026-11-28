@@ -493,6 +493,40 @@ it.each([
     .toHaveAttribute("aria-expanded", "true");
 });
 
+it("previews a changed image revealed from the file tree", async () => {
+  using context = setup("origin/orphan");
+  state.diffFilesCollapsed = true;
+  state.checkpoints = [
+    {
+      runId: "run",
+      checkpointTurnCount: 1,
+      checkpointRef: "ref",
+      status: "ready",
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:00Z",
+    },
+  ];
+  // What git writes for a modified PNG: no hunks, only a binary marker.
+  state.checkpointDiff = {
+    diff: "diff --git a/icon.png b/icon.png\nindex 1111111..2222222 100644\nBinary files a/icon.png and b/icon.png differ\n",
+  };
+  useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"), "icon.png");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse icon.png", exact: true }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect
+    .element(screen.getByRole("img", { name: "icon.png", exact: true }))
+    .toBeInTheDocument();
+});
+
 it("opens a file from a tool call's diff by the path its agent recorded", async () => {
   using context = setup("origin/orphan");
   // A local thread in a project that is the repository's apps/web folder.
