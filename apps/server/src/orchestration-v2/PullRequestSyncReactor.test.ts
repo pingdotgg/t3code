@@ -2405,6 +2405,13 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "more URLs than the one create after an empty assignment",
+      input: "GH_PAGER=; gh pr create --fill; git log -1 --format=%b",
+      output:
+        "https://github.com/owner/repository/pull/124\nFollow-up to\nhttps://github.com/owner/repository/pull/50",
+      linked: [],
+    },
+    {
       name: "a create beside a command that lists other pull requests",
       input: "gh pr list --json url --jq '.[].url' && gh pr create --fill > /dev/null",
       output: "https://github.com/owner/repository/pull/120",

@@ -56,7 +56,8 @@ const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
 const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
 // What may come before a command's name: `NAME=value` assignments and wrappers like `timeout 60`.
-const COMMAND_PREFIX = "(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+// An assignment's value stops at a separator: `VAR=; gh pr create` is two commands.
+const COMMAND_PREFIX = "(?:(?:\\w+=[^\\s;&|]*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
 // The subcommand must end its shell word: `gh pr create#x` runs another one.
 const COMMAND_END = "(?=$|[\\s;&|)])";
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
