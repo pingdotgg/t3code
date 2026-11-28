@@ -147,7 +147,7 @@ export function parsePullRequestQuery(raw: string): {
 }
 
 /** The Filters menu's radio qualifiers: it shows a typed one in place of its own value. */
-const MENU_QUALIFIERS = ["draft", "review", "checks"] as const;
+const MENU_QUALIFIERS = ["author", "draft", "review", "checks"] as const;
 type MenuQualifier = (typeof MENU_QUALIFIERS)[number];
 
 export function pullRequestMenuFilters(
@@ -156,6 +156,7 @@ export function pullRequestMenuFilters(
 ): PullRequestListFilters {
   return {
     ...menuFilters,
+    author: typed.author ?? menuFilters.author,
     draft: typed.draft ?? menuFilters.draft,
     review: typed.review ?? menuFilters.review,
     checks: typed.checks ?? menuFilters.checks,
@@ -195,6 +196,7 @@ export function applyPullRequestFilterChange(
             .trim(),
     filters: {
       ...next,
+      author: changed("author") ? next.author : menuFilters.author,
       draft: changed("draft") ? next.draft : menuFilters.draft,
       review: changed("review") ? next.review : menuFilters.review,
       checks: changed("checks") ? next.checks : menuFilters.checks,

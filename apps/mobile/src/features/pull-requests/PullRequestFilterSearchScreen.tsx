@@ -3,6 +3,11 @@ import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
+  applyPullRequestFilterChange,
+  parsePullRequestQuery,
+  pullRequestMenuFilters,
+} from "@t3tools/client-runtime/pull-request-query";
+import {
   EnvironmentId,
   ProjectId,
   type PullRequestFilterOptionKind,
@@ -11,7 +16,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useGT } from "gt-react-native";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Platform } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -19,6 +24,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useDebouncedValue } from "../../state/queries";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import {
   pullRequestFilterChoices,
   pullRequestLabelColors,
@@ -63,6 +69,11 @@ export function PullRequestFilterSearchScreen({
   const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
   const listControls = usePullRequestListControls();
   const controls = listControls.controlsFor(environmentId);
+  const workspace = useWorkspaceTabs();
+  const tab = workspace?.state.tabs.pullRequests;
+  const typedQuery = !tab || tab.searchMode === "resting" ? "" : tab.query;
+  const typedFilters = parsePullRequestQuery(typedQuery).filters;
+  const menuFilters = pullRequestMenuFilters(typedFilters, controls.filters);
   const [query, setQuery] = useState("");
   const typed = query.trim().slice(0, 100);
   const sent = useDebouncedValue(typed, 250);
@@ -80,7 +91,7 @@ export function PullRequestFilterSearchScreen({
   );
   const hosted = useAtomValue(optionsFamily(key));
   const selectedLabels = controls.filters.labels?.flat() ?? [];
-  const author = controls.filters.author;
+  const author = menuFilters.author;
   const selected = kind === "labels" ? selectedLabels : author ? [author] : [];
   const rows = pullRequestFilterChoices({
     selected,
@@ -99,14 +110,28 @@ export function PullRequestFilterSearchScreen({
     setSeenColors((previous) => ({ ...previous, ...hostedColors }));
   }
   const colors = { ...seenColors, ...labelColors };
+  const savingAuthorRef = useRef(false);
   const isSelected = (value: string) =>
     selected.some((held) => held.toLowerCase() === value.toLowerCase());
-  const choose = (value: string) => {
+  const choose = async (value: string) => {
     if (kind === "authors") {
-      listControls.setControls(environmentId, {
-        ...controls,
-        filters: { ...controls.filters, author: isSelected(value) ? undefined : value },
+      if (savingAuthorRef.current || !navigation.isFocused()) return;
+      const update = applyPullRequestFilterChange(typedQuery, controls.filters, {
+        ...menuFilters,
+        author: isSelected(value) ? undefined : value,
       });
+      savingAuthorRef.current = true;
+      const result = await listControls
+        .setControls(environmentId, {
+          ...controls,
+          filters: update.filters,
+        })
+        .finally(() => {
+          savingAuthorRef.current = false;
+        });
+      if (result._tag === "Failure" || !navigation.isFocused()) return;
+      if (update.query !== typedQuery)
+        workspace?.dispatch({ type: "query", tab: "pullRequests", query: update.query });
       navigation.goBack();
       return;
     }

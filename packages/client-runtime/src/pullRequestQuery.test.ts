@@ -166,6 +166,26 @@ describe("colon-namespaced labels typed as a search", () => {
 });
 
 describe("changing a menu filter after typing its qualifier", () => {
+  it("replaces or clears a typed author so the menu and request agree", () => {
+    const update = applyPullRequestFilterChange("author:alice fix", {}, { author: "bob" });
+    expect(update.query).toBe("fix");
+    expect({ ...update.filters, ...parsePullRequestQuery(update.query).filters }).toEqual({
+      author: "bob",
+    });
+  });
+
+  it("keeps the typed author and stored fallback when another filter changes", () => {
+    const update = applyPullRequestFilterChange(
+      "author:alice fix",
+      { author: "bob" },
+      { author: "alice", checks: "passing" },
+    );
+    expect(update).toEqual({
+      query: "author:alice fix",
+      filters: { author: "bob", checks: "passing" },
+    });
+  });
+
   it("replaces or clears a typed draft qualifier and keeps the rest of the query", () => {
     expect(
       applyPullRequestFilterChange('draft:false fix label:"needs design"', {}, { draft: "only" }),
@@ -224,9 +244,15 @@ describe("changing a menu filter after typing its qualifier", () => {
   it("shows typed qualifiers in place of the stored menu values", () => {
     expect(
       pullRequestMenuFilters(
-        parsePullRequestQuery("status:success review:none label:bug fix").filters,
-        { checks: "failing", draft: "hide", labels: [["wip"]] },
+        parsePullRequestQuery("author:alice status:success review:none label:bug fix").filters,
+        { author: "bob", checks: "failing", draft: "hide", labels: [["wip"]] },
       ),
-    ).toEqual({ checks: "passing", review: "none", draft: "hide", labels: [["wip"]] });
+    ).toEqual({
+      author: "alice",
+      checks: "passing",
+      review: "none",
+      draft: "hide",
+      labels: [["wip"]],
+    });
   });
 });

@@ -28,7 +28,7 @@ export function usePullRequestListControls() {
     });
   };
   const setControls = (environment: string | null, controls: PullRequestListControls) => {
-    void savePreferences({
+    return savePreferences({
       transform: (current) => ({
         pullRequestListFilters: {
           environmentId: current.pullRequestListFilters?.environmentId ?? null,
