@@ -1739,21 +1739,31 @@ describe("PreviewManager", () => {
           | ((event: unknown, zoom: unknown) => void)
           | undefined;
         expect(onPageZoom).toBeDefined();
+        const sent = (method: string) => {
+          const reached = Promise.withResolvers<void>();
+          guest.sendCommand.mockImplementation(async (called) => {
+            if (called === method) reached.resolve();
+            return undefined;
+          });
+          return reached.promise;
+        };
         guest.sendCommand.mockClear();
 
+        const positioned = sent("Runtime.evaluate");
         onPageZoom?.({}, { scale: 2, x: 10, y: 20 });
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
-        const methods = guest.sendCommand.mock.calls.map(([method]) => method);
-        expect(methods).toEqual(["Emulation.setPageScaleFactor", "Runtime.evaluate"]);
+        yield* Effect.promise(() => positioned);
+        expect(guest.sendCommand.mock.calls.map(([method]) => method)).toEqual([
+          "Emulation.setPageScaleFactor",
+          "Runtime.evaluate",
+        ]);
         expect(guest.sendCommand.mock.calls[0]?.[1]).toEqual({ pageScaleFactor: 2 });
-        expect(JSON.stringify(guest.sendCommand.mock.calls[1]?.[1])).toContain("scrollX + 10");
+        expect(JSON.stringify(guest.sendCommand.mock.calls[1]?.[1])).toContain("10 - origin.left");
 
         guest.sendCommand.mockClear();
-        onPageZoom?.({}, { scale: 1, x: 0, y: 0 });
+        const reset = sent("Emulation.setPageScaleFactor");
         onPageZoom?.({}, { scale: "big" });
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
+        onPageZoom?.({}, { scale: 1, x: 0, y: 0 });
+        yield* Effect.promise(() => reset);
         expect(guest.sendCommand.mock.calls).toEqual([
           ["Emulation.setPageScaleFactor", { pageScaleFactor: 1 }],
         ]);
@@ -3689,6 +3699,7 @@ describe("PreviewManager", () => {
       cropRect: PreviewAnnotationRect | null,
       targets: Partial<Pick<PreviewAnnotationPayload, "elements" | "regions" | "strokes">> = {},
       emptyImage?: "viewport" | "crop",
+      viewport?: { readonly scale: number; readonly x: number; readonly y: number },
     ) =>
       withManager((manager) =>
         Effect.gen(function* () {
@@ -3745,6 +3756,7 @@ describe("PreviewManager", () => {
             cropRect,
             "attach",
             2,
+            viewport,
           );
 
           const result = yield* Fiber.join(pick);
@@ -3754,6 +3766,19 @@ describe("PreviewManager", () => {
           return { result, crop };
         }),
       );
+
+    effectIt.effect("crops the zoomed-in view where a pinch-zoomed page drew the selection", () =>
+      Effect.gen(function* () {
+        const rect = { x: 300, y: 200, width: 50, height: 30 };
+        const { crop } = yield* captureAnnotation(
+          rect,
+          { regions: [{ id: "region_1", rect }] },
+          undefined,
+          { scale: 2, x: 100, y: 50 },
+        );
+        expect(crop).toHaveBeenCalledExactlyOnceWith({ x: 800, y: 600, width: 200, height: 120 });
+      }),
+    );
 
     effectIt.effect("clips a partially visible selection to the captured viewport", () =>
       Effect.gen(function* () {

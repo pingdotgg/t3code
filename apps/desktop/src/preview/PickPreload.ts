@@ -1834,6 +1834,12 @@ function startAnnotation(
           submission === "send" && !sendEnabled ? "attach" : submission,
           // Main crops a viewport capture, whose pixels are CSS px × this.
           window.devicePixelRatio,
+          // A pinch-zoomed capture shows only the visual viewport.
+          window.visualViewport && {
+            scale: window.visualViewport.scale,
+            x: window.visualViewport.offsetLeft,
+            y: window.visualViewport.offsetTop,
+          },
         );
       })
       .catch(() => {
