@@ -72,6 +72,7 @@ const decodeModelEnd = Schema.decodeUnknownOption(
     toolCalls: Schema.optionalKey(Schema.Array(Schema.Unknown)),
   }),
 );
+const decodeTurnEnd = Schema.decodeUnknownOption(Schema.Struct({ outcome: Schema.String }));
 const decodeArguments = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const FxSubagentRequest = Schema.Union([
@@ -252,18 +253,21 @@ interface RootSubagentCall {
   /** Repeated on hook-made updates: one landing after the turn is parsed alone. */
   rawInput?: unknown;
   state: FxSubagentHookState;
+  /** fx 0.0.17+ answers `message` at once; the child's own turn end settles the call. */
+  acknowledged?: boolean;
 }
 
 /**
- * Turns fx hook events into ACP updates the adapter already projects: facts
- * about a root `subagent` call ride on that call's `_meta`, and a dispatched
- * child's steps arrive as updates on the child's session. A child is followed
- * only while its call runs, the only time a turn can take its steps.
+ * Turns fx hook events into ACP updates the adapter already projects: root
+ * `subagent` call facts ride on its `_meta`, a child's steps arrive on its
+ * session. A child is followed until its call returns, or, for a call fx
+ * answered at once, until the child's own turn ends.
  */
 export function makeFxSubagentHookRouter() {
   const calls = new Map<string, RootSubagentCall>();
   const childCalls = new Map<string, string>();
   const agentModelCalls = new Set<string>();
+  const childReplies = new Map<string, { readonly text: string; readonly truncated: boolean }>();
 
   const rootUpdate = (
     callId: string,
@@ -310,10 +314,28 @@ export function makeFxSubagentHookRouter() {
     if (result === undefined || call === undefined || output === undefined || output === null) {
       return [];
     }
-    calls.delete(result.call.callId);
-    call.state = { ...call.state, output, truncated: event.contentTruncated };
+    const { childSessionId } = call.state;
+    // Only "dispatched" so far: fx sent the message and the child works on.
+    if (call.state.phase === "dispatched" && childSessionId !== undefined) {
+      call.acknowledged = true;
+      return [];
+    }
+    return settle(result.call.callId, call, output, event.contentTruncated);
+  };
+
+  const settle = (
+    callId: string,
+    call: RootSubagentCall,
+    output: string,
+    truncated: boolean,
+  ): ReadonlyArray<EffectAcpSchema.SessionNotification> => {
+    calls.delete(callId);
+    call.state = { ...call.state, output, truncated };
     const { childSessionId, phase } = call.state;
-    if (childSessionId !== undefined) childCalls.delete(childSessionId);
+    if (childSessionId !== undefined) {
+      childCalls.delete(childSessionId);
+      childReplies.delete(childSessionId);
+    }
     const reply = fxSubagentReply({ ...call.state, output });
     return [
       // The reply goes in before the call settles, so the child thread ends on it.
@@ -333,8 +355,38 @@ export function makeFxSubagentHookRouter() {
               },
             },
           ]),
-      ...rootUpdate(result.call.callId, call),
+      ...rootUpdate(callId, call),
     ];
+  };
+
+  const settleAcknowledged = (
+    event: FxHookEvent,
+  ): ReadonlyArray<EffectAcpSchema.SessionNotification> => {
+    const callId = childCalls.get(event.sessionId);
+    const call = callId === undefined ? undefined : calls.get(callId);
+    if (callId === undefined || call?.acknowledged !== true) return [];
+    const outcome = Option.getOrUndefined(decodeTurnEnd(event.data))?.outcome;
+    const reply = childReplies.get(event.sessionId);
+    call.state = {
+      ...call.state,
+      phase:
+        outcome === "completed"
+          ? "completed"
+          : outcome === "cancelled"
+            ? "cancelled"
+            : outcome === "paused" || outcome === "yielded"
+              ? "yielded"
+              : "failed",
+    };
+    return settle(
+      callId,
+      call,
+      JSON.stringify({
+        ok: outcome === "completed",
+        result: reply?.text ?? (outcome === "completed" ? "" : (outcome ?? "failed")),
+      }),
+      reply?.truncated ?? false,
+    );
   };
 
   const routeChild = (event: FxHookEvent): ReadonlyArray<EffectAcpSchema.SessionNotification> => {
@@ -384,8 +436,12 @@ export function makeFxSubagentHookRouter() {
           !agentModelCalls.delete(`${sessionId}:${event.executionId}:${end.modelCallId}`)
         )
           return [];
-        // A reply without tool calls is the child's answer, which the root result carries whole.
-        if (!end.output?.trim() || (end.toolCalls?.length ?? 0) === 0) return [];
+        if (!end.output?.trim()) return [];
+        // A reply without tool calls is the child's answer, which its call's result carries.
+        if ((end.toolCalls?.length ?? 0) === 0) {
+          childReplies.set(sessionId, { text: end.output, truncated: event.contentTruncated });
+          return [];
+        }
         return [
           {
             sessionId,
@@ -397,6 +453,8 @@ export function makeFxSubagentHookRouter() {
           },
         ];
       }
+      case "turn.end":
+        return settleAcknowledged(event);
       default:
         return [];
     }
@@ -407,6 +465,7 @@ export function makeFxSubagentHookRouter() {
       calls.clear();
       childCalls.clear();
       agentModelCalls.clear();
+      childReplies.clear();
     },
     /** Records fx's `subagent` calls and attaches what hooks reported so far. */
     enrich: (

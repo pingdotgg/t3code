@@ -284,12 +284,70 @@ describe("fx sub-agent hooks", () => {
     const router = makeFxSubagentHookRouter();
     router.enrich(announce);
     router.route(delegation("dispatched"));
+    router.route(delegation("completed"));
     const late = router.route(rootResult(WHOLE_RESULT)).at(-1);
     if (late === undefined) throw new Error("the whole result produced no root update");
     const alone = parseSessionUpdateEvent(late).events.flatMap((event) =>
       event._tag === "ToolCallUpdated" ? [extractFxSubagentUpdate(event.toolCall)] : [],
     );
     assert.deepInclude(alone[0], { status: "completed", result: REPLY });
+  });
+
+  it("follows a child fx answered at once until the child's own turn ends", () => {
+    const sent = JSON.stringify({ ok: true, result: "Sent to reviewer.", error_code: null });
+    const run = play([
+      {
+        acp: {
+          sessionId: ROOT,
+          update: {
+            ...announce.update,
+            rawInput: { action: "message", agent: "reviewer", message: TASK },
+          } as EffectAcpSchema.SessionUpdate,
+        },
+      },
+      { hook: delegation("dispatched") },
+      { acp: preview("completed", sent) },
+      { hook: rootResult(sent, false, "tool.end") },
+      { hook: rootResult(sent) },
+      { hook: hook(CHILD, "turn.start", { resumed: false }) },
+      { hook: hook(CHILD, "model.start", { modelCallId: 1, purpose: "agent" }) },
+      {
+        hook: hook(CHILD, "model.end", {
+          modelCallId: 1,
+          output: "Checking the work tree.",
+          toolCalls: [call("call_git", "shell")],
+        }),
+      },
+      { hook: hook(CHILD, "tool.start", { call: call("call_git", "shell", '{"command":"git"}') }) },
+      {
+        hook: hook(CHILD, "tool.end", {
+          call: call("call_git", "shell"),
+          output: "true",
+          status: "success",
+        }),
+      },
+      { hook: hook(CHILD, "model.start", { modelCallId: 2, purpose: "agent" }) },
+      { hook: hook(CHILD, "model.end", { modelCallId: 2, output: REPLY, toolCalls: [] }) },
+      { hook: hook(CHILD, "turn.end", { outcome: "completed", error: null }) },
+      { hook: hook(CHILD, "tool.start", { call: call("call_late", "shell") }) },
+    ]);
+    assert.deepEqual(childSteps(run.delivered), [
+      "agent_message exec-child:1: Checking the work tree.",
+      "tool_call call_git in_progress",
+      "tool_call_update call_git completed",
+      `agent_message result: ${REPLY}`,
+    ]);
+    assert.deepEqual(run.statuses, ["running", "running", "running", "completed"]);
+    assert.deepInclude(run.update, { childSessionId: CHILD, status: "completed", result: REPLY });
+
+    const failed = play([
+      { acp: announce },
+      { hook: delegation("dispatched") },
+      { hook: rootResult(sent, false, "tool.end") },
+      { hook: hook(CHILD, "turn.end", { outcome: "failed", error: "ProviderFailed" }) },
+    ]);
+    assert.lengthOf(failed.delivered, 0);
+    assert.deepInclude(failed.update, { status: "failed", result: "failed" });
   });
 
   it("ignores hooks for calls fx never announced over ACP and for sessions it never dispatched", () => {
