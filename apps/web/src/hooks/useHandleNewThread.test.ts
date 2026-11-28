@@ -385,21 +385,27 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
-  it("seeds the prompt into the empty draft that is already open", async () => {
-    testState.reset(null);
-    testState.openEmptyDraft("draft-open");
+  it.each([
+    { freshDraft: false, expectedId: "draft-open" },
+    { freshDraft: true, expectedId: "draft-delayed" },
+  ])(
+    "opens $expectedId with the prompt when freshDraft is $freshDraft",
+    async ({ freshDraft, expectedId }) => {
+      testState.reset(null);
+      testState.openEmptyDraft("draft-open");
 
-    const opened = await useNewThreadHandler()(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { prompt: "Read the playbook. " },
-    );
+      const opened = await useNewThreadHandler()(
+        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+        { prompt: "Read the playbook. ", freshDraft },
+      );
 
-    expect(opened?.draftId).toBe("draft-open");
-    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
-      "draft-open",
-      "Read the playbook. ",
-    );
-  });
+      expect(opened?.draftId).toBe(expectedId);
+      expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+        expectedId,
+        "Read the playbook. ",
+      );
+    },
+  );
 
   it("opens the draft without waiting on a project file from an offline machine", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });

@@ -134,6 +134,7 @@ import {
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
   buildPullRequestContext,
+  buildPullRequestReferenceContext,
   buildResolveConflictsPrompt,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
@@ -1221,6 +1222,22 @@ export function PullRequestDetailPanel({
     );
   };
 
+  const createThread = async () => {
+    if (!detail || handoff !== null || !canOperateThread) return;
+    setHandoff("create");
+    const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    const opened = await newThread(projectRef, { freshDraft: true }).catch(() => null);
+    setHandoff(null);
+    if (!opened) {
+      toastManager.add({ type: "error", title: m(msg("Could not open a thread")) });
+      return;
+    }
+    writeHandoffToComposer(opened.draftId, {
+      prompt: "",
+      reviewComments: [buildPullRequestReferenceContext(detail)],
+    });
+  };
+
   const askAboutPullRequest = () => {
     if (!detail) return;
     void startAsk("ask", {
@@ -1682,6 +1699,7 @@ export function PullRequestDetailPanel({
                 refreshFromHost={refreshFromHost}
                 handoff={handoff}
                 attachesToComposer={attachTarget !== null}
+                createThread={canOperateThread ? createThread : null}
                 askAboutPullRequest={askAboutPullRequest}
                 explainPullRequest={explainPullRequest}
                 canFixFindings={canFixFindings}

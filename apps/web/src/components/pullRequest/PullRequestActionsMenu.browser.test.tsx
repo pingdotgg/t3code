@@ -85,6 +85,7 @@ function setup() {
       refreshFromHost={async () => {}}
       handoff={null}
       attachesToComposer={false}
+      createThread={async () => {}}
       askAboutPullRequest={() => {}}
       explainPullRequest={() => {}}
       canFixFindings={false}
