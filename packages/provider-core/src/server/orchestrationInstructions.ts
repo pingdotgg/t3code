@@ -10,7 +10,7 @@ Ordinary coding tasks need no T3 tools.
 - ${
     nativeSubagents
       ? `Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`.`
-      : `Use \`delegate_task\` for subagents, including when the child uses your provider and model. Set \`isolation:"worktree"\` for a separate checkout.`
+      : `Use \`delegate_task\` for subagents, including when the child uses your provider and model, instead of any native subagent tool. Set \`isolation:"worktree"\` for a separate checkout.`
   } Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
@@ -65,7 +65,7 @@ const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
 
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
-const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
+const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. Run each \`acp-mcp-call\` directly as its own shell command (no wrapper script or extra stdout) so T3 Code recognizes its output, including \`html_render\`. On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
@@ -75,12 +75,46 @@ const T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Plan
 
 Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
 
+export interface T3AcpMcpInstructionOptions {
+  readonly hasDeviceTools: boolean;
+  readonly toolExposure?: McpToolExposureMode | undefined;
+  readonly nativeSubagents?: boolean | undefined;
+}
+
+export function t3AcpMcpInstructions(options: T3AcpMcpInstructionOptions): ReadonlyArray<string> {
+  return [
+    T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+    ...(options.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+    t3CodeOrchestrationSections(options.nativeSubagents).join("\n\n"),
+    ...(options.toolExposure === "deferred-proxy" ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS] : []),
+    T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
+  ];
+}
+
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
   readonly toolExposure?: McpToolExposureMode | undefined;
+  readonly nativeSubagents?: boolean | undefined;
+  /**
+   * T3 MCP instructions already carried by the session's native system prompt, so prompts
+   * skip them unless capabilities grow past what session setup sent.
+   */
+  readonly systemPromptMcp?: T3AcpMcpInstructionOptions | undefined;
 }
+
+const sameAcpMcpOptions = (
+  left: T3AcpMcpInstructionOptions | undefined,
+  right: T3AcpMcpInstructionOptions | undefined,
+): boolean =>
+  left === undefined && right === undefined
+    ? true
+    : left !== undefined &&
+      right !== undefined &&
+      left.hasDeviceTools === right.hasDeviceTools &&
+      left.toolExposure === right.toolExposure &&
+      (left.nativeSubagents ?? true) === (right.nativeSubagents ?? true);
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
 export function t3AcpPromptWithInstructions(input: {
@@ -94,25 +128,35 @@ export function t3AcpPromptWithInstructions(input: {
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
-    input.previousState.toolExposure === input.state.toolExposure
+    input.previousState.toolExposure === input.state.toolExposure &&
+    (input.previousState.nativeSubagents ?? true) === (input.state.nativeSubagents ?? true) &&
+    sameAcpMcpOptions(input.previousState.systemPromptMcp, input.state.systemPromptMcp)
   ) {
     return input.prompt;
   }
+  const systemPromptMcp = input.state.systemPromptMcp;
+  const mcpInstructions = !input.state.hasT3Mcp
+    ? []
+    : systemPromptMcp === undefined
+      ? t3AcpMcpInstructions({
+          hasDeviceTools: input.state.hasDeviceTools,
+          toolExposure: input.state.toolExposure,
+          nativeSubagents: input.state.nativeSubagents,
+        })
+      : [
+          ...(input.state.hasDeviceTools && !systemPromptMcp.hasDeviceTools
+            ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS]
+            : []),
+          ...(input.state.toolExposure === "deferred-proxy" &&
+          systemPromptMcp.toolExposure !== "deferred-proxy"
+            ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS]
+            : []),
+        ];
   const instructions = [
     input.state.interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
-    ...(input.state.hasT3Mcp
-      ? [
-          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
-          ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
-          ...(input.state.toolExposure === "deferred-proxy"
-            ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS]
-            : []),
-          T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
-        ]
-      : []),
+    ...mcpInstructions,
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }

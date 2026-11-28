@@ -3777,6 +3777,167 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),
   );
+
+  it.effect(
+    "carries T3 MCP orchestration, delegate_task subagent guidance, html_render, and PR linking in systemPrompt.append when advertised",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+        const requestLog = path.join(logs, "requests.ndjson");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
+        const instanceId = ProviderInstanceId.make("antigravity-system-prompt-full-test");
+        const threadId = ThreadId.make("thread-antigravity-system-prompt-full");
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("env-antigravity-system-prompt-full"),
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-sp-full"),
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer antigravity-sp-full-token",
+          browserToolsAvailable: true,
+          capabilities: new Set(["device"]),
+        });
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_ANTIGRAVITY_SYSTEM_PROMPT_APPEND: "1",
+                  T3_ACP_AGENT_VERSION: "1.5.16",
+                  T3_ACP_REQUEST_LOG_PATH: requestLog,
+                  T3_ACP_HANG_PROMPT_FOREVER: "1",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                prompt: (request) =>
+                  Deferred.succeed(promptReceived, request).pipe(
+                    Effect.andThen(runtime.prompt(request)),
+                  ),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-sp-full-" });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-sp-full"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* session
+          .startTurn({
+            appThread: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project-antigravity-system-prompt-full"),
+              title: "Antigravity system prompt full",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            threadId,
+            runId: RunId.make("run-antigravity-system-prompt-full"),
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: RunAttemptId.make("attempt-antigravity-system-prompt-full"),
+            rootNodeId: NodeId.make("node-antigravity-system-prompt-full"),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("message-antigravity-system-prompt-full"),
+              text: "chart PRs and delegate a review",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkScoped);
+        const sent = JSON.stringify((yield* Deferred.await(promptReceived)).prompt);
+        const sessionNew = (yield* fileSystem.readFileString(requestLog))
+          .trim()
+          .split("\n")
+          .map(
+            (line) =>
+              JSON.parse(line) as {
+                method?: string;
+                params?: { _meta?: { antigravity?: { systemPrompt?: { append?: string } } } };
+              },
+          )
+          .find((request) => request.method === "session/new");
+        const appended = sessionNew?.params?._meta?.antigravity?.systemPrompt?.append ?? "";
+        assert.include(appended, "<pull_request_linking>");
+        assert.include(appended, "## T3 Code browser");
+        assert.include(appended, "## T3 Code devices");
+        assert.include(appended, "## T3 Code orchestration");
+        assert.include(
+          appended,
+          "Use `delegate_task` for subagents, including when the child uses your provider and model, instead of any native subagent tool.",
+        );
+        assert.notInclude(appended, "use your native tool");
+        assert.include(appended, "html_render");
+        assert.include(appended, "Deferred T3 tools:");
+        assert.include(appended, "tool_call({ name, arguments })");
+        assert.include(appended, "Run each `acp-mcp-call` directly as its own shell command");
+
+        // Identity and mode stay per turn; system-prompt sections are not duplicated in the user prompt.
+        assert.include(sent, "through the Antigravity harness, as gemini-test-low");
+        assert.include(sent, "## T3 Code interaction mode: Default");
+        assert.notInclude(sent, "<pull_request_linking>");
+        assert.notInclude(sent, "## T3 Code orchestration");
+        assert.notInclude(sent, "## T3 Code browser");
+        assert.notInclude(sent, "## T3 Code devices");
+        assert.notInclude(sent, "Deferred T3 tools:");
+        assert.notInclude(sent, "ACP fallback:");
+      }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 update_steps checklist", () => {

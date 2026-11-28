@@ -19,6 +19,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const antigravityThoughtLevel = process.env.T3_ACP_ANTIGRAVITY_THOUGHT_LEVEL === "1";
+const antigravitySystemPromptAppend = process.env.T3_ACP_ANTIGRAVITY_SYSTEM_PROMPT_APPEND === "1";
 const antigravityResumeThoughtLevel = process.env.T3_ACP_RESUME_THOUGHT_LEVEL;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
@@ -594,6 +595,9 @@ const program = Effect.gen(function* () {
         info: { name: "t3-acp-mock-agent", version: agentVersion },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
+          ...(antigravitySystemPromptAppend
+            ? { _meta: { antigravity: { systemPrompt: { append: true } } } }
+            : {}),
           session: {
             ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
             ...(supportsV2Management ? { delete: {} } : {}),

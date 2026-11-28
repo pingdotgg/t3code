@@ -751,7 +751,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           id: initializeRequest.id,
           result: {
             protocolVersion: 2,
-            capabilities: {},
+            capabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } },
             info: {
               name: "mock-agent",
               version: "0.0.0",
@@ -768,7 +768,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         }),
       );
 
-      yield* Fiber.join(initializeFiber);
+      const initialized = yield* Fiber.join(initializeFiber);
+      assert.deepEqual(initialized.agentCapabilities?._meta, {
+        antigravity: { systemPrompt: { append: true } },
+      });
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
 
       const sessionFiber = yield* acp.agent

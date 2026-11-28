@@ -1110,6 +1110,8 @@ export interface AcpMcpToolCallIdentity {
 }
 
 const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
+const ACP_MCP_FALLBACK_HEREDOC =
+  /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)\s+-\s*<<-?\s*(['"]?)([A-Za-z0-9_]+)\2[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\3\s*$/u;
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
@@ -1306,6 +1308,14 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
+    const heredocMatch = ACP_MCP_FALLBACK_HEREDOC.exec(command);
+    if (heredocMatch?.[1] !== undefined) {
+      const input = acpMcpFallbackInput(heredocMatch[4]);
+      return unwrapT3ToolCallProxy(
+        { server: "t3-code", tool: heredocMatch[1], ...(input === undefined ? {} : { input }) },
+        input,
+      );
+    }
     const match = ACP_MCP_FALLBACK_CALL.exec(command);
     if (match?.[1] !== undefined) {
       const input = acpMcpFallbackInput(match[2]);

@@ -2087,6 +2087,28 @@ describe("extractMcpToolCallIdentity", () => {
       input: { title: "Chart", html: "<p>hi</p>", height: 240 },
     });
   });
+
+  it("recovers T3 identity and JSON input from heredoc acp-mcp-call fallback commands", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "heredoc-1",
+      kind: "execute",
+      title: "Run command",
+      status: "completed",
+      rawInput: {
+        command: [
+          'ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" "$T3_ACP_MCP_ENTRYPOINT" acp-mcp-call html_render - <<\'EOF\'',
+          '{"path":"/tmp/pulse.html","title":"Pulse","height":195}',
+          "EOF",
+        ].join("\n"),
+      },
+    });
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+      input: { path: "/tmp/pulse.html", title: "Pulse", height: 195 },
+    });
+  });
 });
 
 describe("embeddedTerminalIdsFromSessionUpdate", () => {

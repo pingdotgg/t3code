@@ -136,10 +136,15 @@ import {
 } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
+  t3AcpMcpInstructions,
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
+  type T3AcpMcpInstructionOptions,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  PULL_REQUEST_LINKING_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -272,6 +277,8 @@ export interface AcpAdapterV2RuntimeInput {
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
   readonly sessionMeta?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["sessionMeta"]>;
+  /** Session-scoped T3 instructions for flavors whose agent supports native system-prompt append. */
+  readonly sessionSystemPromptAppend?: string;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntime.AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["requestLogger"]>;
@@ -797,10 +804,15 @@ export interface AcpAdapterV2Flavor {
    */
   readonly supportsImagePrompts?: boolean;
   /**
-   * True when this session's native system prompt carries T3's PR-linking instructions, so
-   * turns omit them. Must use the same negotiated check that sent them on session setup.
+   * False when T3 should steer the agent to `delegate_task` instead of its native subagent tool.
    */
-  readonly sessionCarriesPullRequestLinking?: (
+  readonly nativeSubagents?: boolean;
+  /**
+   * True when this session's native system prompt carries `sessionSystemPromptAppend`
+   * (PR linking and session-scoped T3 MCP instructions), so turns omit them. Must use the
+   * same negotiated check that sent them on session setup.
+   */
+  readonly sessionCarriesSystemPrompt?: (
     initializeResult: EffectAcpSchema.InitializeResponse,
   ) => boolean;
 }
@@ -1144,6 +1156,8 @@ interface AcpMcpContext {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly endpoint?: string;
   readonly authorization?: string;
+  readonly hasDeviceTools: boolean;
+  readonly toolExposure?: McpProviderSession.McpToolExposureMode;
   /** Only proxy mode reaches the stdio and MCP-over-ACP bridges; Copilot lists every tool there. */
   readonly bridgeToolExposure?: McpProviderSession.McpToolExposureMode;
 }
@@ -1196,7 +1210,7 @@ function acpMcpContext(
   callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
-    return { servers: [], acpServers: [], httpServers: [] };
+    return { servers: [], acpServers: [], httpServers: [], hasDeviceTools: false };
   }
   const exposure = mcpToolExposureMode(deferMcpTools);
   const bridgeToolExposure = exposure === "deferred-proxy" ? exposure : undefined;
@@ -1236,6 +1250,8 @@ function acpMcpContext(
         : [],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
+    hasDeviceTools: session.capabilities?.has("device") === true,
+    ...(exposure === undefined ? {} : { toolExposure: exposure }),
     ...(bridgeToolExposure === undefined ? {} : { bridgeToolExposure }),
     processEnvironment: {
       // The thread id every process the agent starts inherits, so a tool run
@@ -1250,6 +1266,27 @@ function acpMcpContext(
       ...(callLauncher === undefined ? {} : { T3_ACP_MCP_CALL: callLauncher }),
     },
   };
+}
+
+function acpSystemPromptMcp(
+  mcpContext: AcpMcpContext,
+  nativeSubagents: boolean | undefined,
+): T3AcpMcpInstructionOptions | undefined {
+  if (mcpContext.endpoint === undefined) return undefined;
+  return {
+    hasDeviceTools: mcpContext.hasDeviceTools,
+    ...(mcpContext.toolExposure === undefined ? {} : { toolExposure: mcpContext.toolExposure }),
+    ...(nativeSubagents === undefined ? {} : { nativeSubagents }),
+  };
+}
+
+function acpSessionSystemPromptAppend(
+  systemPromptMcp: T3AcpMcpInstructionOptions | undefined,
+): string {
+  return [
+    PULL_REQUEST_LINKING_INSTRUCTIONS,
+    ...(systemPromptMcp === undefined ? [] : t3AcpMcpInstructions(systemPromptMcp)),
+  ].join("\n\n");
 }
 
 function acpMcpActivation(context: AcpMcpContext) {
@@ -2791,6 +2828,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
+        const activeSystemPromptMcp = yield* Ref.make<T3AcpMcpInstructionOptions | undefined>(
+          undefined,
+        );
         const deliveredAppContext = yield* Ref.make(new Map<string, ReadonlyMap<string, string>>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
@@ -3405,6 +3445,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
+          const systemPromptMcp = acpSystemPromptMcp(mcpContext, flavor.nativeSubagents);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
@@ -3418,6 +3459,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? {}
               : { processEnvironment: mcpContext.processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+            sessionSystemPromptAppend: acpSessionSystemPromptAppend(systemPromptMcp),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {
               fs: {
@@ -8733,6 +8775,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           runtimeScope = yield* Scope.make();
           const mcpContext = yield* readMcpContext(threadId);
+          yield* Ref.set(
+            activeSystemPromptMcp,
+            acpSystemPromptMcp(mcpContext, flavor.nativeSubagents),
+          );
           runtimeMcpBridge = yield* makeRuntimeMcpBridge(mcpContext, runtimeScope);
           const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
           openAgentRequests = new Set();
@@ -8811,8 +8857,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               stagedSessionUpdates.push(notification);
             });
           let replacementMcpBridge: AcpMcpOverAcpBridge | undefined;
+          let replacementSystemPromptMcp: T3AcpMcpInstructionOptions | undefined;
           const startup = Effect.gen(function* () {
             const mcpContext = yield* readMcpContext(threadId);
+            replacementSystemPromptMcp = acpSystemPromptMcp(mcpContext, flavor.nativeSubagents);
             replacementMcpBridge = yield* makeRuntimeMcpBridge(mcpContext, replacementScope);
             const replacementRuntime = yield* flavor
               .makeRuntime(
@@ -8883,6 +8931,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   runtimeScope = replacementScope;
                   runtimeMcpBridge = replacementMcpBridge;
                   openAgentRequests = replacementAgentRequests;
+                  yield* Ref.set(activeSystemPromptMcp, replacementSystemPromptMcp);
                   yield* Ref.set(runtimeCallbackGeneration, replacementGeneration);
                   prepareTerminalEnvironment(
                     yield* readMcpContext(threadId),
@@ -10085,12 +10134,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const sessionSetup = yield* Ref.get(activeSessionSetup);
+          const sessionCarriesSystemPrompt =
+            sessionSetup !== null &&
+            flavor.sessionCarriesSystemPrompt?.(sessionSetup.initializeResult) === true;
+          const systemPromptMcp = sessionCarriesSystemPrompt
+            ? yield* Ref.get(activeSystemPromptMcp)
+            : undefined;
           const toolExposure = mcpToolExposureMode(flavor.deferMcpTools);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
             ...(toolExposure === undefined ? {} : { toolExposure }),
+            ...(flavor.nativeSubagents === undefined
+              ? {}
+              : { nativeSubagents: flavor.nativeSubagents }),
+            ...(systemPromptMcp === undefined ? {} : { systemPromptMcp }),
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined
@@ -10131,15 +10191,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? {}
               : { previousState: previousInstructionState }),
           });
-          const sessionSetup = yield* Ref.get(activeSessionSetup);
           const runtimeInstructions = buildRuntimeInstructions({
             agentFeedback: instructionState.hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
-            pullRequestLinking:
-              sessionSetup === null ||
-              flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
+            pullRequestLinking: !sessionCarriesSystemPrompt,
           });
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =

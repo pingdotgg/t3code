@@ -4,6 +4,7 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  t3AcpMcpInstructions,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -103,5 +104,62 @@ describe("T3 device instructions", () => {
     assert.include(withProxy, "including `delegate_task`");
     assert.include(withProxy, "tool_call({ name, arguments })");
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "tool_call(");
+    assert.include(withProxy, "Run each `acp-mcp-call` directly as its own shell command");
+  });
+
+  it("steers ACP sessions with nativeSubagents=false to delegate_task and skips system-prompt duplicates", () => {
+    const systemPromptMcp = {
+      hasDeviceTools: false,
+      toolExposure: "deferred-proxy" as const,
+      nativeSubagents: false,
+    };
+    const systemPromptText = t3AcpMcpInstructions(systemPromptMcp).join("\n\n");
+    assert.include(
+      systemPromptText,
+      "Use `delegate_task` for subagents, including when the child uses your provider and model, instead of any native subagent tool.",
+    );
+    assert.notInclude(systemPromptText, "use your native tool");
+    assert.include(systemPromptText, "html_render");
+    assert.include(systemPromptText, "tool_call({ name, arguments })");
+
+    const promptWithSystemMcp = t3AcpPromptWithInstructions({
+      prompt: "Chart the queue.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        toolExposure: "deferred-proxy",
+        nativeSubagents: false,
+        systemPromptMcp,
+      },
+    });
+    assert.include(promptWithSystemMcp, "## T3 Code interaction mode: Default");
+    assert.notInclude(promptWithSystemMcp, "## T3 Code orchestration");
+    assert.notInclude(promptWithSystemMcp, "## T3 Code browser");
+    assert.notInclude(promptWithSystemMcp, "Deferred T3 tools:");
+    assert.notInclude(promptWithSystemMcp, "ACP fallback:");
+
+    // If device access appears after session setup, only the newly gained device section is sent.
+    const upgraded = t3AcpPromptWithInstructions({
+      prompt: "Open the simulator.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: true,
+        toolExposure: "deferred-proxy",
+        nativeSubagents: false,
+        systemPromptMcp,
+      },
+      previousState: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        toolExposure: "deferred-proxy",
+        nativeSubagents: false,
+        systemPromptMcp,
+      },
+    });
+    assert.include(upgraded, T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+    assert.notInclude(upgraded, "## T3 Code orchestration");
   });
 });

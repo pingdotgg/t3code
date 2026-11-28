@@ -622,6 +622,7 @@ function normalizeInitializeResponse(
             },
           }),
       ...(response.capabilities?.providers == null ? {} : { providers: {} }),
+      ...(response.capabilities?._meta === undefined ? {} : { _meta: response.capabilities._meta }),
       ...(response.authMethods === undefined || response.authMethods.length === 0
         ? {}
         : { auth: { logout: {} } }),

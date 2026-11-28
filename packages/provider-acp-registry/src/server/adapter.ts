@@ -277,7 +277,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
     ...(isAntigravityCli
-      ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true, deferMcpTools: "proxy" }
+      ? {
+          wakeOnDetachedRequest: true,
+          replyEndsWithUsageUpdate: true,
+          deferMcpTools: "proxy",
+          nativeSubagents: false,
+        }
       : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),

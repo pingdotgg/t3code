@@ -165,7 +165,8 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
+            sessionSystemPromptAppend:
+              input.sessionSystemPromptAppend ?? PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -237,7 +238,9 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     // Antigravity freezes its toolbox per turn, so optional T3 tools run through `tool_call`.
     deferMcpTools: "proxy",
-    sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
+    // Steer subagent work to T3's delegate_task instead of Antigravity's native invoke_subagent.
+    nativeSubagents: false,
+    sessionCarriesSystemPrompt: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
       buildAntigravityPrompt({
