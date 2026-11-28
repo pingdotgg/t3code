@@ -148,7 +148,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      // Real path: macOS temp dirs sit behind a /var -> /private/var symlink.
+      const tempDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" }),
+      );
       const configDir = path.join(tempDir, "claude-home");
       const workspace = path.join(tempDir, "workspace");
       const nestedWorkspace = path.join(workspace, "packages", "app");
@@ -591,7 +594,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["pstack-copy", "pstack", "copied"],
         ["tools", "tools", "synced-tool"],
         ["a_b", undefined, "renamed"],
-        ["PSTACK", "PSTACK", "shouted"],
+        ["shouted", "PSTACK", "shouted"],
       ] as const) {
         yield* writeSkill(path.join(bucket, directory, "skills"), skill, "# Synced");
         if (prefix === undefined) continue;
@@ -604,7 +607,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* fs.writeFileString(
         path.join(bucket, "manifest.json"),
         JSON.stringify({
-          plugins: ["pstack", "pstack-copy", "tools", "a:b. ", "PSTACK", "no-id"].map(
+          plugins: ["pstack", "pstack-copy", "tools", "a:b. ", "shouted", "no-id"].map(
             (name, index) => (name === "no-id" ? { name } : { pluginId: `plugin_0${index}`, name }),
           ),
         }),
