@@ -1902,7 +1902,8 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const knownIsGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd);
+  const isGitRepo = knownIsGitRepo ?? true;
   // A plain folder holding tracked repositories has turn diffs without being a Git repository.
   const diffAvailable =
     isGitRepo ||
@@ -3169,6 +3170,7 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread,
     isLocalDraftThread,
     isGitRepo,
+    knownIsGitRepo,
     phase,
     runtimeMode,
     sendEnvMode,

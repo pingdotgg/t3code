@@ -262,6 +262,13 @@ export class ThreadLaunchService extends Context.Service<
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /**
+     * A person's worktree request runs in the folder when the project is a plain folder with no
+     * repository to check out; agents keep the not-a-repository error from `checkWorktreeBase`.
+     */
+    readonly resolveClientWorkspaceStrategy: (
+      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
+    ) => Effect.Effect<ThreadLaunchWorkspaceStrategy>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -1678,22 +1685,26 @@ const make = Effect.gen(function* () {
               return yield* releasePreparation(input.commandId);
             }
             const boundWorktreePath = current?.thread.worktreePath ?? null;
-            // A retry prepares the worktree the accepted launch asked for, not the
+            // A retry prepares the workspace the accepted launch asked for, not the
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
+            const retryStrategy =
+              Option.isSome(launchReceipt) && accepted?.type === "root"
+                ? accepted
+                : workspaceStrategy;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
               Option.isSome(launchReceipt) &&
               (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
                 : Option.isSome(launchReceipt) &&
-                    workspaceStrategy.type === "root" &&
+                    retryStrategy.type === "root" &&
                     boundWorktreePath !== null
                   ? {
                       type: "existing_worktree",
                       worktreePath: boundWorktreePath,
-                      branch: workspaceStrategy.branch,
+                      branch: retryStrategy.branch,
                     }
-                  : workspaceStrategy;
+                  : retryStrategy;
             // The thread's link decides, as it does when preparation is retried: a request
             // that reuses a thread names none.
             const { linkOrigin: _requestLinkOrigin, ...preparation } = input;
@@ -1839,10 +1850,22 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const resolveClientWorkspaceStrategy: ThreadLaunchService["Service"]["resolveClientWorkspaceStrategy"] =
+    Effect.fn("ThreadLaunchService.resolveClientWorkspaceStrategy")(function* (input) {
+      const strategy = input.workspaceStrategy;
+      if (strategy.type !== "worktree" || (strategy.repositories ?? []).length > 0) return strategy;
+      if (!(yield* isNonGitProject(input.projectId))) return strategy;
+      const taskPlan = yield* taskFolders
+        .plan({ projectId: input.projectId })
+        .pipe(Effect.orElseSucceed(() => undefined));
+      return taskPlan === null ? { type: "root" } : strategy;
+    });
+
   return ThreadLaunchService.of({
     launch,
     checkWorktreeBase,
     isNonGitProject,
+    resolveClientWorkspaceStrategy,
     retryPreparation,
     prepareRun,
   });
