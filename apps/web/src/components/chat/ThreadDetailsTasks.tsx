@@ -33,7 +33,7 @@ export function ThreadDetailsTasks({
   const count = (
     <span
       className={cn(
-        "text-2xs font-medium tabular-nums",
+        "text-caption tabular-nums",
         done === plan.steps.length ? "text-success-foreground" : "text-muted-foreground",
       )}
     >
@@ -44,7 +44,7 @@ export function ThreadDetailsTasks({
   if (compact) {
     return (
       <ThreadDetailsSection title={gt("Tasks")} summary={count}>
-        <div className="flex h-6 min-w-0 items-center gap-2 px-2.5 text-xs">
+        <div className="flex h-6 min-w-0 items-center gap-2 px-2.5 text-meta">
           <span className="min-w-0 flex-1 truncate text-foreground/80">
             {current?.text ?? gt("All done")}
           </span>
@@ -82,7 +82,10 @@ export function ThreadDetailsTasks({
         </Button>
       }
     >
-      <ul data-thread-details-task-list className="flex max-h-48 flex-col overflow-y-auto text-xs">
+      <ul
+        data-thread-details-task-list
+        className="flex max-h-48 flex-col overflow-y-auto text-meta"
+      >
         {!expanded && !current ? (
           <li className="px-2.5 py-1 text-muted-foreground/60">{gt("All done")}</li>
         ) : null}
@@ -121,7 +124,7 @@ export function ThreadDetailsTasks({
               {step.text}
             </span>
             {step.durationMs !== undefined ? (
-              <span className="shrink-0 text-3xs/4 text-muted-foreground/50 tabular-nums">
+              <span className="shrink-0 text-micro text-muted-foreground/50 tabular-nums">
                 {formatDuration(step.durationMs, m)}
               </span>
             ) : null}
