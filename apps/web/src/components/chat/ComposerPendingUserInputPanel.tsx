@@ -1,7 +1,7 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useGT } from "gt-react";
-import { memo, type ReactNode, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
@@ -26,10 +26,6 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
-  /** Leads the header row, such as whose question this is. */
-  label?: ReactNode;
-  /** Collapses with the question, under its options. */
-  footer?: ReactNode;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -43,8 +39,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
-  label,
-  footer,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -63,8 +57,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
-      label={label}
-      footer={footer}
     />
   );
 });
@@ -80,8 +72,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
-  label,
-  footer,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -93,8 +83,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
-  label?: ReactNode;
-  footer?: ReactNode;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -226,12 +214,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         className="px-4 py-1.5"
       >
         <ComposerBanner.Content>
-          {label === undefined ? null : (
-            <>
-              {label}
-              <ComposerBanner.Separator />
-            </>
-          )}
           <span
             className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
             dir={textDirection(activeQuestion.header)}
@@ -364,7 +346,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             </div>
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>
-        {footer}
       </CollapsiblePanel>
     </Collapsible>
   );

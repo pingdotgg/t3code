@@ -1025,7 +1025,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Modes above an administrator's ceiling, or that the provider cannot run in this folder,
   // stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
-    compatibleRuntimeModes,
+    // Bots need slack to orchestrate, so they offer only auto and full-access.
+    activeThread?.botConfig == null
+      ? compatibleRuntimeModes
+      : compatibleRuntimeModes.filter((mode) => mode === "auto" || mode === "full-access"),
     managedPolicy,
     m,
     runtimeModeLimits,

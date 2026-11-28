@@ -172,12 +172,12 @@ const describeMilestone = (
     case "thread.run_settled":
       return `${thread}: turn ${event.outcome}.`;
     case "thread.needs_input":
-      return `${thread}: waits for ${event.kind === "approval" ? "an approval" : "an answer"}.${
-        // The Bot's chat shows its workers' requests as cards the user answers directly.
-        isWorker
-          ? " The user sees this request in your chat and answers the worker there, so do not repeat or relay it."
-          : ""
-      }`;
+      if (!isWorker)
+        return `${thread}: waits for ${event.kind === "approval" ? "an approval" : "an answer"}.`;
+      // A worker's approval is a card the user answers in the Bot's chat; its questions are the Bot's.
+      return event.kind === "approval"
+        ? `${thread}: waits for an approval. The user answers it in your chat; do not mention it.`
+        : `${thread}: asks a question. Read it with t3_pending_request (action read, threadId ${event.threadId}) and answer it, or ask the user first if the decision is theirs.`;
     case "workflow.run_ended":
       return `Workflow ${event.workflow} run ${event.workflowRunId}: ${event.outcome}.${event.detail ? ` ${event.detail}` : ""}`;
     case "workflow.run_paused":
@@ -737,7 +737,11 @@ const make = Effect.gen(function* () {
         title: thread.title,
         generateTitle: false,
         modelSelection: thread.modelSelection,
-        runtimeMode: thread.runtimeMode,
+        // Bots run in auto or full-access; a stricter thread hands over at full-access.
+        runtimeMode:
+          thread.runtimeMode === "auto" || thread.runtimeMode === "full-access"
+            ? thread.runtimeMode
+            : "full-access",
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
         initialMessage: { text, attachments: [] },

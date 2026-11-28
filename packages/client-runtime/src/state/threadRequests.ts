@@ -667,25 +667,17 @@ export function createChildThreadApprovalsAtom(input: {
   return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
 }
 
-/** A request one of a Bot's workers is waiting on, answered on the worker's own thread. */
-export type BotWorkerRequest =
-  | {
-      readonly kind: "approval";
-      readonly thread: ScopedThreadRef;
-      readonly title: string;
-      readonly approval: ThreadPendingApproval;
-    }
-  | {
-      readonly kind: "user-input";
-      readonly thread: ScopedThreadRef;
-      readonly title: string;
-      readonly userInput: ThreadPendingUserInput;
-    };
+/**
+ * An approval one of a Bot's workers waits on, answered on the worker's own thread. Its questions
+ * are the Bot's to answer, so they never reach the user here.
+ */
+export type BotWorkerRequest = {
+  readonly thread: ScopedThreadRef;
+  readonly title: string;
+  readonly approval: ThreadPendingApproval;
+};
 
-const botWorkerRequestValue = (request: BotWorkerRequest) =>
-  request.kind === "approval" ? request.approval : request.userInput;
-
-/** Every open request of a Bot's workers, oldest first. */
+/** Every open approval of a Bot's workers, oldest first. */
 export function createBotWorkerRequestsAtom(input: {
   readonly threadShellsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
   readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
@@ -700,7 +692,7 @@ export function createBotWorkerRequestsAtom(input: {
             worker.environmentId !== bot.environmentId ||
             worker.groupedUnderThreadId !== bot.threadId ||
             worker.archivedAt !== null ||
-            !(worker.hasPendingApprovals || worker.hasPendingUserInput)
+            !worker.hasPendingApprovals
           ) {
             return [];
           }
@@ -708,32 +700,15 @@ export function createBotWorkerRequestsAtom(input: {
           // Only workers whose shell says they wait on the user need a detail subscription.
           const requests = get(input.pendingRequestsAtom(thread));
           if (requests === null) return [];
-          return [
-            ...requests.approvals.map((approval) => ({
-              kind: "approval" as const,
-              thread,
-              title: worker.title,
-              approval,
-            })),
-            ...requests.userInputs.map((userInput) => ({
-              kind: "user-input" as const,
-              thread,
-              title: worker.title,
-              userInput,
-            })),
-          ];
+          return requests.approvals.map((approval) => ({ thread, title: worker.title, approval }));
         })
-        .sort((left, right) =>
-          botWorkerRequestValue(left).createdAt.localeCompare(
-            botWorkerRequestValue(right).createdAt,
-          ),
-        );
+        .sort((left, right) => left.approval.createdAt.localeCompare(right.approval.createdAt));
       if (
         next.length === previous.length &&
         next.every((request, index) => {
           const old = previous[index]!;
           return (
-            botWorkerRequestValue(old) === botWorkerRequestValue(request) &&
+            old.approval === request.approval &&
             old.title === request.title &&
             threadKey(old.thread) === threadKey(request.thread)
           );

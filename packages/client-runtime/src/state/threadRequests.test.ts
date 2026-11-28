@@ -703,7 +703,7 @@ it("loads only child approvals and retains their destination across environments
   registry.dispose();
 });
 
-it("lists a Bot's open worker requests oldest first, loading only workers that wait", () => {
+it("lists a Bot's open worker approvals oldest first, leaving its workers' questions to the Bot", () => {
   const environmentId = EnvironmentId.make("local");
   const bot = { environmentId, threadId: ThreadId.make("bot") };
   const shell = (id: string, fields: Record<string, unknown>) => ({
@@ -725,22 +725,11 @@ it("lists a Bot's open worker requests oldest first, loading only workers that w
     createdAt,
     responseCapability: "live" as const,
   });
-  const userInput = {
-    requestId: RuntimeRequestId.make("question"),
-    createdAt: "2026-10-19T00:00:02Z",
-    questions: [],
-    responseCapability: "live" as const,
-    dismissible: false,
-  };
-  const details = Atom.family((key: string) =>
-    Atom.make<PendingThreadRequests | null>(
-      key.endsWith("asks")
-        ? { approvals: [], userInputs: [userInput] }
-        : {
-            approvals: [approval("2026-10-19T00:00:03Z"), approval("2026-10-19T00:00:01Z")],
-            userInputs: [],
-          },
-    ),
+  const details = Atom.family((_key: string) =>
+    Atom.make<PendingThreadRequests | null>({
+      approvals: [approval("2026-10-19T00:00:03Z"), approval("2026-10-19T00:00:01Z")],
+      userInputs: [],
+    }),
   );
   const readDetails = vi.fn((ref: ScopedThreadRef) => details(threadKey(ref)));
   const requestsAtom = createBotWorkerRequestsAtom({
@@ -750,21 +739,12 @@ it("lists a Bot's open worker requests oldest first, loading only workers that w
   const registry = AtomRegistry.make();
   const unmount = registry.mount(requestsAtom(bot));
   expect(
-    registry
-      .get(requestsAtom(bot))
-      .map((request) => [
-        request.title,
-        request.kind === "approval" ? request.approval.createdAt : request.userInput.createdAt,
-      ]),
+    registry.get(requestsAtom(bot)).map((request) => [request.title, request.approval.createdAt]),
   ).toEqual([
     ["approves", "2026-10-19T00:00:01Z"],
-    ["asks", "2026-10-19T00:00:02Z"],
     ["approves", "2026-10-19T00:00:03Z"],
   ]);
-  expect(readDetails.mock.calls.map(([ref]) => ref.threadId).toSorted()).toEqual([
-    "approves",
-    "asks",
-  ]);
+  expect(readDetails.mock.calls.map(([ref]) => ref.threadId)).toEqual(["approves"]);
   unmount();
   registry.dispose();
 });

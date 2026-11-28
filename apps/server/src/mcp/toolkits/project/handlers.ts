@@ -42,6 +42,7 @@ import {
   providerOptionDescriptors,
   refuseAgentModePick,
   resolveRuntimeMode,
+  runtimeModeRank,
 } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -454,8 +455,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        // A Bot's workers get its slack: they inherit its mode and never drop below auto.
+        const botLaunch = caller?.botConfig != null;
+        if (
+          botLaunch &&
+          input.runtimeMode !== undefined &&
+          runtimeModeRank(input.runtimeMode) < runtimeModeRank("auto")
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "A Bot's workers run in auto or full-access. Omit runtimeMode to inherit yours.",
+          });
         let startedRuntimeMode =
-          projectDefaults !== undefined && input.runtimeMode === undefined
+          projectDefaults !== undefined && input.runtimeMode === undefined && !botLaunch
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
                 Effect.orElseSucceed(() => runtimeMode),
               )

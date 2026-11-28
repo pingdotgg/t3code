@@ -124,7 +124,12 @@ describe("groupBots", () => {
       at(thread("newer-bot", { mutedBot: false }), "2026-11-02T00:00:00.000Z"),
       at(thread("bot", { mutedBot: false, settled: true }), "2026-11-01T00:00:00.000Z"),
       at(thread("archived-bot", { mutedBot: false }), "2026-11-01T00:00:00.000Z", true),
+      // The Bot answers its workers' questions; only their approvals need you.
       at(thread("asking", { under: "bot", needsInput: true }), "2026-11-03T00:00:00.000Z"),
+      at(
+        { ...thread("approving", { under: "bot" }), hasPendingApprovals: true },
+        "2026-11-03T00:00:00.000Z",
+      ),
       at(thread("busy", { under: "bot", working: true }), "2026-11-03T00:00:00.000Z"),
       at(thread("finished", { under: "bot", settled: true }), "2026-11-03T00:00:00.000Z"),
       at(thread("gone", { under: "bot" }), "2026-11-03T00:00:00.000Z", true),
@@ -134,12 +139,12 @@ describe("groupBots", () => {
     expect(ids(groups.bots)).toEqual(["bot", "newer-bot"]);
     const board = groups.boardByBotKey.get("environment-1:bot")!;
     expect([ids(board.needsYou), ids(board.working), ids(board.done)]).toEqual([
-      ["asking"],
-      ["busy"],
+      ["approving"],
+      ["asking", "busy"],
       ["finished"],
     ]);
     expect([...groups.botAndWorkerKeys].toSorted()).toEqual(
-      ["bot", "newer-bot", "asking", "busy", "finished", "gone"]
+      ["bot", "newer-bot", "asking", "approving", "busy", "finished", "gone"]
         .map((id) => `environment-1:${id}`)
         .toSorted(),
     );

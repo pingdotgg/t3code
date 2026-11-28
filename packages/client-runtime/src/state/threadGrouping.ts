@@ -165,7 +165,9 @@ export function groupBots<
     if (board === undefined) continue;
     botAndWorkerKeys.add(keyOf(thread));
     if (thread.archivedAt !== null) continue;
-    const status = workerStatus(thread);
+    // A worker's question is its Bot's to answer: it stays working until the Bot replies.
+    const others = workerStatus({ ...thread, hasPendingUserInput: false });
+    const status = others === "needs-input" || !thread.hasPendingUserInput ? others : "working";
     (status === "needs-input"
       ? board.needsYou
       : status === "working"

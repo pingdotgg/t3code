@@ -16,8 +16,11 @@ workers stay out of the thread list.
 
 ## Working with a Bot
 
-- When a worker finishes or needs your approval, the Bot is told and can follow up. Ask it to watch
-  other threads or workflow runs too.
+- When a worker finishes or asks something, the Bot is told and follows up. It answers its workers'
+  questions itself and asks you only when the decision is yours. Ask it to watch other threads or
+  workflow runs too.
+- Bots and their workers run in Auto or Full Access, so they can work without stopping for
+  approvals.
 - The panel beside a Bot's conversation holds its instructions and notes, which you can edit, and
   can mute worker notifications other than requests for input. Its workers are listed there too.
 - Settle or archive a Bot when you are done: its workers go back to the thread list and it stops
