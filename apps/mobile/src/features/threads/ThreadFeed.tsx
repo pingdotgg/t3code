@@ -243,6 +243,7 @@ import {
 } from "../../lib/markdownLinks";
 import {
   createThreadFeedCache,
+  deriveAssistantMetaMessageIds,
   threadFeedCompactionLabels,
   failedFeedRunIds,
   deriveThreadFeedPresentation,
@@ -2026,7 +2027,7 @@ function renderFeedEntry(
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
-    readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly assistantMetaMessageIds: ReadonlySet<MessageId>;
     readonly unsettledTurnId: RunId | null;
     readonly compactionLabelsByEntryId: ReadonlyMap<string, { title: string; compacting: string }>;
     readonly failedRunIds: ReadonlySet<RunId>;
@@ -2323,7 +2324,7 @@ function renderFeedEntry(
       message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      props.assistantMetaMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
 
@@ -3985,15 +3986,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const terminalAssistantMessageIds = (() => {
-    const terminalIdsByTurn = new Map<RunId, string>();
-    for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
-        terminalIdsByTurn.set(entry.message.runId, entry.message.id);
-      }
-    }
-    return new Set(terminalIdsByTurn.values());
-  })();
+  const assistantMetaMessageIds = deriveAssistantMetaMessageIds(props.feed);
   // An interrupted run unfolds; a run that is no longer latest folds back.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);
   if (previousLatestRun !== props.latestRun) {
@@ -4300,7 +4293,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             expandedWorkRows,
             workRowSizing,
             workGroupScrollPositions,
-            terminalAssistantMessageIds,
+            assistantMetaMessageIds,
             unsettledTurnId,
             compactionLabelsByEntryId,
             failedRunIds,
@@ -4405,7 +4398,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
               if (
                 entry.message.role === "assistant" &&
-                !terminalAssistantMessageIds.has(entry.message.id)
+                !assistantMetaMessageIds.has(entry.message.id)
               ) {
                 return "message:assistant-progress";
               }

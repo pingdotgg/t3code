@@ -3555,10 +3555,24 @@ describe("v2 run and attempt history", () => {
         for (const runStatus of ["running", "completed"] as const) {
           for (const visibility of ["showAll", "zen"] as const) {
             const rows = rowsFor(completedSecond, runStatus, visibility, phase);
-            expect(rows.some((row) => row.id === "old-reply-entry")).toBe(retained);
+            const oldReply = rows.find((row) => row.id === "old-reply-entry");
+            expect(oldReply !== undefined).toBe(retained);
+            if (oldReply !== undefined) {
+              expect(oldReply).toMatchObject({
+                showAssistantMeta: runStatus === "completed",
+                showAssistantCopyButton: runStatus === "completed",
+              });
+            }
             if (phase !== undefined && runStatus === "completed") {
               const nativeRows = rowsFor(completedSecond, runStatus, visibility, phase, true);
-              expect(nativeRows.some((row) => row.id === "old-reply-entry")).toBe(retained);
+              const nativeOldReply = nativeRows.find((row) => row.id === "old-reply-entry");
+              expect(nativeOldReply !== undefined).toBe(retained);
+              if (nativeOldReply !== undefined) {
+                expect(nativeOldReply).toMatchObject({
+                  showAssistantMeta: true,
+                  showAssistantCopyButton: true,
+                });
+              }
               expect(nativeRows.some((row) => row.id === "status-entry")).toBe(false);
             }
             if (runStatus === "completed") {
@@ -4404,6 +4418,74 @@ describe("linked timeline resources", () => {
       "summary:created",
       "assistant-meta:final",
     ]);
+  });
+
+  it("keeps a retained final_answer reply's meta row on itself without duplicating run summaries", () => {
+    const work = (id: string, second: number) => ({
+      kind: "work" as const,
+      id,
+      createdAt: `2026-09-08T10:00:0${second}Z`,
+      entry: {
+        id,
+        createdAt: `2026-09-08T10:00:0${second}Z`,
+        runId,
+        label: id,
+        tone: "tool" as const,
+      },
+    });
+    const timelineEntries = [
+      {
+        kind: "message" as const,
+        id: "kept-answer",
+        createdAt: "2026-09-08T10:00:00Z",
+        message: {
+          id: MessageId.make("kept-answer"),
+          role: "assistant" as const,
+          text: "Initial answer",
+          runId,
+          streaming: false,
+          createdAt: "2026-09-08T10:00:00Z",
+          updatedAt: "2026-09-08T10:00:00Z",
+        },
+        projectedItem: {
+          item: {
+            type: "assistant_message",
+            phase: "final_answer",
+            status: "completed",
+            completedAt: DateTime.makeUnsafe("2026-09-08T10:00:00Z"),
+          },
+        } as never,
+      },
+      work("tool-1", 1),
+      work("tool-2", 2),
+      event("created", "thread_created"),
+      {
+        kind: "message" as const,
+        id: "final",
+        createdAt: "2026-09-08T10:00:04Z",
+        message: {
+          id: MessageId.make("final"),
+          role: "assistant" as const,
+          text: "Steer reply",
+          runId,
+          streaming: false,
+          createdAt: "2026-09-08T10:00:04Z",
+          updatedAt: "2026-09-08T10:00:04Z",
+        },
+      },
+    ];
+    for (const expandedRunIds of [new Set<RunId>(), new Set([runId])]) {
+      const rows = deriveMessagesTimelineRows({ ...common, timelineEntries, expandedRunIds });
+      expect(rows.find((row) => row.id === "kept-answer")).toMatchObject({
+        kind: "message",
+        showAssistantMeta: true,
+        showAssistantCopyButton: true,
+      });
+      expect(rows.filter((row) => row.id === "summary:created")).toHaveLength(1);
+      expect(rows.filter((row) => row.kind === "assistant-meta").map((row) => row.id)).toEqual([
+        "assistant-meta:final",
+      ]);
+    }
   });
 
   it("shows a created chat after a steer only when that steer's segment is open", () => {

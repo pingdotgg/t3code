@@ -1217,6 +1217,22 @@ function finalAnswerIds(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<Messa
   return ids;
 }
 
+export function deriveAssistantMetaMessageIds(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+): ReadonlySet<MessageId> {
+  const terminalIdsByTurn = new Map<RunId, MessageId>();
+  const metaIds = new Set<MessageId>(finalAnswerIds(feed));
+  for (const entry of feed) {
+    if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
+      terminalIdsByTurn.set(entry.message.runId, entry.message.id);
+    }
+  }
+  for (const id of terminalIdsByTurn.values()) {
+    metaIds.add(id);
+  }
+  return metaIds;
+}
+
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,

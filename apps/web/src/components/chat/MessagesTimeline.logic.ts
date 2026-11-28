@@ -1326,6 +1326,7 @@ function deriveTurnFolds(input: {
 
 function attachTrailingToolGroupsToAssistant(
   rows: ReadonlyArray<MessagesTimelineRow>,
+  terminalAssistantMessageIds: ReadonlySet<string>,
 ): MessagesTimelineRow[] {
   const messageRowsWithoutMeta = new Set<string>();
   const metaRowsAfterIndex = new Map<
@@ -1339,6 +1340,7 @@ function attachTrailingToolGroupsToAssistant(
       row.kind !== "message" ||
       row.message.role !== "assistant" ||
       !row.showAssistantMeta ||
+      !terminalAssistantMessageIds.has(row.message.id) ||
       runId === null
     ) {
       continue;
@@ -2325,8 +2327,10 @@ export function deriveMessagesTimelineRows(
 
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
-      terminalAssistantMessageIds.has(timelineEntry.message.id) &&
-      !assistantResponseStillInProgress;
+      (terminalAssistantMessageIds.has(timelineEntry.message.id) ||
+        retainedAssistantReplyIds.has(timelineEntry.id)) &&
+      !assistantResponseStillInProgress &&
+      !timelineEntry.message.streaming;
 
     nextRows.push({
       kind: "message",
@@ -2443,6 +2447,7 @@ export function deriveMessagesTimelineRows(
 
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+    terminalAssistantMessageIds,
   );
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
@@ -2519,7 +2524,12 @@ function attachCreatedThreadSummaries(
       )
         return [];
     }
-    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+    if (
+      row.kind === "message" &&
+      row.showAssistantMeta &&
+      row.message.runId &&
+      index === terminalIndexes.get(row.message.runId)
+    ) {
       return [
         row,
         ...(createdByRun.get(row.message.runId) ?? []).map((entry) => ({

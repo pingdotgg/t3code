@@ -20,6 +20,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
+  deriveAssistantMetaMessageIds,
   workEntryRowLabel,
   threadFeedCompactionLabels,
   createThreadFeedCache,
@@ -1512,6 +1513,9 @@ describe("buildThreadFeed", () => {
       expect(rows([user, partial, steer, final], "zen").includes("answer")).toBe(
         phase === "final_answer",
       );
+      const metaIds = deriveAssistantMetaMessageIds(interrupted);
+      expect(metaIds.has(answer.messageId)).toBe(phase === "final_answer");
+      expect(metaIds.has(final.messageId)).toBe(true);
     }
     const confirmed = { ...answer, phase: "final_answer" as const };
     const continued = buildThreadFeed(
