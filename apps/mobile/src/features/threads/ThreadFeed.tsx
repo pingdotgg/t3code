@@ -2960,6 +2960,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
         models={models}
         textStyle={props.markdownStyles.nativeTextStyle}
         preserveSoftBreaks
+        singleTilde={false}
         {...props.linkHandlers}
         renderImage={props.renderImage}
       />
@@ -2993,6 +2994,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
             models={models}
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
+            singleTilde={false}
             {...props.linkHandlers}
             renderImage={props.renderImage}
           />

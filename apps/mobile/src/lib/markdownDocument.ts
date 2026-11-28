@@ -562,16 +562,60 @@ function normalizedMarkdown(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
-export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithImageParagraphs(normalizedMarkdown(markdown));
+const doubleTildeParser = unified().use(remarkParse).use(remarkGfm, { singleTilde: false });
+
+/** md4c always strikes `~a~`; escaping lone tildes in prose matches remark-gfm's `singleTilde: false`. */
+function markdownWithLiteralSingleTildes(markdown: string): string {
+  if (!/(?<!~)~(?!~)/.test(markdown)) return markdown;
+  const [, source] = splitLeadingBom(markdown);
+  const edits: MarkdownEdit[] = [];
+  let autolinkEnd = -1;
+  const visit = (node: MarkdownNode) => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+    if (node.type === "text") {
+      for (let index = source.indexOf("~", start); index !== -1 && index < end;) {
+        let slashes = 0;
+        while (source[index - 1 - slashes] === "\\") slashes += 1;
+        if (
+          source[index - 1] !== "~" &&
+          source[index + 1] !== "~" &&
+          slashes % 2 === 0 &&
+          index !== autolinkEnd
+        )
+          edits.push({ start: index, end: index, content: "\\" });
+        index = source.indexOf("~", index + 1);
+      }
+    } else if (node.type === "link" && source[start] !== "[") {
+      // GFM ends a bare URL before a trailing `~` that md4c keeps; `\~` there would unlink it.
+      autolinkEnd = end;
+    } else if ("children" in node) {
+      node.children.forEach(visit);
+    }
+  };
+  visit(doubleTildeParser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
+/** `singleTilde: false` keeps `~a~` literal, as web does for user messages. */
+export function markdownForNativeParsing(markdown: string, singleTilde = false): string {
+  const normalized = normalizedMarkdown(markdown);
+  return markdownWithImageParagraphs(
+    singleTilde ? normalized : markdownWithLiteralSingleTildes(normalized),
+  );
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(normalizedMarkdown(markdown));
 }
 
-export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+export function markdownForNativeRendering(
+  markdown: string,
+  fileLink: RegExp,
+  singleTilde = false,
+): string {
+  return transformNativeMarkdown(markdownForNativeParsing(markdown, singleTilde), fileLink, true);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */

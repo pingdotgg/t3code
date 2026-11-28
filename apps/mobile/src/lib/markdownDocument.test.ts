@@ -57,4 +57,9 @@ describe("single tildes", () => {
   it("leave double-tilde strikethrough alone", () => {
     expect(nativeDocument("Drop ~~old~~ now")).toContain('"type":"delete"');
   });
+
+  it("stay as written in code and autolinks", () => {
+    const markdown = "`a~b~c` https://example.com/~a~ <https://example.com/~b~>";
+    expect(render(markdown)).toBe(markdown);
+  });
 });

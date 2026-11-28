@@ -77,6 +77,8 @@ export interface SelectableMarkdownTextProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
+  /** Whether `~text~` strikes through as well as `~~text~~`. Defaults to true. */
+  readonly singleTilde?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly onCiteText?: (text: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;

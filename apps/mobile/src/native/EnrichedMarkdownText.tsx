@@ -273,13 +273,17 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     if (!fileEmbedLabel) {
       return {
         markdown: markdownWithTextDirection(
-          markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+          markdownForNativeRendering(
+            props.markdown,
+            ENRICHED_INLINE_FILE_LINK_REGEX,
+            props.singleTilde ?? true,
+          ),
         ),
         fileHrefs: new Set<string>(),
       };
     }
     const content = markdownWithInlineFileLinks(
-      markdownForNativeParsing(props.markdown),
+      markdownForNativeParsing(props.markdown, props.singleTilde ?? true),
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
@@ -287,7 +291,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       ...files,
       markdown: markdownWithTextDirection(markdownWithTableBreaks(files.markdown)),
     };
-  }, [props.markdown, fileEmbedLabel]);
+  }, [props.markdown, props.singleTilde, fileEmbedLabel]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
