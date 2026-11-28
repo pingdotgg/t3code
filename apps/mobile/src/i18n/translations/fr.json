@@ -5766,5 +5766,9 @@
   "5d9bc70d1cb3b596": "{count} machines n’ont presque plus d’espace disque",
   "7bb6d3c4fe5cea0f": "{count} machines sont surchargées",
   "b48a4b390016a4f0": "Utilise {usage} alors que la mémoire ralentit les agents. L’arrêter aide les autres.",
-  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres."
+  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres.",
+  "142c582f7f3f4bca": "Retirer le script du projet",
+  "6896cd0818d78d22": "Script du projet retiré",
+  "6fff510c4a9d42c7": "Ajouté aux scripts du projet",
+  "e8a087a38558e37b": "Ajouter aux scripts du projet"
 }

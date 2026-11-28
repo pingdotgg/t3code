@@ -112,11 +112,14 @@ const FileTreeRow = function FileTreeRow(props: {
     >
       {row}
     </Menu>
-  ) : row;
+  ) : (
+    row
+  );
 };
 
 export function FileTreeBrowser(props: {
   readonly project?: EnvironmentProject | null;
+  readonly scriptPathPrefix?: string;
   readonly revealSelection: (path: string | null) => void;
   readonly expandedPaths: ReadonlySet<string>;
   readonly setExpandedPaths: (
@@ -228,11 +231,13 @@ export function FileTreeBrowser(props: {
       onPressDirectory={toggleDirectory}
       onPreviewFile={onPreviewFile}
       onPressFile={handleSelectFile}
-      scriptAction={item.node.kind === "file" ? scriptAction(item.node.path) : undefined}
+      scriptAction={item.node.kind === "file" ? scriptAction(
+        props.scriptPathPrefix ? `${props.scriptPathPrefix}/${item.node.path}` : item.node.path,
+      ) : undefined}
     />
   );
 
-  const extraData = { expandedPaths, loadingDirectories, selectedPath, scriptAction };
+  const extraData = { expandedPaths, loadingDirectories, selectedPath, scriptAction, scriptPathPrefix: props.scriptPathPrefix };
 
   // Keep the list as direct screen content so UIKit can apply header insets.
   return (

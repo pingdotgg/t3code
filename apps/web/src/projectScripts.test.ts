@@ -2,7 +2,12 @@ import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
 import { ProjectId } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { projectScriptFileCommand, projectScriptForFile, settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptFileCommand,
+  projectScriptForFile,
+  settleProjectScript,
+  setupProjectScript,
+} from "@t3tools/shared/projectScripts";
 
 import {
   commandForProjectScript,
@@ -25,7 +30,7 @@ describe("projectScripts helpers", () => {
     ["scripts/$(touch pwned).sh", null],
     ["scripts/%PATH%.sh", null],
     ["scripts/`id`.sh", null],
-    ["scripts/a\".sh", null],
+    ['scripts/a".sh', null],
     ["scripts/line\nbreak.sh", null],
     ["../outside.sh", null],
     ["/absolute.sh", null],

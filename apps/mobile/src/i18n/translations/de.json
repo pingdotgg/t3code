@@ -5772,5 +5772,9 @@
   "5d9bc70d1cb3b596": "{count} Rechnern geht der Speicherplatz aus",
   "7bb6d3c4fe5cea0f": "{count} Rechner sind überlastet",
   "b48a4b390016a4f0": "Belegt {usage}, während Arbeitsspeicher Agents ausbremst. Ihn zu stoppen hilft den übrigen.",
-  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen."
+  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen.",
+  "142c582f7f3f4bca": "Projektskript entfernen",
+  "6896cd0818d78d22": "Projektskript entfernt",
+  "6fff510c4a9d42c7": "Zu Projektskripten hinzugefügt",
+  "e8a087a38558e37b": "Zu Projektskripten hinzufügen"
 }

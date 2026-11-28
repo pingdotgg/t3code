@@ -17,7 +17,9 @@ export function projectScriptFileCommand(path: string): string | null {
   if (!path || /["$`%!^\\\x00-\x1f]/.test(path) || path.startsWith("/")) return null;
   if (path.split("/").some((part) => part === ".." || part === "." || !part)) return null;
   const extension = /\.([a-z]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
-  const runner = Object.hasOwn(FILE_SCRIPT_RUNNERS, extension) ? FILE_SCRIPT_RUNNERS[extension] : undefined;
+  const runner = Object.hasOwn(FILE_SCRIPT_RUNNERS, extension)
+    ? FILE_SCRIPT_RUNNERS[extension]
+    : undefined;
   return runner ? `${runner} "./${path}"` : null;
 }
 

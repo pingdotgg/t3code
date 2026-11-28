@@ -1,5 +1,6 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import {
@@ -427,9 +428,11 @@ function useThreadFilesWorkspace(params: {
     cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
-    project: project?.environmentId === environmentId &&
+    project:
+      project?.environmentId === environmentId &&
       (routeCwd === null || routeCwd === selectedThreadCwd || routeCwd === project.workspaceRoot)
-      ? project : null,
+        ? project
+        : null,
     relativePath: normalizeRoutePath(params.path),
     selectedThread,
     threadId,
@@ -500,9 +503,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, project, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, project, selectedThread, threadId } =
+    useThreadFilesWorkspace(props.route.params);
   const hasFileInspector = fileInspector.supported && threadId !== null;
   const messages = useMessages();
   const fileAccessSession = useEnvironmentQuery(
@@ -692,6 +694,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   );
   const metadataPending = !metadata.isSuccess && metadata.error === null;
   const directoryPath = metadata.data?.kind === "directory" ? targetPath : null;
+  const scriptPathPrefix = directoryPath && cwd ? workspaceRelativeFilePath(directoryPath, cwd) : null;
   const [searchQuery, setSearchQuery] = useState("");
   const entriesQuery = useFileTreeEntries({
     environmentId,
@@ -893,7 +896,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const renderInspector = () =>
     fileInspector.supported && environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
-        project={directoryPath === null ? project : null}
+        project={directoryPath === null || scriptPathPrefix !== null ? project : null}
+        {...(scriptPathPrefix ? { scriptPathPrefix } : {})}
         cwd={directoryPath ?? cwd}
         environmentId={environmentId}
         projectName={directoryPath ?? projectName}
@@ -1115,6 +1119,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         <ScreenContent>
           <FileTreeBrowser
             key={JSON.stringify([environmentId, directoryPath])}
+            project={scriptPathPrefix !== null ? project : null}
+            {...(scriptPathPrefix ? { scriptPathPrefix } : {})}
             revealSelection={entriesQuery.revealSelection}
             expandedPaths={entriesQuery.expandedPaths}
             setExpandedPaths={entriesQuery.setExpandedPaths}

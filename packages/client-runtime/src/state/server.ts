@@ -1557,14 +1557,25 @@ export function createServerEnvironmentAtoms<R, E>(
       const additions = input.patch.projectScriptOverrides?.[input.project.id] ?? [];
       const next = input.removeScriptId
         ? scripts.filter((script) => script.id !== input.removeScriptId)
-        : [...scripts, ...additions.filter((added) => !scripts.some((script) => script.command === added.command))];
-      const folded = registry.get(configValueAtom(environmentId))?.environment.capabilities.projectSettingsOverrides === true;
+        : [
+            ...scripts,
+            ...additions.filter(
+              (added) => !scripts.some((script) => script.command === added.command),
+            ),
+          ];
+      const folded =
+        registry.get(configValueAtom(environmentId))?.environment.capabilities
+          .projectSettingsOverrides === true;
       return yield* requestGuarded(WS_METHODS.serverUpdateSettings, {
         patch: folded
-          ? { projectSettingsOverrides: { [input.project.id]: {
-              ...settings.projectSettingsOverrides[input.project.id],
-              defaultProjectScripts: next,
-            } } }
+          ? {
+              projectSettingsOverrides: {
+                [input.project.id]: {
+                  ...settings.projectSettingsOverrides[input.project.id],
+                  defaultProjectScripts: next,
+                },
+              },
+            }
           : { projectScriptOverrides: { [input.project.id]: next } },
       });
     }),

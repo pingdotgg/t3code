@@ -17,6 +17,7 @@ import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
 export function ThreadFileNavigatorPane(props: {
   readonly project?: EnvironmentProject | null;
+  readonly scriptPathPrefix?: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly projectName: string;
@@ -61,6 +62,7 @@ export function ThreadFileNavigatorPane(props: {
   const fileTree = (
     <FileTreeBrowser
       {...(props.project ? { project: props.project } : {})}
+      {...(props.scriptPathPrefix ? { scriptPathPrefix: props.scriptPathPrefix } : {})}
       key={workspaceKey}
       revealSelection={entriesQuery.revealSelection}
       expandedPaths={entriesQuery.expandedPaths}
