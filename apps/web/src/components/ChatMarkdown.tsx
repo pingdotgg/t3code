@@ -2027,7 +2027,7 @@ function PreviewableMarkdownFence({
           threadRef={threadRef}
           headingLevelOffset={headingLevelOffset}
           onImageExpand={expandMedia}
-          className="mt-1 border-t border-divider surface-card-fill px-3 py-3"
+          className="surface-card-fill px-3 py-3"
         />
       ) : (
         children
