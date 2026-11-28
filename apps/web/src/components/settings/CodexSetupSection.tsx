@@ -16,7 +16,6 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { codexAuthHandoffUrl } from "@t3tools/shared/codexAuthHandoff";
-import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import {
@@ -685,7 +684,7 @@ function ManagedCodexSetup({
   );
 
   const handoffUrl =
-    needsManualCallback && url && auth?.flowId && providerAuthReturnUrl(returnUrl.toString())
+    needsManualCallback && url && auth?.flowId
       ? codexAuthHandoffUrl(
           {
             authorizationUrl: url,

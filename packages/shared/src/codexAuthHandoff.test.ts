@@ -32,7 +32,7 @@ const callbackUrl = `http://127.0.0.1:54213/auth/callback?state=${"a".repeat(43)
 
 describe("Codex desktop handoff", () => {
   it("keeps the hosted return route, account, and environment with the code in a fragment", () => {
-    expect(readCodexAuthHandoff(codexAuthHandoffUrl(input), false)).toEqual(input);
+    expect(readCodexAuthHandoff(codexAuthHandoffUrl(input)!, false)).toEqual(input);
     const delivery = codexAuthDeliveryUrl(input, callbackUrl);
     expect(new URL(delivery).search).toBe("");
     expect(readCodexAuthDelivery(delivery)).toEqual({
@@ -44,22 +44,34 @@ describe("Codex desktop handoff", () => {
       returnUrl: input.returnUrl,
     });
   });
+  it("keeps the settings instance when the return URL has a long tracking query", () => {
+    const returnUrl = "https://app.t3.codes/settings/providers?instanceId=work";
+    const link = codexAuthHandoffUrl({
+      ...input,
+      returnUrl: `${returnUrl}&utm_source=${"x".repeat(4100)}`,
+    });
+    expect(readCodexAuthHandoff(link!, false)).toEqual({ ...input, returnUrl });
+  });
+  it("omits the desktop link when the canonical return URL still exceeds the limit", () => {
+    const returnUrl = `https://app.t3.codes/settings/providers?instanceId=${"x".repeat(4100)}`;
+    expect(codexAuthHandoffUrl({ ...input, returnUrl })).toBeUndefined();
+  });
   it("rejects other handlers, schemes, arbitrary return sites, and non-OpenAI authorization", () => {
-    const link = codexAuthHandoffUrl(input);
+    const link = codexAuthHandoffUrl(input)!;
     expect(readCodexAuthHandoff(link, true)).toBeUndefined();
     expect(readCodexAuthHandoff(link.replace("auth/codex", "auth/other"), false)).toBeUndefined();
     expect(
-      readCodexAuthHandoff(
-        codexAuthHandoffUrl({ ...input, returnUrl: "https://attacker.example/welcome" }),
-        false,
-      ),
+      readCodexAuthHandoff(link.replace("app.t3.codes", "attacker.example"), false),
+    ).toBeUndefined();
+    expect(
+      codexAuthHandoffUrl({ ...input, returnUrl: "https://attacker.example/welcome" }),
     ).toBeUndefined();
     expect(
       readCodexAuthHandoff(
         codexAuthHandoffUrl({
           ...input,
           authorizationUrl: input.authorizationUrl.replace("auth.openai.com", "attacker.example"),
-        }),
+        })!,
         false,
       ),
     ).toBeUndefined();

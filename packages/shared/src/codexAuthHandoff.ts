@@ -1,4 +1,5 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { oauthCallbackUrl } from "./oauthCallback.ts";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
@@ -19,7 +20,7 @@ const Delivery = Schema.Struct({
   returnHash: Schema.String.check(Schema.isMaxLength(128)),
 });
 
-const encodeHandoff = Schema.encodeSync(Schema.fromJsonString(CodexAuthHandoff));
+const encodeHandoff = Schema.encodeOption(Schema.fromJsonString(CodexAuthHandoff));
 const decodeHandoff = Schema.decodeUnknownSync(Schema.fromJsonString(CodexAuthHandoff));
 const encodeDelivery = Schema.encodeSync(Schema.fromJsonString(Delivery));
 const decodeDelivery = Schema.decodeUnknownSync(Schema.fromJsonString(Delivery));
@@ -65,8 +66,12 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
 }
 
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
+  const returnUrl = providerAuthReturnUrl(input.returnUrl);
+  if (!returnUrl) return undefined;
+  const request = encodeHandoff({ ...input, returnUrl });
+  if (Option.isNone(request)) return undefined;
   const url = new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`);
-  url.searchParams.set("request", encodeHandoff(input));
+  url.searchParams.set("request", request.value);
   return url.toString();
 }
 

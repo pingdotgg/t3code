@@ -388,6 +388,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         flowId: "flow-one",
       };
       const link = codexAuthHandoffUrl(request, true);
+      assert.ok(link);
       const delivered = Promise.withResolvers<string>();
       const shell = ElectronShell.ElectronShell.of({
         openExternal: (value) =>
