@@ -1550,7 +1550,10 @@ function conversationProviderThread(
   );
 }
 
-/** Wakes and fresh starts act on the active session; a message continues the conversation. */
+/**
+ * Wakes and fresh starts act on the active session; a message continues the conversation, and so
+ * does a delegated task's completion unless a fresh-session schedule run dispatched the task.
+ */
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1559,9 +1562,13 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
+  const parentRunId = message.delegatedCompletion?.parentRunId;
+  const parentRun =
+    parentRunId === undefined ? undefined : projection.runs.find((run) => run.id === parentRunId);
   return freshContext ||
     message.notification !== undefined ||
-    message.delegatedCompletion !== undefined
+    (parentRunId !== undefined &&
+      (parentRun === undefined || isScheduledFreshRun(parentRun, projection.turnItems)))
     ? projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       )

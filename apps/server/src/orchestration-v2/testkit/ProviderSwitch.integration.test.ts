@@ -5629,7 +5629,7 @@ describe("orchestration v2 provider switching", () => {
                 id: taskId,
                 threadId,
                 runId: parentRun.id,
-                parentNodeId: parentRun.rootNodeId,
+                parentNodeId: parentRun.rootNodeId!,
                 origin: "app_owned",
                 createdBy: "agent",
                 driver: CLAUDE_DRIVER,
