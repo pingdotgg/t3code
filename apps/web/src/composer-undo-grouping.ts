@@ -19,6 +19,11 @@ export function isPasteTransaction(tr: Transaction): boolean {
   return tr.getMeta("uiEvent") === "paste" || tr.getMeta(CLIPBOARD_EDIT_META) === "paste";
 }
 
+/** Pasted or dropped text, which the user did not type. */
+export function isPasteOrDropTransaction(tr: Transaction): boolean {
+  return isPasteTransaction(tr) || tr.getMeta("uiEvent") === "drop";
+}
+
 /** Start a replacement undo group, keeping the IME edits together and prior typing separate. */
 export function markAsCompositionReplace(tr: Transaction): Transaction {
   return closeHistory(tr).setMeta(COMPOSITION_REPLACE_META, true);
