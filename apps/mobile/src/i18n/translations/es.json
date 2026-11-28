@@ -534,6 +534,7 @@
   "d0f1961fef6825d2": "No se pudo conectar. Reconectando...",
   "26c3dfb406fb90ad": "Las preferencias de enrutamiento de pull requests no están disponibles en este cliente.",
   "1d195c550f6dea22": "Este entorno no tiene un endpoint de conexión guardado.",
+  "5ae9f093b68f3b07": "Esa dirección lleva a {host}, al que esta app ya está conectada.",
   "c0794944a743d980": "Esa dirección dice ser {host}, que ya está guardado. Añádela como ruta desde los ajustes de ese entorno.",
   "7eabeed193759388": "El orden de rutas debe incluir cada ruta guardada una vez.",
   "18de69e3b6ac3891": "El perfil de conexión {connectionId} no es una conexión bearer.",

@@ -534,6 +534,7 @@
   "d0f1961fef6825d2": "Falha ao conectar. Reconectando...",
   "26c3dfb406fb90ad": "As preferências de roteamento de pull requests não estão disponíveis neste cliente.",
   "1d195c550f6dea22": "Este ambiente não tem um endpoint de conexão salvo.",
+  "5ae9f093b68f3b07": "Esse endereço leva a {host}, ao qual este app já está conectado.",
   "c0794944a743d980": "Esse endereço afirma ser {host}, que já está salvo. Adicione-o como uma rota nas configurações desse ambiente.",
   "7eabeed193759388": "A ordem das rotas precisa listar cada rota salva uma vez.",
   "18de69e3b6ac3891": "O perfil de conexão {connectionId} não é uma conexão bearer.",

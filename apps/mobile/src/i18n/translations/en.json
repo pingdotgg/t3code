@@ -534,6 +534,7 @@
   "d0f1961fef6825d2": "Failed to connect. Reconnecting...",
   "26c3dfb406fb90ad": "Pull request routing preferences are unavailable on this client.",
   "1d195c550f6dea22": "This environment does not have a saved connection endpoint.",
+  "5ae9f093b68f3b07": "That address reaches {host}, which this app is already connected to.",
   "c0794944a743d980": "That address claims to be {host}, which is already saved. Add it as a route from that environment's settings instead.",
   "7eabeed193759388": "The route order must list every saved route once.",
   "18de69e3b6ac3891": "Connection profile {connectionId} is not a bearer connection.",

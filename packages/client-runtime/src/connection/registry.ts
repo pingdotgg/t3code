@@ -114,8 +114,9 @@ export class EnvironmentRegistry extends Context.Service<
       options?: { readonly knownAddressOnly?: boolean; readonly useRegistrationLabel?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
-     * Fails when the route would add a new address to a saved user environment. Pairing that does
-     * not target an environment checks this, because the server reports its own environment id.
+     * Fails when the route would add a new address to a saved user environment, or reaches a
+     * platform-managed one. Pairing that does not target an environment checks this before
+     * redeeming its code, because the server reports its own environment id.
      */
     readonly assertKnownAddress: (
       route: ConnectionRoute,
@@ -560,7 +561,17 @@ export const make = Effect.gen(function* () {
     route: ConnectionRoute,
   ) {
     const environmentId = route.target.environmentId;
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    // The host owns this entry, so pairing would spend the code and add nothing.
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        ...translatableDetail(
+          msg("That address reaches {host}, which this app is already connected to.", {
+            host: route.target.label,
+          }),
+        ),
+      });
+    }
     const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
     if (
       saved !== undefined &&
