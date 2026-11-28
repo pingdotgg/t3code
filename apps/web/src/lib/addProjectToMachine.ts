@@ -10,6 +10,7 @@ import type {
   ProjectCloneSnapshot,
   ProjectId,
   ScopedProjectRef,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { create } from "zustand";
@@ -43,6 +44,10 @@ export interface AddProjectToMachineInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly remoteUrl: string;
+  /** The forge the remote is on. The target asks its own login there for the real clone URLs. */
+  readonly provider: SourceControlProviderKind | undefined;
+  /** Set when `remoteUrl` was rewritten to HTTPS, so the target's forge may replace the guess. */
+  readonly protocol: "https" | undefined;
   readonly destinationPath: string;
   readonly files: ReadonlyArray<string>;
 }
@@ -143,6 +148,8 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         title: input.title,
         createdAt: new Date().toISOString(),
         remoteUrl: input.remoteUrl,
+        ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.protocol ? { protocol: input.protocol } : {}),
         destinationPath: input.destinationPath,
       },
     },

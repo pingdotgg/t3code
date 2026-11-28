@@ -511,10 +511,11 @@ function rejectingSsh(
       Effect.gen(function* () {
         const url = input.args.at(-2)!;
         urls.push(url);
-        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        const overHttp = /^https?:\/\//.test(url);
+        if (overHttp && !httpsFails) return processOutput();
         yield* (
           input.progress?.onStderrLine?.(
-            url.startsWith("https://")
+            overHttp
               ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
               : "git@github.com: Permission denied (publickey).",
           ) ?? Effect.void
@@ -533,6 +534,7 @@ function rejectingSsh(
 const cloneInTemporaryDirectory = (
   git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
   input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+  provider?: SourceControlProvider.SourceControlProvider["Service"],
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -546,7 +548,7 @@ const cloneInTemporaryDirectory = (
         ...input,
         destinationPath: path.join(parent, "t3code"),
       });
-    }).pipe(Effect.provide(layer({ git }).pipe(Layer.orDie)));
+    }).pipe(Effect.provide(layer({ git, ...(provider ? { provider } : {}) }).pipe(Layer.orDie)));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
@@ -576,6 +578,72 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
   }),
 );
 
+const GITLAB = SourceControlProviderKind.make("gitlab");
+const GITLAB_SSH_URL = "git@gitlab.internal:group/project.git";
+const GITLAB_GUESSED_URL = "https://gitlab.internal/group/project.git";
+const GITLAB_HTTP_URL = "http://gitlab.internal:9999/group/project.git";
+
+function gitLabForge(known: boolean | "elsewhere", lookups: Array<string>) {
+  return makeProvider({
+    kind: GITLAB,
+    getRepositoryCloneUrls: (input) => {
+      lookups.push(input.repository);
+      return known
+        ? Effect.succeed({
+            nameWithOwner: "group/project",
+            url: known === true ? GITLAB_HTTP_URL : "https://gitlab.com/group/project.git",
+            sshUrl:
+              known === true
+                ? "ssh://git@gitlab.internal:2222/group/project.git"
+                : "git@gitlab.com:group/project.git",
+          })
+        : Effect.fail(
+            new SourceControlProviderError({
+              provider: GITLAB,
+              operation: "getRepositoryCloneUrls",
+              cwd: input.cwd,
+              detail: "glab is not signed in.",
+            }),
+          );
+    },
+  });
+}
+
+it.effect.each([
+  ["HTTPS from this host's forge", "https", true, GITLAB_HTTP_URL],
+  ["HTTPS as given without a forge login", "https", false, GITLAB_GUESSED_URL],
+  [
+    "HTTPS as given when the forge answers for another host",
+    "https",
+    "elsewhere",
+    GITLAB_GUESSED_URL,
+  ],
+  ["refused SSH from this host's forge", undefined, true, GITLAB_HTTP_URL],
+  ["refused SSH by rewriting without a forge login", undefined, false, GITLAB_GUESSED_URL],
+] as const)("clones another machine's remote over %s", ([, protocol, known, clonedFrom]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const lookups: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(
+      rejectingSsh(urls, false),
+      protocol === "https"
+        ? { provider: GITLAB, remoteUrl: GITLAB_GUESSED_URL, protocol }
+        : { provider: GITLAB, remoteUrl: GITLAB_SSH_URL },
+      gitLabForge(known, lookups),
+    );
+
+    assert.deepStrictEqual(
+      urls,
+      protocol === "https" ? [clonedFrom] : [GITLAB_SSH_URL, clonedFrom],
+    );
+    assert.strictEqual(result.remoteUrl, clonedFrom);
+    // Every forge reads its host from an HTTP(S) URL, never from an SCP-style remote.
+    assert.deepStrictEqual(lookups, [GITLAB_GUESSED_URL]);
+    // Only a clone the user named by repository is labelled with it.
+    assert.strictEqual(result.repository, null);
+  }),
+);
+
 it.effect.each([
   "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
   "ssh://user:pa@rt@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
@@ -592,6 +660,19 @@ it.effect.each([
       "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo",
     ]);
     assert.strictEqual(result.remoteUrl, "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo");
+  }),
+);
+
+it.effect("does not ask the forge about a clone that SSH accepts", () =>
+  Effect.gen(function* () {
+    const lookups: Array<string> = [];
+    yield* cloneInTemporaryDirectory(
+      {},
+      { provider: GITLAB, remoteUrl: GITLAB_SSH_URL },
+      gitLabForge(true, lookups),
+    );
+
+    assert.deepStrictEqual(lookups, []);
   }),
 );
 
