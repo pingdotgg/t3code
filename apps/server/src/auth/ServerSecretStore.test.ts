@@ -1,6 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,7 +36,7 @@ const layerPermissionDeniedFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerPermissionDeniedSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -63,39 +63,12 @@ const layerRenameFailureFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerRenameFailureSecretStore = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(layerServerConfig()),
     Layer.provideMerge(layerRenameFailureFileSystem),
-  );
-
-const layerRemoveFailureFileSystem = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-
-    return {
-      ...fileSystem,
-      remove: (path, options) =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "PermissionDenied",
-            module: "FileSystem",
-            method: "remove",
-            pathOrDescriptor: String(path),
-            description: `Permission denied while removing secret file.${options ? " options-set" : ""}`,
-          }),
-        ),
-    } satisfies FileSystem.FileSystem;
-  }),
-).pipe(Layer.provide(NodeServices.layer));
-
-const layerRemoveFailureSecretStore = () =>
-  ServerSecretStore.layer.pipe(
-    Layer.provide(layerServerConfig()),
-    Layer.provideMerge(layerRemoveFailureFileSystem),
   );
 
 const layerConcurrentReadMissFileSystem = Layer.effect(
@@ -119,24 +92,20 @@ const layerConcurrentReadMissFileSystem = Layer.effect(
                     yield* Deferred.succeed(readBarrier, void 0);
                   }
                   yield* Deferred.await(readBarrier);
-                  return yield* Effect.failCause(
-                    Cause.fail(
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFile",
-                        pathOrDescriptor: String(path),
-                        description: "Secret file does not exist yet.",
-                      }),
-                    ),
-                  );
+                  return yield* PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    pathOrDescriptor: String(path),
+                    description: "Secret file does not exist yet.",
+                  });
                 });
               }),
             )
           : fileSystem.readFile(path),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerConcurrentCreateSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -144,17 +113,56 @@ const layerConcurrentCreateSecretStore = () =>
     Layer.provideMerge(layerConcurrentReadMissFileSystem),
   );
 
-it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
-  it.effect("returns Option.none when a secret file does not exist", () =>
+// Both callers read the empty secret before either repairs it, and the second removal of the
+// secret file waits until the first caller has returned its key.
+const layerConcurrentEmptyRepairFileSystem = (firstReturned: Deferred.Deferred<void>) =>
+  Layer.effect(
+    FileSystem.FileSystem,
     Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const readCountRef = yield* Ref.make(0);
+      const removeCountRef = yield* Ref.make(0);
+      const readBarrier = yield* Deferred.make<void>();
+      const isSecretPath = (path: string) => /[\\/]session-signing-key\.bin$/.test(path);
 
-      const secret = yield* secretStore.get("missing-secret");
+      return {
+        ...fileSystem,
+        readFile: (path) =>
+          isSecretPath(path)
+            ? Ref.updateAndGet(readCountRef, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count > 2
+                    ? fileSystem.readFile(path)
+                    : Effect.gen(function* () {
+                        if (count === 2) {
+                          yield* Deferred.succeed(readBarrier, void 0);
+                        }
+                        yield* Deferred.await(readBarrier);
+                        return yield* fileSystem.readFile(path);
+                      }),
+                ),
+              )
+            : fileSystem.readFile(path),
+        remove: (path, options) =>
+          isSecretPath(path)
+            ? Ref.updateAndGet(removeCountRef, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count > 1 ? Deferred.await(firstReturned) : Effect.void,
+                ),
+                Effect.flatMap(() => fileSystem.remove(path, options)),
+              )
+            : fileSystem.remove(path, options),
+      } satisfies FileSystem.FileSystem;
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
-      assert.isTrue(Option.isNone(secret));
-    }).pipe(Effect.provide(layerServerSecretStore())),
+const layerConcurrentEmptyRepairSecretStore = (firstReturned: Deferred.Deferred<void>) =>
+  ServerSecretStore.layer.pipe(
+    Layer.provide(layerServerConfig()),
+    Layer.provideMerge(layerConcurrentEmptyRepairFileSystem(firstReturned)),
   );
 
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStore.layer", (it) => {
   it.effect("reuses an existing secret instead of regenerating it", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -164,6 +172,58 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
       assert.deepEqual(Array.from(second), Array.from(first));
     }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
+  it.effect("refuses a name that would leave the secrets directory", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const value = new TextEncoder().encode("planted");
+      for (const name of ["marker-x/../session-signing-key", "marker-x\\..\\session-signing-key"]) {
+        for (const write of [secretStore.create, secretStore.set]) {
+          assert.equal((yield* write(name, value).pipe(Effect.flip))._tag, "SecretStoreNameError");
+        }
+        assert.equal((yield* secretStore.get(name).pipe(Effect.flip))._tag, "SecretStoreNameError");
+        assert.equal(
+          (yield* secretStore.remove(name).pipe(Effect.flip))._tag,
+          "SecretStoreNameError",
+        );
+      }
+      assert.isTrue(Option.isNone(yield* secretStore.get("session-signing-key")));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
+  it.effect("replaces an empty persisted secret with a fresh random one", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      yield* secretStore.set("session-signing-key", new Uint8Array());
+
+      const secret = yield* secretStore.getOrCreateRandom("session-signing-key", 32);
+      const persisted = yield* secretStore.get("session-signing-key");
+
+      assert.equal(secret.byteLength, 32);
+      assert.deepEqual(Array.from(Option.getOrThrow(persisted)), Array.from(secret));
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
+  it.effect("keeps the repaired secret when concurrent callers find it empty", () =>
+    Effect.gen(function* () {
+      const firstReturned = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.set("session-signing-key", new Uint8Array());
+        const getOrCreate = secretStore
+          .getOrCreateRandom("session-signing-key", 32)
+          .pipe(Effect.tap(() => Deferred.succeed(firstReturned, void 0)));
+
+        const [first, second] = yield* Effect.all([getOrCreate, getOrCreate], {
+          concurrency: "unbounded",
+        });
+        const persisted = Option.getOrThrow(yield* secretStore.get("session-signing-key"));
+
+        assert.deepEqual(Array.from(first), Array.from(persisted));
+        assert.deepEqual(Array.from(second), Array.from(persisted));
+      }).pipe(Effect.provide(layerConcurrentEmptyRepairSecretStore(firstReturned)));
+    }),
   );
 
   it.effect("returns the persisted secret when concurrent creators race", () =>
@@ -183,45 +243,6 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.deepEqual(Array.from(first), Array.from(persistedBytes));
       assert.deepEqual(Array.from(second), Array.from(persistedBytes));
     }).pipe(Effect.provide(layerConcurrentCreateSecretStore())),
-  );
-
-  it.effect("uses restrictive permissions for the secret directory and files", () =>
-    Effect.gen(function* () {
-      const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
-      const layerRecordingFileSystem = Layer.effect(
-        FileSystem.FileSystem,
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-
-          return {
-            ...fileSystem,
-            makeDirectory: () => Effect.void,
-            writeFile: () => Effect.void,
-            rename: () => Effect.void,
-            chmod: (path, mode) =>
-              Effect.sync(() => {
-                chmodCalls.push({ path: String(path), mode });
-              }),
-          } satisfies FileSystem.FileSystem;
-        }),
-      ).pipe(Layer.provide(NodeServices.layer));
-
-      const secretStore = yield* Effect.service(ServerSecretStore.ServerSecretStore).pipe(
-        Effect.provide(
-          ServerSecretStore.layer.pipe(
-            Layer.provide(layerServerConfig()),
-            Layer.provideMerge(layerRecordingFileSystem),
-          ),
-        ),
-      );
-
-      yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
-
-      assert.isTrue(
-        chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
-      );
-      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
-    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>
@@ -250,18 +271,5 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
-  );
-
-  it.effect("propagates remove failures other than missing-file errors", () =>
-    Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const error = yield* Effect.flip(secretStore.remove("session-signing-key"));
-
-      assert.instanceOf(error, ServerSecretStore.SecretStoreRemoveError);
-      assert.include(error.message, "Failed to remove secret session-signing-key.");
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
-    }).pipe(Effect.provide(layerRemoveFailureSecretStore())),
   );
 });

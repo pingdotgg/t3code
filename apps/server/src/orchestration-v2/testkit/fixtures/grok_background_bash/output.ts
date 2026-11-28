@@ -12,9 +12,7 @@ import {
 } from "../shared.ts";
 import { GROK_BACKGROUND_BASH_PROMPT, GROK_BACKGROUND_BASH_TICKS } from "./input.ts";
 
-// Grok completes a background shell command's tool call with a
-// `BackgroundTaskStarted` acknowledgement while the process keeps running,
-// streams its output afterwards, and ends it only with `x.ai/task_completed`.
+// Grok ACKs background shells with BackgroundTaskStarted, then streams output until x.ai/task_completed.
 export function assertGrokBackgroundBashOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -60,14 +58,15 @@ export function assertGrokBackgroundBashOutput(
       event.payload.id === command?.id &&
       event.payload.status === "completed",
   );
-  const rootCompletedAt = result.domainEvents.findIndex(
+  // The root turn ends with the prompt; a background shell may be a dev server that never exits.
+  const rootTurnEndedAt = result.domainEvents.findIndex(
     (event) =>
       event.type === "run.updated" &&
       event.payload.id === rootRun?.id &&
       event.payload.status === "completed",
   );
-  assert.isAtLeast(commandCompletedAt, 0);
-  assert.isAbove(rootCompletedAt, commandCompletedAt, "run 1 completed before the command ended");
+  assert.isAtLeast(rootTurnEndedAt, 0);
+  assert.isBelow(rootTurnEndedAt, commandCompletedAt, "run 1 waited for the command to end");
 
   const rootTexts = projection.turnItems.flatMap((item) =>
     item.runId === rootRun?.id && item.type === "assistant_message" ? [item.text.trim()] : [],

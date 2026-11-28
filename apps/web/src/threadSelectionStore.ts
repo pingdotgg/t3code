@@ -6,15 +6,16 @@ export interface ThreadSelectionState {
 }
 
 interface ThreadSelectionStore extends ThreadSelectionState {
-  toggleThread: (threadKey: string) => void;
-  /**
-   * Requires the ordered list of scoped thread keys within the same project so the store can
-   * compute which threads fall between anchor and target.
-   */
-  rangeSelectTo: (threadKey: string, orderedThreadKeys: readonly string[]) => void;
+  /** The open thread looks selected, so a new selection starts from it. */
+  toggleThread: (threadKey: string, openThreadKey?: string | null) => void;
+  /** Requires ordered scoped thread keys from the same project. */
+  rangeSelectTo: (
+    threadKey: string,
+    orderedThreadKeys: readonly string[],
+    openThreadKey?: string | null,
+  ) => void;
   clearSelection: () => void;
   removeFromSelection: (threadKeys: readonly string[]) => void;
-  setAnchor: (threadKey: string) => void;
   hasSelection: () => boolean;
 }
 
@@ -32,10 +33,13 @@ export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) =
   selectedThreadKeys: EMPTY_SET,
   anchorThreadKey: null,
 
-  toggleThread: (threadKey) => {
+  toggleThread: (threadKey, openThreadKey = null) => {
     set((state) => {
       const next = new Set(state.selectedThreadKeys);
-      if (next.has(threadKey)) {
+      if (next.size === 0 && openThreadKey !== null && openThreadKey !== threadKey) {
+        next.add(openThreadKey);
+        next.add(threadKey);
+      } else if (next.has(threadKey)) {
         next.delete(threadKey);
       } else {
         next.add(threadKey);
@@ -47,9 +51,9 @@ export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) =
     });
   },
 
-  rangeSelectTo: (threadKey, orderedThreadKeys) => {
+  rangeSelectTo: (threadKey, orderedThreadKeys, openThreadKey = null) => {
     set((state) => {
-      const anchor = state.anchorThreadKey;
+      const anchor = state.selectedThreadKeys.size === 0 ? openThreadKey : state.anchorThreadKey;
       if (anchor === null) {
         const next = new Set(state.selectedThreadKeys);
         next.add(threadKey);
@@ -81,11 +85,6 @@ export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) =
     const state = get();
     if (state.selectedThreadKeys.size === 0 && state.anchorThreadKey === null) return;
     set({ selectedThreadKeys: EMPTY_SET, anchorThreadKey: null });
-  },
-
-  setAnchor: (threadKey) => {
-    if (get().anchorThreadKey === threadKey) return;
-    set({ anchorThreadKey: threadKey });
   },
 
   removeFromSelection: (threadKeys) => {

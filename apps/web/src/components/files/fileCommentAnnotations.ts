@@ -1,4 +1,6 @@
 import type { LineAnnotation, SelectedLineRange } from "@pierre/diffs";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface FileCommentAnnotationEntry {
   id: string;
@@ -31,8 +33,14 @@ export function normalizeFileCommentRange(range: SelectedLineRange): {
   };
 }
 
-export function formatFileCommentRange(startLine: number, endLine: number): string {
-  return startLine === endLine ? `L${startLine}` : `L${startLine} to L${endLine}`;
+export function formatFileCommentRange(
+  startLine: number,
+  endLine: number,
+  resolve: MessageResolver = m,
+): string {
+  return startLine === endLine
+    ? `L${startLine}`
+    : resolve(msg("L{start} to L{end}", { start: String(startLine), end: String(endLine) }));
 }
 
 export function remapFileCommentAnnotations(
@@ -51,4 +59,12 @@ export function remapFileCommentAnnotations(
       }),
     },
   }));
+}
+
+/** Drafts and the comments still in the prompt; sent or removed ones are not shown or re-added. */
+export function promptFileCommentEntries(
+  entries: ReadonlyArray<FileCommentAnnotationEntry>,
+  promptCommentIds: ReadonlySet<string>,
+): FileCommentAnnotationEntry[] {
+  return entries.filter((entry) => entry.kind === "draft" || promptCommentIds.has(entry.id));
 }

@@ -25,35 +25,44 @@ function lastPiResponseData(transcript: ProviderReplayTranscript, command: strin
 }
 
 /**
- * Pi reports usage only through `get_session_stats`, read once per settled
- * turn: each completed provider turn carries the stats response recorded for
- * it, in order, not the last live streaming total.
+ * Settled Pi usage takes the context size from each turn's get_session_stats response and the
+ * input breakdown from the turn's last streamed message usage, since stats tokens are session totals.
  */
 export function assertPiSettledTokenUsage(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  const stats = transcript.entries.flatMap((entry) =>
-    entry.type === "emit_inbound" &&
-    field(entry.frame, "type") === "response" &&
-    field(entry.frame, "command") === "get_session_stats"
-      ? [field(entry.frame, "data")]
-      : [],
-  );
-  const turns = projectionFor(result, transcript.scenario).providerTurns;
-  assert.lengthOf(turns, stats.length);
-  for (const [index, turn] of turns.entries()) {
-    const contextUsage = field(stats[index], "contextUsage");
-    const tokens = field(stats[index], "tokens");
-    const { updatedAt: _updatedAt, ...tokenUsage } = turn.tokenUsage ?? { updatedAt: "" };
-    assert.deepEqual(tokenUsage, {
-      usedTokens: field(contextUsage, "tokens"),
-      maxTokens: field(contextUsage, "contextWindow"),
-      inputTokens: field(tokens, "input"),
-      cachedInputTokens: field(tokens, "cacheRead"),
-      outputTokens: field(tokens, "output"),
-    });
+  const expected: Array<Record<string, unknown>> = [];
+  let messageUsage: unknown;
+  for (const entry of transcript.entries) {
+    if (entry.type !== "emit_inbound") continue;
+    const usage = field(entry.frame, "usage");
+    if (field(entry.frame, "type") === "message_update" && field(usage, "totalTokens") !== 0) {
+      messageUsage = usage;
+    }
+    if (
+      field(entry.frame, "type") === "response" &&
+      field(entry.frame, "command") === "get_session_stats"
+    ) {
+      const contextUsage = field(field(entry.frame, "data"), "contextUsage");
+      const count = (key: string) => Number(field(messageUsage, key));
+      expected.push({
+        usedTokens: field(contextUsage, "tokens"),
+        maxTokens: field(contextUsage, "contextWindow"),
+        inputTokens: count("input") + count("cacheRead") + count("cacheWrite"),
+        cachedInputTokens: count("cacheRead"),
+        outputTokens: count("output"),
+      });
+    }
   }
+  const turns = projectionFor(result, transcript.scenario).providerTurns;
+  assert.deepEqual(
+    turns.map((turn) => {
+      const { updatedAt: _updatedAt, ...tokenUsage } = turn.tokenUsage ?? { updatedAt: "" };
+      return tokenUsage;
+    }),
+    expected,
+  );
 }
 
 export function assertPiSimpleOutput(
@@ -80,8 +89,7 @@ export function assertPiSimpleOutput(
   assertPiSettledTokenUsage(result, transcript);
   const [turn] = projection.providerTurns;
 
-  // Pi attaches cumulative usage to every streaming update, zeros until the
-  // provider reports.
+  // Pi streams cumulative usage, initially zeros until the provider reports.
   const streamedTotals = transcript.entries.flatMap((entry) =>
     entry.type === "emit_inbound" && field(entry.frame, "type") === "message_update"
       ? [field(field(entry.frame, "usage"), "totalTokens")]

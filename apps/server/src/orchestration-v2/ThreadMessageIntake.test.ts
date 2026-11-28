@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -7,9 +8,9 @@ import {
   ChatAttachmentId,
   CommandId,
   EventId,
+  GuestMessageId,
   MessageId,
-  ProjectId,
-  ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -21,7 +22,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import {
+  createAttachmentId,
+  createPendingAttachmentId,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -29,24 +34,40 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand, sendToThread } from "./ThreadMessageIntake.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+
+const dispatchCommand = (command: OrchestrationV2Command, sender = { managesProviders: true }) =>
+  ThreadMessageIntake.dispatchCommand(command, sender);
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
-}).pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(ServerSettings.layerTest()));
+}).pipe(
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+  Layer.provideMerge(ServerSettings.layerTest()),
+);
+
+const layerFailingDispatchHandler =
+  (captured: OrchestrationV2ServerCommand[]) => (command: OrchestrationV2ServerCommand) => {
+    captured.push(command);
+    return Effect.fail(
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Stop after intake",
+      }),
+    );
+  };
+
+const noPendingRuntimeRequests: ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"] =
+  () =>
+    Effect.succeed({ runtimeRequests: [] } as unknown as Effect.Success<
+      ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"]>
+    >);
 
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    dispatch: (command) => {
-      captured.push(command);
-      return Effect.fail(
-        new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Stop after intake",
-        }),
-      );
-    },
+    dispatch: layerFailingDispatchHandler(captured),
+    getThreadRecords: noPendingRuntimeRequests,
   });
 
 const NOW = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
@@ -92,41 +113,6 @@ const answeredRespondEvents = (input: {
   },
 ];
 
-const textOnlyRespondEvents = (input: {
-  readonly threadId: ThreadId;
-  readonly requestId: string;
-}): OrchestrationV2StoredEvent[] => [
-  {
-    sequence: 1,
-    commandId: null,
-    event: {
-      id: EventId.make("evt-recorded-answer"),
-      type: "turn-item.updated",
-      threadId: input.threadId,
-      occurredAt: NOW,
-      payload: {
-        id: TurnItemId.make("item-recorded-answer"),
-        type: "user_input_request",
-        threadId: input.threadId,
-        runId: null,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 1,
-        status: "completed",
-        title: null,
-        startedAt: null,
-        completedAt: NOW,
-        updatedAt: NOW,
-        requestId: RuntimeRequestId.make(input.requestId),
-        questions: [],
-      },
-    },
-  },
-];
-
 it.effect("claims question uploads and passes readable paths through the V2 request command", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -160,125 +146,62 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": "${path}"`,
+      `Attached image "screen.png": ${JSON.stringify(path)}`,
     ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
-it.effect("rolls back earlier question claims when a later pending upload is missing", () =>
+it.effect("leaves an async answer's text alone so its files travel as message attachments", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const threadId = ThreadId.make("thread-q-fail");
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    const existingId = ChatAttachmentId.make("thread-q-fail-00000000-0000-4000-8000-000000000001");
+    const id = ChatAttachmentId.make(createPendingAttachmentId()!);
     NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      NodePath.join(config.attachmentsDir, `${id}.png`),
       new Uint8Array([1, 2, 3]),
     );
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${existingId}.png`),
-      new Uint8Array([9, 9, 9, 9]),
-    );
+    const threadId = ThreadId.make("thread-async-answer");
+    const requestId = RuntimeRequestId.make("request-async");
     const captured: OrchestrationV2ServerCommand[] = [];
-    const result = yield* dispatchCommand({
+    yield* dispatchCommand({
       type: "runtime-request.respond",
-      commandId: CommandId.make("answer-missing-pending"),
+      commandId: CommandId.make("answer-async"),
       threadId,
-      requestId: RuntimeRequestId.make("request-missing-pending"),
-      answers: { q1: ["one"], q2: ["two"] },
+      requestId,
+      answers: { q: "" },
       attachmentsByQuestionId: {
-        q1: [
-          {
-            type: "image",
-            id: existingId,
-            name: "keep.png",
-            mimeType: "image/png",
-            sizeBytes: 4,
-          },
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-        q2: [
-          {
-            type: "image",
-            id: ChatAttachmentId.make(createPendingAttachmentId()!),
-            name: "gone.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
+        q: [{ type: "image", id, name: "screen.png", mimeType: "image/png", sizeBytes: 3 }],
       },
-    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure._tag).toBe("AttachmentClaimError");
-    }
-    expect(captured).toHaveLength(0);
-    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toEqual(
-      Buffer.from([1, 2, 3]),
-    );
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-q-fail-"),
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: layerFailingDispatchHandler(captured),
+          getThreadRecords: () =>
+            Effect.succeed({
+              runtimeRequests: [
+                {
+                  id: requestId,
+                  nodeId: null,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: { type: "message" },
+                  createdAt: NOW,
+                  resolvedAt: null,
+                },
+              ],
+            } as unknown as Effect.Success<
+              ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"]>
+            >),
+        }),
       ),
-    ).toEqual([`${existingId}.png`]);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("rolls back earlier question claims when attachment path preparation fails", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
+      Effect.result,
     );
-    const captured: OrchestrationV2ServerCommand[] = [];
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-missing-claimed"),
-      threadId: ThreadId.make("thread-path-fail"),
-      requestId: RuntimeRequestId.make("request-missing-claimed"),
-      answers: { q1: ["one"], q2: ["two"] },
-      attachmentsByQuestionId: {
-        q1: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-        q2: [
-          {
-            type: "image",
-            id: ChatAttachmentId.make("thread-path-fail-00000000-0000-4000-8000-000000000099"),
-            name: "missing.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-      },
-    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure._tag).toBe("AttachmentClaimError");
-    }
-    expect(captured).toHaveLength(0);
-    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toEqual(
-      Buffer.from([1, 2, 3]),
-    );
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-path-fail-"),
-      ),
-    ).toEqual([]);
+    expect(captured).toHaveLength(1);
+    const command = captured[0]!;
+    if (command.type !== "runtime-request.respond") throw new Error("expected a response");
+    expect(command.answers).toEqual({ q: "" });
+    expect(command.attachmentsByQuestionId?.q).toHaveLength(1);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
@@ -347,6 +270,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: (command) =>
             Effect.fail(
               new OrchestratorCommandPreviouslyRejectedError({
@@ -414,6 +338,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -428,215 +353,6 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     expect(
       NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`)),
     ).toEqual(Buffer.from([4, 4, 4]));
-    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("releases claimed copies when the recorded answer has no attachments", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const threadId = ThreadId.make("thread-empty-answer");
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    const storedEvents = answeredRespondEvents({
-      threadId,
-      requestId: "request-empty-answer",
-      attachmentsByQuestionId: {},
-    });
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-empty"),
-      threadId,
-      requestId: RuntimeRequestId.make("request-empty-answer"),
-      answers: { q: ["one"] },
-      attachmentsByQuestionId: {
-        q: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-      },
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
-        }),
-      ),
-      Effect.result,
-    );
-    expect(result._tag).toBe("Success");
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-empty-answer-"),
-      ),
-    ).toEqual([]);
-    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("releases claimed copies when the recorded answer was text-only", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const threadId = ThreadId.make("thread-text-only-answer");
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    const storedEvents = textOnlyRespondEvents({
-      threadId,
-      requestId: "request-text-only",
-    });
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-text-only"),
-      threadId,
-      requestId: RuntimeRequestId.make("request-text-only"),
-      answers: { q: ["one"] },
-      attachmentsByQuestionId: {
-        q: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-      },
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
-        }),
-      ),
-      Effect.result,
-    );
-    expect(result._tag).toBe("Success");
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-text-only-answer-"),
-      ),
-    ).toEqual([]);
-    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const threadId = ThreadId.make("thread-fresh-answer");
-    const firstId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    const secondId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${firstId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${secondId}.png`),
-      new Uint8Array([7, 7]),
-    );
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-fresh"),
-      threadId,
-      requestId: RuntimeRequestId.make("request-fresh"),
-      answers: { q1: ["one"], q2: ["two"] },
-      attachmentsByQuestionId: {
-        q1: [
-          {
-            type: "image",
-            id: firstId,
-            name: "one.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-        q2: [
-          {
-            type: "image",
-            id: secondId,
-            name: "two.png",
-            mimeType: "image/png",
-            sizeBytes: 2,
-          },
-        ],
-      },
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          dispatch: (command) =>
-            Effect.succeed({
-              sequence: 1,
-              storedEvents: answeredRespondEvents({
-                threadId,
-                requestId: "request-fresh",
-                attachmentsByQuestionId:
-                  command.type === "runtime-request.respond"
-                    ? (command.attachmentsByQuestionId ?? {})
-                    : {},
-              }),
-            }),
-        }),
-      ),
-      Effect.result,
-    );
-    expect(result._tag).toBe("Success");
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-fresh-answer-"),
-      ),
-    ).toHaveLength(2);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("releases claimed copies when preparation dies with a defect", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    const poisoned = {
-      get id(): string {
-        throw new Error("poisoned");
-      },
-    };
-    const captured: OrchestrationV2ServerCommand[] = [];
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-defect"),
-      threadId: ThreadId.make("thread-defect"),
-      requestId: RuntimeRequestId.make("request-defect"),
-      answers: { q1: ["one"], q2: ["two"] },
-      attachmentsByQuestionId: {
-        q1: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-        q2: [poisoned] as never,
-      },
-    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.exit);
-    expect(result._tag).toBe("Failure");
-    expect(captured).toHaveLength(0);
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-defect-"),
-      ),
-    ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
@@ -693,6 +409,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     const retry = yield* dispatchCommand(command).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: (dispatched) => {
             captured.push(dispatched);
             return Effect.succeed({ sequence: 1, storedEvents: [] });
@@ -724,78 +441,171 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
-it.effect("applies the image budget across all questions before dispatch", () =>
+it.effect("sends a guest message with the guest's files, never ones the client names", () =>
   Effect.gen(function* () {
-    const attachments = Array.from({ length: 5 }, (_, index) => ({
+    const config = yield* ServerConfig.ServerConfig;
+    const guestFile = {
       type: "image" as const,
-      id: ChatAttachmentId.make(`existing-budget-${index}`),
-      name: `${index}.png`,
+      id: ChatAttachmentId.make(createAttachmentId("thread-guest")!),
+      name: "screen.png",
       mimeType: "image/png",
-      sizeBytes: 10 * 1024 * 1024,
-    }));
-    const captured: OrchestrationV2ServerCommand[] = [];
-    const result = yield* Effect.exit(
-      dispatchCommand({
-        type: "runtime-request.respond",
-        commandId: CommandId.make("command-image-budget"),
-        threadId: ThreadId.make("thread-image-budget"),
-        requestId: RuntimeRequestId.make("question-image-budget"),
-        answers: {},
-        attachmentsByQuestionId: { q1: attachments, q2: attachments },
-      }).pipe(Effect.provide(layerFailingDispatch(captured))),
+      sizeBytes: 3,
+    };
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${guestFile.id}.png`),
+      new Uint8Array([1, 2, 3]),
     );
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") expect(String(result.cause)).toContain("80 MiB");
-    expect(captured).toEqual([]);
+    const guestMessageId = GuestMessageId.make("guest-message:files");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const layerGuestShare = Layer.mock(ThreadManagementService.ThreadManagementService)({
+      dispatch: layerFailingDispatchHandler(captured),
+      // Only the share is read.
+      getThreadSnapshotWindow: () =>
+        Effect.succeed({
+          projection: {
+            thread: {
+              guestShare: {
+                messages: [{ id: guestMessageId, status: "pending", attachments: [guestFile] }],
+              },
+            },
+          },
+        } as unknown as Effect.Success<
+          ReturnType<
+            ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshotWindow"]
+          >
+        >),
+    });
+    yield* dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-guest-message"),
+      threadId: ThreadId.make("thread-guest"),
+      messageId: MessageId.make("message-guest"),
+      guestMessageId,
+      text: "",
+      attachments: [{ ...guestFile, id: ChatAttachmentId.make("thread-guest-owner-file") }],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(Effect.provide(layerGuestShare), Effect.result);
+    const command = captured[0];
+    if (command?.type !== "message.dispatch") throw new Error("Expected a message dispatch.");
+    expect(command.attachments).toHaveLength(1);
+    // The guest's file, which is already the thread's.
+    expect(command.attachments).toEqual([guestFile]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
-it.effect("releases claimed copies when a project disables the message's provider instance", () =>
+it.effect("refuses a queued edit that keeps a file another edit already deleted", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    const storedFile = (name: string) => ({
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId("thread-queued-edit")!),
+      name,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    const kept = storedFile("kept.png");
+    const deleted = storedFile("deleted.png");
     NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      NodePath.join(config.attachmentsDir, `${kept.id}.png`),
       new Uint8Array([1, 2, 3]),
     );
-    const result = yield* sendToThread({
-      projectId: ProjectId.make("project-disabled-send"),
-      commandId: CommandId.make("command-disabled-send"),
-      threadId: ThreadId.make("thread-disabled-send"),
-      messageId: MessageId.make("message-disabled-send"),
-      text: "Hello",
-      attachments: [
-        {
-          type: "image",
-          id: pendingId,
-          name: "screen.png",
-          mimeType: "image/png",
-          sizeBytes: 3,
-        },
-      ],
-      mode: "auto",
-      createdBy: "user",
-      creationSource: "web",
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          sendToThread: (input) =>
-            Effect.fail(
-              new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                projectId: input.projectId,
-                instanceId: ProviderInstanceId.make("codex"),
-              }),
-            ),
-        }),
-      ),
-      Effect.result,
-    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const edit = (attachments: ReadonlyArray<typeof kept>) =>
+      dispatchCommand({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`queued-edit-${attachments.length}`),
+        threadId: ThreadId.make("thread-queued-edit"),
+        runId: RunId.make("run-queued-edit"),
+        text: "Edited from a stale view.",
+        attachments,
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) =>
+              Effect.succeed(captured.some((command) => command.commandId === commandId)),
+          }),
+        ),
+        Effect.result,
+      );
+
+    yield* edit([kept]);
+    expect(captured).toHaveLength(1);
+    const result = yield* edit([kept, deleted]);
     expect(result._tag).toBe("Failure");
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-disabled-send-"),
-      ),
-    ).toEqual([]);
-    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+    expect(captured).toHaveLength(1);
+    // A retry of the accepted edit replays its receipt even after a later cleanup removed its file.
+    NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${kept.id}.png`));
+    yield* edit([kept]);
+    expect(captured).toHaveLength(2);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("a queued /logout edit without provider management must keep an attachment", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-sign-out-edit");
+    const image = {
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const config = yield* ServerConfig.ServerConfig;
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${image.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    // The edit omits `attachments`, as an older client's does, so the queued ones stay.
+    const edit = (run: string, managesProviders: boolean) =>
+      dispatchCommand(
+        {
+          type: "queued-run.edit",
+          commandId: CommandId.make(`edit-${run}-${managesProviders}`),
+          threadId,
+          runId: RunId.make(run),
+          text: " /LOGOUT ",
+        },
+        { managesProviders },
+      ).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) => Effect.succeed(commandId === "edit-replayed-false"),
+            getThreadRecords: () =>
+              Effect.succeed({
+                runs: ["attached", "bare"].map((id) => ({
+                  id: RunId.make(id),
+                  status: "queued",
+                  userMessageId: MessageId.make(id),
+                })),
+              } as never),
+            getMessagesById: (_threadId, [id]) =>
+              Effect.succeed(
+                new Map([[id, { attachments: id === "attached" ? [image] : [] }]]) as never,
+              ),
+          }),
+        ),
+        Effect.flip,
+      );
+
+    expect((yield* edit("bare", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect((yield* edit("started", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect(captured).toEqual([]);
+    yield* edit("attached", false);
+    yield* edit("bare", true);
+    // A retry of an accepted edit reaches its receipt after its run left the queue.
+    yield* edit("replayed", false);
+    // The kept files are pinned, so an edit racing this one cannot strip them afterwards.
+    expect(captured).toMatchObject([
+      { runId: "attached", attachments: [image] },
+      { runId: "bare" },
+      { runId: "replayed" },
+    ]);
+    expect(captured[1]).not.toHaveProperty("attachments");
+    expect(captured[2]).not.toHaveProperty("attachments");
   }).pipe(Effect.provide(layerIntakeTest)),
 );

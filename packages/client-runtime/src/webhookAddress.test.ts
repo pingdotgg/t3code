@@ -2,35 +2,41 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { webhookAddress } from "./webhookAddress.ts";
 
-const path = "/api/hooks/scheduled-task%3Ahook/token";
-const endpoint = (url: string | null) => ({ path, url, hasSecret: false });
+const endpoint = {
+  path: "/hooks/abc",
+  url: null,
+  hasSecret: true,
+};
 
 describe("webhookAddress", () => {
-  it("uses the T3 Connect URL when the server has one", () => {
-    expect(webhookAddress(endpoint("https://relay.t3.codes/v1/hooks/k/t/x"), null)).toEqual({
-      address: "https://relay.t3.codes/v1/hooks/k/t/x",
-      copyable: true,
-      note: null,
-    });
-  });
-
-  it("builds a direct URL on the environment's address without T3 Connect", () => {
-    const result = webhookAddress(endpoint(null), "https://mac.tail1234.ts.net/");
-    expect(result.address).toBe(`https://mac.tail1234.ts.net${path}`);
+  it("returns the public endpoint URL copyable with no note", () => {
+    const result = webhookAddress(
+      { ...endpoint, url: "https://connect.example.com/hooks/abc" },
+      null,
+    );
+    expect(result.address).toBe("https://connect.example.com/hooks/abc");
     expect(result.copyable).toBe(true);
-    expect(result.note).toContain("Tailscale");
+    expect(result.note).toBeNull();
   });
 
-  it("says only this computer can call a loopback address", () => {
-    const result = webhookAddress(endpoint(null), "http://127.0.0.1:3773/");
+  it("is not copyable and points at T3 Connect when no base URL exists", () => {
+    const result = webhookAddress(endpoint, null);
+    expect(result.address).toBe("/hooks/abc");
+    expect(result.copyable).toBe(false);
+    expect(result.note).toContain("T3 Connect");
+  });
+
+  it("warns that loopback addresses only work on this computer", () => {
+    const result = webhookAddress(endpoint, "http://127.0.0.1:8787");
+    expect(result.address).toBe("http://127.0.0.1:8787/hooks/abc");
     expect(result.copyable).toBe(true);
     expect(result.note).toContain("Only this computer");
   });
 
-  it("falls back to the path when the address is unknown", () => {
-    expect(webhookAddress(endpoint(null), null)).toMatchObject({
-      address: path,
-      copyable: false,
-    });
+  it("explains reachability for non-loopback hosts", () => {
+    const result = webhookAddress(endpoint, "https://home.example.net");
+    expect(result.address).toBe("https://home.example.net/hooks/abc");
+    expect(result.copyable).toBe(true);
+    expect(result.note).toContain("Tailscale");
   });
 });

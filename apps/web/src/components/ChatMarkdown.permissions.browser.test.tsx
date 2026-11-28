@@ -5,26 +5,28 @@ import {
   ThreadId,
   type AuthEnvironmentScope,
   type EditorId,
-  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
+import { act, render } from "../../test/render";
 import { useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   allowed: true,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
-  updateMetadata: vi.fn(),
+  link: vi.fn(),
+  unlink: vi.fn(),
   search: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
-  linkedPullRequest: null as ThreadLinkedPullRequest | null,
+  download: vi.fn(),
+  pullRequests: [] as ThreadPullRequestLink[],
 }));
 
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
@@ -36,9 +38,11 @@ vi.mock(import("../state/use-atom-command"), async (original) => {
   return {
     ...(await original()),
     useAtomCommand: ((command: unknown) =>
-      command === threadEnvironment.updateMetadata
-        ? state.updateMetadata
-        : state.openEditor) as never,
+      command === threadEnvironment.linkPullRequest
+        ? state.link
+        : command === threadEnvironment.unlinkPullRequest
+          ? state.unlink
+          : state.openEditor) as never,
   };
 });
 vi.mock(import("../state/session"), async (original) => {
@@ -59,7 +63,6 @@ vi.mock(import("../state/session"), async (original) => {
       ),
   };
 });
-// Atoms derived from the server config run in the real registry over this config.
 vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
@@ -74,10 +77,8 @@ vi.mock(import("../state/server"), async (original) => {
 });
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
-  readThreadShell: (() => ({ linkedPullRequest: state.linkedPullRequest })) as never,
-  useProjects: (() => [
-    { id: linkedPullRequest.projectId, environmentId: threadRef.environmentId },
-  ]) as never,
+  readThreadShell: (() => ({ pullRequests: state.pullRequests })) as never,
+  useProjects: (() => [{ id: projectId, environmentId: threadRef.environmentId }]) as never,
 }));
 vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
@@ -96,84 +97,109 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
-vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+vi.mock(import("../hooks/useFileMetadata"), async (original) => ({
+  ...(await original()),
+  useFileMetadata: ((_id: unknown, path: string) =>
+    path.includes("user.ts")
+      ? null
+      : { kind: path.includes("src") ? "directory" : "file" }) as never,
+}));
+vi.mock(import("./files/useFileDownload"), () => ({ useFileDownload: () => state.download }));
+vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
+// Desktop can forward this environment's ports: it runs on another machine.
+vi.mock(import("../state/portForwards"), async (original) => ({
+  ...(await original()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => "remote" as const,
+  usePortForwards: () => [],
+  forwardPort: (async (environmentId: string, remotePort: number) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  })) as never,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
+vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: ((projects: readonly { id: ProjectId }[]) => projects[0]) as never,
-  matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>
-    candidate.url === href,
-  parseChangeRequestUrl: ((href: string) =>
-    href === linkedPullRequest.url
-      ? {
-          host: "github.com",
-          repository: linkedPullRequest.repository,
-          number: linkedPullRequest.number,
-        }
-      : null) as never,
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 
 const threadRef = {
   environmentId: EnvironmentId.make("selected"),
   threadId: ThreadId.make("thread"),
 };
-const linkedPullRequest: ThreadLinkedPullRequest = {
-  projectId: ProjectId.make("project"),
+const projectId = ProjectId.make("project");
+const linkedPullRequest: ThreadPullRequestLink = {
+  host: "github.com",
   repository: "example/repo",
   number: 42,
   url: "https://github.com/example/repo/pull/42",
+  source: "manual",
+  linkedAt: "2026-09-08T00:00:00.000Z",
+  snapshot: null,
+  stack: null,
 };
 const serverConfig = {
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
-  environment: { platform: { os: "linux" }, capabilities: { threadPullRequestLinking: true } },
+  environment: { platform: { os: "linux" }, capabilities: {} },
 };
-const roots: Root[] = [];
-let container: HTMLDivElement;
 
-beforeEach(() => {
+function setup() {
+  using stack = new DisposableStack();
   state.allowed = true;
   state.listeners.clear();
-  state.linkedPullRequest = null;
+  state.pullRequests = [];
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.link.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.unlink.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
+  state.download.mockReset();
+  const { openFile } = useRightPanelStore.getState();
   useRightPanelStore.setState({ openFile: state.openFile });
-  vi.spyOn(navigator.clipboard, "writeText").mockImplementation(state.copy);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-});
-
-afterEach(async () => {
-  for (const root of roots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  stack.defer(() => useRightPanelStore.setState({ openFile }));
+  stack.use(vi.spyOn(navigator.clipboard, "writeText").mockImplementation(state.copy));
+  stack.use(
+    vi.spyOn(navigator.clipboard, "write").mockImplementation(async (items) => {
+      const item = items[0]!;
+      await state.copy(await (await item.getType("text/plain")).text());
+    }),
+  );
+  return stack.move();
+}
 
 async function renderMarkdown(text: string) {
-  container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () =>
-    root.render(<ChatMarkdown cwd="/work" threadRef={threadRef} text={text} />),
-  );
-}
-
-function anchor() {
-  return container.querySelector("a")!;
-}
-
-async function openContextMenu() {
-  await act(async () => {
-    anchor().dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
-    );
+  const screen = await render(<ChatMarkdown cwd="/work" threadRef={threadRef} text={text} />);
+  const anchor = () => screen.container.querySelector("a")!;
+  return Object.assign(screen, {
+    anchor,
+    openContextMenu: () =>
+      act(async () => {
+        anchor().dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 10,
+            clientY: 10,
+          }),
+        );
+      }),
   });
 }
 
@@ -189,20 +215,50 @@ async function setAllowed(allowed: boolean) {
 }
 
 it("removes host actions after revocation while keeping file preview and copying", async () => {
-  await renderMarkdown("[Readme](docs/readme.md)");
-  await openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+  using _setup = setup();
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
+  expect(offeredActions()).toEqual(["open", "reveal", "download", "copy-relative", "copy-full"]);
   await setAllowed(false);
+  state.choose.mockResolvedValue("download");
+  await screen.openContextMenu();
+  expect(offeredActions()).toEqual(["download", "copy-relative", "copy-full"]);
+  expect(state.download).toHaveBeenCalledWith("/work", expect.any(Promise));
+  await expect(state.download.mock.lastCall![1]).resolves.toBe("/work/docs/readme.md");
   state.choose.mockResolvedValue("copy-full");
-  await openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
+  await screen.openContextMenu();
   await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
-  await act(async () => anchor().click());
+  await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
+it("offers download unless the link is a known folder", async () => {
+  using _setup = setup();
+  await using folder = await renderMarkdown("[Source](./src)");
+  await folder.openContextMenu();
+  expect(offeredActions()).not.toContain("download");
+  // A bare name the workspace lookup resolves elsewhere has no metadata at its literal path.
+  await using basename = await renderMarkdown("[user.ts](user.ts)");
+  await basename.openContextMenu();
+  expect(offeredActions()).toContain("download");
+});
+
+it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
+  "tells the native menu for %s whether the keyboard opened it",
+  async (text) => {
+    using _setup = setup();
+    await using screen = await renderMarkdown(text);
+    screen.anchor().focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
+    await userEvent.click(screen.anchor(), { button: "right" });
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
+  },
+);
+
 it("does not launch an editor after revocation during a native context menu", async () => {
+  using _setup = setup();
   let choose: (action: string) => void = () => {
     throw new Error("Menu not opened");
   };
@@ -212,8 +268,8 @@ it("does not launch an editor after revocation during a native context menu", as
         choose = resolve;
       }),
   );
-  await renderMarkdown("[Readme](docs/readme.md)");
-  await openContextMenu();
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
   expect(offeredActions()).toContain("open");
   await act(async () => {
     state.allowed = false;
@@ -223,6 +279,7 @@ it("does not launch an editor after revocation during a native context menu", as
 });
 
 it("does not reveal a file after revocation during its workspace lookup", async () => {
+  using _setup = setup();
   let finishLookup: () => void = () => {
     throw new Error("Lookup not started");
   };
@@ -233,8 +290,8 @@ it("does not reveal a file after revocation during its workspace lookup", async 
       }),
   );
   state.choose.mockResolvedValue("reveal");
-  await renderMarkdown("[Readme](readme.md)");
-  await openContextMenu();
+  await using screen = await renderMarkdown("[Readme](readme.md)");
+  await screen.openContextMenu();
   expect(state.search).toHaveBeenCalledOnce();
   await act(async () => {
     state.allowed = false;
@@ -243,24 +300,12 @@ it("does not reveal a file after revocation during its workspace lookup", async 
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
-it.each([false, true])(
-  "keeps PR links usable without offering metadata edits (linked=%s)",
-  async (linked) => {
-    state.allowed = false;
-    state.linkedPullRequest = linked ? linkedPullRequest : null;
-    state.choose.mockResolvedValue("open-external");
-    await renderMarkdown(`[Review](${linkedPullRequest.url})`);
-    await openContextMenu();
-    expect(offeredActions()).toEqual(["open-external", "copy-link"]);
-    await vi.waitFor(() => expect(state.openExternal).toHaveBeenCalledWith(linkedPullRequest.url));
-    expect(state.updateMetadata).not.toHaveBeenCalled();
-  },
-);
-
 it.each(["link-to-thread", "unlink-from-thread"])(
   "rechecks %s after a native context menu returns",
   async (action) => {
-    state.linkedPullRequest = action === "unlink-from-thread" ? linkedPullRequest : null;
+    using _setup = setup();
+    state.pullRequests = action === "unlink-from-thread" ? [linkedPullRequest] : [];
+    const command = action === "link-to-thread" ? state.link : state.unlink;
     let choose: (action: string) => void = () => {
       throw new Error("Menu not opened");
     };
@@ -270,26 +315,90 @@ it.each(["link-to-thread", "unlink-from-thread"])(
           choose = resolve;
         }),
     );
-    await renderMarkdown(`[Review](${linkedPullRequest.url})`);
-    await openContextMenu();
+    await using screen = await renderMarkdown(`[Review](${linkedPullRequest.url})`);
+    await screen.openContextMenu();
     expect(offeredActions()).toContain(action);
     await act(async () => {
       state.allowed = false;
       choose(action);
     });
-    expect(state.updateMetadata).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
 
     await setAllowed(true);
     state.choose.mockResolvedValue(action);
-    await openContextMenu();
+    await screen.openContextMenu();
     await vi.waitFor(() =>
-      expect(state.updateMetadata).toHaveBeenCalledExactlyOnceWith({
+      expect(command).toHaveBeenCalledExactlyOnceWith({
         environmentId: threadRef.environmentId,
-        input: {
+        input: expect.objectContaining({
           threadId: threadRef.threadId,
-          linkedPullRequest: action === "link-to-thread" ? linkedPullRequest : null,
-        },
+          repository: "example/repo",
+          number: 42,
+        }),
       }),
     );
   },
 );
+
+it("preserves keyboard activation of a file-options button", async () => {
+  using _setup = setup();
+  await using screen = await render(
+    <MarkdownFileLink
+      environmentId={null}
+      href="readme.md"
+      targetPath="readme.md"
+      iconPath="readme.md"
+      workspaceRelativePath="readme.md"
+      panelPath={null}
+      label="Readme"
+      copyMarkdown="[Readme](readme.md)"
+      theme="dark"
+      onOpenInPanel={vi.fn()}
+      resolveDragPath={async () => "/work/readme.md"}
+      resolveCopyPaths={async () => ({ relativePath: "readme.md", fullPath: "/work/readme.md" })}
+      openInEditorMenuLabel="Open in editor"
+    />,
+  );
+  const button = screen.container.querySelector("button")!;
+  button.focus();
+  for (const key of ["{Enter}", " "]) {
+    await userEvent.keyboard(key);
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
+    state.choose.mockClear();
+  }
+  await userEvent.click(button);
+  await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
+});
+
+it("opens an editor link over the desktop bridge on a click and on a middle-click", async () => {
+  using _setup = setup();
+  const href = "vscode://file/work/docs/readme.md:3";
+  await using screen = await renderMarkdown(`[Open in editor](${href})`);
+  for (const [type, button] of [
+    ["click", 0],
+    ["auxclick", 1],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
+    await act(async () => screen.anchor().dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(state.openExternal).toHaveBeenLastCalledWith(href);
+  }
+  expect(state.openExternal).toHaveBeenCalledTimes(2);
+});
+
+it("opens a remote environment's localhost link in the system browser through a forward", async () => {
+  using _setup = setup();
+  await using screen = await renderMarkdown("[App](http://localhost:3000/docs?x=1#top)");
+  // Keeps the test page from following the link; React's handlers run before this.
+  const stopNavigation = (event: Event) => event.preventDefault();
+  window.addEventListener("click", stopNavigation);
+  try {
+    await userEvent.click(screen.anchor(), { modifiers: ["ControlOrMeta"] });
+  } finally {
+    window.removeEventListener("click", stopNavigation);
+  }
+  await vi.waitFor(() =>
+    expect(state.openExternal).toHaveBeenCalledWith("http://localhost:45000/docs?x=1#top"),
+  );
+  expect(state.openExternal).not.toHaveBeenCalledWith("http://localhost:3000/docs?x=1#top");
+});

@@ -1,0 +1,102 @@
+---
+title: Private services
+description: Keep a Cloud Run service private and call it from another service with GCP.Run.InvokeService and Google-signed identity tokens.
+---
+
+A Cloud Run service is private unless you set `invokerIamDisabled`.
+Callers need a Google identity token from an account that holds
+`roles/run.invoker` on it. `InvokeService` sets that up for you.
+
+## A private backend
+
+Leave `invokerIamDisabled` off:
+
+```typescript
+// src/Quotes.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Quotes extends GCP.Function<Quotes>()(
+  "Quotes",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      fetch: HttpServerResponse.json({ quote: "Make it work, make it right." }),
+    };
+  }),
+) {}
+```
+
+Requests without a valid token get a 403 before they reach your code.
+
+## Call it from another service
+
+```typescript
+// src/Gateway.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import Quotes from "./Quotes.ts";
+
+export default class Gateway extends GCP.Function<Gateway>()(
+  "Gateway",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const quotes = yield* GCP.Run.InvokeService(Quotes);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const response = yield* quotes.fetch("/quote");
+        return HttpServerResponse.text(yield* response.text, {
+          status: response.status,
+          contentType: "application/json",
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Run.InvokeServiceHttp)),
+) {}
+```
+
+On deploy, `InvokeService` grants the Gateway `roles/run.invoker` on
+Quotes and nothing else, and gives the Gateway Quotes' URL. Each call
+attaches a fresh identity token. You pass a path, not a URL.
+
+## Send a body
+
+```typescript
+const response = yield* orders.fetch("/orders", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ sku: "abc", quantity: 1 }),
+});
+const order = yield* response.json;
+```
+
+## Handle an unreachable backend
+
+A failed call fails with `GCP.Run.InvokeServiceError`. Turn it into a
+502:
+
+```typescript
+const response = yield* quotes.fetch("/quote").pipe(
+  Effect.catchTag("GCP.Run.InvokeServiceError", (error) =>
+    Effect.succeed({
+      status: 502,
+      text: Effect.succeed(JSON.stringify({ error: error.message })),
+    }),
+  ),
+);
+```
+
+## Example
+
+[`examples/gcp-service-to-service`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-service-to-service)
+is a public gateway in front of a private backend.
+
+## Where next
+
+- [VPC & private networking](/gcp/networking/vpc) — reach private IPs
+  from Cloud Run.
+- [IAM & bindings](/gcp/security/iam) — how the invoker grant is
+  scoped.

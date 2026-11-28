@@ -2,6 +2,9 @@ import type { DesktopBridge, DesktopDiscoveredSshHost } from "@t3tools/contracts
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
@@ -18,7 +21,10 @@ export function filterDiscoveredSshHosts(
     const alias = host.alias.toLowerCase();
     if (alias.startsWith(normalizedQuery)) {
       prefixMatches.push(host);
-    } else if (alias.includes(normalizedQuery)) {
+    } else if (
+      alias.includes(normalizedQuery) ||
+      host.hostname.toLowerCase().includes(normalizedQuery)
+    ) {
       substringMatches.push(host);
     }
   }
@@ -31,7 +37,7 @@ class DesktopSshDiscoveryUnavailableError extends Schema.TaggedError<DesktopSshD
   {},
 ) {
   override get message(): string {
-    return "Desktop SSH host discovery is unavailable.";
+    return m(msg("Desktop SSH host discovery is unavailable."));
   }
 }
 
@@ -40,7 +46,7 @@ class DesktopSshDiscoveryError extends Schema.TaggedError<DesktopSshDiscoveryErr
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Failed to discover SSH hosts.";
+    return m(msg("Failed to discover SSH hosts."));
   }
 }
 
@@ -48,9 +54,7 @@ function getDesktopSshDiscoveryBridge(): DesktopSshDiscoveryBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopSshHostsStateAtom(
-  getBridge: () => DesktopSshDiscoveryBridge | undefined,
-) {
+function createDesktopSshHostsStateAtom(getBridge: () => DesktopSshDiscoveryBridge | undefined) {
   const discoverDesktopSshHosts = Effect.fn("discoverDesktopSshHosts")(function* () {
     const bridge = getBridge();
     if (!bridge) {

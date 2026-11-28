@@ -1,247 +1,8 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { render } from "../../../test/render";
+
 import { collectThreadFindRanges, useThreadFindHighlights } from "./threadFindHighlights";
-
-function Probe(props: Parameters<typeof useThreadFindHighlights>[0]) {
-  useThreadFindHighlights(props);
-  return null;
-}
-
-let root: Root;
-let host: HTMLElement;
-let container: HTMLElement;
-const onActiveRange = vi.fn();
-const activeRanges = () => [
-  ...(CSS.highlights.get("t3-thread-find-active") as unknown as Set<Range>),
-];
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("CSS", { highlights: new Map() });
-  vi.stubGlobal(
-    "Highlight",
-    class extends Set<Range> {
-      constructor(...ranges: Range[]) {
-        super(ranges);
-      }
-    },
-  );
-  host = document.createElement("div");
-  container = document.createElement("div");
-  container.innerHTML =
-    '<div data-timeline-row-id="first"><p data-thread-find-text>COD4 and COD4</p></div>' +
-    '<div data-timeline-row-id="second"><p data-thread-find-text>COD4</p></div>';
-  document.body.append(host, container);
-  root = createRoot(host);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  container.remove();
-  vi.restoreAllMocks();
-  vi.clearAllMocks();
-  vi.unstubAllGlobals();
-});
-
-describe("find highlight caching", () => {
-  it("checks only the old and new occurrence when cycling a message with many clipped matches", async () => {
-    container.innerHTML =
-      '<div data-timeline-row-id="first"><div data-thread-find-fold><p data-thread-find-text>' +
-      "COD4 ".repeat(1500) +
-      "</p></div></div>";
-    const bounds = vi.fn(() => new DOMRect(0, 0, 40, 20));
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
-      configurable: true,
-      value: bounds,
-    });
-    container.querySelector<HTMLElement>("[data-thread-find-fold]")!.getBoundingClientRect = () =>
-      new DOMRect(0, 0, 800, 100);
-    const props = {
-      container,
-      query: "COD4",
-      activeRowId: "first",
-      activeOccurrence: 0,
-      onActiveRange,
-    };
-    try {
-      await act(async () => root.render(<Probe {...props} />));
-      const inactive = CSS.highlights.get("t3-thread-find");
-      const first = activeRanges()[0];
-      bounds.mockClear();
-      await act(async () => root.render(<Probe {...props} activeOccurrence={1} />));
-      expect(bounds).toHaveBeenCalledTimes(2);
-      expect(CSS.highlights.get("t3-thread-find")).toBe(inactive);
-      expect(inactive?.size).toBe(1499);
-      expect(inactive?.has(first!)).toBe(true);
-      expect(activeRanges()[0]?.startOffset).toBe(5);
-      expect(inactive?.has(activeRanges()[0]!)).toBe(false);
-    } finally {
-      Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
-    }
-  });
-
-  it("repaints for searchable text changes but not for timers outside it", async () => {
-    const timer = document.createElement("span");
-    container.firstElementChild!.append(timer);
-    await act(async () =>
-      root.render(
-        <Probe
-          container={container}
-          query="COD4"
-          activeRowId="first"
-          activeOccurrence={0}
-          onActiveRange={onActiveRange}
-        />,
-      ),
-    );
-    onActiveRange.mockClear();
-    await act(async () => {
-      timer.textContent = "0:01";
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(onActiveRange).not.toHaveBeenCalled();
-    await act(async () => {
-      container.querySelector("p")!.append(" COD4");
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(onActiveRange).toHaveBeenCalled();
-  });
-
-  it("opens only the selected fold while reusing its cached text", async () => {
-    container.innerHTML =
-      '<div data-timeline-row-id="first"><div hidden><p data-thread-find-text>COD4 COD4</p></div></div>' +
-      '<div data-timeline-row-id="second"><div hidden><p data-thread-find-text>COD4</p></div></div>';
-    const folds = [...container.querySelectorAll<HTMLElement>("[hidden]")];
-    for (const fold of folds)
-      fold.addEventListener("beforematch", () => fold.removeAttribute("hidden"));
-    const createRange = vi.spyOn(document, "createRange");
-    await act(async () =>
-      root.render(
-        <Probe
-          container={container}
-          query="COD4"
-          activeRowId="first"
-          activeOccurrence={0}
-          onActiveRange={onActiveRange}
-        />,
-      ),
-    );
-    await act(async () => {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(folds[0]?.hasAttribute("hidden")).toBe(false);
-    expect(folds[1]?.hasAttribute("hidden")).toBe(true);
-    expect(activeRanges()[0]?.toString()).toBe("COD4");
-    expect(CSS.highlights.get("t3-thread-find")?.size).toBe(1);
-    const scanned = createRange.mock.calls.length;
-    await act(async () =>
-      root.render(
-        <Probe
-          container={container}
-          query="COD4"
-          activeRowId="first"
-          activeOccurrence={1}
-          onActiveRange={onActiveRange}
-        />,
-      ),
-    );
-    expect(createRange).toHaveBeenCalledTimes(scanned);
-    expect(activeRanges()[0]?.startOffset).toBe(5);
-  });
-
-  it("observes rows mounted synchronously while revealing the first match", async () => {
-    container.replaceChildren();
-    onActiveRange.mockImplementationOnce(() => {
-      container.innerHTML =
-        '<div data-timeline-row-id="first"><p data-thread-find-text>COD4</p></div>';
-    });
-    await act(async () => {
-      root.render(
-        <Probe
-          container={container}
-          query="COD4"
-          activeRowId="first"
-          activeOccurrence={0}
-          onActiveRange={onActiveRange}
-        />,
-      );
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    await act(async () => {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(activeRanges()[0]?.toString()).toBe("COD4");
-  });
-
-  it("rebuilds ranges when the list moves or recycles an existing row", async () => {
-    const props = {
-      container,
-      query: "COD4",
-      activeRowId: "first",
-      activeOccurrence: 0,
-      onActiveRange,
-    };
-    await act(async () => root.render(<Probe {...props} />));
-    const initial = activeRanges()[0];
-    const row = container.querySelector<HTMLElement>('[data-timeline-row-id="first"]')!;
-    await act(async () => {
-      row.remove();
-      container.append(row);
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(activeRanges()[0]).not.toBe(initial);
-    expect(activeRanges()[0]?.toString()).toBe("COD4");
-    await act(async () => {
-      row.dataset.timelineRowId = "recycled";
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(activeRanges()).toHaveLength(0);
-    await act(async () => root.render(<Probe {...props} activeRowId="recycled" />));
-    expect(activeRanges()[0]?.toString()).toBe("COD4");
-  });
-
-  it("reuses unchanged text ranges on navigation and scans only the streaming row", async () => {
-    const createRange = vi.spyOn(document, "createRange");
-    const props = {
-      container,
-      query: "COD4",
-      activeRowId: "first",
-      activeOccurrence: 0,
-      onActiveRange,
-    };
-    await act(async () => root.render(<Probe {...props} />));
-    expect(createRange).toHaveBeenCalledTimes(3);
-    const initial = activeRanges()[0];
-    await act(async () => root.render(<Probe {...props} activeOccurrence={1} />));
-    expect(createRange).toHaveBeenCalledTimes(3);
-    expect(activeRanges()[0]?.startOffset).toBe(9);
-    await act(async () => root.render(<Probe {...props} />));
-    expect(activeRanges()[0]).toBe(initial);
-    await act(async () => {
-      container.querySelector('[data-timeline-row-id="second"] p')!.firstChild!.nodeValue =
-        "COD4 COD4";
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(createRange).toHaveBeenCalledTimes(5);
-    expect(activeRanges()[0]).toBe(initial);
-    await act(async () =>
-      root.render(<Probe {...props} activeRowId="second" activeOccurrence={1} />),
-    );
-    expect(createRange).toHaveBeenCalledTimes(5);
-    expect(activeRanges()[0]?.toString()).toBe("COD4");
-    expect(activeRanges()[0]?.startOffset).toBe(5);
-    await act(async () => {
-      container.querySelector('[data-timeline-row-id="second"]')!.remove();
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    });
-    expect(activeRanges()).toHaveLength(0);
-    expect(onActiveRange).toHaveBeenLastCalledWith(null);
-    expect(CSS.highlights.get("t3-thread-find")?.size).toBe(2);
-    await act(async () => root.render(<Probe {...props} query="missing" />));
-    expect(CSS.highlights.get("t3-thread-find")?.size).toBe(0);
-  });
-});
 
 function row(html: string) {
   const container = document.createElement("div");
@@ -251,7 +12,6 @@ function row(html: string) {
 
 describe("collectThreadFindRanges", () => {
   it("finds matches split across inline token spans, in order", () => {
-    // Shiki-style tokens split one identifier over several text nodes.
     const container = row(
       "<pre><code><span>con</span><span>st</span> a = <span>c</span>onst; const</code></pre>",
     );
@@ -262,13 +22,155 @@ describe("collectThreadFindRanges", () => {
       [2, "const"],
     ]);
   });
+});
 
-  it("finds every match across thousands of token nodes", () => {
-    const tokens = Array.from({ length: 4000 }, (_, i) => `<span>id</span><span>${i} </span>`);
-    const container = row(`<pre><code>${tokens.join("")}</code></pre>`);
-    const ranges = collectThreadFindRanges(container, "id");
-    expect(ranges).toHaveLength(4000);
-    expect(ranges.map((match) => match.occurrence)).toEqual([...ranges.keys()]);
-    expect(ranges.every((match) => match.range.toString() === "id")).toBe(true);
-  });
+function Highlights(props: Parameters<typeof useThreadFindHighlights>[0]) {
+  useThreadFindHighlights(props);
+  return null;
+}
+
+function mountTimeline(html: string) {
+  const container = document.createElement("div");
+  container.style.cssText = "height: 200px; width: 300px; overflow: auto";
+  container.innerHTML = html;
+  document.body.append(container);
+  return { container, [Symbol.dispose]: () => container.remove() };
+}
+
+const painted = () => [...(CSS.highlights.get("t3-thread-find") ?? [])] as Range[];
+const paintedIn = (element: Element) =>
+  painted().filter((range) => element.contains(range.startContainer)).length;
+
+it("paints only matches near the viewport plus the active one, in a row with more matches than a call can take as arguments", async () => {
+  const count = 200_000;
+  const onActiveRange = vi.fn<(range: Range | null) => void>();
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="row"><div data-thread-find-text>${"e x".repeat(count)}</div></div>`,
+  );
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId="row"
+      activeOccurrence={count - 1}
+      onActiveRange={onActiveRange}
+    />,
+  );
+  const visible = painted();
+  expect(visible.length).toBeGreaterThan(0);
+  expect(visible.length).toBeLessThan(5_000);
+  expect(Math.max(...visible.map((range) => range.startOffset))).toBeLessThan(count);
+  expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
+  expect(onActiveRange.mock.lastCall?.[0]?.startOffset).toBe((count - 1) * 3);
+
+  timeline.container.scrollTop = timeline.container.scrollHeight;
+  await vi.waitFor(() =>
+    expect(Math.max(...painted().map((range) => range.startOffset))).toBe((count - 2) * 3),
+  );
+  expect(painted().length).toBeLessThan(5_000);
+});
+
+it("paints every match near the viewport when cells lay text out in a different order than the DOM", async () => {
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="row"><div data-thread-find-text><table style="width: 100%"><tr>
+       <td style="vertical-align: top">${"e x ".repeat(5_000)}</td>
+       <td style="vertical-align: top">${"e x ".repeat(5_000)}</td>
+     </tr></table></div></div>`,
+  );
+  const cells = [...timeline.container.querySelectorAll("td")];
+  const ranges = collectThreadFindRanges(timeline.container, "e");
+  const key = (range: Range) =>
+    `${cells.indexOf(range.startContainer.parentElement as HTMLTableCellElement)}:${range.startOffset}`;
+  const missing = () => {
+    const viewport = timeline.container.getBoundingClientRect();
+    const [top, bottom] = [viewport.top - viewport.height, viewport.bottom + viewport.height];
+    const shown = new Set(painted().map(key));
+    return ranges.filter(({ range }) => {
+      const rect = range.getBoundingClientRect();
+      return rect.bottom >= top && rect.top <= bottom && !shown.has(key(range));
+    }).length;
+  };
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect(missing()).toBe(0);
+
+  timeline.container.scrollTop = 1_000;
+  await vi.waitFor(() => expect(missing()).toBe(0));
+  expect(painted().length).toBeLessThan(ranges.length / 2);
+});
+
+it("skips a hidden block's matches without measuring each one", async () => {
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="row"><div data-thread-find-text>
+       <div style="display: none">${"e x ".repeat(10_000)}</div><p>e</p>
+     </div></div>`,
+  );
+  const visible = timeline.container.querySelector("p")!;
+  using measure = vi.spyOn(Range.prototype, "getBoundingClientRect");
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect([painted().length, paintedIn(visible)]).toEqual([1, 1]);
+  expect(measure.mock.calls.length).toBeLessThan(100);
+});
+
+it("registers a row's matches only while it is near the viewport, and again after its text changes", async () => {
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="near"><div data-thread-find-text>e e e</div></div>
+     <div style="height: 5000px"></div>
+     <div data-timeline-row-id="far"><div data-thread-find-text>e e</div></div>`,
+  );
+  const [near, far] = [...timeline.container.querySelectorAll("[data-thread-find-text]")];
+  const onActiveRange = vi.fn<(range: Range | null) => void>();
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId="far"
+      activeOccurrence={1}
+      onActiveRange={onActiveRange}
+    />,
+  );
+  expect([paintedIn(near!), paintedIn(far!)]).toEqual([3, 0]);
+  expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
+  expect(far!.contains(onActiveRange.mock.lastCall?.[0]?.startContainer ?? null)).toBe(true);
+
+  near!.append(" e");
+  await vi.waitFor(() => expect(paintedIn(near!)).toBe(4));
+
+  timeline.container.scrollTop = timeline.container.scrollHeight;
+  await vi.waitFor(() => expect([paintedIn(near!), paintedIn(far!)]).toEqual([0, 1]));
+});
+
+it("paints a row's matches once the hidden wrapper around it is revealed", async () => {
+  using timeline = mountTimeline(
+    `<div id="wrap" hidden><div data-timeline-row-id="row"><div data-thread-find-text>e e</div></div></div>`,
+  );
+  const text = timeline.container.querySelector("[data-thread-find-text]")!;
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect(paintedIn(text)).toBe(0);
+
+  timeline.container.querySelector("#wrap")!.removeAttribute("hidden");
+  await vi.waitFor(() => expect(paintedIn(text)).toBe(2));
 });

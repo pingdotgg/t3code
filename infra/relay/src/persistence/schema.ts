@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
@@ -5,6 +6,7 @@ import type {
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -111,6 +113,13 @@ export const relayManagedEndpointAllocations = pgTable(
   ],
 );
 
+// One row per upstream API whose rate limit is shared by every Worker
+// isolate, so a 429 seen by one isolate pauses the rest.
+export const relayUpstreamApiPauses = pgTable("relay_upstream_api_pauses", {
+  api: varchar("api", { length: 64 }).primaryKey(),
+  pausedUntilMs: bigint("paused_until_ms", { mode: "number" }).notNull(),
+});
+
 export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
   userId: varchar("user_id", { length: 191 }).primaryKey(),
   maxTunnels: integer("max_tunnels").notNull(),
@@ -131,7 +140,6 @@ export const relayEnvironmentCredentials = pgTable(
   },
   (table) => [
     uniqueIndex("idx_relay_environment_credentials_hash").on(table.credentialHash),
-    index("idx_relay_environment_credentials_environment").on(table.environmentId, table.revokedAt),
     index("idx_relay_environment_credentials_environment_key").on(
       table.environmentId,
       table.environmentPublicKey,
@@ -152,7 +160,6 @@ export const relayAgentActivityRows = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.environmentId, table.environmentPublicKey, table.threadId] }),
-    index("idx_relay_agent_activity_rows_updated").on(table.updatedAt),
   ],
 );
 
@@ -174,11 +181,7 @@ export const relayDeliveryAttempts = pgTable(
     transportError: text("transport_error"),
   },
   (table) => [
-    index("idx_relay_delivery_attempts_environment").on(
-      table.environmentId,
-      table.threadId,
-      table.createdAt,
-    ),
+    index("idx_relay_delivery_attempts_created").on(table.createdAt),
     uniqueIndex("idx_relay_delivery_attempts_source_job").on(table.sourceJobId),
   ],
 );
@@ -193,7 +196,26 @@ export const relayDpopProofs = pgTable(
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
   (table) => [
+    // No index on expires_at: pruning a few minutes of proofs is cheaper as a scan than
+    // maintaining a second index on every request's insert.
     primaryKey({ columns: [table.thumbprint, table.jti] }),
-    index("idx_relay_dpop_proofs_expires_at").on(table.expiresAt),
+  ],
+);
+
+// Clerk account deletions: pending until a pass succeeds after every relay token issued before
+// the request has expired, then kept as the record of what was deleted and when. Re-run after a
+// backup restore by clearing completed_at.
+export const relayAccountDeletions = pgTable(
+  "relay_account_deletions",
+  {
+    userId: varchar("user_id", { length: 255 }).primaryKey(),
+    requestedAt: varchar("requested_at", { length: 64 }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    completedAt: varchar("completed_at", { length: 64 }),
+  },
+  (table) => [
+    index("idx_relay_account_deletions_pending")
+      .on(table.attempts, table.requestedAt)
+      .where(sql`${table.completedAt} is null`),
   ],
 );

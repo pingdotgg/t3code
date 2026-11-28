@@ -1,102 +1,177 @@
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { EnvironmentId, ProjectId, ServerConfig } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+
+import { render } from "../../../test/render";
 import {
-  createMemoryHistory,
-  createRootRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
-import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  persistClientSettingsPatch,
+} from "../../hooks/useSettings";
+import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
+import type { EnvironmentPresentation } from "../../state/environments";
+import type { Project } from "../../types";
 
-const { listBrowserImportSources } = vi.hoisted(() => ({
-  listBrowserImportSources: vi.fn().mockResolvedValue([]),
-}));
-
-vi.mock(import("../preview/previewBridge"), async (original) => {
-  const actual = await original();
-  return {
-    ...actual,
-    previewBridge: { ...actual.previewBridge, listBrowserImportSources } as never,
-  };
+const environmentId = EnvironmentId.make("browser-settings");
+const config = Schema.decodeSync(ServerConfig)({
+  environment: {
+    environmentId,
+    label: "Desk",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "1.0.0",
+    orchestrationProtocolVersion: 2,
+    capabilities: {},
+  },
+  auth: {
+    policy: "loopback-browser",
+    bootstrapMethods: ["one-time-token"],
+    sessionMethods: ["browser-session-cookie"],
+    sessionCookieName: "t3_session",
+  },
+  cwd: "/workspace/browser",
+  keybindingsConfigPath: "/workspace/keybindings.json",
+  keybindings: [],
+  issues: [],
+  providers: [],
+  availableEditors: [],
+  observability: {
+    logsDirectoryPath: "/workspace/logs",
+    localTracingEnabled: false,
+    otlpTracesEnabled: false,
+    otlpMetricsEnabled: false,
+  },
+  settings: {},
 });
+const environments: EnvironmentPresentation[] = [
+  {
+    environmentId,
+    label: "Desk",
+    displayUrl: "http://localhost:12345",
+    relayManaged: false,
+    entry: {
+      target: new PrimaryConnectionTarget({
+        environmentId,
+        label: "Desk",
+        httpBaseUrl: "http://localhost:12345",
+        wsBaseUrl: "ws://localhost:12345/ws",
+      }),
+      profile: Option.none(),
+      enabled: true,
+    },
+    connection: { phase: "connected", error: null, traceId: null },
+    refusedRouteIds: [],
+    serverConfig: config,
+  },
+];
+const projects: Project[] = [
+  {
+    id: ProjectId.make("browser-project"),
+    environmentId,
+    title: "Browser project",
+    workspaceRoot: "/workspace/browser",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-11-14T00:00:00.000Z",
+    updatedAt: "2026-11-14T00:00:00.000Z",
+  },
+];
+
+// Profiles, link target and the advanced rows only work in the desktop app.
 vi.mock(import("../../env"), async (original) => ({ ...(await original()), isElectron: true }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironments: (() => ({ environments: [], isReady: true })) as never,
-  usePrimaryEnvironment: () => null,
-  usePrimaryEnvironmentId: () => null,
+  useEnvironments: () => ({
+    isReady: true,
+    networkStatus: "online" as const,
+    environments,
+    presentationById: new Map(),
+  }),
+  usePrimaryEnvironmentId: () => environmentId,
+  usePrimaryEnvironment: () => environments[0]!,
+  readEnvironment: () => environments[0]!,
 }));
-vi.mock(import("../../hooks/useSettings"), async (original) => ({
+vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
-  useClientSettings: ((selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS) as never,
-  useClientSettingsHydrated: () => true,
-  usePrimarySettingsAvailable: () => true,
-  usePrimarySettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
-  useUpdatePrimarySettings: (() => vi.fn()) as never,
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: () => new Set([environmentId]),
 }));
-vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
+vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  ProjectDefaultsSettings: (() => null) as never,
-}));
-vi.mock(import("./SettingsScopeContext"), async (original) => ({
-  ...(await original()),
-  useSettingsScope: (() => ({
-    scope: { kind: "all", environmentIds: [] },
-    search: {},
-    environment: null,
-    environments: [],
-    target: null,
-    connectedEnvironments: [],
-    targets: [],
-  })) as never,
-  useOptionalSettingsScope: () => null,
+  useProjects: () => projects,
+  useServerConfigs: () => new Map([[environmentId, config]]),
 }));
 
-import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
+import { BrowserSettingsPanel } from "./IntegrationsSettings";
+import { SettingsScopeProvider } from "./SettingsScopeContext";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  listBrowserImportSources.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+const [group] = buildSidebarProjectSnapshots({
+  projects,
+  settings: DEFAULT_CLIENT_SETTINGS,
+  primaryEnvironmentId: environmentId,
+  resolveEnvironmentLabel: () => "Desk",
 });
+const isInert = (element: Element) => element.closest("[inert]") !== null;
 
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-async function openSettings() {
-  const router = createRouter({
-    routeTree: createRootRoute({ component: IntegrationsSettingsPanel }),
-    history: createMemoryHistory(),
-  });
-  await router.load();
-  await act(async () =>
-    root.render(
-      <StrictMode>
-        <RouterProvider router={router} />
-      </StrictMode>,
-    ),
+it.each([
+  { scope: "a project", search: { project: group!.projectKey } },
+  {
+    scope: "a checkout",
+    search: { project: group!.projectKey, checkout: group!.memberProjects[0]!.physicalProjectKey },
+  },
+])("shows device preferences read-only for $scope", async ({ search }) => {
+  await ensureClientSettingsHydrated();
+  await persistClientSettingsPatch(
+    { browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }] },
+    async () => {},
   );
-  await vi.waitFor(() => expect(container.querySelector("section#browser")).not.toBeNull());
-}
+  await using screen = await render(
+    <SettingsScopeProvider search={search} onChange={() => {}}>
+      <BrowserSettingsPanel />
+    </SettingsScopeProvider>,
+    { router: "/settings/browser" },
+  );
 
-describe("Integrations browser discovery", () => {
-  it("does not scan browser files when entering or revisiting settings", async () => {
-    await openSettings();
-    expect(listBrowserImportSources).not.toHaveBeenCalled();
+  for (const name of ["Search engine", "Open links in"]) {
+    expect(isInert(screen.getByRole("combobox", { name }).element())).toBe(true);
+  }
+  expect(isInert(screen.getByRole("switch", { name: "Agent browser access" }).element())).toBe(
+    false,
+  );
+  // Profiles save for this device in every scope, but the default profile is a device preference.
+  await expect.element(screen.getByRole("button", { name: "Add profile" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Work options" }));
+  await expect
+    .element(page.getByRole("menuitem", { name: "Set as default" }))
+    .toHaveAttribute("aria-disabled", "true");
+});
 
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await openSettings();
-    expect(listBrowserImportSources).not.toHaveBeenCalled();
+it("saves a typed default viewport size on Enter", async () => {
+  await ensureClientSettingsHydrated();
+  await persistClientSettingsPatch(
+    { browserDefaultViewport: { _tag: "freeform", width: 1280, height: 800 } },
+    async () => {},
+  );
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <BrowserSettingsPanel />
+    </SettingsScopeProvider>,
+    { router: "/settings/browser" },
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  const width = screen.getByRole("textbox", { name: "Default viewport width" });
+  await userEvent.clear(width);
+  await userEvent.type(width, "1440");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(width).toHaveFocus();
+  expect(getClientSettings().browserDefaultViewport).toEqual({
+    _tag: "freeform",
+    width: 1440,
+    height: 800,
   });
 });

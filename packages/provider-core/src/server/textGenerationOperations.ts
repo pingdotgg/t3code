@@ -19,6 +19,8 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
+export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
+
 export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
@@ -28,12 +30,14 @@ export interface Request<S extends Schema.Top> {
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /**
-   * Set when the model must investigate `cwd` before answering: it may read files and run
-   * read-only commands there, over as many turns as it needs, and must change nothing. A
-   * runner that cannot guarantee read-only tools fails rather than answering blind.
-   */
-  readonly investigate?: { readonly timeoutMs: number } | undefined;
+  /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
+  readonly investigate?:
+    | {
+        readonly timeoutMs: number;
+        /** cwd holds the content under review; paths the user configured resolve here instead. */
+        readonly projectCwd: string;
+      }
+    | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -71,6 +75,19 @@ export const decodeJsonReply = <S extends Schema.Top>(
         }),
     ),
   );
+};
+
+export const generatedThreadTitle = (raw: string) => {
+  const title = sanitizeThreadTitle(raw);
+  // Some models echo the output schema's key instead of a title.
+  return title.toLowerCase() === "title"
+    ? Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: 'The model returned the placeholder title "title".',
+        }),
+      )
+    : Effect.succeed(title);
 };
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
@@ -113,6 +130,8 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         diffPatch: input.diffPatch,
         policy: input.policy,
         changeRequestTemplate: input.changeRequestTemplate,
+        threadContext: input.threadContext,
+        producedBy: input.producedBy,
       }),
     });
     return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };
@@ -145,16 +164,30 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       attachments: input.attachments,
       ...buildThreadTitlePrompt({
         message: input.message,
+        projectTitle: input.projectTitle,
         previousTitle: input.previousTitle,
+        forkSource: input.forkSource,
         linkedContext: input.linkedContext,
         attachments: input.attachments,
+        instructions: input.instructions,
       }),
     });
     return {
-      title: sanitizeThreadTitle(generated.title),
+      title: yield* generatedThreadTitle(generated.title),
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });
+
+  const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
+    Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
+      return yield* run({
+        operation: "generateTranscriptionPostProcessing",
+        cwd: input.cwd,
+        prompt: input.prompt,
+        outputSchema: TranscriptionPostProcessingOutput,
+        modelSelection: input.modelSelection,
+      });
+    });
 
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = Effect.fn(
     `${name}.generateReviewGuide`,
@@ -163,7 +196,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "generateReviewGuide",
       cwd: input.cwd,
       modelSelection: input.modelSelection,
-      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS, projectCwd: input.projectCwd },
       ...buildReviewGuidePrompt(input),
     });
   });
@@ -174,5 +207,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 }

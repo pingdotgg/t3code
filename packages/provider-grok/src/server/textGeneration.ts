@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -27,21 +27,28 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runGrokJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
-    return Effect.gen(function* () {
+  const runGrokJson: TextGenerationOperations.Runner = Effect.fn("GrokTextGeneration.runGrokJson")(
+    function* (request) {
+      const { operation, cwd, prompt, modelSelection } = request;
+
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
         environment,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        // Grok config may always-approve; ask mode sends tool approvals here, and none are granted.
+        runtimeMode: "approval-required",
       }).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, random),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
+      );
+
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
       );
 
       yield* runtime.handleSessionUpdate((notification) => {
@@ -115,19 +122,23 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       }
 
       return yield* TextGenerationOperations.decodeJsonReply(request, "Grok Agent", trimmed);
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Grok ACP text generation failed.",
-              cause,
-            }),
-      ),
-      Effect.scoped,
-    );
-  };
+    },
+    (effect, request) => {
+      const { operation } = request;
+      return effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Grok ACP text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
 
   return TextGenerationOperations.fromRunner(
     "GrokTextGeneration",

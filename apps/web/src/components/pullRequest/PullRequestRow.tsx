@@ -1,6 +1,9 @@
 import type { PullRequestAction } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { T } from "gt-react";
 import { SearchIcon } from "lucide-react";
+import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import {
   PullRequestSpeedActions,
@@ -11,8 +14,8 @@ import { memo, type RefCallback } from "react";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
@@ -22,11 +25,9 @@ import {
   PullRequestRowGlyph,
   PullRequestRowLines,
 } from "./PullRequestListRow";
-import {
-  PullRequestDiffStat,
-  PullRequestLabelChip,
-  PullRequestReviewDecisionGlyph,
-} from "./pullRequestPresentation";
+import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
+import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const LABEL_SLOTS = [
   { overflow: "@xl/pr-row-meta:hidden" },
@@ -81,7 +82,7 @@ function PullRequestRowImpl({
   statsKey,
   statsRef,
   onSelect,
-  speedMode,
+  onIntent,
   hostActions,
   onActed,
   closing = false,
@@ -94,18 +95,19 @@ function PullRequestRowImpl({
   showProvider: boolean;
   environmentLabel?: string;
   matchedElsewhere?: boolean;
-  /** Used by the list's shared visibility observer to defer optional line-count reads. */
+  /** Visibility key for deferred line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
-  speedMode: boolean;
+  /** The row the pointer or focus rests on, or null when it leaves. */
+  onIntent?: (entry: PullRequestRowTarget | null) => void;
   hostActions: ReadonlySet<PullRequestAction>;
   onActed: (result: PullRequestSpeedActionResult) => void;
   closing?: boolean;
   sweeping?: boolean;
   onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
-  const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
+  const { Icon, providerName, terminology } = getSourceControlPresentationForKind(entry.provider);
   return (
     <div
       ref={statsRef}
@@ -120,6 +122,14 @@ function PullRequestRowImpl({
         type="button"
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(entry)}
+        onPointerEnter={() => onIntent?.(entry)}
+        onPointerLeave={(event) => {
+          if (event.currentTarget !== document.activeElement) onIntent?.(null);
+        }}
+        onFocus={() => onIntent?.(entry)}
+        onBlur={(event) => {
+          if (!event.currentTarget.matches(":hover")) onIntent?.(null);
+        }}
         className={cn(
           PULL_REQUEST_ROW_CLASS,
           PAGE_ROW_CLASS,
@@ -144,6 +154,7 @@ function PullRequestRowImpl({
                   url: entry.url,
                   openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
                   position: { x: event.clientX, y: event.clientY },
+                  source: contextMenuSourceOf(event),
                 });
               }}
             >
@@ -153,14 +164,16 @@ function PullRequestRowImpl({
           title={entry.title}
           signals={
             <>
+              {entry.visibility === "private" ? (
+                <PullRequestPrivateMark className="size-3 text-muted-foreground" />
+              ) : null}
               {entry.checksState === undefined ? null : (
                 <PullRequestChecksPopover
                   checksState={entry.checksState}
                   environmentId={entry.environmentId}
                   reference={{
-                    projectId: entry.projectId,
-                    repository: entry.repository,
-                    number: entry.number,
+                    ...pullRequestPanelReference({ ...entry, host: entry.host.toLowerCase() }),
+                    allowStale: false,
                   }}
                 />
               )}
@@ -186,7 +199,14 @@ function PullRequestRowImpl({
                   }
                 />
               ) : null}
-              <PullRequestDiffStat
+              <PullRequestChangeBreakdownStat
+                environmentId={entry.environmentId}
+                reference={{
+                  projectId: entry.projectId,
+                  host: entry.host,
+                  repository: entry.repository,
+                  number: entry.number,
+                }}
                 additions={entry.additions}
                 deletions={entry.deletions}
                 className="font-mono"
@@ -197,28 +217,32 @@ function PullRequestRowImpl({
           meta={
             <>
               {matchedElsewhere ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
-                    }
-                  >
-                    <span className="sr-only">matched in the description</span>
-                    <SearchIcon aria-hidden className="size-3 shrink-0" />
-                    <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                      matched in the description
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">Matched in the description</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
+                  }
+                  label={
+                    <>
+                      <T>Matched in the description</T>
+                    </>
+                  }
+                >
+                  <span className="sr-only">
+                    <T>matched in the description</T>
+                  </span>
+                  <SearchIcon aria-hidden className="size-3 shrink-0" />
+                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+                    <T>matched in the description</T>
+                  </span>
+                </SharedTooltipTrigger>
               ) : null}
               {showProvider ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                    <Icon aria-label={providerName} className="size-3" />
-                  </TooltipTrigger>
-                  <TooltipPopup>{providerName}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={<span className="inline-flex shrink-0" />}
+                  label={providerName}
+                >
+                  <Icon aria-label={providerName} className="size-3" />
+                </SharedTooltipTrigger>
               ) : null}
               <PullRequestRowAuthor
                 actor={entry.author}
@@ -239,7 +263,7 @@ function PullRequestRowImpl({
         <PullRequestSpeedActions
           entry={entry}
           hostActions={hostActions}
-          visible={speedMode}
+          terminology={terminology}
           onActed={onActed}
           closing={closing}
           sweeping={sweeping}

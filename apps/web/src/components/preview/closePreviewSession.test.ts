@@ -1,10 +1,10 @@
 import type {
+  EnvironmentId,
   PreviewCloseInput,
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -14,8 +14,19 @@ import {
 } from "~/previewStateStore";
 
 import { useClosedViewStore } from "~/closedViewStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { closePreviewSession } from "./closePreviewSession";
+
+vi.mock("~/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/env")>()),
+  isElectron: true,
+}));
+vi.mock("~/state/primaryEnvironment", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/primaryEnvironment")>()),
+  primaryEnvironmentIdAtom: Atom.make<EnvironmentId | null>(null),
+}));
 
 const threadRef = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
@@ -35,8 +46,16 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-18T19:00:00.000Z",
 };
 
+const setPrimaryEnvironment = (environmentId: EnvironmentId | null) => {
+  if (!Atom.isWritable<EnvironmentId | null, EnvironmentId | null>(primaryEnvironmentIdAtom)) {
+    throw new Error("primaryEnvironmentIdAtom is not writable");
+  }
+  appAtomRegistry.set(primaryEnvironmentIdAtom, environmentId);
+};
+
 beforeEach(() => {
   resetPreviewStateForTests();
+  setPrimaryEnvironment(null);
   useClosedViewStore.setState({ entries: [] });
 });
 
@@ -71,27 +90,26 @@ describe("closePreviewSession", () => {
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
   });
 
-  it("restores the last snapshot and keeps full history when the server close fails", async () => {
-    applyPreviewServerSnapshot(threadRef, snapshot);
-    for (let index = 0; index < 20; index++) {
-      useClosedViewStore.getState().remember({
-        kind: "browser",
-        threadRef,
-        snapshot: { ...snapshot, tabId: `closed-${index}` },
-      });
-    }
-    const history = useClosedViewStore.getState().entries;
-
-    const result = await closePreviewSession({
-      closePreview: async () => AsyncResult.failure(Cause.fail(new Error("close failed"))),
-      snapshot,
-      tabId: snapshot.tabId,
+  it("keeps a tab this desktop renders mounted until the server has closed it", async () => {
+    setPrimaryEnvironment(threadRef.environmentId);
+    const desktopSnapshot = { ...snapshot, runtime: "server" as const };
+    applyPreviewServerSnapshot(threadRef, desktopSnapshot);
+    let finishClose: (() => void) | undefined;
+    const closing = closePreviewSession({
+      closePreview: () =>
+        new Promise<ReturnType<typeof AsyncResult.success<void>>>((resolve) => {
+          finishClose = () => resolve(AsyncResult.success(undefined));
+        }),
+      snapshot: desktopSnapshot,
+      tabId: desktopSnapshot.tabId,
       threadRef,
     });
 
-    expect(result._tag).toBe("Failure");
-    expect(useClosedViewStore.getState().entries).toEqual(history);
-    expect(readThreadPreviewState(threadRef).snapshot).toEqual(snapshot);
-    expect(readThreadPreviewState(threadRef).sessions).toEqual({ [snapshot.tabId]: snapshot });
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({ "tab-1": desktopSnapshot });
+    finishClose?.();
+    await closing;
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+    applyPreviewServerSnapshot(threadRef, desktopSnapshot);
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
   });
 });

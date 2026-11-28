@@ -13,9 +13,9 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentQuery } from "./query";
 import { environmentSession, usePreparedConnection } from "./session";
 
@@ -123,24 +123,66 @@ const threadPreviewTabsAtom = Atom.family((threadKey: string) => {
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`mobile-preview-tabs:${threadKey}`));
 });
 
+interface ServerBrowserTabs {
+  readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
+  readonly loaded: boolean;
+}
+
+const sameServerBrowserTabs = (previous: ServerBrowserTabs, next: ServerBrowserTabs) =>
+  previous.loaded === next.loaded &&
+  previous.tabs.length === next.tabs.length &&
+  previous.tabs.every((tab, index) => tab === next.tabs[index]);
+
+// A list or event that leaves the thread's server tabs as they were notifies no one, so the
+// thread screen does not re-render each time it reads the list again.
+const serverBrowserTabsAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): ServerBrowserTabs => {
+    const tabs = get(threadPreviewTabsAtom(threadKey));
+    return {
+      tabs: tabs.sessions.filter((session) => session.runtime === "server"),
+      loaded: tabs.listed,
+    };
+  }).pipe(Atom.withEquality(sameServerBrowserTabs), Atom.setIdleTTL(1_000)),
+);
+const emptyServerBrowserTabsAtom = Atom.make<ServerBrowserTabs>({ tabs: [], loaded: false });
+const serverBrowserTabCountAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => get(serverBrowserTabsAtom(threadKey)).tabs.length),
+);
+const noServerBrowserTabsAtom = Atom.make(0);
+
 export function useThreadServerBrowserTabs(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly enabled: boolean;
-}) {
-  const tabs = useAtomValue(
+}): ServerBrowserTabs {
+  return useAtomValue(
     input.enabled
-      ? threadPreviewTabsAtom(
+      ? serverBrowserTabsAtom(
           scopedThreadKey({ environmentId: input.environmentId, threadId: input.threadId }),
         )
-      : emptyTabsAtom,
+      : emptyServerBrowserTabsAtom,
   );
-  const sessions = useMemo(
-    () => tabs.sessions.filter((session) => session.runtime === "server"),
-    [tabs.sessions],
-  );
-  return { tabs: sessions, loaded: tabs.listed };
 }
+
+/** How many server browser tabs the thread has, for screens that only show the count. */
+export function useThreadServerBrowserTabCount(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly enabled: boolean;
+}): number {
+  return useAtomValue(
+    input.enabled
+      ? serverBrowserTabCountAtom(
+          scopedThreadKey({ environmentId: input.environmentId, threadId: input.threadId }),
+        )
+      : noServerBrowserTabsAtom,
+  );
+}
+
+// The earliest time the next access request may go out.
+const previewStreamNotBeforeAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(0).pipe(Atom.withLabel(`mobile-preview-stream-retry:${environmentId}`)),
+);
 
 const previewStreamAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
@@ -148,16 +190,29 @@ const previewStreamAccessAtom = Atom.family((environmentId: EnvironmentId) =>
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
-      return prepared === null
-        ? Effect.never
-        : resolveDeviceHubAccess({ prepared, hubBasePath: PREVIEW_STREAM_BASE_PATH });
+      const notBefore = get(previewStreamNotBeforeAtom(environmentId));
+      if (prepared === null) return Effect.never;
+      const resolve = resolveDeviceHubAccess({ prepared, hubBasePath: PREVIEW_STREAM_BASE_PATH });
+      // A recompute interrupts the wait, so only the newest retry resolves.
+      const wait = notBefore - Date.now();
+      return wait > 0 ? Effect.andThen(Effect.sleep(wait), resolve) : resolve;
     })
     .pipe(Atom.setIdleTTL(60_000), Atom.withLabel(`mobile-preview-stream-access:${environmentId}`)),
 );
+
+/** Resolves fresh stream access once `delayMs` has passed. */
+function retryPreviewStreamAccess(environmentId: EnvironmentId, delayMs: number) {
+  appAtomRegistry.set(previewStreamNotBeforeAtom(environmentId), Date.now() + delayMs);
+}
 
 export function usePreviewStreamAccess(environmentId: EnvironmentId) {
   const prepared = usePreparedConnection(environmentId);
   const query = useEnvironmentQuery(previewStreamAccessAtom(environmentId));
   const access = query.data && query.error === null && Option.isSome(prepared) ? query.data : null;
-  return { access, error: query.error, refresh: query.refresh };
+  return {
+    access,
+    error: query.error,
+    refresh: query.refresh,
+    retryAfter: (delayMs: number) => retryPreviewStreamAccess(environmentId, delayMs),
+  };
 }

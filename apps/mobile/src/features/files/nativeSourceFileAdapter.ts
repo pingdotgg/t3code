@@ -5,14 +5,18 @@ import type {
 } from "../diffs/nativeReviewDiffSurface";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import type { SourceHighlightTokens } from "./sourceHighlightingState";
+import type { HighlightedLines } from "../../lib/highlights";
 
 export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
 
 export function createNativeSourceStyle(
   codeSurface: ResolvedMobileCodeSurface,
+  fonts: { readonly code: string; readonly ui: string; readonly uiBold: string },
 ): NativeReviewDiffStyle {
   return {
+    codeFontFamily: fonts.code,
+    uiFontFamily: fonts.ui,
+    uiBoldFontFamily: fonts.uiBold,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_SOURCE_CONTENT_WIDTH,
     changeBarWidth: 0,
@@ -54,7 +58,7 @@ export function buildNativeSourceRows(
 }
 
 export function buildNativeSourceTokens(
-  tokenLines: SourceHighlightTokens | null,
+  tokenLines: HighlightedLines | null,
 ): Readonly<Record<string, ReadonlyArray<NativeReviewDiffToken>>> {
   if (tokenLines === null) {
     return {};

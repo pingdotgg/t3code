@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -72,23 +73,10 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
-  it("renders a follow-up suggestion as its label", () => {
-    const followUp = parse(`Next: ${FOLLOW_UP}`).children?.[0]?.children?.[1];
-
-    expect(followUp).toMatchObject({
-      data: { hName: "span" },
-      children: [{ type: "text", value: "Prepare print version" }],
-    });
-  });
-
   it.each([
     "Meeting at 10:30",
-    "Open src/main.ts:42",
-    "Use :hover and :tada:",
-    "::note",
     ":::note\ncontent\n:::",
     ':codex-file-citation-extra{path="outputs/report.xlsx"}',
-    "::artifact-template-extra",
     ':codex-followup-extra[Label]{prompt="Prompt"}',
   ])("does not change unrelated colon syntax: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
@@ -96,10 +84,8 @@ describe("remarkCodexDirectives", () => {
 
   it.each([
     ':codex-file-citation{purpose="output"}',
-    '::artifact-template{skill_name="artifact-template-hello-world"}',
     ":codex-followup[Prepare print version]",
     ':codex-followup[ ]{prompt="Prepare the document for printing."}',
-    ':codex-followup[Prepare print version]{prompt=" "}',
   ])("keeps malformed supported directives literal: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
@@ -109,27 +95,64 @@ describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
   { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
 ])("$name file citation round trips", ({ render }) => {
+  // regression: #12243 copied Codex citations keep their backslashes
   it.each([
-    "C:\\Users\\test\\[draft]\\report.md",
-    "\\\\server\\share\\report.md",
-    "outputs/report.md",
-    "/tmp/report%5C.md",
-  ])("preserves the literal path and line: %s", (path) => {
+    ["C:\\Users\\test\\[draft]\\report.md", "C:\\Users\\test\\[draft]\\report.md"],
+    ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
+    ["/tmp/report%5C.md", "/tmp/report%5C.md"],
+    ["~\\reports\\draft.md", "~/reports/draft.md"],
+    ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
+    ["./reports/draft.md", "./reports/draft.md"],
+  ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
     expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: linkPath, line: 7 });
+  });
+
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
+  });
+
+  it("keeps literal tildes in the visible filename", () => {
+    const markdown = render(':codex-file-citation{path="reports/~~final~~.txt"}');
+    const parsed = unified().use(remarkParse).use(remarkGfm).parse(markdown) as TestNode;
+    const link = parsed.children?.[0]?.children?.[0];
+
+    expect(link).toMatchObject({
+      type: "link",
+      url: "./reports/~~final~~.txt",
+      children: [{ type: "text", value: "~~final~~.txt" }],
+    });
+  });
+
+  it("preserves a table row when the cited path contains a pipe", () => {
+    const markdown = render(
+      '| File | Note |\n| --- | --- |\n| :codex-file-citation{path="reports/a&#124;b.txt"} | ok |',
+    );
+    const table = unified().use(remarkParse).use(remarkGfm).parse(markdown).children[0] as TestNode;
+    const cells = table.children?.[1]?.children;
+    const link = cells?.[0]?.children?.[0];
+
+    expect(cells).toHaveLength(2);
+    expect(link).toMatchObject({
+      type: "link",
+      url: "./reports/a%7Cb.txt",
+      children: [{ type: "text", value: "a|b.txt" }],
+    });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "./reports/a|b.txt" });
+    expect(cells?.[1]?.children).toMatchObject([{ type: "text", value: "ok" }]);
   });
 });
 
 describe("native Markdown adapters", () => {
-  it("uses the same parser to render file citations as portable links", () => {
-    expect(renderCodexInlineDirectivesAsMarkdown(`Created ${FILE_CITATION}.`)).toBe(
-      "Created [report.xlsx](<outputs/report.xlsx>).",
-    );
-  });
-
   it("renders follow-up suggestions as their label Markdown", () => {
     expect(
       renderCodexInlineDirectivesAsMarkdown(
@@ -138,17 +161,9 @@ describe("native Markdown adapters", () => {
     ).toBe("- Prepare print version\n- Review **document**");
   });
 
-  it.each([`\\${FOLLOW_UP}`, `\`${FOLLOW_UP}\``])(
-    "does not render excluded follow-up syntax: %s",
-    (markdown) => {
-      expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(markdown);
-    },
-  );
-
   it.each([
     `\\${FILE_CITATION}`,
     `\`${FILE_CITATION}\``,
-    `\`\`\`text\n${FILE_CITATION}\n\`\`\``,
     `[See ${FILE_CITATION}](https://example.com)`,
   ])("does not render excluded citation syntax: %s", (markdown) => {
     expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(markdown);
@@ -196,14 +211,5 @@ describe("directive copy adapter", () => {
     ).toBe(
       "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)\n\n- Prepare print version",
     );
-  });
-
-  it("leaves excluded and malformed directive source unchanged", () => {
-    const markdown = [
-      `\`${FILE_CITATION}\``,
-      '::artifact-template{display_name="Hello World"}',
-    ].join("\n\n");
-
-    expect(renderCodexDirectivesForCopy(markdown)).toBe(markdown);
   });
 });

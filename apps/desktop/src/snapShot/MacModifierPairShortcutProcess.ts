@@ -11,8 +11,9 @@ const MAC_MODIFIER_PAIR_DEVICE_MASKS: Record<SnapShotModifier, readonly [number,
   meta: [0x8, 0x10],
 };
 
-// The CoreGraphics query connects osascript to the window server, which registers it as a
-// foreground app attributed to T3 Code. Go background-only first so it never gets a Dock tile.
+// CoreGraphics registers osascript as a foreground app; go background-only first to avoid a Dock tile.
+// A key typed since the pair was last fully up means the overlap came from typing (rolled Shifts
+// for consecutive capitals, or a lost key-up), not a deliberate press, so it does not trigger.
 const POLLER_SCRIPT = `
 ObjC.import("AppKit");
 $.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyProhibited);
@@ -22,12 +23,16 @@ function run(argv) {
   const left = Number(argv[0]);
   const right = Number(argv[1]);
   const both = left | right;
+  const keyDowns = () => $.CGEventSourceCounterForEventType(0, $.kCGEventKeyDown);
   let active = false;
+  let idleKeyDowns = keyDowns();
   console.log("ready");
   while ($.getppid() !== 1) {
-    const pressed = ($.CGEventSourceFlagsState(0) & both) === both;
-    if (pressed && !active) console.log("trigger");
+    const flags = $.CGEventSourceFlagsState(0);
+    const pressed = (flags & both) === both;
+    if (pressed && !active && keyDowns() === idleKeyDowns) console.log("trigger");
     active = pressed;
+    if ((flags & both) === 0) idleKeyDowns = keyDowns();
     delay(0.05);
   }
   return "orphaned";

@@ -1,7 +1,12 @@
 // @effect-diagnostics globalDate:off -- Usage windows are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
-import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  UsageDay,
+  type UsageResolution,
+  type UsageSource,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 
-import type { UsageContractMismatch } from "./usageMerge.ts";
+import { sourceIdentity } from "./usageMerge.ts";
 
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -12,21 +17,92 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 
 const INTEGER = new Intl.NumberFormat("en-US");
 
-export function formatUsd(value: number): string {
-  return CURRENCY.format(value);
+// Clients pass their UI locale; English (and the server, which passes none) keeps en-US.
+function formatLocale(locale: string | undefined): string {
+  return locale === undefined || locale === "en" ? "en-US" : locale;
 }
 
-export function formatCount(value: number): string {
-  return INTEGER.format(Math.round(value));
+const numberFormatters = new Map<string, Intl.NumberFormat>();
+
+function numberFormatter(locale: string, currency: boolean): Intl.NumberFormat {
+  if (locale === "en-US") return currency ? CURRENCY : INTEGER;
+  const key = `${locale}:${currency}`;
+  let formatter = numberFormatters.get(key);
+  if (formatter === undefined) {
+    formatter = currency
+      ? new Intl.NumberFormat(locale, {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : new Intl.NumberFormat(locale);
+    numberFormatters.set(key, formatter);
+  }
+  return formatter;
 }
+
+export function formatMalformedUsageWarning(count: number): string {
+  return `${count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`;
+}
+
+export function usageSourceMessages(
+  sources: readonly UsageSource[],
+  malformedWarning: (count: number) => string = formatMalformedUsageWarning,
+): readonly string[] {
+  const sourceKey = sourceIdentity(sources.map((source) => source.fingerprint));
+  const messages = new Set<string>();
+  const malformedBySource = new Map<string, number>();
+  for (const source of sources) {
+    if (
+      source.status !== "partial" &&
+      source.status !== "failed" &&
+      source.fingerprint.provider !== "cursor" &&
+      !(source.status === "missing" && source.malformedRecords > 0)
+    ) {
+      continue;
+    }
+    let message = source.message;
+    if (source.malformedRecords > 0) {
+      const key = sourceKey(source.fingerprint);
+      malformedBySource.set(
+        key,
+        Math.max(malformedBySource.get(key) ?? 0, source.malformedRecords),
+      );
+      // Servers also append this warning to message; retain any preceding read failure.
+      const warning = formatMalformedUsageWarning(source.malformedRecords);
+      if (message?.endsWith(warning)) message = message.slice(0, -warning.length).trim();
+    }
+    if (message) messages.add(message);
+  }
+  const malformedRecords = [...malformedBySource.values()].reduce(
+    (total, count) => total + count,
+    0,
+  );
+  if (malformedRecords > 0) messages.add(malformedWarning(malformedRecords));
+  return [...messages];
+}
+
+export function formatUsd(value: number, locale?: string): string {
+  return numberFormatter(formatLocale(locale), true).format(value);
+}
+
+export function formatCount(value: number, locale?: string): string {
+  return numberFormatter(formatLocale(locale), false).format(Math.round(value));
+}
+
+const TOKEN_SUFFIXES = ["K", "M", "B", "T"] as const;
 
 export function formatTokens(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1e12) return `${trim(value / 1e12)}T`;
-  if (abs >= 1e9) return `${trim(value / 1e9)}B`;
-  if (abs >= 1e6) return `${trim(value / 1e6)}M`;
-  if (abs >= 1e3) return `${trim(value / 1e3)}K`;
-  return INTEGER.format(Math.round(value));
+  if (Math.abs(Math.round(value)) < 1e3) return INTEGER.format(Math.round(value));
+  let scaled = value / 1e3;
+  let unit = 0;
+  // Choose the unit after rounding, so 999,999 reads 1M rather than 1000K.
+  while (Math.abs(Number(trim(scaled))) >= 1e3 && unit < TOKEN_SUFFIXES.length - 1) {
+    scaled /= 1e3;
+    unit += 1;
+  }
+  return `${trim(scaled)}${TOKEN_SUFFIXES[unit]}`;
 }
 
 function trim(value: number): string {
@@ -39,21 +115,24 @@ export function formatPercent(share: number, digits = 1): string {
   const percent = share * 100;
   const smallest = 10 ** -digits;
   if (percent > 0 && percent < smallest) return `<${smallest.toFixed(digits)}%`;
+  // A share short of the whole must not round up to 100%, as a nonzero one must not read 0%.
+  const largest = 100 - smallest;
+  if (percent < 100 && percent > largest) return `>${largest.toFixed(digits)}%`;
   return `${percent.toFixed(digits)}%`;
 }
 
-export function formatUsageContractMismatch(
-  environmentLabel: string,
-  mismatch: Pick<UsageContractMismatch, "direction">,
-): string {
-  return mismatch.direction === "serverBehind"
-    ? `${environmentLabel} runs an older server version and is excluded from totals.`
-    : `This client is older than the server on ${environmentLabel}; its usage is excluded from totals.`;
-}
-
-export function formatDayShort(day: string): string {
+export function formatDayShort(day: string, locale?: string): string {
   const [year, month, dayOfMonth] = day.split("-").map((part) => Number(part));
   if (year === undefined || month === undefined || dayOfMonth === undefined) return day;
+  const intlLocale = formatLocale(locale);
+  if (intlLocale !== "en-US") {
+    const date = new Date(Date.UTC(year, month - 1, dayOfMonth));
+    return Number.isNaN(date.getTime())
+      ? day
+      : dateTimeFormatter(intlLocale, { timeZone: "UTC", month: "short", day: "numeric" }).format(
+          date,
+        );
+  }
   const MONTHS = [
     "Jan",
     "Feb",
@@ -114,17 +193,36 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
   return starts;
 }
 
+function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
+  return hour12 ? { hour: "numeric", hour12: true } : { hour: "2-digit", hourCycle: "h23" };
+}
+
+function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
+  if (hour12) return formatter.format(date);
+  // Rolling buckets can start between whole hours, but their labels always name the hour.
+  return formatter
+    .formatToParts(date)
+    .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
+    .join("");
+}
+
 /**
  * Repeated wall-clock hours during a fall-back transition include their short zone name so the
  * two distinct buckets remain distinguishable.
  */
-export function formatHourShort(hourStart: string, timeZone?: string): string {
+export function formatHourShort(
+  hourStart: string,
+  timeZone?: string,
+  hour12 = true,
+  locale?: string,
+): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
   const options = timeZone === undefined ? {} : { timeZone };
-  const hourFormat = dateTimeFormatter("en-US", {
+  const intlLocale = formatLocale(locale);
+  const hourFormat = dateTimeFormatter(intlLocale, {
     ...options,
-    hour: "numeric",
+    ...hourOptions(hour12),
   });
   const wallHourFormat = dateTimeFormatter("en-CA", {
     ...options,
@@ -139,34 +237,45 @@ export function formatHourShort(hourStart: string, timeZone?: string): string {
     (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
   );
 
-  if (!isRepeatedHour) return hourFormat.format(instant);
-  return dateTimeFormatter("en-US", {
-    ...(timeZone === undefined ? {} : { timeZone }),
-    hour: "numeric",
+  if (!isRepeatedHour) return formatHour(hourFormat, instant, hour12);
+  const zonedHourFormat = dateTimeFormatter(intlLocale, {
+    ...options,
+    ...hourOptions(hour12),
     timeZoneName: "short",
-  }).format(instant);
+  });
+  return formatHour(zonedHourFormat, instant, hour12);
 }
 
-export function formatDateTimeShort(instant: string, timeZone?: string): string {
+export function formatDateTimeShort(
+  instant: string,
+  timeZone?: string,
+  hour12 = true,
+  locale?: string,
+): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
-  return dateTimeFormatter("en-US", {
+  const dateHourFormat = dateTimeFormatter(formatLocale(locale), {
     ...(timeZone === undefined ? {} : { timeZone }),
     month: "short",
     day: "numeric",
-    hour: "numeric",
-  }).format(date);
+    ...hourOptions(hour12),
+  });
+  return formatHour(dateHourFormat, date, hour12);
 }
 
 export function formatRelativeHourShort(
   hourStart: string,
   relativeTo: string,
   timeZone?: string,
+  hour12 = true,
+  relativeDay: (hour: string, daysAgo: 0 | 1) => string = (hour, daysAgo) =>
+    daysAgo === 0 ? `${hour} today` : `${hour} yesterday`,
+  locale?: string,
 ): string {
   const instant = new Date(hourStart);
   const reference = new Date(relativeTo);
   if (Number.isNaN(instant.getTime()) || Number.isNaN(reference.getTime())) {
-    return formatDateTimeShort(hourStart, timeZone);
+    return formatDateTimeShort(hourStart, timeZone, hour12, locale);
   }
 
   const dayFormat = dateTimeFormatter("en-CA", {
@@ -178,11 +287,10 @@ export function formatRelativeHourShort(
   const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
   const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
-  const hour = formatHourShort(hourStart, timeZone);
+  const hour = formatHourShort(hourStart, timeZone, hour12, locale);
 
-  if (calendarDaysAgo === 0) return `${hour} today`;
-  if (calendarDaysAgo === 1) return `${hour} yesterday`;
-  return formatDateTimeShort(hourStart, timeZone);
+  if (calendarDaysAgo === 0 || calendarDaysAgo === 1) return relativeDay(hour, calendarDaysAgo);
+  return formatDateTimeShort(hourStart, timeZone, hour12, locale);
 }
 
 export function makeWindow(
@@ -223,9 +331,7 @@ export function makeWindow(
       untilTime: untilTime.toISOString(),
     };
   }
-  // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
-  // around a DST transition. The window start is pure calendar arithmetic on
-  // the local end day, done in UTC where days are uniform.
+  // Use calendar arithmetic in UTC; fixed millisecond subtraction crosses DST days incorrectly.
   const [year = 0, month = 1, dayOfMonth = 1] = untilDay
     .split("-")
     .map((part) => Number.parseInt(part, 10));

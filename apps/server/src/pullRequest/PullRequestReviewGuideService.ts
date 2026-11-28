@@ -18,13 +18,13 @@ import {
   type PullRequestReviewGuideResult,
   type PullRequestReviewGuideRun,
   type PullRequestStack,
-  ProjectId,
   type RepositoryIdentity,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
+import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
@@ -35,7 +35,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
-import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
+import { ownPullRequestRepositories, pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
@@ -75,8 +75,7 @@ const make = Effect.gen(function* () {
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
-  // Claiming a run and storing a finished guide take turns, so a run that still owns its pull
-  // request when it checks is the one whose guide is stored: a newer claim cannot land between.
+  // Serialize claims and guide writes so a newer claim cannot steal ownership between checking and storing.
   const ownership = yield* Semaphore.make(1);
 
   const keyFor = Effect.fn("PullRequestReviewGuideService.keyFor")(function* (
@@ -97,24 +96,18 @@ const make = Effect.gen(function* () {
 
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
     function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlRepositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (own === null || own.host !== key.host || own.repository !== key.repository) {
+      const own = ownPullRequestRepositories(identity).find(
+        (candidate) =>
+          candidate.key.host === key.host && candidate.key.repository === key.repository,
+      );
+      if (own === undefined) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:
             "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
         });
       }
+      return own.locator;
     },
   );
 
@@ -148,12 +141,52 @@ const make = Effect.gen(function* () {
 
   const checkoutHead = Effect.fn("PullRequestReviewGuideService.checkoutHead")(function* (
     workspaceRoot: string,
+    locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    const remote = yield* git.resolvePrimaryRemoteName(workspaceRoot);
+    // Identity names can be stale; the identity keeps a remote's URL before or after insteadOf.
+    const names = yield* git
+      .execute({
+        operation: "PullRequestReviewGuideService.listRemotes",
+        cwd: workspaceRoot,
+        args: ["remote"],
+      })
+      .pipe(Effect.map((result) => result.stdout.split("\n").filter((name) => name.length > 0)));
+    const remote = yield* Effect.findFirst(
+      [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
+      (name) =>
+        Effect.forEach(
+          [
+            ["remote", "get-url", "--", name],
+            ["config", "--get-all", `remote.${name}.url`],
+          ],
+          (args) =>
+            git
+              .execute({
+                operation: "PullRequestReviewGuideService.remoteUrl",
+                cwd: workspaceRoot,
+                args,
+              })
+              .pipe(
+                Effect.map(
+                  (result) =>
+                    withoutRemoteUrlCredentials(result.stdout.split("\n")[0]?.trim() ?? "") ===
+                    locator.remoteUrl,
+                ),
+                Effect.orElseSucceed(() => false),
+              ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((matches) => matches.includes(true))),
+    ).pipe(Effect.map(Option.getOrUndefined));
+    if (remote === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: "This project's checkout no longer has a remote for the pull request's repository.",
+      });
+    }
     const fetch = (args: ReadonlyArray<string>) =>
       git.execute({
         operation: "PullRequestReviewGuideService.fetch",
@@ -161,8 +194,7 @@ const make = Effect.gen(function* () {
         args: ["fetch", "--quiet", "--no-tags", "--", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
-    // The host names the base branch. A name git rejects, or one that would change the refspec
-    // (a leading `+`, a `:`), is refused before it reaches `git fetch`.
+    // Reject invalid branch names and refspec operators before fetching host-provided names.
     yield* git
       .execute({
         operation: "PullRequestReviewGuideService.checkBaseBranch",
@@ -179,8 +211,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    // Fetched into a ref of this run's own: FETCH_HEAD is shared by every fetch in the
-    // workspace, so a concurrent run could otherwise measure this change from its base.
+    // FETCH_HEAD is workspace-global; isolate this run's base from concurrent fetches.
     const baseRef = `refs/t3/review-guide/${runId}/base`;
     yield* fetch([`+refs/heads/${detail.baseBranch}:${baseRef}`]);
     yield* Effect.addFinalizer(() =>
@@ -205,7 +236,7 @@ const make = Effect.gen(function* () {
           detail: `The host reported a head for #${number} that is not a commit hash.`,
         });
       }
-      // Not redundant: rev-parse prefers a branch or tag named like a short hash over the commit.
+      // rev-parse prefers same-named branches/tags over short hashes.
       const resolveHead = git.resolveCommit({ cwd: workspaceRoot, revision: sha }).pipe(
         Effect.filterOrFail(
           ({ commitSha }) => commitSha.startsWith(sha),
@@ -217,6 +248,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
+      const headRef = sourceControlDefinitions.get(detail.provider).changeRequestHeadRef?.(number);
       const branchRef = `refs/heads/${branch}`;
       const checkBranch = git.execute({
         operation: "PullRequestReviewGuideService.checkHeadBranch",
@@ -232,11 +264,7 @@ const make = Effect.gen(function* () {
           source: `branch ${branch}`,
           head: checkBranch.pipe(Effect.andThen(fetchAndResolve(branchRef))),
         },
-        { source: `refs/pull/${number}/head`, head: fetchAndResolve(`refs/pull/${number}/head`) },
-        {
-          source: `refs/merge-requests/${number}/head`,
-          head: fetchAndResolve(`refs/merge-requests/${number}/head`),
-        },
+        ...(headRef === undefined ? [] : [{ source: headRef, head: fetchAndResolve(headRef) }]),
       ];
       const failures: Array<string> = [];
       for (const { source, head } of sources) {
@@ -277,7 +305,17 @@ const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "PullRequestReviewGuideService.addWorktree",
       cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
+      // Scratch checkout for reading the change: repository hooks (installs, LFS) only slow or fail it.
+      args: [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "worktree",
+        "add",
+        "--detach",
+        "--quiet",
+        path,
+        resolvedHead.commitSha,
+      ],
       timeoutMs: 5 * 60_000,
     });
     yield* Effect.addFinalizer(() =>
@@ -302,8 +340,7 @@ const make = Effect.gen(function* () {
         .execute({
           operation: "PullRequestReviewGuideService.readChange",
           cwd,
-          // Fixed prefixes: a user's diff.noPrefix or custom prefixes would hide the headers the
-          // parser reads.
+          // Override user diff prefixes so the parser can find headers.
           args: [
             "-c",
             "core.quotePath=false",
@@ -317,7 +354,10 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout));
     const [nameOnly, patch] = yield* Effect.all(
-      [diff(["--name-only", "-z"]), diff(["--unified=0", "--no-color", "--no-ext-diff"])],
+      [
+        diff(["--name-only", "-z"]),
+        diff(["--unified=0", "--no-color", "--no-ext-diff", "--no-textconv"]),
+      ],
       { concurrency: "unbounded" },
     );
     return parseReviewGuideChange(nameOnly, patch);
@@ -327,6 +367,7 @@ const make = Effect.gen(function* () {
     input: PullRequestRef,
     key: ThreadPullRequestKey,
     workspaceRoot: string,
+    locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     runId: string,
@@ -349,6 +390,7 @@ const make = Effect.gen(function* () {
     );
     const { generated, change } = yield* checkoutHead(
       workspaceRoot,
+      locator,
       detail,
       headSha,
       stack,
@@ -360,7 +402,9 @@ const make = Effect.gen(function* () {
             generated: textGeneration.generateReviewGuide({
               ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
               cwd: checkout.path,
+              projectCwd: workspaceRoot,
               modelSelection,
+              projectId: input.projectId,
               instructions: projectSettings.reviewGuideInstructions,
               stack: checkout.stack,
             }),
@@ -408,11 +452,11 @@ const make = Effect.gen(function* () {
     if (!settings.reviewGuidesEnabled) {
       return yield* new PullRequestOperationError({
         operation: "generateReviewGuide",
-        detail: "Review guides are off. Turn them on in Settings → Source Control.",
+        detail: "Review guides are off. Turn them on in Settings → Source control & issues.",
       });
     }
     const { key, workspaceRoot, identity } = yield* keyFor(input);
-    yield* requireOwnRepository(key, identity);
+    const locator = yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
@@ -430,9 +474,7 @@ const make = Effect.gen(function* () {
       headSha: currentHeadSha,
       startedAt: yield* nowIso,
     };
-    // Claimed atomically, so two readers pressing Generate start one run between them. The head
-    // is read again under the claim: a press that read an older head before a push must not
-    // replace a run another press started for the new one, so it asks to be pressed again.
+    // Claim atomically and re-read the head so stale clicks cannot replace a newer head's run.
     const claimed = yield* ownership.withPermits(1)(
       pullRequests.detail(input).pipe(
         Effect.flatMap((latest) =>
@@ -465,7 +507,7 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(input, key, workspaceRoot, detail, currentHeadSha, runId, owns).pipe(
+    yield* write(input, key, workspaceRoot, locator, detail, currentHeadSha, runId, owns).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

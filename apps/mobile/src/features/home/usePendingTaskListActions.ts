@@ -1,69 +1,111 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation } from "@react-navigation/native";
+import { msg } from "gt-react-native";
 import { useCallback } from "react";
+
+import { m } from "../../i18n/messages";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { releaseEditingQueuedMessage } from "../../state/use-thread-outbox";
+import { appAtomRegistry } from "../../state/atom-registry";
+import {
+  editingQueuedMessageIdsAtom,
+  holdEditingQueuedMessage,
+  releaseEditingQueuedMessage,
+} from "../../state/use-thread-outbox";
+import { withThreadDismissal } from "./thread-dismissal";
 
-export function usePendingTaskListActions(): {
+export function usePendingTaskListActions(
+  selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void,
+): {
   readonly openPendingTask: (pendingTask: PendingNewTask) => void;
   readonly confirmDeletePendingTask: (pendingTask: PendingNewTask) => void;
 } {
-  const navigation = useNavigation();
-
   const openPendingTask = useCallback(
     (pendingTask: PendingNewTask) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
-          environmentId: String(pendingTask.environmentId),
-          projectId: String(pendingTask.projectId),
-          ...(pendingTask.kind === "pending"
-            ? { pendingTaskId: String(pendingTask.message.messageId) }
-            : { draftId: pendingTask.draftKey }),
-        },
-      });
+      selectThreadRoute(
+        pendingTask.kind === "pending"
+          ? {
+              environmentId: String(pendingTask.environmentId),
+              threadId: String(pendingTask.message.threadId),
+            }
+          : {
+              draft: {
+                environmentId: String(pendingTask.environmentId),
+                projectId: String(pendingTask.projectId),
+                draftId: pendingTask.draftKey,
+              },
+            },
+      );
     },
-    [navigation],
+    [selectThreadRoute],
   );
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
     if (pendingTask.kind === "draft") {
-      Dialog.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Discard",
-          style: "destructive",
-          onPress: () => {
-            clearComposerDraftContent(pendingTask.draftKey, {
-              clearModelSelection: true,
-              clearWorkspaceSelection: true,
-            });
+      Dialog.alert(
+        m(msg("Discard draft?")),
+        m(msg("“{title}” will be removed.", { title: pendingTask.title })),
+        [
+          { text: m(msg("Cancel")), style: "cancel" },
+          {
+            text: m(msg("Discard", { $context: "verb, discards a draft" })),
+            style: "destructive",
+            onPress: () => {
+              void withThreadDismissal(
+                pendingTask.key,
+                async () =>
+                  clearComposerDraftContent(pendingTask.draftKey, {
+                    clearModelSelection: true,
+                    clearWorkspaceSelection: true,
+                  }),
+                () => true,
+              );
+            },
           },
-        },
-      ]);
+        ],
+      );
       return;
     }
     Dialog.alert(
-      "Delete pending task?",
-      `“${pendingTask.title}” has not been sent yet and will be removed from the outbox.`,
+      m(msg("Delete pending task?")),
+      m(
+        msg("“{title}” has not been sent yet and will be removed from the outbox.", {
+          title: pendingTask.title,
+        }),
+      ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: m(msg("Cancel")), style: "cancel" },
         {
-          text: "Delete",
+          text: m(msg("Delete", { $context: "verb, deletes a pending task" })),
           style: "destructive",
           onPress: () => {
-            // Release the edit lock only after removal succeeds, and only if
-            // it is held for THIS task — clearing it up front (or for another
-            // task) would let the drain deliver a mid-edit payload.
-            void removeThreadOutboxMessage(pendingTask.message)
-              .then(() => releaseEditingQueuedMessage(pendingTask.message.messageId))
+            // Hold delivery from confirmation so reconnects cannot send a task during removal.
+            // The editor can release the shared hold mid-animation; remove edited tasks at once.
+            // Keep an editor's hold unless removal succeeds.
+            const messageId = pendingTask.message.messageId;
+            const heldByEditor = appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId];
+            holdEditingQueuedMessage(messageId);
+            const releaseUnlessEditing = () => {
+              if (!heldByEditor) releaseEditingQueuedMessage(messageId);
+            };
+            const remove = () => removeThreadOutboxMessage(pendingTask.message);
+            void (
+              heldByEditor
+                ? remove()
+                : withThreadDismissal(pendingTask.key, remove, (removed) => removed)
+            )
+              .then((removed) =>
+                removed ? releaseEditingQueuedMessage(messageId) : releaseUnlessEditing(),
+              )
               .catch((error) => {
+                releaseUnlessEditing();
                 Dialog.alert(
-                  "Could not delete pending task",
-                  error instanceof Error ? error.message : "The pending task could not be removed.",
+                  m(msg("Could not delete pending task")),
+                  error instanceof Error
+                    ? (errorDisplayMessage(error, m) ?? error.message)
+                    : m(msg("The pending task could not be removed.")),
                 );
               });
           },

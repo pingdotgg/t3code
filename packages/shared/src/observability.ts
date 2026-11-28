@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - flushSync must write before the process exits.
+import * as NodeFS from "node:fs";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -5,6 +7,7 @@ import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
@@ -25,6 +28,33 @@ export interface SignalExport {
   readonly headers: Readonly<Record<string, string>> | undefined;
   readonly exportIntervalMs: number;
 }
+
+/**
+ * `process.runtime.*` resource attributes for a Node process, matching the
+ * OpenTelemetry Node process detector. Electron embeds Node, so an Electron
+ * process reports Node and names Electron in the description.
+ */
+export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
+  "process.runtime.name": "nodejs",
+  "process.runtime.version": process.versions.node,
+  "process.runtime.description": process.versions.electron
+    ? `Electron ${process.versions.electron}`
+    : "Node.js",
+});
+let generatedServiceInstanceId: string | undefined;
+
+/**
+ * `service.instance.id` shared by every resource this process exports. Effect lets code
+ * attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so callers pass the operator's in to keep it winning.
+ */
+export const processServiceInstanceId = (
+  operatorAttributes: Readonly<Record<string, string>> = {},
+): string => {
+  if (operatorAttributes["service.instance.id"]) return operatorAttributes["service.instance.id"];
+  // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resources are built synchronously, outside any Effect.
+  generatedServiceInstanceId ??= crypto.randomUUID();
+  return generatedServiceInstanceId;
+};
 
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
@@ -146,10 +176,13 @@ export interface TraceSink {
   readonly filePath: string;
   push: (record: TraceRecord) => void;
   flush: Effect.Effect<void>;
+  /** Appends buffered records synchronously, for process exit where async writes never land. */
+  flushSync: () => void;
   close: () => Effect.Effect<void>;
 }
 
 export interface LocalFileTracerOptions extends TraceSinkOptions {
+  readonly sampleRoutineSpans?: boolean;
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
 }
@@ -158,6 +191,7 @@ type OtlpSpan = OtlpTracer.ScopeSpan["spans"][number];
 type OtlpSpanEvent = OtlpSpan["events"][number];
 type OtlpSpanLink = OtlpSpan["links"][number];
 type OtlpSpanStatus = OtlpSpan["status"];
+type OtlpScope = OtlpTracer.ScopeSpan["scope"];
 
 interface SerializableSpan {
   readonly name: string;
@@ -178,15 +212,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function markSeen(value: object, seen: WeakSet<object>): boolean {
-  if (seen.has(value)) {
-    return true;
-  }
-  seen.add(value);
-  return false;
+// Repeated references expand once per path, so a small shared graph can grow exponentially.
+const TRACE_ATTRIBUTE_MAX_NODES = 10_000;
+
+interface NormalizeState {
+  // Only the current ancestors, so a value repeated under two keys is not a cycle.
+  readonly seen: WeakSet<object>;
+  remainingNodes: number;
 }
 
-function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+function enterNode(value: object, state: NormalizeState): string | undefined {
+  if (state.seen.has(value)) {
+    return "[Circular]";
+  }
+  if (state.remainingNodes <= 0) {
+    return "[Truncated]";
+  }
+  state.remainingNodes--;
+  state.seen.add(value);
+  return undefined;
+}
+
+function normalizeJsonValue(value: unknown, state: NormalizeState): unknown {
   if (
     value === null ||
     value === undefined ||
@@ -210,46 +257,59 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     };
   }
   if (Array.isArray(value)) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return value.map((entry) => normalizeJsonValue(entry, seen));
+    const normalized = value.map((entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Map) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Object.fromEntries(
+    const normalized = Object.fromEntries(
       Array.from(value.entries(), ([key, entryValue]) => [
         String(key),
-        normalizeJsonValue(entryValue, seen),
+        normalizeJsonValue(entryValue, state),
       ]),
     );
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Set) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
+    const normalized = Array.from(value.values(), (entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (!isPlainObject(value)) {
     return String(value);
   }
-  if (markSeen(value, seen)) {
-    return "[Circular]";
+  const marker = enterNode(value, state);
+  if (marker) {
+    return marker;
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, state)]),
   );
+  state.seen.delete(value);
+  return normalized;
 }
 
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
+  const state: NormalizeState = { seen: new WeakSet(), remainingNodes: TRACE_ATTRIBUTE_MAX_NODES };
   const entries: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(attributes)) {
     if (value !== undefined) {
-      entries.push([key, normalizeJsonValue(value)]);
+      entries.push([key, normalizeJsonValue(value, state)]);
     }
   }
   return Object.fromEntries(entries);
@@ -276,11 +336,17 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
+function truncateTraceString(value: string, length: number): string {
+  const last = value.charCodeAt(length - 1);
+  const end = length - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  return `${value.slice(0, end)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+}
+
 function truncateNestedValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
       ? value
-      : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      : truncateTraceString(value, TRACE_ATTRIBUTE_MAX_LENGTH);
   }
   if (Array.isArray(value)) {
     const truncated = value.map(truncateNestedValue);
@@ -299,18 +365,14 @@ function truncateNestedValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * Returns a new record when anything was clamped; never mutates the input (the live span's
- * attributes are shared with other tracers).
- */
+/** Clones only when clamping; never mutates attributes shared with other tracers. */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
     if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
       if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
       truncated ??= { ...attributes };
-      truncated[key] =
-        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      truncated[key] = truncateTraceString(value, TRACE_ATTRIBUTE_TRUNCATED_LENGTH);
       continue;
     }
     const next = truncateNestedValue(value);
@@ -352,6 +414,12 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
     exit: formatTraceExit(status.exit),
   };
 }
+
+// WebSocket tickets and their DPoP proofs ride in URL queries and stay valid after the request.
+const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
+
+const redactUrlCredentials = (text: string) =>
+  text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
 
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
@@ -402,9 +470,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       const written = yield* sink.write(chunk).pipe(Effect.result);
       if (Result.isFailure(written)) {
-        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
-        // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
+        // Drop the batch after disk failure to avoid an ever-growing retry backlog.
         writeFailing = true;
         droppedCount += records.length - persistedCount;
         return;
@@ -452,12 +518,10 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }),
     )
     .pipe(
-      // A cancelled write still completes in the OS. Finish it before another
-      // flush rotates the file or the scope's finalizer drains the remaining records.
+      // Cancelled OS writes still finish; await completion before rotation or finalizer drain.
       Effect.uninterruptible,
       Effect.withTracerEnabled(false),
-      // The timed fiber inherits the makeTraceSink span. That span has ended but
-      // lives as long as the sink, so the tracer logger must not add logs to it.
+      // Drop the ended makeTraceSink parent span so timed-fiber logs cannot accumulate on it.
       Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
     );
 
@@ -474,7 +538,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     push(record) {
       try {
-        const text = `${JSON.stringify(record)}\n`;
+        const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
         const bytes = Buffer.byteLength(text);
         if (bytes > options.maxBytes) return;
         if (bufferBytes + bytes > maxBufferBytes) {
@@ -491,9 +555,51 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }
     },
     flush,
+    flushSync() {
+      if (buffer.length === 0) return;
+      const text = buffer.map((record) => record.text).join("");
+      buffer = [];
+      bufferBytes = 0;
+      try {
+        NodeFS.appendFileSync(options.filePath, text);
+      } catch {
+        return;
+      }
+    },
     close: () => flush,
   } satisfies TraceSink;
 });
+
+// Effect's HTTP errors, including failed upgrades, put the request URL in their message.
+export function redactCauseCredentials(cause: Cause.Cause<unknown>): Cause.Cause<unknown> {
+  if (cause.reasons.length === 0 || Cause.hasInterruptsOnly(cause)) {
+    return cause;
+  }
+  const pretty = Cause.pretty(cause);
+  const redacted = redactUrlCredentials(pretty);
+  return redacted === pretty ? cause : Cause.die(new Error(redacted));
+}
+
+function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
+  if (ExitRuntime.isSuccess(exit)) {
+    return exit;
+  }
+  const cause = redactCauseCredentials(exit.cause);
+  return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
+}
+
+const ROUTINE_ATTRIBUTE = "t3.trace.routine";
+/** Marks high-volume bookkeeping spans the local trace file may sample. SQLite spans count without it. */
+export const routineSpan = { [ROUTINE_ATTRIBUTE]: true } as const;
+
+/** Runs real work that a routine context (such as the workflow engine) calls without the routine marker. */
+export const withoutRoutineSpans = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.updateService(effect, References.TracerSpanAnnotations, (annotations) => {
+    const { [ROUTINE_ATTRIBUTE]: _, ...rest } = annotations;
+    return rest;
+  });
+
+const SLOW_ROUTINE_SPAN_NANOS = 10_000_000n;
 
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
@@ -510,14 +616,17 @@ class LocalFileSpan implements Tracer.Span {
   attributes: Map<string, unknown>;
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
+  private readonly sampleRoutineSpans: boolean;
   private readonly push: (record: EffectTraceRecord) => void;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
+    sampleRoutineSpans: boolean,
   ) {
     this.delegate = delegate;
+    this.sampleRoutineSpans = sampleRoutineSpans;
     this.push = push;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
@@ -544,20 +653,40 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit: traceExit,
     };
-    this.delegate.end(endTime, traceExit);
+    this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
+    if (this.sampled && !(this.sampleRoutineSpans && this.isDroppableRoutine(endTime, traceExit))) {
       this.push(spanToTraceRecord(this));
     }
   }
 
+  // Keyed per span: background fibers share the boot trace, and recurring ticks reuse one parent span.
+  private isDroppableRoutine(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
+    return (
+      (this.attributes.get("db.system.name") === "sqlite" ||
+        this.attributes.get(ROUTINE_ATTRIBUTE) === true) &&
+      ExitRuntime.isSuccess(exit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < SLOW_ROUTINE_SPAN_NANOS &&
+      !this.spanId.endsWith("00")
+    );
+  }
+
   attribute(key: string, value: unknown): void {
-    this.attributes.set(key, value);
-    this.delegate.attribute(key, value);
+    const recorded =
+      (key === "url.full" || key === "url.query") && typeof value === "string"
+        ? redactUrlCredentials(value)
+        : value;
+    this.attributes.set(key, recorded);
+    this.delegate.attribute(key, recorded);
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const nextAttributes = attributes ?? {};
+    const cause = attributes?.["effect.cause"];
+    const nextAttributes =
+      typeof cause === "string"
+        ? { ...attributes, "effect.cause": redactUrlCredentials(cause) }
+        : (attributes ?? {});
     this.events.push([name, startTime, nextAttributes]);
     this.delegate.event(name, startTime, nextAttributes);
   }
@@ -589,7 +718,12 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
 
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(
+        spanOptions,
+        delegate.span(spanOptions),
+        sink.push,
+        options.sampleRoutineSpans === true,
+      );
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });
@@ -608,24 +742,22 @@ export function decodeOtlpTraceRecords(
 ): ReadonlyArray<OtlpTraceRecord> {
   const records: Array<OtlpTraceRecord> = [];
 
-  for (const resourceSpan of payload.resourceSpans) {
-    const resourceAttributes = decodeAttributes(resourceSpan.resource?.attributes ?? []);
+  // OTLP/JSON follows protobuf JSON, which omits unset and empty fields, so a
+  // valid batch can leave out any field read here.
+  for (const resourceSpan of payload.resourceSpans ?? []) {
+    const resourceAttributes = decodeAttributes(resourceSpan.resource?.attributes);
 
-    for (const scopeSpan of resourceSpan.scopeSpans) {
-      for (const span of scopeSpan.spans) {
+    for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+      const scope: Partial<OtlpScope> = scopeSpan.scope ?? {};
+      for (const span of scopeSpan.spans ?? []) {
         records.push(
           otlpSpanToTraceRecord({
             resourceAttributes,
             scopeAttributes: decodeAttributes(
-              "attributes" in scopeSpan.scope && Array.isArray(scopeSpan.scope.attributes)
-                ? scopeSpan.scope.attributes
-                : [],
+              "attributes" in scope && Array.isArray(scope.attributes) ? scope.attributes : [],
             ),
-            scopeName: scopeSpan.scope.name,
-            scopeVersion:
-              "version" in scopeSpan.scope && typeof scopeSpan.scope.version === "string"
-                ? scopeSpan.scope.version
-                : undefined,
+            scopeName: scope.name,
+            scopeVersion: typeof scope.version === "string" ? scope.version : undefined,
             span,
           }),
         );
@@ -669,9 +801,9 @@ function otlpSpanToTraceRecord(input: {
   };
 }
 
-function decodeStatus(input: OtlpSpanStatus): OtlpTraceRecord["status"] {
-  const code = String(input.code);
-  const message = input.message;
+function decodeStatus(input: OtlpSpanStatus | undefined): OtlpTraceRecord["status"] {
+  const code = String(input?.code ?? 0);
+  const message = input?.message;
 
   return {
     code,
@@ -679,16 +811,20 @@ function decodeStatus(input: OtlpSpanStatus): OtlpTraceRecord["status"] {
   };
 }
 
-function decodeEvents(input: ReadonlyArray<OtlpSpanEvent>): ReadonlyArray<TraceRecordEvent> {
-  return input.map((current) => ({
+function decodeEvents(
+  input: ReadonlyArray<OtlpSpanEvent> | undefined,
+): ReadonlyArray<TraceRecordEvent> {
+  return (input ?? []).map((current) => ({
     name: current.name,
     timeUnixNano: current.timeUnixNano,
     attributes: decodeAttributes(current.attributes),
   }));
 }
 
-function decodeLinks(input: ReadonlyArray<OtlpSpanLink>): ReadonlyArray<TraceRecordLink> {
-  return input.flatMap((current) => {
+function decodeLinks(
+  input: ReadonlyArray<OtlpSpanLink> | undefined,
+): ReadonlyArray<TraceRecordLink> {
+  return (input ?? []).flatMap((current) => {
     const traceId = current.traceId;
     const spanId = current.spanId;
     return {
@@ -700,11 +836,11 @@ function decodeLinks(input: ReadonlyArray<OtlpSpanLink>): ReadonlyArray<TraceRec
 }
 
 function decodeAttributes(
-  input: ReadonlyArray<OtlpResource.KeyValue>,
+  input: ReadonlyArray<OtlpResource.KeyValue> | undefined,
 ): Readonly<Record<string, unknown>> {
   const entries: Record<string, unknown> = {};
 
-  for (const attribute of input) {
+  for (const attribute of input ?? []) {
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
@@ -731,7 +867,7 @@ function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {
     return input.bytesValue;
   }
   if (input.arrayValue) {
-    return input.arrayValue.values.map((entry) => decodeValue(entry));
+    return (input.arrayValue.values ?? []).map((entry) => decodeValue(entry));
   }
   if (input.kvlistValue) {
     return decodeAttributes(input.kvlistValue.values);

@@ -2,7 +2,8 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { newTaskFlowKey } from "../threads/new-task-flow-state";
+import { chooserDraftKey, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
 
 const ENVIRONMENT_A = EnvironmentId.make("environment-a");
 const ENVIRONMENT_B = EnvironmentId.make("environment-b");
@@ -20,22 +21,30 @@ describe("resolveAddProjectEnvironment", () => {
       ),
     ).toBeNull();
   });
+});
 
-  it("resolves an explicit connected environment", () => {
-    expect(
-      resolveAddProjectEnvironment(
-        [environment(ENVIRONMENT_A, "connected"), environment(ENVIRONMENT_B, "connected")],
-        ENVIRONMENT_A,
-      )?.environmentId,
-    ).toBe(ENVIRONMENT_A);
+describe("chooserDraftKey", () => {
+  const home = { key: "home", name: "Home" };
+  const draftRoute = { key: "thread", name: "Thread", params: { draft: { requestId: "r1" } } };
+  const chooser = { key: "chooser", name: "NewTaskProject" };
+  const addProject = [
+    { key: "add", name: "AddProject" },
+    { key: "local", name: "AddProjectLocal" },
+  ];
+  const flowDraftKeys = new Map([[newTaskFlowKey(draftRoute), "new-task:typed"]]);
+  const readFlowDraftKey = (flowKey: string) => flowDraftKeys.get(flowKey) ?? null;
+
+  it("picks the added project for the draft whose chooser opened Add project", () => {
+    expect(chooserDraftKey([home, draftRoute, chooser, ...addProject], readFlowDraftKey)).toBe(
+      "new-task:typed",
+    );
+    const savedChooser = { ...chooser, params: { draftId: "new-task:saved" } };
+    expect(chooserDraftKey([home, savedChooser, ...addProject], readFlowDraftKey)).toBe(
+      "new-task:saved",
+    );
   });
 
-  it("defaults to the first connected environment when no environment is requested", () => {
-    expect(
-      resolveAddProjectEnvironment(
-        [environment(ENVIRONMENT_A, "offline"), environment(ENVIRONMENT_B, "connected")],
-        null,
-      )?.environmentId,
-    ).toBe(ENVIRONMENT_B);
+  it("picks no draft when Add project opened outside the chooser", () => {
+    expect(chooserDraftKey([home, draftRoute, ...addProject], readFlowDraftKey)).toBeNull();
   });
 });

@@ -1,20 +1,31 @@
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { fileBasename } from "@t3tools/shared/path";
 import type { ThreadId } from "@t3tools/contracts";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import type { MarkdownFileContextMenu } from "../../native/SelectableMarkdownText.types";
 import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import {
   isAbsolutePath,
+  resolveFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 
-export type FileChipAction = "copy-full-path" | "copy-relative-path" | "open-file" | "save";
-
 export interface FileChipTarget {
   readonly fullPath?: string;
   readonly relativePath?: string;
+}
+
+export function fileChipClipboardPath(
+  target: FileChipTarget,
+  action: "copy-full-path" | "copy-relative-path",
+): string | undefined {
+  const path = action === "copy-full-path" ? target.fullPath : target.relativePath;
+  return path === undefined ? undefined : formatFilePathForClipboard(path, target.fullPath);
 }
 
 export function resolveFileChipTarget(
@@ -23,9 +34,11 @@ export function resolveFileChipTarget(
 ): FileChipTarget | null {
   const presentation = resolveMarkdownLinkPresentation(href);
   if (presentation.kind !== "file") return null;
-  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, presentation.path);
-  const fullPath = isAbsolutePath(presentation.path)
-    ? presentation.path
+  const path = resolveFileLinkPath(workspaceRoot, presentation.path);
+  if (path === null) return null;
+  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
+  const fullPath = isAbsolutePath(path)
+    ? path
     : workspaceRoot && relativePath
       ? resolveWorkspaceFilePath(workspaceRoot, relativePath)
       : undefined;
@@ -57,18 +70,23 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
     : null;
 }
 
-export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
+export function fileChipMenu(
+  target: FileChipTarget,
+  resolve: MessageResolver = m,
+): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",
     actions: [
-      ...(target.fullPath ? [{ id: "copy-full-path", title: "Copy full path" }] : []),
-      ...(target.relativePath ? [{ id: "copy-relative-path", title: "Copy relative path" }] : []),
-      { id: "open-file", title: "Open in file viewer" },
+      ...(target.fullPath ? [{ id: "copy-full-path", title: resolve(msg("Copy full path")) }] : []),
+      ...(target.relativePath
+        ? [{ id: "copy-relative-path", title: resolve(msg("Copy relative path")) }]
+        : []),
+      { id: "open-file", title: resolve(msg("Open in file viewer")) },
       ...(fileChipMetadata(target)
         ? [
             {
               id: "save",
-              title: "Save or share",
+              title: resolve(msg("Save or share")),
             },
           ]
         : []),

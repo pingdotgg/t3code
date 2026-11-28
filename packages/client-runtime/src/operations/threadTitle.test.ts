@@ -1,47 +1,20 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { deriveThreadTitleSeed } from "./threadTitle.ts";
+import { threadTitleTextFromPrompt } from "./threadTitle.ts";
 
-describe("deriveThreadTitleSeed", () => {
-  it("prefers normalized message text", () => {
+describe("threadTitleTextFromPrompt", () => {
+  it("names a mentioned model by its slug, without the reference syntax", () => {
+    expect(threadTitleTextFromPrompt("Delegate to model:codex/gpt-6.1-sol and report back")).toBe(
+      "Delegate to gpt-6.1-sol and report back",
+    );
     expect(
-      deriveThreadTitleSeed({
-        text: "  Investigate\n  login   failures  ",
-        attachments: [{ name: "login-error.png" }],
-        fallbackLabels: ["Terminal 1"],
-      }),
-    ).toBe("Investigate login failures");
+      threadTitleTextFromPrompt("model:opencode/anthropic/opus, then model:codex/gpt-5.4."),
+    ).toBe("anthropic/opus, then gpt-5.4.");
   });
 
-  it("uses the first attachment name when text is empty", () => {
-    expect(
-      deriveThreadTitleSeed({
-        text: " \n ",
-        attachments: [{ name: "login-error.png" }, { name: "other.png" }],
-      }),
-    ).toBe("Image: login-error.png");
-  });
-
-  it("uses the first non-empty fallback label after text and attachments", () => {
-    expect(
-      deriveThreadTitleSeed({
-        text: "",
-        attachments: [],
-        fallbackLabels: [null, "  ", "Terminal 1"],
-      }),
-    ).toBe("Terminal 1");
-  });
-
-  it("falls back to New thread", () => {
-    expect(deriveThreadTitleSeed({ text: "", attachments: [] })).toBe("New thread");
-  });
-
-  it("applies the shared title truncation", () => {
-    expect(
-      deriveThreadTitleSeed({
-        text: "x".repeat(60),
-        attachments: [],
-      }),
-    ).toBe(`${"x".repeat(50)}...`);
+  it("composes NFD macOS paths mentioned in the prompt", () => {
+    expect(threadTitleTextFromPrompt("Read @\u1109\u1175\u110b\u1161\u11ab/a.txt")).toBe(
+      "Read @\uc2dc\uc548/a.txt",
+    );
   });
 });

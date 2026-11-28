@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { msg, T, Var } from "gt-react";
 
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { m } from "../i18n/messages";
+import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
@@ -9,7 +10,12 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
     Math.min(...requests.map((request) => request.thresholdMs)) / 1000,
   );
 
-  return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+  return m(
+    msg(
+      "{count, plural, one {{count} request} other {{count} requests}} waiting longer than {thresholdSeconds}s.",
+      { count, thresholdSeconds },
+    ),
+  );
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
@@ -22,7 +28,9 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
         >
           <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
           <div className="mt-0.5 text-3xs opacity-75">
-            Started {new Date(request.startedAt).toLocaleTimeString()}
+            <T>
+              Started <Var>{new Date(request.startedAt).toLocaleTimeString()}</Var>
+            </T>
           </div>
         </li>
       ))}
@@ -30,15 +38,15 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
   );
 }
 
-export function SlowRpcRequestToastCoordinator() {
-  const slowRequests = useSlowRpcAckRequests();
-  const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+/** One warning toast that tracks the set of slow requests while any are outstanding. */
+export function startSlowRpcRequestToasts(): () => void {
+  let toastId: ReturnType<typeof toastManager.add> | null = null;
 
-  useEffect(() => {
+  const unsubscribe = subscribeSlowRpcAckRequests((slowRequests) => {
     if (slowRequests.length === 0) {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-        toastIdRef.current = null;
+      if (toastId !== null) {
+        toastManager.close(toastId);
+        toastId = null;
       }
       return;
     }
@@ -47,29 +55,23 @@ export function SlowRpcRequestToastCoordinator() {
       data: {
         expandableContent: <SlowRequestDetails requests={slowRequests} />,
         expandableDescriptionTrigger: true,
-        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
+        expandableLabels: { collapse: m(msg("Hide requests")), expand: m(msg("Show requests")) },
       },
       description: describeSlowRequests(slowRequests),
       timeout: 0,
-      title: "Some requests are slow",
+      title: m(msg("Some requests are slow")),
       type: "warning" as const,
     };
 
-    if (toastIdRef.current === null) {
-      toastIdRef.current = toastManager.add(nextToast);
+    if (toastId === null) {
+      toastId = toastManager.add(nextToast);
     } else {
-      toastManager.update(toastIdRef.current, nextToast);
+      toastManager.update(toastId, nextToast);
     }
-  }, [slowRequests]);
+  });
 
-  useEffect(
-    () => () => {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-      }
-    },
-    [],
-  );
-
-  return null;
+  return () => {
+    unsubscribe();
+    if (toastId !== null) toastManager.close(toastId);
+  };
 }

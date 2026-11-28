@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  createEnvironmentSessionAtoms,
+  sessionDeniesScope,
+} from "@t3tools/client-runtime/state/session";
 import {
   type AuthEnvironmentScope,
   type AuthSessionState,
@@ -17,24 +20,49 @@ export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRu
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
-function sessionHasScope(
+/** This client's own session on the environment, or null until the host has said. */
+export function useEnvironmentSessionId(environmentId: EnvironmentId | null): string | null {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => AsyncResult.getOrElse(result, () => null)?.sessionId ?? null,
+  );
+}
+
+export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const session = Option.getOrNull(AsyncResult.value(result));
+  const session = AsyncResult.getOrElse(result, () => null);
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
+function sessionStateAtomFor(environmentId: EnvironmentId | null) {
+  return environmentId === null
+    ? EMPTY_SESSION_STATE_ATOM
+    : environmentSession.sessionStateAtom(environmentId);
+}
+
+// Both hooks select a boolean: every revalidation emits a new result, and most consumers are
+// list rows.
 export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const result = useAtomValue(
-    environmentId === null
-      ? EMPTY_SESSION_STATE_ATOM
-      : environmentSession.sessionStateAtom(environmentId),
+  return useAtomValue(sessionStateAtomFor(environmentId), (result) =>
+    sessionHasScope(result, scope),
   );
-  return sessionHasScope(result, scope);
+}
+
+/** Unlike `!useEnvironmentScope`, stays false until the host has answered without the scope. */
+export function useEnvironmentScopeDenied(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return useAtomValue(sessionStateAtomFor(environmentId), (result) =>
+    sessionDeniesScope(result, scope),
+  );
 }
 
 export function useEnvironmentsWithScope(
@@ -63,6 +91,16 @@ export function readEnvironmentScope(
 ): boolean {
   const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
   return sessionHasScope(result, scope);
+}
+
+export function readEnvironmentScopeDenied(
+  environmentId: EnvironmentId,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return sessionDeniesScope(
+    appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
+    scope,
+  );
 }
 
 const EMPTY_PREPARED_CONNECTION_ATOM = Atom.make(Option.none()).pipe(

@@ -1,18 +1,16 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextRecord, threadContextReference } from "./lib/composerContextRecords";
+import { threadContextReference } from "./lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
-  buildPendingUserInputAnswers,
+  answerContextRecords,
   carryDisplacedCustomAnswerIntoPrompt,
-  countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
-  findFirstUnansweredPendingUserInputQuestionIndex,
   projectPendingUserInputAnswer,
-  resolvePendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
+  threadContextsReferencedByAnswer,
+  withdrawDisplacedCustomAnswerFromPrompt,
 } from "./pendingUserInput";
 
 describe("projectPendingUserInputAnswer", () => {
@@ -27,18 +25,76 @@ describe("projectPendingUserInputAnswer", () => {
   it("sends thread chips as readable links with the actual thread ID", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
-      "Compare [Reference work](t3-thread://v1/reference-thread)",
+      "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
   });
 
-  it("leaves plain answers unchanged when the draft has unreferenced thread records", () => {
-    expect(projectPendingUserInputAnswer("Plain answer", [record])).toBe("Plain answer");
+  // regression: #28022, #36293 review comment and preview annotation chips in an answer reached the agent as bare links
+  it("sends thread draft chips with their full content", () => {
+    const reviewComment = {
+      id: "file-comment-1",
+      sectionId: "branch",
+      sectionTitle: "Changes",
+      filePath: "notes.md",
+      startIndex: 2,
+      endIndex: 2,
+      rangeLabel: "+2",
+      text: "Rename this to line two updated",
+      diff: "@@ -0,0 +2,1 @@\n+line two changed",
+      fenceLanguage: "diff",
+    };
+    const annotation = {
+      id: "annotation-1",
+      pageUrl: "http://localhost:3000/",
+      pageTitle: "Home",
+      comment: "FIRST NOTE: this features section looks too bare; add three feature cards",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const records = answerContextRecords(undefined, {
+      reviewComments: [reviewComment],
+      previewAnnotations: [annotation],
+    });
+    const answer = `See my notes: ${records
+      .map((record) =>
+        formatInlineContextReference({
+          kind: record.kind,
+          contextId: record.contextId,
+          label: record.label,
+        }),
+      )
+      .join(" ")}`;
+    const projected = projectPendingUserInputAnswer(answer, records);
+    expect(projected).toContain("Rename this to line two updated");
+    expect(projected).toContain("+line two changed");
+    expect(projected).toContain(`comment: ${annotation.comment}`);
   });
 
+  // regression: #18789 answers to pending questions lost exact text and option values
   it("preserves option values and exact answer text", () => {
     const options = [" first\t", "second"];
     expect(projectPendingUserInputAnswer(options, [record])).toBe(options);
     expect(projectPendingUserInputAnswer("  Edited answer\n", [record])).toBe("  Edited answer\n");
+  });
+});
+
+describe("threadContextsReferencedByAnswer", () => {
+  const kept = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("kept-thread") },
+    "Kept work",
+  );
+  const deleted = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("deleted-thread") },
+    "Deleted work",
+  );
+
+  it("preserves remaining chips without restoring deleted thread records", () => {
+    const answer = `Compare ${formatInlineContextReference(threadContextReference(kept))}`;
+    expect(threadContextsReferencedByAnswer(answer, [deleted, kept])).toEqual([kept]);
   });
 });
 
@@ -54,230 +110,6 @@ const singleSelectQuestion = {
   ],
   multiSelect: false,
 } as const;
-
-const multiSelectQuestion = {
-  id: "areas",
-  header: "Areas",
-  question: "Which areas should this change cover?",
-  options: [
-    {
-      label: "Server",
-      description: "Server",
-    },
-    {
-      label: "Web",
-      description: "Web",
-    },
-  ],
-  multiSelect: true,
-} as const;
-
-const nativeChoiceQuestion = {
-  id: "result",
-  header: "Result",
-  question: "Which result should be used?",
-  options: [
-    { value: " first\t", label: "Result", description: "First result" },
-    { value: "second", label: "Result", description: "Second result" },
-  ],
-  allowCustomAnswer: false,
-  multiSelect: false,
-} as const;
-
-describe("resolvePendingUserInputAnswer", () => {
-  it("preserves exact editor text, including a deliberately cleared answer", () => {
-    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
-    expect(resolvePendingUserInputAnswer(question, { customAnswer: question.initialAnswer })).toBe(
-      question.initialAnswer,
-    );
-    expect(resolvePendingUserInputAnswer(question, { customAnswer: "  Edited message\n\n" })).toBe(
-      "  Edited message\n\n",
-    );
-    expect(resolvePendingUserInputAnswer(question, { customAnswer: "" })).toBe("");
-    expect(resolvePendingUserInputAnswer(question, { customAnswer: " \n" })).toBe(" \n");
-    expect(
-      setPendingUserInputCustomAnswer(
-        { selectedOptionValues: ["Orchestration-first"] },
-        "",
-        question,
-      ),
-    ).toEqual({ customAnswer: "" });
-    const questions = [question, { ...singleSelectQuestion, id: "follow-up" }];
-    const drafts = { scope: { customAnswer: "" } };
-    expect(findFirstUnansweredPendingUserInputQuestionIndex(questions, drafts)).toBe(1);
-    expect(derivePendingUserInputProgress([question], drafts, 0)).toMatchObject({
-      customAnswer: "",
-      resolvedAnswer: "",
-      canAdvance: true,
-      isComplete: true,
-    });
-  });
-
-  it("prefers a custom answer over selected options", () => {
-    expect(
-      resolvePendingUserInputAnswer(singleSelectQuestion, {
-        selectedOptionValues: ["Orchestration-first"],
-        customAnswer: "Keep the existing envelope for one release",
-      }),
-    ).toBe("Keep the existing envelope for one release");
-  });
-
-  it("falls back to the selected option for single-select questions", () => {
-    expect(
-      resolvePendingUserInputAnswer(singleSelectQuestion, {
-        selectedOptionValues: ["Orchestration-first"],
-      }),
-    ).toBe("Orchestration-first");
-  });
-
-  it("returns all selected labels for multi-select questions", () => {
-    expect(
-      resolvePendingUserInputAnswer(multiSelectQuestion, {
-        selectedOptionValues: ["Server", "Web"],
-      }),
-    ).toEqual(["Server", "Web"]);
-  });
-
-  it("clears the preset selection when a custom answer is entered", () => {
-    expect(
-      setPendingUserInputCustomAnswer(
-        {
-          selectedOptionValues: ["Server", "Web"],
-        },
-        "doesn't matter",
-      ),
-    ).toEqual({
-      customAnswer: "doesn't matter",
-    });
-  });
-
-  it("does not replace a required choice with a custom answer", () => {
-    expect(
-      resolvePendingUserInputAnswer(nativeChoiceQuestion, {
-        selectedOptionValues: ["second"],
-        customAnswer: "Use another result",
-      }),
-    ).toBe("second");
-  });
-
-  it("does not submit labels or unknown values when an option has a value", () => {
-    expect(
-      resolvePendingUserInputAnswer(nativeChoiceQuestion, {
-        selectedOptionValues: ["Result", "unknown"],
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("togglePendingUserInputOptionSelection", () => {
-  it("toggles options for multi-select questions", () => {
-    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Server")).toEqual(
-      {
-        customAnswer: "",
-        selectedOptionValues: ["Server"],
-      },
-    );
-
-    expect(
-      togglePendingUserInputOptionSelection(
-        multiSelectQuestion,
-        {
-          selectedOptionValues: ["Server", "Web"],
-        },
-        "Server",
-      ),
-    ).toEqual({
-      customAnswer: "",
-      selectedOptionValues: ["Web"],
-    });
-  });
-
-  it("selects and removes options with the same label independently", () => {
-    const question = { ...nativeChoiceQuestion, multiSelect: true };
-    const firstSelected = togglePendingUserInputOptionSelection(question, undefined, " first\t");
-    const bothSelected = togglePendingUserInputOptionSelection(question, firstSelected, "second");
-
-    expect(buildPendingUserInputAnswers([question], { result: bothSelected })).toEqual({
-      result: [" first\t", "second"],
-    });
-
-    const secondSelected = togglePendingUserInputOptionSelection(
-      question,
-      bothSelected,
-      " first\t",
-    );
-    expect(buildPendingUserInputAnswers([question], { result: secondSelected })).toEqual({
-      result: ["second"],
-    });
-  });
-});
-
-describe("buildPendingUserInputAnswers", () => {
-  it("returns a canonical answer map for complete prompts", () => {
-    expect(
-      buildPendingUserInputAnswers(
-        [
-          singleSelectQuestion,
-          {
-            id: "compat",
-            header: "Compat",
-            question: "How strict should compatibility be?",
-            options: [
-              {
-                label: "Keep current envelope",
-                description: "Preserve current wire format",
-              },
-            ],
-            multiSelect: false,
-          },
-        ],
-        {
-          scope: {
-            selectedOptionValues: ["Orchestration-first"],
-          },
-          compat: {
-            customAnswer: "Keep the current envelope for one release window",
-          },
-        },
-      ),
-    ).toEqual({
-      scope: "Orchestration-first",
-      compat: "Keep the current envelope for one release window",
-    });
-  });
-
-  it("returns arrays for answered multi-select prompts", () => {
-    expect(
-      buildPendingUserInputAnswers([multiSelectQuestion], {
-        areas: {
-          selectedOptionValues: ["Server", "Web"],
-        },
-      }),
-    ).toEqual({
-      areas: ["Server", "Web"],
-    });
-  });
-
-  it("returns null when any question is unanswered", () => {
-    expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
-  });
-
-  it.each([" first\t", ""])("preserves the exact selected option value %j", (value) => {
-    const question = {
-      ...nativeChoiceQuestion,
-      options: [{ ...nativeChoiceQuestion.options[0], value }, nativeChoiceQuestion.options[1]],
-    };
-    const draft = togglePendingUserInputOptionSelection(question, undefined, value);
-
-    expect(buildPendingUserInputAnswers([question], { result: draft })).toEqual({ result: value });
-    expect(derivePendingUserInputProgress([question], { result: draft }, 0)).toMatchObject({
-      selectedOptionValues: [value],
-      answeredQuestionCount: 1,
-      canAdvance: true,
-      isComplete: true,
-    });
-  });
-});
 
 describe("pending user input question progress", () => {
   const questions = [
@@ -296,37 +128,15 @@ describe("pending user input question progress", () => {
     },
   ] as const;
 
-  it("counts only answered questions", () => {
-    expect(
-      countAnsweredPendingUserInputQuestions(questions, {
-        scope: {
-          selectedOptionValues: ["Orchestration-first"],
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("finds the first unanswered question", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionValues: ["Orchestration-first"],
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("returns the last question index when all answers are complete", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionValues: ["Orchestration-first"],
-        },
-        compat: {
-          customAnswer: "Keep it for one release window",
-        },
-      }),
-    ).toBe(1);
+  it("counts a deliberately cleared answer as answered", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    const drafts = { scope: { customAnswer: "" } };
+    expect(derivePendingUserInputProgress([question], drafts, 0)).toMatchObject({
+      customAnswer: "",
+      resolvedAnswer: "",
+      canAdvance: true,
+      isComplete: true,
+    });
   });
 
   it("derives the active question and advancement state", () => {
@@ -353,65 +163,46 @@ describe("pending user input question progress", () => {
     });
   });
 
-  it("treats multi-select questions as answered when they have selected options", () => {
-    expect(
-      derivePendingUserInputProgress(
-        [multiSelectQuestion],
-        {
-          areas: {
-            selectedOptionValues: ["Server", "Web"],
-          },
-        },
-        0,
-      ),
-    ).toMatchObject({
-      selectedOptionValues: ["Server", "Web"],
-      resolvedAnswer: ["Server", "Web"],
+  it("advances past an unselected optional single choice", () => {
+    const optionalChoice = {
+      id: "extras",
+      header: "Extras",
+      question: "Include extras?",
+      options: [
+        { label: "true", description: "Yes", value: "true" },
+        { label: "false", description: "No", value: "false" },
+      ],
+      allowCustomAnswer: false,
+      required: false,
+    } as const;
+    const mixed = [optionalChoice, singleSelectQuestion] as const;
+
+    expect(derivePendingUserInputProgress(mixed, {}, 0)).toMatchObject({
       canAdvance: true,
-      isComplete: true,
-    });
-  });
-
-  it("requires an option when custom answers are disabled", () => {
-    const drafts = { result: { customAnswer: "Use another result" } };
-
-    expect(buildPendingUserInputAnswers([nativeChoiceQuestion], drafts)).toBeNull();
-    expect(derivePendingUserInputProgress([nativeChoiceQuestion], drafts, 0)).toMatchObject({
-      customAnswer: "",
-      usingCustomAnswer: false,
-      resolvedAnswer: null,
-      answeredQuestionCount: 0,
-      canAdvance: false,
       isComplete: false,
     });
+    expect(
+      derivePendingUserInputProgress(mixed, { extras: { attachmentsBlocked: true } }, 0),
+    ).toMatchObject({ canAdvance: false });
+    expect(derivePendingUserInputProgress(mixed, {}, 1)).toMatchObject({ canAdvance: false });
+    expect(
+      derivePendingUserInputProgress(
+        mixed,
+        { scope: { selectedOptionValues: ["Orchestration-first"] } },
+        1,
+      ),
+    ).toMatchObject({ canAdvance: true, isComplete: true });
   });
-});
-
-it("accepts attachment-only answers after every upload finishes", () => {
-  const questions = [
-    { id: "spec", header: "Spec", question: "Provide a spec", options: [], multiSelect: false },
-  ];
-  expect(buildPendingUserInputAnswers(questions, { spec: { attachmentCount: 1 } })).toEqual({
-    spec: "",
-  });
-  expect(
-    buildPendingUserInputAnswers(questions, {
-      spec: { attachmentCount: 1, attachmentsBlocked: true },
-    }),
-  ).toBeNull();
-  expect(
-    buildPendingUserInputAnswers([{ ...questions[0]!, allowCustomAnswer: false }], {
-      spec: { attachmentCount: 1 },
-    }),
-  ).toBeNull();
 });
 
 describe("carryDisplacedCustomAnswerIntoPrompt", () => {
+  // regression: #12577 clicking a question option discarded typed text
   it("keeps the thread draft when nothing was typed into the answer", () => {
     expect(carryDisplacedCustomAnswerIntoPrompt("draft", undefined)).toBe("draft");
     expect(carryDisplacedCustomAnswerIntoPrompt("draft", "   ")).toBe("draft");
   });
 
+  // regression: #12577 clicking a question option discarded typed text
   it("moves the typed answer into an empty thread draft", () => {
     expect(carryDisplacedCustomAnswerIntoPrompt("", "also rename the flag ")).toBe(
       "also rename the flag",
@@ -422,5 +213,42 @@ describe("carryDisplacedCustomAnswerIntoPrompt", () => {
     expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
       "first half\n\nsecond half",
     );
+  });
+});
+
+describe("withdrawDisplacedCustomAnswerFromPrompt", () => {
+  // regression: #35205 an answer restored with undo stayed in the thread draft and was sent twice
+  it("takes set-aside text back out of the thread draft and leaves the rest", () => {
+    const setAside = carryDisplacedCustomAnswerIntoPrompt("", "first answer ");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(setAside, "first answer ")).toBe("");
+
+    const afterDraft = carryDisplacedCustomAnswerIntoPrompt("draft", "first answer");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(afterDraft, "first answer")).toBe("draft");
+
+    const beforeSecond = carryDisplacedCustomAnswerIntoPrompt(setAside, "second answer");
+    expect(
+      withdrawDisplacedCustomAnswerFromPrompt(beforeSecond, "first answer", ["second answer"]),
+    ).toBe("second answer");
+
+    const between = carryDisplacedCustomAnswerIntoPrompt(afterDraft, "second answer");
+    expect(
+      withdrawDisplacedCustomAnswerFromPrompt(between, "first answer", ["second answer"]),
+    ).toBe("draft\n\nsecond answer");
+  });
+
+  it("removes its own copy, not equal text inside a later set-aside answer", () => {
+    const first = carryDisplacedCustomAnswerIntoPrompt("", "foo");
+    const both = carryDisplacedCustomAnswerIntoPrompt(first, "bar\n\nfoo");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(both, "foo", ["bar\n\nfoo"])).toBe("bar\n\nfoo");
+  });
+
+  it("leaves a thread draft that no longer holds the set-aside text where it was put", () => {
+    expect(withdrawDisplacedCustomAnswerFromPrompt("first answer, edited", "first answer")).toBe(
+      "first answer, edited",
+    );
+    expect(withdrawDisplacedCustomAnswerFromPrompt("my first answer", "first answer")).toBe(
+      "my first answer",
+    );
+    expect(withdrawDisplacedCustomAnswerFromPrompt("draft", "  ")).toBe("draft");
   });
 });

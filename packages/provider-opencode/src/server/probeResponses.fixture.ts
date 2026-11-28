@@ -8,8 +8,7 @@ interface RecordedResponse {
   readonly body: string;
 }
 
-// Both versions serve their web UI's index page for unknown paths. Bodies are cut after the
-// first lines; the classifier rejects them on content type alone.
+// Unknown paths serve SPA HTML; content type alone rejects these truncated bodies.
 const SPA_HTML =
   '<!doctype html>\n<html lang="en" style="background-color: var(--v2-background-bg-deep, #fafafa)">\n';
 
@@ -40,6 +39,16 @@ export const OPENCODE_2_WORKSPACE_RESPONSES = {
   },
 } satisfies Record<string, RecordedResponse>;
 
+// OpenCode 2.4.2 `/api/event` data for a project: its scan ends, then a SKILL.md is added to it.
+export const OPENCODE_2_SKILL_EVENTS = {
+  scanCommands:
+    '{"id":"evt_2166d464c001SsOdwlKFp696kN","created":1795672589900,"type":"command.updated","location":{"directory":"/work"},"data":{}}',
+  scanSkills:
+    '{"id":"evt_2166d464e001YEzhFl7mAlBitq","created":1795672589902,"type":"skill.updated","location":{"directory":"/work"},"data":{}}',
+  skillAdded:
+    '{"id":"evt_2166d5160001YtAz1aBpkG7u8o","created":1795672592736,"type":"skill.updated","location":{"directory":"/work"},"data":{}}',
+};
+
 export const OPENCODE_1_RESPONSES = {
   "/api/info": { status: 200, contentType: "text/html", body: SPA_HTML },
   "/global/health": {
@@ -60,7 +69,7 @@ export function replayOpenCodeServer(
   requestedPaths: Array<string> = [],
 ) {
   const answers: Record<string, RecordedResponse | undefined> = responses;
-  // Both versions decode Basic credentials as UTF-8 (checked live with `pässwörd` and `pass€word`).
+  // Both versions decode Basic credentials as UTF-8.
   const expected = password
     ? `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`
     : undefined;

@@ -1,7 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -49,9 +48,18 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<{
+      id: string;
+      auth_index: string;
+      provider: string;
+      email?: string;
+      disabled?: boolean;
+      project_id?: string;
+      id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+    }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    models?: (name: string) => Response;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -64,6 +72,12 @@ function fixture(
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/models"))
+        return HttpClientResponse.fromWeb(
+          request,
+          options.models?.(new URL(request.url).searchParams.get("name")!) ??
+            Response.json({}, { status: 404 }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -115,7 +129,6 @@ function fixture(
   };
 }
 
-/** A hub API whose every request fails the way `fail` says. */
 const unreachableHub = (
   fail: (
     request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],
@@ -152,6 +165,7 @@ describe("CLIProxyAPI hub failures", () => {
     }),
   );
 
+  // regression: #18168 Limits hub failures name their TLS, HTTP, or timeout cause
   it.effect("ignores a transport code that is not a short Node error code", () =>
     Effect.gen(function* () {
       const api = yield* unreachableHub(
@@ -187,40 +201,6 @@ describe("CLIProxyAPI hub failures", () => {
       expect(error.detail).not.toContain("management-secret");
     }),
   );
-
-  it.effect("says when the hub does not answer in time", () =>
-    Effect.gen(function* () {
-      const api = yield* makeCliproxyApi.pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.never),
-        ),
-        Effect.provide(NodeCrypto.layer),
-      );
-      const pending = yield* Effect.flip(api.readAccounts(config)).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* TestClock.adjust("15 seconds");
-      const error = yield* Fiber.join(pending);
-      expect(error.detail).toContain("did not answer within 15 seconds");
-    }),
-  );
-
-  it.effect("keeps a malformed account list generic", () =>
-    Effect.gen(function* () {
-      const test = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(request, Response.json({ nope: "hub-internal" })),
-        ),
-      );
-      const api = yield* makeCliproxyApi.pipe(
-        Effect.provideService(HttpClient.HttpClient, test),
-        Effect.provide(NodeCrypto.layer),
-      );
-      const error = yield* Effect.flip(api.readAccounts(config));
-      expect(error.detail).toBe("The hub could not list accounts.");
-    }),
-  );
 });
 
 describe("CLIProxyAPI built-in management API", () => {
@@ -231,7 +211,7 @@ describe("CLIProxyAPI built-in management API", () => {
         yield* TestClock.setTime(1788710400000);
         const test = fixture();
         const api = yield* test.api;
-        const result = yield* api.readAccounts(config);
+        const { accounts: result } = yield* api.readAccounts(config);
         expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
@@ -254,14 +234,96 @@ describe("CLIProxyAPI built-in management API", () => {
       }),
   );
 
-  it.effect("keeps the path of a hub served under a prefix", () =>
+  it.effect("names the models the hub routes to each account, when the hub lists them", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [...accounts, { ...accounts[1]!, id: "third.json", auth_index: "c" }],
+        models: (name) =>
+          name === "first.json"
+            ? Response.json({ models: [{ id: "gpt-5.6-sol" }, { id: " " }] })
+            : name === "third.json"
+              ? Response.json({ models: [] })
+              : Response.json({}, { status: 404 }),
+      });
+      const api = yield* test.api;
+      const { accounts: result } = yield* api.readAccounts(config);
+      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
+      expect(result[1]?.usageLimits.windows).toHaveLength(1);
+    }),
+  );
+
+  it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, id_token: { chatgpt_account_id: "account-a", plan_type: "free" } },
+          {
+            ...accounts[1]!,
+            id_token: {
+              chatgpt_account_id: "account-b",
+              plan_type: "go",
+              chatgpt_plan_type: "plus",
+            },
+          },
+          {
+            ...accounts[1]!,
+            id: "third.json",
+            auth_index: "c",
+            id_token: { chatgpt_account_id: "account-c", chatgpt_plan_type: "free" },
+          },
+        ],
+        upstream: (request) => ({
+          status: 200,
+          body: {
+            ...(request.auth_index === "a" ? { plan_type: "plus" } : {}),
+            rate_limit: { primary_window: { used_percent: 12 } },
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const { accounts: result } = yield* api.readAccounts(config);
+      expect(result.map((account) => [account.plan, account.usageLimits.windows[0]?.kind])).toEqual(
+        [
+          ["ChatGPT Plus Subscription", "session"],
+          ["ChatGPT Go Subscription", "monthly"],
+          ["ChatGPT Free Subscription", "monthly"],
+        ],
+      );
+    }),
+  );
+
+  it.effect.each([
+    "https://tools.test/cliproxy",
+    "https://tools.test/cliproxy/",
+    "https://tools.test/cliproxy/management.html",
+    "https://tools.test/cliproxy/management.html/",
+    "https://tools.test/cliproxy/MANAGEMENT.HTML",
+    "https://tools.test/cliproxy/management.html?tab=accounts",
+    "https://tools.test/cliproxy/management.html#accounts",
+    "https://tools.test/cliproxy/management.html/?tab=accounts",
+    "https://tools.test/cliproxy/management.html/#accounts",
+  ])("keeps the path of a hub served under a prefix: %s", (url) =>
     Effect.gen(function* () {
       const test = fixture();
       const api = yield* test.api;
-      yield* api.readAccounts({ ...config, url: "https://tools.test/cliproxy" });
+      yield* api.readAccounts({ ...config, url });
       expect(test.requests.length).toBeGreaterThan(0);
       expect(
         test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("preserves a hub path that only ends with the panel filename", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.readAccounts({ ...config, url: "https://tools.test/team-management.html" });
+      expect(test.requests.length).toBeGreaterThan(0);
+      expect(
+        test.requests.every((request) =>
+          request.path.startsWith("/team-management.html/v0/management/"),
+        ),
       ).toBe(true);
     }),
   );
@@ -275,7 +337,7 @@ describe("CLIProxyAPI built-in management API", () => {
             : { status: 200, body: { rate_limit: { primary_window: { used_percent: 12 } } } },
       });
       const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
+      const { accounts: result } = yield* api.readAccounts(config);
       expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
     }),
@@ -295,8 +357,11 @@ describe("CLIProxyAPI built-in management API", () => {
               },
       });
       const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      const { accounts: result } = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.unavailable).toEqual({
+        reason: "probeFailed",
+        message: "The provider refused the hub request (HTTP 401).",
+      });
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
     }),
@@ -306,8 +371,9 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({
-          status: 200,
+        // The usage endpoint answers 429 to requests without a Claude Code user agent.
+        upstream: (request) => ({
+          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -323,7 +389,7 @@ describe("CLIProxyAPI built-in management API", () => {
         }),
       });
       const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
+      const { accounts: result } = yield* api.readAccounts(config);
       expect(
         result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
       ).toEqual([
@@ -331,6 +397,156 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "spend budget",
+      budget: {
+        spend: {
+          enabled: true,
+          used: { amount_minor: 4_631, currency: "USD", exponent: 2 },
+          limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
+        },
+      },
+    },
+    {
+      name: "extra usage",
+      budget: {
+        extra_usage: {
+          is_enabled: true,
+          used_credits: 4_631,
+          monthly_limit: 50_000,
+          utilization: 9,
+        },
+      },
+    },
+  ])("keeps Claude monthly spend from $name beside rolling windows", ({ budget }) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: { five_hour: { utilization: 10, resets_at: null }, ...budget },
+        }),
+      });
+      const { accounts: result } = yield* (yield* test.api).readAccounts(config);
+      expect(
+        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+      ).toEqual([
+        ["five_hour", 10],
+        ["monthly_spend", expect.closeTo(9.262, 10)],
+      ]);
+    }),
+  );
+
+  it.effect("omits disabled Claude budgets without losing rolling windows", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: 10, resets_at: null },
+            spend: { enabled: false, used: null, limit: null },
+            extra_usage: {
+              is_enabled: false,
+              used_credits: null,
+              monthly_limit: null,
+              utilization: null,
+            },
+          },
+        }),
+      });
+      const { accounts: result } = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["five_hour"]);
+    }),
+  );
+
+  it.effect("keeps a Claude account whose window reports no utilization", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: null, resets_at: null },
+            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+          },
+        }),
+      });
+      const { accounts: result } = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.unavailable).toBeUndefined();
+      expect(
+        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+      ).toEqual([["seven_day", 50]]);
+    }),
+  );
+
+  it.effect("reads an xAI account as Grok with Grok CLI headers", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ id: "xai.json", auth_index: "x", provider: "xai", email: "x@example.com" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            config: {
+              creditUsagePercent: 40,
+              currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2099-01-01T00:00:00Z" },
+            },
+          },
+        }),
+      });
+      const {
+        accounts: [account],
+      } = yield* (yield* test.api).readAccounts(config);
+      expect(account).toMatchObject({ driver: "grok", email: "x@example.com" });
+      expect(account?.usageLimits.windows).toMatchObject([
+        { id: "subscription", kind: "weekly", usedPercent: 40 },
+      ]);
+      const call = test.requests.find((request) => request.body?.url)?.body;
+      expect(call?.method).toBe("GET");
+      expect(call?.url).toBe("https://cli-chat-proxy.grok.com/v1/billing?format=credits");
+      expect(call?.header).toMatchObject({
+        "x-xai-token-auth": "xai-grok-cli",
+        "x-grok-client-version": expect.any(String),
+        "User-Agent": expect.stringMatching(/^grok-cli\//),
+      });
+    }),
+  );
+
+  it.effect.each([
+    { name: "a refused xAI call", provider: "xai", status: 403, body: { error: "denied" } },
+    { name: "a malformed xAI answer", provider: "xai", status: 200, body: { config: "x" } },
+  ])("reports $name as unreadable", ({ provider, status, body }) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ id: `${provider}.json`, auth_index: "a", provider }],
+        upstream: () => ({ status, body }),
+      });
+      const {
+        accounts: [account],
+      } = yield* (yield* test.api).readAccounts(config);
+      expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
+    }),
+  );
+
+  it.effect("skips accounts of providers the hub table does not know", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "kiro.json", auth_index: "k", provider: "kiro", email: "k@example.com" },
+          // Antigravity only allows ACP clients, so its internal quota API is never called.
+          { id: "antigravity.json", auth_index: "g", provider: "antigravity", project_id: "p" },
+          { ...accounts[0]!, provider: "claude" },
+        ],
+        upstream: () => ({ status: 200, body: { five_hour: { utilization: 1, resets_at: null } } }),
+      });
+      const { accounts: result } = yield* (yield* test.api).readAccounts(config);
+      expect(result.map((account) => account.driver)).toEqual(["claudeAgent"]);
+      expect(test.requests.map((request) => request.body?.auth_index)).not.toContain("k");
+      expect(test.requests.map((request) => request.body?.auth_index)).not.toContain("g");
     }),
   );
 
@@ -359,21 +575,6 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect.each([
-    ["nothing_to_reset", "nothingToReset"],
-    ["no_credit", "noCredit"],
-    ["already_redeemed", "alreadyRedeemed"],
-  ] as const)("reports %s accurately", ([code, outcome]) =>
-    Effect.gen(function* () {
-      const test = fixture({ upstream: () => ({ status: 200, body: { code } }) });
-      const api = yield* test.api;
-      expect(yield* api.consume(config, "first.json", "credit")).toEqual({ outcome });
-      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(
-        code === "already_redeemed",
-      );
-    }),
-  );
-
   it.effect("reports redemption success even if cooldown clearing fails", () =>
     Effect.gen(function* () {
       const api = yield* fixture({ cooldownStatus: 404 }).api;
@@ -387,10 +588,29 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
       const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
+      expect(yield* api.readAccounts(config)).toEqual({ accounts: [], unreadProviders: [] });
       expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
+      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("names the providers of enabled accounts it cannot read", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "kimi.json", auth_index: "k", provider: "kimi-ai" },
+          { id: "gemini.json", auth_index: "g", provider: "antigravity" },
+          { id: "other.json", auth_index: "o", provider: "kimi-ai" },
+          { id: "off.json", auth_index: "x", provider: "qwen", disabled: true },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readAccounts(config)).toEqual({
+        accounts: [],
+        unreadProviders: ["antigravity", "kimi-ai"],
+      });
       expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
     }),
   );

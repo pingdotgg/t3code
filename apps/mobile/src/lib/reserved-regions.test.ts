@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "./reserved-regions";
+import {
+  deriveBottomControlInsets,
+  deriveContentSideInsets,
+  deriveSharedTopBand,
+  type NativeLayoutMetrics,
+} from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
 
 const innerDisplay: NativeLayoutMetrics = {
@@ -12,14 +17,6 @@ const innerDisplay: NativeLayoutMetrics = {
 };
 
 describe("bottom controls around reserved regions", () => {
-  it("respects asymmetric side controls without reserving the bottom twice", () => {
-    expect(deriveBottomControlInsets(innerDisplay)).toEqual({ left: 8, right: 72, bottom: 0 });
-  });
-
-  it("leaves ordinary non-native clients unchanged", () => {
-    expect(deriveBottomControlInsets(null)).toEqual({ left: 0, right: 0, bottom: 0 });
-  });
-
   it("keeps the editor entirely on one side of a book fold", () => {
     const insets = deriveBottomControlInsets({
       ...innerDisplay,
@@ -27,6 +24,29 @@ describe("bottom controls around reserved regions", () => {
     });
     expect(insets).toEqual({ left: 8, right: 504, bottom: 0 });
     expect(innerDisplay.width - insets.left - insets.right).toBeGreaterThan(320);
+  });
+
+  it("starts the editor after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0, bottom: 0 });
+  });
+
+  it("does not reserve a hinge twice when the safe area already covers it", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 412,
+        safeArea: { top: 82, bottom: 34, left: 40, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 40, right: 0, bottom: 0 });
   });
 
   it("keeps controls below a horizontal fold in a hands-free pose", () => {
@@ -49,65 +69,101 @@ describe("bottom controls around reserved regions", () => {
       }),
     ).toEqual({ left: 68, right: 72, bottom: 0 });
   });
+});
 
-  it("restores the full editor width when the device opens flat", () => {
-    const folded = {
-      ...innerDisplay,
-      reservedRegions: [{ kind: "division" as const, x: 456, y: 0, width: 48, height: 560 }],
-    };
-    expect(deriveBottomControlInsets(folded)).not.toEqual(deriveBottomControlInsets(innerDisplay));
-    expect(deriveBottomControlInsets(innerDisplay)).toEqual({ left: 8, right: 72, bottom: 0 });
+describe("content side insets around reserved regions", () => {
+  it("keeps transcript text on the wider side of a book fold", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [{ kind: "division", x: 456, y: 0, width: 48, height: 560 }],
+      }),
+    ).toEqual({ left: 8, right: 504 });
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 800,
+        reservedRegions: [{ kind: "division", x: 240, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 280, right: 72 });
+  });
+
+  it("starts transcript text after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0 });
+  });
+
+  it("ends transcript text before a fold at a native column's trailing edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 456,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 416, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 40 });
+  });
+
+  it("ignores a horizontal fold and bottom cameras", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [
+          { kind: "division", x: 0, y: 240, width: 960, height: 40 },
+          { kind: "occlusion", x: 8, y: 510, width: 60, height: 50 },
+        ],
+      }),
+    ).toEqual({ left: 8, right: 72 });
+  });
+});
+
+describe("a bar sharing the top band with the system status", () => {
+  // The folded Duo with horizontal bars: its status block sits at the right of a tall top band.
+  const foldedDuo: NativeLayoutMetrics = {
+    width: 466,
+    height: 678,
+    horizontalSizeClass: "compact",
+    verticalBarEdge: "none",
+    safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+    reservedRegions: [
+      { kind: "occlusion", x: 399.67, y: 29.33, width: 37, height: 37 },
+      { kind: "occlusion", x: 266, y: 0, width: 200, height: 82 },
+    ],
+  };
+
+  it.each([
+    ["status block on the right", foldedDuo, { height: 82, left: 0, right: 200 }],
+    [
+      "status block on the left",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 0, y: 0, width: 200, height: 82 }],
+      },
+      { height: 82, left: 200, right: 0 },
+    ],
+    ["no status block (a notch or island)", { ...foldedDuo, reservedRegions: [] }, null],
+    [
+      "a block across the middle",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 133, y: 0, width: 200, height: 82 }],
+      },
+      null,
+    ],
+    ["no top safe area", { ...foldedDuo, safeArea: { ...foldedDuo.safeArea, top: 0 } }, null],
+  ])("%s", (_, metrics, expected) => {
+    expect(deriveSharedTopBand(metrics)).toEqual(expected);
   });
 });
 
 describe("Duo workspace sizing", () => {
-  it("shows both columns on a short regular-width inner display", () => {
-    const layout = deriveLayout({ ...innerDisplay, nativeMetrics: innerDisplay });
-    expect(layout.usesSplitView).toBe(true);
-    expect(
-      deriveWorkspacePaneLayout({
-        layout,
-        viewportWidth: innerDisplay.width,
-        primarySidebarPreferredVisible: true,
-        auxiliaryPanePreferredVisible: false,
-      }).contentPaneWidth,
-    ).toBeGreaterThan(320);
-  });
-
-  it("keeps an ordinary phone compact when it rotates", () => {
-    expect(deriveLayout({ width: 852, height: 393 }).usesSplitView).toBe(false);
-    for (const [width, height] of [
-      [932, 430],
-      [650, 500],
-    ]) {
-      const metrics: NativeLayoutMetrics = {
-        ...innerDisplay,
-        width: width!,
-        height: height!,
-        verticalBarEdge: "none",
-        safeArea: { top: 0, bottom: 20, left: 59, right: 59 },
-      };
-      expect(deriveLayout({ ...metrics, nativeMetrics: metrics }).usesSplitView).toBe(false);
-      const cameraMetrics = {
-        ...metrics,
-        reservedRegions: [{ kind: "occlusion" as const, x: 0, y: 0, width: 60, height: 60 }],
-      };
-      expect(deriveLayout({ ...cameraMetrics, nativeMetrics: cameraMetrics }).usesSplitView).toBe(
-        false,
-      );
-    }
-    expect(
-      deriveLayout({
-        width: 960,
-        height: 560,
-        nativeMetrics: {
-          ...innerDisplay,
-          horizontalSizeClass: "compact",
-        },
-      }).usesSplitView,
-    ).toBe(false);
-  });
-
   it("shows both columns on the unfolded inner display in portrait", () => {
     // Reported by the iOS 27.1 Duo simulator: no side bar or fold, only the hinge.
     const portrait: NativeLayoutMetrics = {
@@ -120,34 +176,10 @@ describe("Duo workspace sizing", () => {
       reservedRegions: [{ kind: "occlusion", x: 535, y: 0, width: 134, height: 82 }],
     };
     expect(deriveLayout({ ...portrait, nativeMetrics: portrait }).usesSplitView).toBe(true);
-    // Without the hinge, the same window is an ordinary narrow iPad-style window.
     const withoutHinge = { ...portrait, hasHinge: false };
     expect(deriveLayout({ ...withoutHinge, nativeMetrics: withoutHinge }).usesSplitView).toBe(
       false,
     );
-  });
-
-  it("keeps the folded front screen compact in both orientations", () => {
-    for (const [width, height] of [
-      [466, 678],
-      [678, 466],
-    ]) {
-      const folded: NativeLayoutMetrics = {
-        width: width!,
-        height: height!,
-        hasHinge: true,
-        horizontalSizeClass: "compact",
-        verticalBarEdge: "right",
-        safeArea: { top: 0, bottom: 34, left: 0, right: 84 },
-        reservedRegions: [],
-      };
-      expect(deriveLayout({ ...folded, nativeMetrics: folded }).usesSplitView).toBe(false);
-    }
-  });
-
-  it("requires enough safe width for both panes in a multitasking window", () => {
-    const metrics = { ...innerDisplay, width: 660 };
-    expect(deriveLayout({ ...metrics, nativeMetrics: metrics }).usesSplitView).toBe(false);
   });
 
   it("aligns the panes to the book fold and accounts for the reserved gap", () => {

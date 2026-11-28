@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
+import * as NodeURL from "node:url";
 import { build } from "vite-plus/pack";
 import { assert, it } from "vite-plus/test";
 
@@ -12,12 +13,14 @@ it("keeps lazy Linux imports and worker bundles from executing desktop startup t
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-bundle-"));
   try {
     const workerEntries = [
+      "src/backend/DesktopBackendRecoveryWorker.ts",
       "src/electron/WindowsForegroundFocusWorker.ts",
       "src/snapShot/GlobalShiftShortcutWorker.ts",
       "src/snapShot/RegionSnapShotWorker.ts",
       "src/snapShot/SnapShotAccessibilityWorker.ts",
     ];
     await Promise.all([
+      NodeFSP.mkdir(NodePath.join(directory, "src/backend"), { recursive: true }),
       NodeFSP.mkdir(NodePath.join(directory, "src/electron"), { recursive: true }),
       NodeFSP.mkdir(NodePath.join(directory, "src/snapShot"), { recursive: true }),
     ]);
@@ -103,7 +106,10 @@ void import("./linux.ts").then(({ result }) => process.emit("ready", result));`,
     for (const entry of workerEntries) {
       load(NodePath.join(outputDirectory, entry.replace(/^src\//, "").replace(/\.ts$/, ".cjs")));
     }
-    assert.deepEqual(workers, [42, 42, 42, 42]);
+    assert.deepEqual(
+      workers,
+      workerEntries.map(() => 42),
+    );
     assert.deepEqual(startups, [42]);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
@@ -114,18 +120,16 @@ it("loads the emitted packaged boot entry and backend cache preload", async () =
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-boot-"));
   try {
     const entries = ["src/boot.ts", "src/compileCache.ts"];
-    await NodeFSP.mkdir(NodePath.join(directory, "src"));
-    await Promise.all(
-      entries.map((entry) =>
-        NodeFSP.copyFile(new URL(`../${entry}`, import.meta.url), NodePath.join(directory, entry)),
-      ),
-    );
     assert.ok(Array.isArray(desktopConfig.pack));
     for (const packConfig of desktopConfig.pack) {
       if (!Array.isArray(packConfig.entry)) continue;
       if (!packConfig.entry.some((entry) => entries.includes(entry))) continue;
       await build({
         ...packConfig,
+        entry: packConfig.entry.map((entry) =>
+          NodeURL.fileURLToPath(new URL(`../${entry}`, import.meta.url)),
+        ),
+        outDir: NodePath.join(directory, "dist-electron"),
         config: false,
         cwd: directory,
         tsconfig: false,

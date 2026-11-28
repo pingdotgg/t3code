@@ -1,3 +1,4 @@
+import { useLocale, useMessages } from "gt-react";
 import { useState } from "react";
 import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
@@ -17,26 +18,27 @@ function sameInput(left: TimelineEntriesInput, right: TimelineEntriesInput): boo
   );
 }
 
-/**
- * Timeline entries for a thread, derived from the previous projection so
- * unchanged rows keep their identity and memoized rows skip rendering. A new
- * thread starts from scratch.
- */
 export function useIncrementalTimelineEntries(
   threadKey: string | null,
-  input: TimelineEntriesInput,
+  timelineInput: TimelineEntriesInput,
 ): TimelineEntriesProjection["entries"] {
+  // Keyed on the locale: without a GTProvider, useMessages() returns a new function every render.
+  const locale = useLocale();
+  const resolve = useMessages();
+  const input = { ...timelineInput, resolve: timelineInput.resolve ?? resolve };
   const [state, setState] = useState(() => ({
     threadKey,
+    locale,
     projection: deriveTimelineEntriesFromVisibleTurnItemsWithState(input),
   }));
-  if (state.threadKey === threadKey && sameInput(state.projection.input, input)) {
+  const reusable = state.threadKey === threadKey && state.locale === locale;
+  if (reusable && sameInput(state.projection.input, input)) {
     return state.projection.entries;
   }
   const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
     input,
-    state.threadKey === threadKey ? state.projection : null,
+    reusable ? state.projection : null,
   );
-  setState({ threadKey, projection });
+  setState({ threadKey, locale, projection });
   return projection.entries;
 }

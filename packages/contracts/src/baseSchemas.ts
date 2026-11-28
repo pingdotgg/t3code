@@ -4,26 +4,62 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
+// Hermes copies the string on every `trim()`, even when nothing changes.
+// Returning the original keeps repeated IDs shared after decode.
+const trim = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length === value.length ? value : trimmed;
+};
+
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transformEffect({
-      decode: (value) => Effect.succeed(value.trim()),
-      encode: (value) => Effect.succeed(value.trim()),
+      decode: (value) => Effect.succeed(trim(value)),
+      encode: (value) => Effect.succeed(trim(value)),
     }),
   ),
 );
-/**
- * A `TrimmedString` only trims when decoding or encoding, so `make` and encode see the untrimmed
- * value: a plain `isNonEmpty` would accept `" "` there and encode it to `""`, which no longer
- * decodes.
- */
+// `make` and encode see untrimmed values; `isNonEmpty` would accept whitespace that encodes to an invalid empty string.
 const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0, {
   expected: "a non-blank string",
   toJsonSchema: () => [{ minLength: 1 }, true],
   arbitraryConstraint: { minLength: 1 },
 });
 export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
+
+// Git forbids ASCII space and control characters in ref names but allows Unicode whitespace such
+// as U+00A0 and U+3000, which `String.prototype.trim` would strip from a name's edges.
+export function trimAsciiWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
+  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
+  return end - start === value.length ? value : value.slice(start, end);
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  return code === 0x20 || (code >= 0x09 && code <= 0x0d);
+}
+
+const isNonBlankGitRefName = Schema.makeFilter(
+  (value: string) => trimAsciiWhitespace(value).length > 0,
+  {
+    expected: "a non-blank string",
+    toJsonSchema: () => [{ minLength: 1 }, true],
+    arbitraryConstraint: { minLength: 1 },
+  },
+);
+/** A branch, ref or remote name. Unlike `TrimmedNonEmptyString`, it keeps Unicode whitespace. */
+export const GitRefName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+      encode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+    }),
+  ),
+).check(isNonBlankGitRefName);
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
@@ -44,16 +80,17 @@ export type IsoDateTime = typeof IsoDateTime.Type;
 
 export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
-  return Schema.optionalKey(
-    Schema.Unknown.pipe(
-      Schema.decodeTo(
-        Schema.UndefinedOr(value),
-        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
-          decode: (raw) =>
-            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
-          encode: (raw) => raw,
-        }),
-      ),
+  // Unreadable values drop the key: an own undefined property is not JSON and fails RPC encoding.
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.optionalKey(Schema.UndefinedOr(value)),
+      SchemaTransformation.transformOptional<Value["Encoded"] | undefined, unknown>({
+        decode: (raw) =>
+          Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
+            ? Option.some(raw.value as Value["Encoded"])
+            : Option.none(),
+        encode: (raw) => (Option.isSome(raw) && raw.value !== undefined ? raw : Option.none()),
+      }),
     ),
   );
 };
@@ -71,12 +108,7 @@ export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value
   );
 };
 
-/**
- * A nullable setting whose null is "unset" and never crosses the wire: it
- * decodes from a missing or unknown key and encodes back to a missing key.
- * For a field that older clients decode as a required literal, so a null
- * on the wire would fail their whole settings snapshot.
- */
+/** Missing or unknown values decode to null; null encodes as absent for older clients requiring a literal. */
 export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
   return Schema.optionalKey(Schema.Unknown).pipe(
@@ -96,14 +128,18 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   );
 };
 
-/**
- * For a tagged union, prefer {@link ForwardCompatibleUnion}: it drops only values whose tag this
- * build does not know, so a known member with a broken payload still fails loudly.
- */
+const UnknownArrayElement = Schema.Unknown.pipe(
+  Schema.decodeTo(Schema.Undefined, {
+    decode: SchemaGetter.succeed(undefined),
+    encode: SchemaGetter.passthrough(),
+  }),
+);
+
+/** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
+  // Exit derives its wire codec from the encoded shape, which keeps the union but drops recovery middleware.
   Schema.Array(
-    Schema.UndefinedOr(element).pipe(
-      Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+    Schema.Union([element, UnknownArrayElement]).pipe(
       Schema.catchEncoding(() => Effect.succeedSome(undefined)),
     ),
   ).pipe(
@@ -113,9 +149,7 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
           Schema.catchEncoding(() => Effect.succeedSome(undefined)),
         ),
       ).check(
-        // The holes above are an encoding detail: a decoded value has none, so
-        // `Schema.is` and `make` still reject an array that does. Aborts, so a
-        // later check on the array never sees a hole.
+        // Schema.is/make must reject holes; abort before later array checks.
         Schema.makeFilter(
           (values) => {
             // Every index, not `every`, which skips the holes of a sparse array.
@@ -144,10 +178,7 @@ export type ForwardCompatibleArray<Element extends Schema.Top> = Schema.Codec<
   Element["EncodingServices"]
 >;
 
-/**
- * A class, so only the codec can make one: no decoded payload, however it is shaped, is ever
- * mistaken for it.
- */
+/** Class identity prevents decoded payloads from impersonating unknown members. */
 export class UnknownUnionMember<Tag extends string = string> {
   readonly tag: Tag;
   readonly value: string;
@@ -157,9 +188,7 @@ export class UnknownUnionMember<Tag extends string = string> {
   }
 }
 
-/**
- * Unknown members are decode-only; encoding one fails.
- */
+/** Unknown members are decode-only; encoding one fails. */
 export const ForwardCompatibleUnion = <
   const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
   const Tag extends string,
@@ -279,6 +308,10 @@ export const RunAttemptId = makeEntityId("RunAttemptId");
 export type RunAttemptId = typeof RunAttemptId.Type;
 export const NodeId = makeEntityId("NodeId");
 export type NodeId = typeof NodeId.Type;
+export const GuestShareId = makeEntityId("GuestShareId");
+export type GuestShareId = typeof GuestShareId.Type;
+export const GuestMessageId = makeEntityId("GuestMessageId");
+export type GuestMessageId = typeof GuestMessageId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
 export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
@@ -316,16 +349,10 @@ export const ProviderThreadId = makeEntityId("ProviderThreadId");
 export type ProviderThreadId = typeof ProviderThreadId.Type;
 export const ProviderTurnId = makeEntityId("ProviderTurnId");
 export type ProviderTurnId = typeof ProviderTurnId.Type;
-export const RuntimeSessionId = makeEntityId("RuntimeSessionId");
-export type RuntimeSessionId = typeof RuntimeSessionId.Type;
-export const RuntimeItemId = makeEntityId("RuntimeItemId");
-export type RuntimeItemId = typeof RuntimeItemId.Type;
 export const TurnItemId = makeEntityId("TurnItemId");
 export type TurnItemId = typeof TurnItemId.Type;
 export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
-export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
-export type RuntimeTaskId = typeof RuntimeTaskId.Type;
 export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
 /** A one-use handle to a secret the user entered for an agent; the agent never sees the value. */
 export const SecretRef = makeEntityId("SecretRef");

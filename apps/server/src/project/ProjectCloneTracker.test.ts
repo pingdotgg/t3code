@@ -3,6 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   OrchestrationDispatchCommandError,
   ProjectId,
+  projectCloneProgressSummary,
+  type SourceControlCloneProtocol,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -14,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
+import { ProjectConflictError } from "./ProjectService.ts";
 import { parseGitCloneProgressLine } from "./gitCloneProgress.ts";
 
 const projectId = ProjectId.make("project-1");
@@ -71,7 +74,7 @@ describe("ProjectCloneTracker", () => {
         Effect.gen(function* () {
           yield* (
             options?.onProgress?.({ stage: "receiving", percent: 40, detail: "1 MiB" }) ??
-              Effect.void
+            Effect.void
           );
           yield* Deferred.await(release);
           return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
@@ -105,13 +108,52 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("flags a clone stalled when git goes quiet and clears it when git speaks", () => {
+    const release = Deferred.makeUnsafe<void>();
+    const resumed = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: (input, options) =>
+        Effect.gen(function* () {
+          const report = options?.onProgress ?? (() => Effect.void);
+          yield* report({ stage: "receiving", percent: 24, detail: "168.80 MiB | 20.69 MiB/s" });
+          yield* Deferred.await(resumed);
+          yield* report({ stage: "receiving", percent: 25, detail: "170.00 MiB | 1.00 MiB/s" });
+          yield* Deferred.await(release);
+          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+        }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+
+      yield* TestClock.adjust("19 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* tracker.get(projectId);
+      expect(stalled).toMatchObject({ stalled: true, percent: 24 });
+      expect(projectCloneProgressSummary(stalled!)).toBe("Receiving objects · 24% · Stalled");
+
+      yield* Deferred.succeed(resumed, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ stalled: false, percent: 25 });
+
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", stalled: false });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("keeps a failed clone with git's own explanation and retries it", () => {
-    let attempts = 0;
+    const protocols: Array<SourceControlCloneProtocol | undefined> = [];
     const harness = makeHarness({
       clone: (input) =>
         Effect.suspend(() => {
-          attempts += 1;
-          return attempts === 1
+          protocols.push(input.protocol);
+          return protocols.length === 1
             ? Effect.fail(
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
@@ -128,7 +170,7 @@ describe("ProjectCloneTracker", () => {
     });
     return Effect.gen(function* () {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* tracker.start(startInput, harness.hooks);
+      yield* tracker.start({ ...startInput, protocol: "ssh" }, harness.hooks);
       yield* Effect.yieldNow;
       const failed = yield* tracker.get(projectId);
       expect(failed).toMatchObject({ phase: "failed", error: "fatal: repository not found" });
@@ -137,7 +179,26 @@ describe("ProjectCloneTracker", () => {
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
-      expect(attempts).toBe(2);
+      expect(protocols).toEqual(["ssh", "ssh"]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("clamps a long failure without splitting a surrogate pair", () => {
+    const harness = makeHarness({
+      clone: () =>
+        Effect.fail(
+          new SourceControlRepositoryError({
+            operation: "cloneRepository",
+            provider: SourceControlProviderKind.make("unknown"),
+            detail: `${"e".repeat(998)}\u{1F680}tail`,
+          }),
+        ),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.error).toBe(`${"e".repeat(998)}…`);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -241,6 +302,97 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("clones for the project that already owns the empty destination", () => {
+    const owner = ProjectId.make("project-stranded");
+    const harness = makeHarness();
+    const hooks: ProjectCloneTracker.ProjectCloneHooks = {
+      ...harness.hooks,
+      createProject: (input) =>
+        Effect.fail(
+          new ProjectConflictError({
+            projectId: input.projectId,
+            workspaceRoot: input.workspaceRoot,
+            conflictingProjectId: owner,
+          }),
+        ),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const result = yield* tracker.start(startInput, hooks);
+      expect(result.projectId).toBe(owner);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(owner)).toMatchObject({
+        projectId: owner,
+        destinationPath: "/workspace/t3code",
+        phase: "done",
+      });
+      expect(harness.cloned).toEqual([owner]);
+      expect(yield* tracker.get(projectId)).toBeNull();
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("a fresh clone into a failed clone's destination supersedes it", () => {
+    let attempts = 0;
+    const harness = makeHarness({
+      clone: (input) =>
+        Effect.suspend(() =>
+          ++attempts === 1
+            ? Effect.fail(
+                new SourceControlRepositoryError({
+                  operation: "cloneRepository",
+                  provider: SourceControlProviderKind.make("unknown"),
+                  detail: "fatal: repository not found",
+                }),
+              )
+            : Effect.succeed({
+                cwd: input.destinationPath,
+                remoteUrl: input.remoteUrl ?? "",
+                repository: null,
+              }),
+        ),
+    });
+    // The failed clone's project still owns the destination.
+    const conflictingHooks: ProjectCloneTracker.ProjectCloneHooks = {
+      ...harness.hooks,
+      createProject: (input) =>
+        Effect.fail(
+          new ProjectConflictError({
+            projectId: input.projectId,
+            workspaceRoot: input.workspaceRoot,
+            conflictingProjectId: projectId,
+          }),
+        ),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("failed");
+
+      const second = ProjectId.make("project-2");
+      const result = yield* tracker.start({ ...startInput, projectId: second }, conflictingHooks);
+      expect(result.projectId).toBe(projectId);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("done");
+      expect(yield* tracker.get(second)).toBeNull();
+      expect(harness.cloned).toEqual([projectId]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("refuses a second clone into a destination that is still cloning", () => {
+    const harness = makeHarness({ clone: () => Effect.never });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      const error = yield* Effect.flip(
+        tracker.start({ ...startInput, projectId: ProjectId.make("project-2") }, harness.hooks),
+      );
+      expect(error.message).toContain("already in progress");
+      expect((yield* tracker.get(projectId))?.phase).toBe("running");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("does not create a project when the clone cannot be prepared", () => {
     const harness = makeHarness();
     const layer = ProjectCloneTracker.layer.pipe(
@@ -272,6 +424,9 @@ describe("parseGitCloneProgressLine", () => {
     expect(
       parseGitCloneProgressLine("Receiving objects:  45% (4500/10000), 12.30 MiB | 5.00 MiB/s"),
     ).toEqual({ stage: "receiving", percent: 45, detail: "12.30 MiB | 5.00 MiB/s" });
+    expect(
+      parseGitCloneProgressLine("Receiving objects: 100% (5/5), 40.00 MiB | 1.40 MiB/s, done."),
+    ).toEqual({ stage: "receiving", percent: 100, detail: "40.00 MiB | 1.40 MiB/s" });
     expect(parseGitCloneProgressLine("Resolving deltas: 100% (700/700), done.")).toEqual({
       stage: "resolving",
       percent: 100,
@@ -287,6 +442,9 @@ describe("parseGitCloneProgressLine", () => {
       percent: 78,
       detail: null,
     });
+    expect(
+      parseGitCloneProgressLine("Filtering content:  66% (2/3), 11.92 MiB | 1009.00 KiB/s"),
+    ).toEqual({ stage: "checkout", percent: 66, detail: "11.92 MiB | 1009.00 KiB/s" });
     expect(parseGitCloneProgressLine("remote: Enumerating objects: 10, done.")).toEqual({
       stage: "counting",
       percent: null,

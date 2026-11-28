@@ -1,10 +1,16 @@
+import {
+  trimOptionalString as trimmed,
+  normalizeRefName,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestCheck,
   PullRequestComment,
+  PullRequestLabel,
   PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestState,
@@ -14,17 +20,14 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
 
-/**
- * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as
- * the other hosts: a new merge status must not fail a whole payload. Every field beyond the
- * identity is optional, because `az repos pr` returns rather more or less of the REST object
- * depending on the command.
- */
+// CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
   displayName: Schema.optional(Schema.NullOr(Schema.String)),
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const RawLabelSchema = Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) });
 
 const RawPullRequestSchema = Schema.Struct({
   pullRequestId: Schema.Int,
@@ -32,11 +35,7 @@ const RawPullRequestSchema = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  /**
-   * Who armed auto-complete, which is the only thing Azure says about it: the field carries an
-   * identity while the pull request is set to complete on its own, and Azure leaves it out
-   * entirely once nobody has. So its presence is the answer, and there is no third state.
-   */
+  /** This identity's presence indicates auto-complete. */
   autoCompleteSetBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   completionOptions: Schema.optional(
     Schema.NullOr(
@@ -49,6 +48,8 @@ const RawPullRequestSchema = Schema.Struct({
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
+  /** `az repos pr list` fills this; `az repos pr show` returns null. */
+  labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelSchema))),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -108,6 +109,39 @@ const RawViewerSchema = Schema.Struct({
   ),
 });
 
+const RawPolicyEvaluationSchema = Schema.Struct({
+  status: Schema.String,
+  context: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        buildId: Schema.optional(Schema.NullOr(Schema.Int)),
+        buildDefinitionName: Schema.optional(Schema.NullOr(Schema.String)),
+        isExpired: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
+  configuration: Schema.Struct({
+    url: Schema.optional(Schema.NullOr(Schema.String)),
+    isBlocking: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    isEnabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    type: Schema.Struct({
+      id: Schema.String,
+      displayName: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+    settings: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          displayName: Schema.optional(Schema.NullOr(Schema.String)),
+          defaultDisplayName: Schema.optional(Schema.NullOr(Schema.String)),
+          statusName: Schema.optional(Schema.NullOr(Schema.String)),
+          manualQueueOnly: Schema.optional(Schema.NullOr(Schema.Boolean)),
+        }),
+      ),
+    ),
+  }),
+});
+
 export interface AzureDevOpsRepositoryLocation {
   readonly project: string;
   readonly repository: string;
@@ -129,26 +163,27 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
 }
 
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
-}
-
-function normalizeRefName(refName: string): string {
-  return refName.trim().replace(/^refs\/heads\//, "");
-}
-
-/** A login has to compare against `az account show`, which reports an email. */
+/** Logins must match the email from `az account show`. */
 function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | undefined) {
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
   return login === null
     ? null
     : { login, name: trimmed(raw?.displayName), avatarUrl: trimmed(raw?.imageUrl) };
+}
+
+function toLabels(
+  raw: ReadonlyArray<Schema.Schema.Type<typeof RawLabelSchema>> | null | undefined,
+): ReadonlyArray<PullRequestLabel> {
+  return (raw ?? []).flatMap((label) => {
+    const name = trimmed(label.name);
+    return name === null ? [] : [{ name, color: null }];
+  });
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {
@@ -239,6 +274,7 @@ function toPullRequest(
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
+    labels: toLabels(raw.labels),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
@@ -251,13 +287,16 @@ const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
+const decodeLabelPage = decodeJsonResult(Schema.Struct({ value: Schema.Array(Schema.Unknown) }));
+const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
+const decodePolicyEvaluations = decodeJsonResult(Schema.Array(RawPolicyEvaluationSchema));
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
 export interface AzureDevOpsPullRequestBatch {
   readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
   readonly rawIndexes: ReadonlyArray<number>;
-  /** Rows Azure returned, counted before decoding, so a skipped row cannot hide a next page. */
+  /** Count before decoding to avoid ending pagination on skipped rows. */
   readonly rawCount: number;
 }
 
@@ -282,7 +321,7 @@ export function decodePullRequestListJson(
   return Result.succeed({ items, rawIndexes, rawCount: decoded.success.length });
 }
 
-/** Null carries "Azure answered, but with too little to use", which the caller reports. */
+/** Null means Azure returned insufficient data. */
 export function decodePullRequestJson(
   raw: string,
 ): Result.Result<AzureDevOpsPullRequest | null, DecodeFailure> {
@@ -299,6 +338,21 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
+export function decodeLabelsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<PullRequestLabel>, DecodeFailure> {
+  const decoded = decodeLabelPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    toLabels(
+      decoded.success.value.flatMap((entry) => {
+        const label = decodeLabelEntry(entry);
+        return Exit.isFailure(label) ? [] : [label.value];
+      }),
+    ),
+  );
+}
+
 export function decodeThreadsJson(
   raw: string,
 ): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
@@ -312,7 +366,7 @@ export function decodeThreadsJson(
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
-    const path = trimmed(thread.threadContext?.filePath);
+    const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
@@ -338,6 +392,101 @@ export function decodeThreadsJson(
   return Result.succeed(
     comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
   );
+}
+
+type RawPolicyEvaluation = Schema.Schema.Type<typeof RawPolicyEvaluationSchema>;
+
+const BUILD_POLICY_TYPE = "0609b952-1397-4640-95ec-e00a01b2c241";
+const STATUS_POLICY_TYPE = "cbdc66da-9728-4af8-aada-9a5a32e4a226";
+// Other policy types wait on people or restrict pushes, so they would read as checks that never end.
+const CHECK_POLICY_TYPES = new Set([BUILD_POLICY_TYPE, STATUS_POLICY_TYPE]);
+
+/** Azure reports `queued` for a build that will never start on its own, so name those apart. */
+function toPolicyCheckProgress(
+  raw: RawPolicyEvaluation,
+): Pick<PullRequestCheck, "status" | "description"> {
+  const settled = (status: PullRequestCheck["status"]) => ({ status, description: null });
+  switch (raw.status.trim().toLowerCase()) {
+    case "approved":
+      return settled("success");
+    case "rejected":
+    case "broken":
+      return settled("failure");
+    case "running":
+      return settled("pending");
+    case "notapplicable":
+      return settled("skipped");
+    case "queued":
+      break;
+    default:
+      // A watch counts anything settled as passed, so an unknown status cannot be.
+      return settled("pending");
+  }
+  const expired = raw.context?.isExpired === true;
+  if (!expired && raw.configuration.settings?.manualQueueOnly !== true) return settled("pending");
+  // Only a blocking build holds the pull request; an optional one nobody queues never runs.
+  return {
+    status: raw.configuration.isBlocking === true ? "action-required" : "skipped",
+    description: expired ? "Expired. Queue it again on Azure DevOps." : "Queue it on Azure DevOps.",
+  };
+}
+
+/** The evaluation's configuration URL opens at the project the policy belongs to. */
+function toPolicyCheckUrl(raw: RawPolicyEvaluation): string | null {
+  const buildId = raw.context?.buildId;
+  const [projectUrl, rest] = (raw.configuration.url ?? "").split("/_apis/", 2);
+  return buildId == null || rest === undefined
+    ? null
+    : `${projectUrl}/_build/results?buildId=${buildId}`;
+}
+
+function toPolicyCheck(raw: RawPolicyEvaluation, isDraft: boolean): PullRequestCheck | null {
+  const { configuration, context } = raw;
+  if (
+    !CHECK_POLICY_TYPES.has(configuration.type.id.toLowerCase()) ||
+    configuration.isEnabled === false ||
+    configuration.isDeleted === true
+  ) {
+    return null;
+  }
+  // A build Azure holds back on a draft stays out, as nothing would ever finish it.
+  if (isDraft && raw.status.trim().toLowerCase() === "queued" && context?.buildId == null) {
+    return null;
+  }
+  return {
+    name:
+      trimmed(configuration.settings?.displayName) ??
+      trimmed(configuration.settings?.defaultDisplayName) ??
+      trimmed(context?.buildDefinitionName) ??
+      trimmed(configuration.settings?.statusName) ??
+      trimmed(configuration.type.displayName) ??
+      "Policy",
+    ...toPolicyCheckProgress(raw),
+    url: toPolicyCheckUrl(raw),
+    required: configuration.isBlocking === true,
+  };
+}
+
+export interface AzureDevOpsPolicyCheckPage {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Evaluations of every policy type, so filtered rows cannot hide a next page. */
+  readonly rawCount: number;
+}
+
+/** Unlike the tolerant decoders above, one bad row fails the page: a lost required check reads as passed. */
+export function decodePolicyChecksJson(
+  raw: string,
+  input: { readonly isDraft: boolean },
+): Result.Result<AzureDevOpsPolicyCheckPage, DecodeFailure> {
+  const decoded = decodePolicyEvaluations(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed({
+    checks: decoded.success.flatMap((evaluation) => {
+      const check = toPolicyCheck(evaluation, input.isDraft);
+      return check === null ? [] : [check];
+    }),
+    rawCount: decoded.success.length,
+  });
 }
 
 const RawIterationSchema = Schema.Struct({
@@ -411,11 +560,7 @@ const decodeChangePage = decodeJsonResult(RawChangePageSchema);
 const decodeChangeEntry = Schema.decodeUnknownExit(RawChangeEntrySchema);
 const decodeItemContent = decodeJsonResult(RawItemContentSchema);
 
-/**
- * Azure leads a path with a slash that every other host and every patch omits. Not trimmed like
- * the rest of this payload, since a leading/trailing space is a legal part of a file's name and
- * the patch and viewed mark are keyed by the untrimmed path.
- */
+/** Preserve whitespace to match patch paths and viewed marks. */
 function toRepositoryPath(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
   const path = value.replace(/^\/+/, "");
@@ -467,19 +612,22 @@ export function decodeIterationChangesJson(
     const decodedChange = decodeChangeEntry(entry);
     if (Exit.isFailure(decodedChange)) continue;
     const change = decodedChange.value;
-    const path = toRepositoryPath(change.item?.path);
+    // Azure uses either field for renames, depending on route/version.
+    const sourcePath =
+      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath);
+    const deleted = toChangeKind(change.changeType, false) === "deleted";
+    // A deleted file has no `item.path`; only the source fields name it.
+    const path = toRepositoryPath(change.item?.path) ?? (deleted ? sourcePath : null);
     if (path === null) continue;
     if (change.item?.isFolder === true) continue;
     if ((change.item?.gitObjectType ?? "blob").toLowerCase() !== "blob") continue;
-    // Azure names where a renamed file came from in either of two places depending on the route
-    // and the version, so both are read and the current path stands in when neither is there.
-    const oldPath =
-      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
+    const oldPath = sourcePath ?? path;
     changes.push({
       path,
       oldPath,
       changeKind: toChangeKind(change.changeType, oldPath !== path),
-      objectId: trimmed(change.item?.objectId),
+      // Viewed marks read a deleted file at the empty revision, not a blob id.
+      objectId: deleted ? null : trimmed(change.item?.objectId),
       originalObjectId: trimmed(change.item?.originalObjectId),
     });
   }
@@ -490,10 +638,7 @@ export function decodeIterationChangesJson(
   });
 }
 
-/**
- * Azure answers an absent file with an empty body rather than an error, which reads as empty.
- * Whether the bytes are text is Azure's own call, not this decoder's to guess from content.
- */
+/** Azure returns an empty body for absent files. Binary status comes from its metadata. */
 export function decodeItemContentJson(
   raw: string,
 ): Result.Result<AzureDevOpsItemContent, DecodeFailure> {

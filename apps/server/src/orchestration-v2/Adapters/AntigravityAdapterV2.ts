@@ -6,34 +6,56 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
+  antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
+  antigravityRuntimeModeForSessionMode,
+  antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
+  buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
-  readAntigravityClientTextFile,
-  writeAntigravityClientTextFile,
-} from "../../provider/acp/AntigravityClientFiles.ts";
+  ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+  antigravitySubagentLaunches,
+  describeAntigravitySubagentLaunches,
+  readAntigravityChildrenAtWork,
+  readAntigravityExecutedModel,
+  readAntigravityPendingReply,
+  readAntigravitySubagentTranscript,
+} from "../../provider/acp/AntigravityChildWork.ts";
+import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySwarmAddChildSessionId,
+  antigravitySwarmAddModel,
+  antigravityToolOutlivesPrompt,
+  antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
+  makeAntigravityReadRepair,
+  makeAntigravityUpdateStepsPlans,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -60,11 +82,17 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
+export type AntigravityAdapterV2RuntimeInput = Omit<
+  AntigravityAcpRuntimeInput,
+  "spawn" | "childProcessSpawner"
+> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    input: AntigravityAdapterV2RuntimeInput,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -72,18 +100,22 @@ export interface AntigravityAdapterV2Options {
   >;
   readonly withProcess: AntigravityAuth["withProcess"];
   readonly defaultModel: Effect.Effect<string | undefined>;
+  readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd: string,
+    session?: { readonly resumed: boolean },
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
+  readonly profileDirectory?: string;
 }
 
 /**
- * ACP 1.1.1 exposes subagent invocations as ordinary `start_subagent` tools without child
- * session ids.
+ * Native subagent tools report no child session ids, so children stay read-only.
+ * Only permission prompts carry the launch; NativeChildWorkQuery matches their ids by this text.
  */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,
@@ -93,23 +125,26 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   }
   const status =
     toolCall.status === "failed" ? "failed" : toolCall.status === "pending" ? "pending" : "running";
+  const launches = antigravitySubagentLaunches(toolCall.data.rawInput);
+  const launch = launches === undefined ? undefined : describeAntigravitySubagentLaunches(launches);
   return {
     nativeTaskId: toolCall.toolCallId,
     prompt:
+      launch?.prompt ??
       antigravitySubagentOutput(toolCall) ??
       toolCall.detail ??
       toolCall.title ??
-      "Antigravity subagent batch",
-    title: "Antigravity subagent batch",
-    model: null,
+      ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+    title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+    model: antigravitySwarmAddModel(toolCall),
     status,
-    childSessionId: null,
+    childSessionId: antigravitySwarmAddChildSessionId(toolCall),
     result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
   };
 };
 
 interface AntigravityFlavorServices {
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
@@ -118,63 +153,139 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
+  const { profileDirectory } = options;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
-  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
-    Effect.gen(function* () {
+  const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
+    function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
-            clientFileSystem: true,
-            additionalDirectories: [options.host.paths.attachmentsDir],
+            clientFileReads: true,
+            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
+      // Repair keeps state across updates, so each runtime must have one session-update handler.
+      const reads = makeAntigravityReadRepair();
+      const plans = makeAntigravityUpdateStepsPlans();
+      // Served reads are reported from the read handler, so they take turns with agent updates.
+      const updates = yield* Semaphore.make(1);
+      let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
       return {
         ...runtime,
-        start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+        handleReadTextFile: (handler) =>
+          runtime.handleReadTextFile((request, context) =>
+            handler(request, context).pipe(
+              Effect.onExit((exit) => {
+                const served = reads.attempted(request.path, Exit.isSuccess(exit));
+                if (served === undefined || projectUpdate === undefined) return Effect.void;
+                return updates
+                  .withPermit(
+                    projectUpdate({
+                      sessionId: served.sessionId,
+                      update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: served.toolCallId,
+                        status: "completed",
+                      },
+                    }),
+                  )
+                  .pipe(Effect.ignore);
+              }),
             ),
-      };
-    }).pipe(
-      Effect.provideService(Crypto.Crypto, options.crypto),
-      Effect.mapError((cause): EffectAcpErrors.AcpError =>
-        cause._tag === "ProviderSetupError"
-          ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
-          : cause,
-      ),
-    );
+          ),
+        prompt: (payload, promptOptions) =>
+          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+        handleSessionUpdate: (handler) => {
+          projectUpdate = handler;
+          return runtime.handleSessionUpdate((notification) => {
+            const update = plans(reads.repair(notification));
+            return update === undefined ? Effect.void : updates.withPermit(handler(update));
+          });
+        },
+        start: () =>
+          runtime.start().pipe(
+            Effect.tap(
+              (started) =>
+                options.onSessionStarted?.(started, input.cwd, {
+                  resumed:
+                    input.resumeSessionId !== undefined &&
+                    started.sessionId === input.resumeSessionId,
+                }) ?? Effect.void,
+            ),
+          ),
+      } satisfies typeof runtime;
+    },
+    Effect.provideService(SecureRandom.SecureRandom, options.random),
+    Effect.mapError((cause): EffectAcpErrors.AcpError =>
+      cause._tag === "ProviderSetupError"
+        ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
+        : cause,
+    ),
+  );
 
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
+    supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
+    // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
+    mcpOverHttp: true,
+    // Antigravity freezes its toolbox per turn, so optional T3 tools run through `tool_call`.
+    deferMcpTools: "proxy",
+    sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    // Loading history replays every tool call; resume restores the session
-    // without the replay and is what the official client does.
-    preferResumeSession: true,
+    buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
+      buildAntigravityPrompt({
+        input: text,
+        attachments,
+        resolveAttachmentPath,
+        promptCapabilities,
+      }).pipe(
+        Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
+        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+        Effect.provideService(Path.Path, options.path),
+      ),
+    // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // A finished background command or timer wakes the agent with no prompt open: it streams a
+    // reply and asks for permissions, and no prompt response ever ends that reply.
+    enablePostSettleContinuation: true,
+    deferFinalizeForBackgroundWork: true,
+    wakeOnDetachedRequest: true,
+    replyEndsWithUsageUpdate: true,
+    toolOutlivesPrompt: antigravityToolOutlivesPrompt,
+    // agy sometimes loses the terminal update or wake for a background command, which would
+    // hold the turn in Working forever. 30 minutes still leaves long commands room.
+    postSettleCommandHold: {
+      timeout: "30 minutes",
+      isCommand: antigravityCommandOutlivesPrompt,
+    },
+    // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
+    // has ended. A message sent while a command runs leaves the command alone.
+    preserveRuntimeOnSettledInterrupt: true,
+    // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
+    steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
-    applyModelSelection: ({ runtime, modelSelection }) =>
-      Effect.gen(function* () {
-        const defaultModel = yield* options.defaultModel;
-        return yield* applyAntigravityAcpModelSelection({
-          runtime,
-          model:
-            modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
-          defaultModel,
-          mapError: (cause) => cause,
-        });
-      }),
+    applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
+      runtime,
+      modelSelection,
+    }) {
+      const defaultModel = yield* options.defaultModel;
+      return yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model:
+          modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
+        defaultModel,
+        mapError: (cause) => cause,
+      });
+    }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
@@ -183,36 +294,64 @@ export function makeAntigravityAcpAdapterFlavor(
           allowedRoots: antigravityClientFileRoots(cwd),
           request,
         }),
-      writeTextFile: (request, cwd) =>
-        writeAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
-          request,
-        }),
     },
+    permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
       if (question === undefined) return undefined;
       return {
-        question: {
-          id: question.id,
-          header: question.header,
-          question: question.question,
-          options: question.options.map((option) => ({
-            label: option.label,
-            description: option.description,
-          })),
-          multiSelect: false,
-        },
+        question,
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
+    extractElicitationForm: extractAntigravityElicitationForm,
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    compactViaAdvertisedCommand: true,
+    requiresSignIn: isAntigravitySignInRequiredError,
+    checksVersionAtHandshake: true,
+    // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
+    promptInactivityTimeout: "15 minutes",
+    reportsPerTurnPromptUsage: true,
+    geminiPromptUsage: true,
+    ...(profileDirectory === undefined
+      ? {}
+      : {
+          watchPromptOutcome: (sessionId: string) =>
+            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
+            readAntigravityChildrenAtWork({
+              profileDirectory,
+              rootSessionId: sessionId,
+              toolCallIds: nativeTaskIds,
+            }),
+          readSubagentTranscript: ({
+            sessionId,
+            nativeTaskId,
+            childSessionId,
+            launch,
+            siblings,
+            finalize,
+          }) =>
+            readAntigravitySubagentTranscript({
+              profileDirectory,
+              rootSessionId: sessionId,
+              nativeTaskId,
+              childSessionId,
+              launch,
+              siblings,
+              finalize,
+            }),
+          hasPendingReply: (sessionId: string) =>
+            readAntigravityPendingReply({
+              profileDirectory,
+              sessionId,
+            }),
+          executedModel: (sessionId: string) =>
+            readAntigravityExecutedModel({ profileDirectory, sessionId }),
+        }),
   };
 }
 
@@ -220,7 +359,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
   options: AntigravityAdapterV2Options,
 ) {
   const services: AntigravityFlavorServices = {
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     fileSystem: yield* FileSystem.FileSystem,
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,

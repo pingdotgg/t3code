@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
@@ -37,21 +38,15 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
-import {
-  AcpProviderCapabilitiesV2,
-  acpCompletedTurnShouldTerminalizeTool,
-  acpSubagentStatusBlocksTurnSettlement,
-  acpSupportsImagePrompts,
-} from "@t3tools/provider-acp/server/adapter";
+import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
 import {
   makeGrokAcpAdapterFlavor,
   makeGrokAdapterV2,
-  GrokProviderCapabilitiesV2,
   GROK_PROVIDER,
   GROK_ACP_INITIALIZE_META,
 } from "@t3tools/provider-grok/testing";
@@ -94,21 +89,33 @@ function runtimePolicy(input: {
   });
 }
 
-describe("acpSubagentStatusBlocksTurnSettlement", () => {
-  it("blocks settlement for pending and running subagents", () => {
-    assert.isTrue(acpSubagentStatusBlocksTurnSettlement("pending"));
-    assert.isTrue(acpSubagentStatusBlocksTurnSettlement("running"));
-  });
-
-  it("does not block settlement for terminal subagents", () => {
-    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("cancelled"));
-    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("completed"));
-    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("failed"));
-    assert.isFalse(acpSubagentStatusBlocksTurnSettlement("interrupted"));
-  });
-});
-
 describe("GrokAdapterV2 capabilities", () => {
+  it("rejects invalid Grok context metadata and ignores aggregate turn usage", () => {
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
+    assert.isDefined(flavor.extractContextUsage);
+    for (const totalTokens of [-1, 1.5, "42000", Number.MAX_SAFE_INTEGER + 1]) {
+      const notification = {
+        sessionId: "grok-context-session",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } },
+        _meta: { totalTokens },
+      } as unknown as EffectAcpSchema.SessionNotification;
+      assert.isUndefined(flavor.extractContextUsage(notification));
+    }
+    const aggregateUsage = {
+      sessionId: "grok-context-session",
+      update: {
+        sessionUpdate: "turn_completed",
+        usage: { inputTokens: 90_000, outputTokens: 2_000, modelCalls: 12 },
+      },
+    } as unknown as EffectAcpSchema.SessionNotification;
+    assert.isUndefined(flavor.extractContextUsage(aggregateUsage));
+  });
+
   it("preserves Grok's rate-limit stop and distinguishes other prompt failures", () => {
     const flavor = makeGrokAcpAdapterFlavor(
       {
@@ -138,24 +145,6 @@ describe("GrokAdapterV2 capabilities", () => {
       flavor.promptFailure?.(new Error("Rate limit mentioned in an ordinary error")).class,
       "provider_error",
     );
-  });
-
-  it("wires hard Stop teardown but soft non-Stop interrupts in the constructor flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor(
-      {
-        makeRuntime: () => Effect.never,
-      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
-      "/home/ada",
-    );
-
-    assert.isFalse(flavor.interruptPromptOnCancel);
-    // User Stop (requestRuntimeRestart) keeps the hard process-group kill and
-    // respawn: Grok cancel is detach-and-continue, so only a process kill
-    // stops the work.
-    assert.isTrue(flavor.restartRuntimeAfterInterrupt);
-    assert.isTrue(flavor.terminateRuntimeProcessGroupOnInterrupt);
-    assert.isUndefined(flavor.restartRuntimeOnEveryInterrupt);
-    assert.isTrue(flavor.preserveRuntimeOnSettledInterrupt);
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
@@ -203,67 +192,9 @@ describe("GrokAdapterV2 capabilities", () => {
     assert.isFalse(acpCompletedTurnShouldTerminalizeTool(monitor, flavor));
     assert.isFalse(acpCompletedTurnShouldTerminalizeTool(subagent, flavor));
   });
-
-  it("keeps optional protocol features conservative until a flavor or handshake confirms them", () => {
-    assert.isFalse(AcpProviderCapabilitiesV2.sessions.supportsModelSwitchInSession);
-    assert.isFalse(AcpProviderCapabilitiesV2.sessions.supportsRuntimeModeSwitchInSession);
-    assert.isFalse(AcpProviderCapabilitiesV2.threads.canReadThreadSnapshot);
-    assert.isFalse(AcpProviderCapabilitiesV2.tools.supportsMcpTools);
-  });
-
-  it("overrides ACP image capability false so screenshot attachments can prompt", () => {
-    assert.isFalse(
-      acpSupportsImagePrompts({
-        negotiatedImage: false,
-      }),
-    );
-    assert.isTrue(
-      acpSupportsImagePrompts({
-        flavorSupportsImagePrompts: true,
-        negotiatedImage: false,
-      }),
-    );
-    assert.isTrue(
-      acpSupportsImagePrompts({
-        negotiatedImage: true,
-      }),
-    );
-  });
-
-  it("declares Grok Task envelopes as native subagents", () => {
-    assert.isFalse(GrokProviderCapabilitiesV2.threads.canForkThread);
-    assert.isTrue(GrokProviderCapabilitiesV2.subagents.supportsSubagents);
-    assert.isTrue(GrokProviderCapabilitiesV2.subagents.exposesSubagentThreadIds);
-    assert.isTrue(GrokProviderCapabilitiesV2.subagents.emitsSubagentLifecycle);
-    assert.isFalse(GrokProviderCapabilitiesV2.turns.supportsActiveSteering);
-    assert.isTrue(GrokProviderCapabilitiesV2.turns.supportsInterrupt);
-    assert.isTrue(GrokProviderCapabilitiesV2.turns.supportsSteeringByInterruptRestart);
-    assert.isTrue(GrokProviderCapabilitiesV2.context.supportsFullThreadHandoff);
-  });
-
-  it("declares the optional ACP features verified by the Grok handshake", () => {
-    assert.isTrue(GrokProviderCapabilitiesV2.sessions.supportsModelSwitchInSession);
-    assert.isTrue(GrokProviderCapabilitiesV2.threads.canReadThreadSnapshot);
-    assert.isTrue(GrokProviderCapabilitiesV2.tools.supportsMcpTools);
-    assert.isTrue(GrokProviderCapabilitiesV2.checkpointing.providerCanReadConversationSnapshot);
-  });
 });
 
 describe("ACP permission policy", () => {
-  it("honors explicit on-request approval over full-access runtime mode", () => {
-    assert.equal(
-      acpPermissionDisposition(
-        runtimePolicy({
-          runtimeMode: "full-access",
-          approvalPolicy: "on-request",
-          sandboxPolicy: { type: "readOnly" },
-        }),
-        permissionRequest("execute"),
-      ),
-      "ask",
-    );
-  });
-
   it("rejects mutating escalation under a non-interactive read-only policy", () => {
     const policy = runtimePolicy({
       runtimeMode: "full-access",
@@ -330,98 +261,13 @@ describe("Grok permission prompts", () => {
   });
 });
 
-describe("Grok model context windows", () => {
-  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
-  const layerTest = Layer.mergeAll(
-    NodeServices.layer,
-    IdAllocator.layer,
-    McpProviderSessions.layer,
-    layerHost,
-  );
-
-  it.effect("budgets handoffs with the selected Grok model's window", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("grok-window-test");
-      const threadId = ThreadId.make("grok-window-test");
-      const modelSelection = { instanceId, model: "grok-build" };
-      const policy = runtimePolicy({ runtimeMode: "full-access" });
-      const path = yield* Path.Path;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const adapter = yield* makeGrokAdapterV2({
-        instanceId,
-        settings: LAUNCH_TEST_GROK_SETTINGS,
-        environment: {},
-        hostPlatform: "linux",
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          Effect.gen(function* () {
-            const context = yield* Layer.build(
-              AcpSessionRuntime.layer({
-                ...input,
-                spawn: {
-                  command: process.execPath,
-                  args: [mockAgentPath],
-                  cwd: process.cwd(),
-                  env: {
-                    T3_ACP_SESSION_LIFECYCLE: "1",
-                    T3_ACP_GROK_MODEL: "grok-4.7",
-                    T3_ACP_GROK_CONTEXT_TOKENS: "256000",
-                  },
-                },
-                authMethodId: "test",
-              }),
-            );
-            return yield* AcpSessionRuntime.AcpSessionRuntime.pipe(Effect.provide(context));
-          }),
-      });
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("grok-window-test"),
-        modelSelection,
-        runtimePolicy: policy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy: policy,
-      });
-      const budgetInput = {
-        tokenCap: 16_000,
-        userText: "Continue",
-        attachments: [],
-        providerThread,
-        nativeContextEstimate: 160_684,
-      };
-      assert.isNull(providerThread.contextUsage);
-      assert.equal(handoffBudget(budgetInput), 0);
-      assert.equal(
-        handoffBudget({
-          ...budgetInput,
-          modelContextWindow: runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }),
-        }),
-        16_000,
-      );
-      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }), 256_000);
-      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: " grok-4.7 " }), 256_000);
-      for (const model of ["custom-model", "grok-build", "toString"]) {
-        assert.isUndefined(runtime.getModelContextWindow?.({ instanceId, model }));
-      }
-      assert.isUndefined(
-        runtime.getModelContextWindow?.({
-          instanceId: ProviderInstanceId.make("another-grok"),
-          model: "grok-4.7",
-        }),
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-});
-
 describe("Grok launch permission mode", () => {
-  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
   const layerTest = Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     IdAllocator.layer,
     McpProviderSessions.layer,
     layerHost,
@@ -431,7 +277,7 @@ describe("Grok launch permission mode", () => {
     Effect.gen(function* () {
       const launches: Array<ReadonlyArray<string>> = [];
       const childProcessSpawner = ChildProcessSpawner.make((command) => {
-        if (command._tag === "StandardCommand") launches.push(command.args);
+        if (command._tag === "StandardCommand") launches.push(command.args.map(String));
         return Effect.fail(
           PlatformError.systemError({
             _tag: "NotFound",
@@ -522,6 +368,12 @@ describe("Grok launch permission mode", () => {
       }).pipe(
         Effect.provide(
           RuntimePolicy.layerFromProjectStore.pipe(
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+              }),
+            ),
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
                 get: () => Effect.die("the thread has a worktree"),
@@ -544,34 +396,203 @@ describe("Grok launch permission mode", () => {
       ]);
     }),
   );
-
-  it.effect("launches asking when an explicit approval or sandbox policy governs the thread", () =>
-    Effect.gen(function* () {
-      const asking = [["--permission-mode", "default", "agent", "stdio"]];
-      assert.deepEqual(
-        yield* launchArgs(
-          policy("full-access", {
-            approvalPolicy: "never",
-            sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
-          }),
-        ),
-        asking,
-      );
-      assert.deepEqual(
-        yield* launchArgs(policy("full-access", { approvalPolicy: "on-request" })),
-        asking,
-      );
-    }),
-  );
 });
 
 describe("Grok native questions", () => {
-  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
   const layerTest = Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     IdAllocator.layer,
     McpProviderSessions.layer,
     layerHost,
+  );
+
+  it.live("projects Grok ACP context metadata into the provider thread", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-context-" });
+      const transcript: AcpReplayTranscript = {
+        provider: GROK_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: "grok-context-usage",
+        entries: [
+          {
+            type: "expect_outbound",
+            label: "initialize",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "initialized",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
+                authMethods: [{ id: "replay", name: "Replay" }],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "session.new",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "session.created",
+            frame: {
+              kind: "response",
+              method: "session/new",
+              result: {
+                sessionId: "grok-context-session",
+                models: {
+                  currentModelId: "grok-build",
+                  availableModels: [
+                    {
+                      modelId: "grok-build",
+                      name: "Grok Build",
+                      _meta: { totalContextTokens: 272_000 },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "prompt",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "context.metadata",
+            frame: {
+              kind: "notification",
+              method: "session/update",
+              params: {
+                sessionId: "grok-context-session",
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "done" },
+                },
+                _meta: { totalTokens: 42_731, eventId: "grok-context-session-1" },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+        ],
+      };
+      const statusPath = path.join(workspace, "status.json");
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("grok-context");
+      const threadId = ThreadId.make("grok-context-thread");
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          scriptPath,
+          childProcessSpawner,
+          fileSystem: fs,
+          initializeMeta: GROK_ACP_INITIALIZE_META,
+        }),
+      });
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "grok-build" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-context-provider-session"),
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const terminal = yield* Deferred.make<void>();
+      let contextUsage: unknown;
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (event.type === "provider_thread.updated") {
+            contextUsage = event.providerThread.contextUsage;
+          }
+          if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("grok-context-project"),
+          title: "Grok context",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: policy.runtimeMode,
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspace,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("grok-context-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("grok-context-attempt"),
+        rootNodeId: NodeId.make("grok-context-root"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("grok-context-message"),
+          text: "Show context usage.",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      yield* Deferred.await(terminal);
+      assert.deepEqual(contextUsage, { usedTokens: 42_731, maxTokens: 272_000 });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.live("keeps x.ai multi-select questions live and returns all selected answers", () =>

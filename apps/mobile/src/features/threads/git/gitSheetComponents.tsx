@@ -1,9 +1,11 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../../lib/changeRequestTerm";
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { msg } from "gt-react-native";
 import type { ComponentProps } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { AppText as Text } from "../../../components/ui/AppText";
+import { View } from "react-native";
 import { Button } from "../../../components/ui/Button";
-import { cn } from "../../../lib/cn";
+import type { MessageResolver } from "../../../i18n/messages";
 
 export function SheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -12,115 +14,10 @@ export function SheetActionButton(props: {
   readonly tone?: "primary" | "secondary" | "danger";
   readonly onPress: () => void;
 }) {
-  if (Platform.OS === "android")
-    return (
-      <View className="flex-1">
-        <Button
-          label={props.label}
-          icon={props.icon}
-          tone={props.tone}
-          disabled={props.disabled}
-          onPress={props.onPress}
-          fullWidth
-        />
-      </View>
-    );
-  const tone = props.tone ?? "secondary";
-  const textColorClassName =
-    tone === "primary"
-      ? "accent-primary-foreground"
-      : tone === "danger"
-        ? "accent-danger-foreground"
-        : "accent-secondary-foreground";
-
   return (
-    <Pressable
-      className={cn(
-        "min-h-[48px] flex-1 items-center justify-center rounded-[18px] px-3 py-3 disabled:opacity-[0.45]",
-        tone === "primary" ? "bg-primary" : tone === "danger" ? "bg-danger" : "bg-secondary",
-        tone !== "primary" &&
-          (tone === "danger" ? "border border-danger-border" : "border border-secondary-border"),
-      )}
-      accessibilityRole="button"
-      disabled={props.disabled}
-      onPress={props.onPress}
-    >
-      <View className="max-w-full flex-row items-center justify-center gap-1.5">
-        <SymbolView
-          name={props.icon}
-          size={16}
-          tintColorClassName={textColorClassName}
-          type="monochrome"
-        />
-        <Text
-          className={cn(
-            "shrink text-center text-xs font-t3-bold tracking-[0.9px] uppercase",
-            tone === "primary"
-              ? "text-primary-foreground"
-              : tone === "danger"
-                ? "text-danger-foreground"
-                : "text-secondary-foreground",
-          )}
-        >
-          {props.label}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
-export function MetaCard(props: { readonly label: string; readonly value: string }) {
-  return (
-    <View className="bg-card px-4 py-3 android:rounded-[20px] ios:rounded-[18px] ios:border ios:border-border">
-      <Text className="text-foreground-muted text-2xs font-t3-bold tracking-[0.9px] uppercase">
-        {props.label}
-      </Text>
-      <Text selectable className="text-foreground text-sm font-medium" numberOfLines={1}>
-        {props.value}
-      </Text>
+    <View className="flex-1">
+      <Button {...props} fullWidth />
     </View>
-  );
-}
-
-export function SheetListRow(props: {
-  readonly icon: ComponentProps<typeof SymbolView>["name"];
-  readonly iconTintClassName?: string | undefined;
-  readonly title: string;
-  readonly subtitle?: string | null;
-  readonly disabled?: boolean;
-  readonly onPress: () => void;
-}) {
-  return (
-    <Pressable
-      className="flex-row items-center py-3 disabled:opacity-[0.45] android:min-h-16 android:gap-4 android:px-4 android:active:bg-subtle ios:gap-3 ios:px-1"
-      disabled={props.disabled}
-      onPress={props.onPress}
-    >
-      <View className="items-center justify-center android:size-6 ios:bg-subtle ios:h-9 ios:w-9 ios:rounded-full">
-        <SymbolView
-          name={props.icon}
-          size={Platform.OS === "android" ? 24 : 16}
-          tintColorClassName={props.iconTintClassName ?? "accent-icon"}
-          type="monochrome"
-        />
-      </View>
-      <View className="flex-1 gap-0.5">
-        <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
-          {props.title}
-        </Text>
-        {props.subtitle ? (
-          <Text className="text-foreground-muted text-xs leading-snug">{props.subtitle}</Text>
-        ) : null}
-      </View>
-      {Platform.OS !== "android" ? (
-        <SymbolView
-          name="chevron.right"
-          size={13}
-          tintColorClassName="accent-icon-subtle"
-          type="monochrome"
-        />
-      ) : null}
-    </Pressable>
   );
 }
 
@@ -140,31 +37,61 @@ export function statusSummary(
     readonly aheadCount?: number;
     readonly behindCount?: number;
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
+    readonly sourceControlProvider?: { readonly kind: string } | null;
   } | null,
+  resolve: MessageResolver,
 ): string {
   if (!gitStatus) {
-    return "Loading branch status\u2026";
+    return resolve(msg("Loading branch status\u2026"));
   }
 
   if (!gitStatus.isRepo) {
-    return "Not a git repository";
+    return resolve(msg("Not a git repository"));
   }
 
   const parts: string[] = [];
   if (gitStatus.hasWorkingTreeChanges) {
     const fileCount = gitStatus.workingTree?.files.length ?? 0;
-    parts.push(`${fileCount} file${fileCount === 1 ? "" : "s"} changed`);
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+          count: fileCount,
+        }),
+      ),
+    );
   } else {
-    parts.push("Clean");
+    parts.push(resolve(msg("Clean", { $context: "git working tree has no changes" })));
   }
   if ((gitStatus.aheadCount ?? 0) > 0) {
-    parts.push(`${gitStatus.aheadCount} ahead`);
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} ahead} other {{count} ahead}}", {
+          count: gitStatus.aheadCount,
+        }),
+      ),
+    );
   }
   if ((gitStatus.behindCount ?? 0) > 0) {
-    parts.push(`${gitStatus.behindCount} behind`);
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} behind} other {{count} behind}}", {
+          count: gitStatus.behindCount,
+        }),
+      ),
+    );
   }
   if (gitStatus.pr?.state === "open") {
-    parts.push(`PR #${gitStatus.pr.number} open`);
+    const term = changeRequestTermKind(
+      sourceControlClients.get(gitStatus.sourceControlProvider?.kind).changeRequest,
+    );
+    parts.push(
+      resolve(
+        msg(
+          "{term, select, mr {MR #{number} open} cr {change request #{number} open} other {PR #{number} open}}",
+          { term, number: gitStatus.pr.number },
+        ),
+      ),
+    );
   }
 
   return parts.join(" \u00b7 ");

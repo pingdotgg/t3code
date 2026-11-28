@@ -1,8 +1,13 @@
+import { startPaletteThreadDrag } from "./CommandPalette.drag";
+import { useLegendListRef } from "~/hooks/useLegendListRef";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
-import { type RefObject, useState } from "react";
+import { type ReactNode, type RefObject, useState } from "react";
+import { T } from "gt-react";
 import { cn } from "~/lib/utils";
+import { textDirection } from "~/textDirection";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -21,7 +26,8 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
-import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+import { ProjectPinButton } from "./ProjectPinButton";
+import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -36,9 +42,11 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
-        (props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+        (props.isActionsOnly ? (
+          <T>No matching actions.</T>
+        ) : (
+          <T>No matching commands, projects, or threads.</T>
+        ))}
     </div>
   );
 }
@@ -74,13 +82,34 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
-export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
-  const element = list?.getState?.().elementAtIndex(rowIndex);
-  if (element instanceof HTMLElement) {
-    element.scrollIntoView({ block: "nearest" });
+export function scrollCommandPaletteRowIntoView(
+  list: LegendListRef | null,
+  rowIndex: number,
+  isFirstItem: boolean,
+) {
+  if (isFirstItem) {
+    void list?.scrollToOffset({ offset: 0, animated: false });
     return;
   }
-  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+  void list?.scrollIndexIntoView({
+    index: rowIndex,
+    animated: false,
+    viewportMargin: { start: 24, end: 24 },
+  });
+}
+
+// Keeps a mounted row's old data when it shows the same item, so typing re-renders only the
+// rows whose item or position changed.
+function commandPaletteRowsAreEqual(previous: CommandPaletteRow, next: CommandPaletteRow) {
+  if (previous.kind === "label" || next.kind === "label") {
+    return (
+      previous.kind === "label" &&
+      next.kind === "label" &&
+      previous.label === next.label &&
+      previous.first === next.first
+    );
+  }
+  return previous.item === next.item && previous.itemIndex === next.itemIndex;
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
@@ -88,23 +117,27 @@ interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResul
   listRef: RefObject<LegendListRef | null>;
 }
 
-/**
- * The parent passes the flat item order to the Command root as `items` with
- * `virtualized`, scrolls keyboard highlights into view through `listRef`, and
- * runs Enter itself since the row may be unmounted.
- */
+/** Pass flat items with virtualized to Command, scroll highlights via listRef, and handle Enter for
+ * unmounted rows. */
 export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
   const { listRef } = props;
+  // The palette rebuilds its handler every render; a stable one keeps rows from re-rendering.
+  const onExecuteItem = useStableCallback(props.onExecuteItem);
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
-    const scrollElement = listRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const top = scrollElement.scrollTop > 1;
-    const bottom =
-      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    const top = !metrics.isAtStart;
+    const bottom = !metrics.isAtEnd;
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
+  };
+  const scrollRef = useLegendListRef(listRef, updateScrollFade);
+  // Kept rows re-render only when this changes, so it holds everything rows read besides their item.
+  const rowInputs = {
+    highlightedItemValue: props.highlightedItemValue,
+    keybindings: props.keybindings,
   };
 
   if (props.rows.length === 0) {
@@ -114,11 +147,13 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   return (
     <CommandListVirtualized>
       <LegendList<CommandPaletteRow>
-        ref={listRef}
+        ref={scrollRef}
         data={props.rows}
+        initialScrollOffset={0}
         keyExtractor={(row) => row.key}
+        itemsAreEqual={commandPaletteRowsAreEqual}
         getItemType={(row) => row.kind}
-        extraData={props.highlightedItemValue}
+        extraData={rowInputs}
         renderItem={({ item: row }) =>
           row.kind === "label" ? (
             <div className={row.first ? undefined : "pt-1.5"}>
@@ -132,7 +167,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
               item={row.item}
               keybindings={props.keybindings}
               isActive={props.highlightedItemValue === row.item.value}
-              onExecuteItem={props.onExecuteItem}
+              onExecuteItem={onExecuteItem}
             />
           )
         }
@@ -140,9 +175,12 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         drawDistance={400}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
+        onReady={updateScrollFade}
+        // Legend counts style padding (not class padding) in its size, end state and row positions.
+        style={{ paddingTop: 8, paddingBottom: 8 }}
         contentContainerClassName="px-2"
         className={cn(
-          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain py-2 [&::-webkit-scrollbar-track]:my-2",
+          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain [&::-webkit-scrollbar-track]:my-2",
           getVirtualizedScrollFadeClassName(scrollFade),
         )}
       />
@@ -150,22 +188,62 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   );
 }
 
+export function CommandPaletteTitleIcon(props: { children: ReactNode }) {
+  return <span className="flex h-5 shrink-0 items-center self-start pt-0.5">{props.children}</span>;
+}
+
+function CommandPaletteTitle({
+  item,
+}: {
+  item: Pick<CommandPaletteActionItem | CommandPaletteSubmenuItem, "title">;
+}) {
+  const { title } = item;
+  return (
+    <span className="truncate" dir={typeof title === "string" ? textDirection(title) : undefined}>
+      {title}
+    </span>
+  );
+}
+
+/**
+ * Project and environment for a thread row whose second line shows a message
+ * snippet or match hint instead, so similar rows can still be told apart.
+ */
+function ThreadRowContext({
+  item,
+}: {
+  item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
+}) {
+  if (!item.threadSearch || !(item.threadContentMatch || item.matchHint)) return null;
+  // A "Project: …" hint already names the project.
+  const context = [item.threadSearch.projectTitle, item.threadSearch.environmentLabel]
+    .filter((part) => part && part !== item.matchHint?.text)
+    .join(" · ");
+  return context ? (
+    <span className="max-w-[45%] shrink-0 truncate text-muted-foreground/70 text-xs">
+      {context}
+    </span>
+  ) : null;
+}
+
 function DisabledCommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
 }) {
   return (
     <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm">
-      {props.item.icon}
+      <CommandPaletteTitleIcon>{props.item.icon}</CommandPaletteTitleIcon>
       {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
-            <span className="truncate">{props.item.title}</span>
+            <CommandPaletteTitle item={props.item} />
+            <ThreadRowContext item={props.item} />
           </span>
           {props.item.threadContentMatch ? (
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
-          ) : null}
-          {props.item.description ? (
+          ) : props.item.matchHint ? (
+            <SearchMatchHintLine hint={props.item.matchHint} />
+          ) : props.item.description ? (
             <span className="min-w-0 text-muted-foreground/70 text-xs">
               {props.item.description}
             </span>
@@ -174,7 +252,7 @@ function DisabledCommandPaletteResultRow(props: {
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
           {props.item.titleLeadingContent}
-          <span className="truncate">{props.item.title}</span>
+          <CommandPaletteTitle item={props.item} />
         </span>
       )}
       {props.item.titleTrailingContent}
@@ -198,6 +276,19 @@ function CommandPaletteResultRow(props: {
       {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
+      {...(props.item.kind === "action" && props.item.checked !== undefined
+        ? { "aria-checked": props.item.checked }
+        : {})}
+      onPointerDown={(event) => {
+        if (props.item.threadRef) {
+          startPaletteThreadDrag(
+            event.nativeEvent,
+            props.item.threadRef,
+            props.item.searchTitle ??
+              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+          );
+        }
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
@@ -205,17 +296,19 @@ function CommandPaletteResultRow(props: {
         props.onExecuteItem(props.item);
       }}
     >
-      {props.item.icon}
+      <CommandPaletteTitleIcon>{props.item.icon}</CommandPaletteTitleIcon>
       {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
-            <span className="truncate">{props.item.title}</span>
+            <CommandPaletteTitle item={props.item} />
+            <ThreadRowContext item={props.item} />
           </span>
           {props.item.threadContentMatch ? (
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
-          ) : null}
-          {props.item.description ? (
+          ) : props.item.matchHint ? (
+            <SearchMatchHintLine hint={props.item.matchHint} />
+          ) : props.item.description ? (
             <span className="min-w-0 text-muted-foreground/70 text-xs">
               {props.item.description}
             </span>
@@ -224,10 +317,18 @@ function CommandPaletteResultRow(props: {
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
           {props.item.titleLeadingContent}
-          <span className="truncate">{props.item.title}</span>
+          <CommandPaletteTitle item={props.item} />
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.kind === "action" && props.item.pin ? (
+        <ProjectPinButton
+          name={props.item.pin.name}
+          pinned={props.item.pin.pinned}
+          onToggle={props.item.pin.toggle}
+          shortcutLabel={shortcutLabelForCommand(props.keybindings, "thread.pin")}
+        />
+      ) : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

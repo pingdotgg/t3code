@@ -2,15 +2,15 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -19,6 +19,7 @@ import {
   acpRegistryProbeResult,
   listAcpRegistrySessions,
   logoutAcpRegistry,
+  makeAcpRegistryTextGeneration,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
   probeAcpRegistryConfiguration,
@@ -66,6 +67,22 @@ describe("ACP Registry probe", () => {
               { value: "gpt-5.4", name: "Duplicate" },
             ],
           },
+          {
+            id: "effort",
+            name: "Effort",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [{ value: "high", name: "High" }],
+          },
+          {
+            id: "mode",
+            name: "Mode",
+            category: "mode",
+            type: "select",
+            currentValue: "ask",
+            options: [{ value: "ask", name: "Ask" }],
+          },
         ],
       },
       modelConfigId: "model",
@@ -88,7 +105,25 @@ describe("ACP Registry probe", () => {
       ],
       models: [{ id: "gpt-5.4", name: "GPT-5.4", description: null }],
       currentModelId: "gpt-5.4",
-      configOptions: [],
+      configOptions: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select",
+          options: [{ id: "high", label: "High" }],
+          currentValue: "high",
+          role: "reasoning",
+        },
+        {
+          id: "mode",
+          label: "Mode",
+          type: "select",
+          options: [{ id: "ask", label: "Ask" }],
+          currentValue: "ask",
+          role: "mode",
+        },
+      ],
+      modelOptionIds: ["effort"],
       sessionManagement: {
         canList: true,
         canLoad: true,
@@ -139,61 +174,6 @@ describe("ACP Registry probe", () => {
     );
 
     expect(methods[0]).not.toHaveProperty("command");
-  });
-
-  it("omits overlong opaque auth method and environment variable ids", () => {
-    const methods = normalizeAcpRegistryAuthMethods([
-      { id: "x".repeat(129), name: "Invalid" },
-      {
-        id: "api-key",
-        name: "API key",
-        type: "env_var",
-        vars: [
-          { name: "y".repeat(129), label: "Invalid" },
-          { name: "OPENAI_API_KEY", label: "OpenAI API key" },
-        ],
-      },
-    ]);
-
-    expect(methods).toEqual([
-      {
-        id: "api-key",
-        name: "API key",
-        description: null,
-        type: "env_var",
-        envVarNames: ["OPENAI_API_KEY"],
-      },
-    ]);
-  });
-
-  it("falls back to model-category configuration options", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
-        sessionId: "probe-session",
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "sonnet",
-            options: [
-              { value: "sonnet", name: "Sonnet", description: "Balanced" },
-              { value: "haiku", name: "Haiku" },
-            ],
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
-
-    expect(result.models).toEqual([
-      { id: "sonnet", name: "Sonnet", description: "Balanced" },
-      { id: "haiku", name: "Haiku", description: null },
-    ]);
-    expect(result.currentModelId).toBe("sonnet");
   });
 
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {
@@ -288,38 +268,49 @@ describe("ACP Registry probe", () => {
           { id: "medium", label: "Medium" },
           { id: "high", label: "High" },
         ],
+        role: "reasoning",
       },
     ]);
   });
 
-  it("omits a current model that falls outside the bounded model catalog", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
+  it.each(["config option", "session model state"] as const)(
+    "retains the current model beyond the catalog cap from %s",
+    (source) => {
+      const models = Array.from({ length: 257 }, (_, index) => ({
+        modelId: `model-${index}`,
+        name: `Model ${index}`,
+      }));
+      const result = acpRegistryProbeResult(instanceId, {
         sessionId: "probe-session",
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "model-256",
-            options: Array.from({ length: 257 }, (_, index) => ({
-              value: `model-${index}`,
-              name: `Model ${index}`,
-            })),
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+        initializeResult: { protocolVersion: 1 },
+        sessionSetupResult: {
+          sessionId: "probe-session",
+          ...(source === "config option"
+            ? {
+                configOptions: [
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select",
+                    currentValue: "model-256",
+                    options: models.map(({ modelId, name }) => ({ value: modelId, name })),
+                  },
+                ],
+              }
+            : { models: { currentModelId: "model-256", availableModels: models } }),
+        },
+        modelConfigId: source === "config option" ? "model" : undefined,
+      } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
-    expect(result.models).toHaveLength(256);
-    expect(result.currentModelId).toBeNull();
-  });
+      expect(result.models).toHaveLength(256);
+      expect(result.models[0]?.id).toBe("model-0");
+      expect(result.models.at(-1)?.id).toBe("model-256");
+      expect(result.currentModelId).toBe("model-256");
+    },
+  );
 
-  it("bounds and de-duplicates advertised commands", () => {
+  it("keeps every distinct advertised command and de-duplicates the rest", () => {
     const commands = normalizeAcpRegistryCommands([
       {
         name: "create_plan",
@@ -331,9 +322,11 @@ describe("ACP Registry probe", () => {
         name: `command_${index}`,
         description: "",
       })),
+      { name: "$late-skill", description: "Advertised after 128 commands" },
     ]);
 
-    expect(commands.slashCommands).toHaveLength(128);
+    expect(commands.slashCommands).toHaveLength(141);
+    expect(commands.slashCommands.at(-1)).toEqual({ name: "command_139" });
     expect(commands.slashCommands[0]).toEqual({
       name: "create_plan",
       description: "Create a plan",
@@ -342,7 +335,7 @@ describe("ACP Registry probe", () => {
     expect(
       commands.slashCommands.filter((command) => command.name.toLowerCase() === "create_plan"),
     ).toHaveLength(1);
-    expect(commands.skills).toEqual([]);
+    expect(commands.skills.map((skill) => skill.name)).toEqual(["late-skill"]);
   });
 
   it("routes dollar-prefixed ACP commands to the provider skill menu", () => {
@@ -367,101 +360,12 @@ describe("ACP Registry probe", () => {
     });
   });
 
-  it.effect("captures commands advertised just after session creation", () =>
-    Effect.gen(function* () {
-      const result = yield* probeAcpRegistryConfiguration({
-        instanceId,
-        settings: decodeSettings({ agentId: "mock-agent" }),
-        cwd: process.cwd(),
-        environment: process.env,
-      });
-
-      expect(result.slashCommands).toEqual([
-        {
-          name: "review",
-          description: "Review the current changes",
-          input: { hint: "focus" },
-        },
-      ]);
-      expect(result.skills).toEqual([
-        {
-          name: "workspace-skill",
-          description: "Run the workspace skill",
-          path: "acp://skill/workspace-skill",
-          scope: "agent",
-          enabled: true,
-        },
-      ]);
-    }).pipe(
-      Effect.provideService(
-        AcpRegistrySupport.AcpRegistryCatalog,
-        AcpRegistrySupport.AcpRegistryCatalog.of({
-          search: () => Effect.die("unused search"),
-          prepare: () => Effect.die("unused prepare"),
-          inspect: () => Effect.die("unused inspect"),
-          uninstallManagedBinary: () => Effect.die("unused uninstall"),
-          resolve: () =>
-            Effect.succeed({
-              agent: {
-                id: "mock-agent",
-                name: "Mock Agent",
-                version: "1.0.0",
-                description: "ACP probe test agent",
-                distribution: { npx: { package: "mock-agent@1.0.0" } },
-              },
-              distribution: "npx",
-              spawn: {
-                command: "node",
-                args: [mockAgentPath],
-                env: {
-                  ...process.env,
-                  T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "25",
-                },
-              },
-            }),
-        }),
-      ),
-      Effect.provide(NodeServices.layer),
-      Effect.scoped,
-    ),
-  );
-
-  it.effect("includes package resolution in the probe timeout", () =>
-    Effect.gen(function* () {
-      const resolveStarted = yield* Deferred.make<void>();
-      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
-        search: () => Effect.die("unused search"),
-        prepare: () => Effect.die("unused prepare"),
-        inspect: () => Effect.die("unused inspect"),
-        uninstallManagedBinary: () => Effect.die("unused uninstall"),
-        resolve: () =>
-          Deferred.succeed(resolveStarted, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const probe = yield* probeAcpRegistryConfiguration({
-        instanceId,
-        settings: decodeSettings({ agentId: "slow-agent" }),
-        cwd: process.cwd(),
-        environment: process.env,
-      }).pipe(
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-        Effect.flip,
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      yield* Deferred.await(resolveStarted);
-      yield* TestClock.adjust("60 seconds");
-
-      expect(yield* Fiber.join(probe)).toMatchObject({
-        reason: "probe_failed",
-        message: expect.stringContaining("within 60 seconds"),
-      });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
     const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
       prepare: () => Effect.die("unused prepare"),
+      refreshIndex: () => Effect.succeed(false),
+      invalidateIndex: () => Effect.void,
       inspect: () => Effect.die("unused inspect"),
       uninstallManagedBinary: () => Effect.die("unused uninstall"),
       resolve: () =>
@@ -509,54 +413,212 @@ describe("ACP Registry probe", () => {
       yield* logoutAcpRegistry(input);
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.provide(NodeServices.layer),
-      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
   });
 
-  it.effect("preserves the ACP method error for unsupported session management", () => {
-    const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
-      search: () => Effect.die("unused search"),
-      prepare: () => Effect.die("unused prepare"),
-      inspect: () => Effect.die("unused inspect"),
-      uninstallManagedBinary: () => Effect.die("unused uninstall"),
-      resolve: () =>
-        Effect.succeed({
-          agent: {
-            id: "mock-agent",
-            name: "Mock Agent",
-            version: "1.0.0",
-            description: "ACP unsupported management test agent",
-            distribution: { npx: { package: "mock-agent@1.0.0" } },
-          },
-          distribution: "npx" as const,
-          spawn: {
-            command: "node",
-            args: [mockAgentPath],
-            env: { ...process.env, T3_ACP_OMIT_SESSION_LIST_HANDLER: "1" },
-          },
-        }),
-    });
+  it.live.each(["succeeds", "fails"] as const)(
+    "deletes its health-probe session when deletion is advertised and %s",
+    (deleteOutcome) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-probe-delete-" });
+        const requestLogPath = NodePath.join(directory, "requests.ndjson");
+        const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+          search: () => Effect.die("unused search"),
+          prepare: () => Effect.die("unused prepare"),
+          refreshIndex: () => Effect.succeed(false),
+          invalidateIndex: () => Effect.void,
+          inspect: () => Effect.die("unused inspect"),
+          uninstallManagedBinary: () => Effect.die("unused uninstall"),
+          resolve: () =>
+            Effect.succeed({
+              agent: {
+                id: "mock-agent",
+                name: "Mock Agent",
+                version: "1.0.0",
+                description: "ACP probe cleanup test agent",
+                distribution: { npx: { package: "mock-agent@1.0.0" } },
+              },
+              distribution: "npx" as const,
+              spawn: {
+                command: "node",
+                args: [mockAgentPath],
+                env: {
+                  ...process.env,
+                  T3_ACP_V2_MANAGEMENT: "1",
+                  T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                  ...(deleteOutcome === "fails" ? { T3_ACP_FAIL_DELETE_SESSION: "1" } : {}),
+                },
+              },
+            }),
+        });
 
-    return Effect.gen(function* () {
-      const failure = yield* listAcpRegistrySessions({
-        instanceId,
-        settings: decodeSettings({ agentId: "mock-agent" }),
-        cwd: process.cwd(),
-        environment: process.env,
-      }).pipe(Effect.flip);
+        const result = yield* probeAcpRegistryConfiguration({
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent" }),
+          cwd: process.cwd(),
+          environment: process.env,
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+        expect(result.probe.ready).toBe(true);
+        expect(result.probe.sessionManagement.canDelete).toBe(true);
 
-      expect(failure).toMatchObject({
-        reason: "session_list_unsupported",
-        message: "The ACP agent does not advertise session listing.",
-        cause: { _tag: "AcpRequestError", code: -32601 },
+        const requests = (yield* fs.readFileString(requestLogPath))
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line));
+        expect(requests.filter((request) => request.method === "session/delete")).toEqual([
+          expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("keeps DeepSeek Harness probe history in a temporary directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-probe-dsh-" });
+      const launcher = NodePath.join(directory, "dsh-fixture.mjs");
+      const launchLog = NodePath.join(directory, "launch.json");
+      yield* fs.writeFileString(
+        launcher,
+        `
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [,, agentPath, logPath, ...args] = process.argv;
+const patchFlag = args.lastIndexOf("--patch");
+const patchPath = patchFlag === -1 ? null : args[patchFlag + 1];
+const patch = patchPath === null ? null : JSON.parse(readFileSync(patchPath, "utf8"));
+writeFileSync(logPath, JSON.stringify({ args, patch }));
+await import(pathToFileURL(agentPath).href);
+`,
+      );
+      const userPatch = NodePath.join(directory, "user-patch.json");
+      yield* fs.writeFileString(userPatch, "[]");
+      const commandArgs = ["--profile", "acp", "--patch", userPatch];
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+        search: () => Effect.die("unused search"),
+        prepare: () => Effect.die("unused prepare"),
+        refreshIndex: () => Effect.succeed(false),
+        invalidateIndex: () => Effect.void,
+        inspect: () => Effect.die("unused inspect"),
+        uninstallManagedBinary: () => Effect.die("unused uninstall"),
+        resolve: () =>
+          Effect.succeed({
+            distribution: "local",
+            spawn: {
+              command: process.execPath,
+              args: [launcher, mockAgentPath, launchLog, ...commandArgs],
+            },
+          }),
       });
-    }).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.provide(NodeServices.layer),
-      Effect.scoped,
-    );
-  });
+      const result = yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ source: "local", commandPath: "dsh", commandArgs }),
+        cwd: directory,
+        environment: process.env,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+      expect(result.probe.ready).toBe(true);
+      expect(result.probe.models.length).toBeGreaterThan(0);
+
+      const { args, patch } = JSON.parse(yield* fs.readFileString(launchLog));
+      expect(args).toEqual([...commandArgs, "--patch", expect.any(String)]);
+      const probeDirectory = NodePath.dirname(args.at(-1));
+      expect(patch).toEqual([
+        {
+          id: "session-persistence-jsonl",
+          config: { root: NodePath.join(probeDirectory, "sessions") },
+        },
+        { id: "session-projection-cache", disabled: true },
+      ]);
+      expect(yield* fs.exists(probeDirectory)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live.each([
+    { model: "default", omitModelOptions: false, customModels: [], writes: 0 },
+    { model: "composer-2", omitModelOptions: false, customModels: [], writes: 1 },
+    { model: "retired-model", omitModelOptions: false, customModels: [], writes: 0 },
+    { model: "composer-2", omitModelOptions: true, customModels: [], writes: 0 },
+    { model: "custom-model", omitModelOptions: false, customModels: ["custom-model"], writes: 1 },
+  ])(
+    "generates text and deletes its session with $model and omitted options $omitModelOptions",
+    ({ model, omitModelOptions, customModels, writes }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-title-" });
+        const requestLogPath = NodePath.join(directory, "requests.ndjson");
+        let failResolution = false;
+        const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+          search: () => Effect.die("unused search"),
+          prepare: () => Effect.die("unused prepare"),
+          refreshIndex: () => Effect.succeed(false),
+          invalidateIndex: () => Effect.void,
+          inspect: () => Effect.die("unused inspect"),
+          uninstallManagedBinary: () => Effect.die("unused uninstall"),
+          resolve: () =>
+            failResolution
+              ? Effect.fail(
+                  new AcpRegistrySupport.AcpRegistryError({
+                    reason: "runner_unavailable",
+                    detail: "private provider failure",
+                  }),
+                )
+              : Effect.succeed({
+                  distribution: "local" as const,
+                  spawn: {
+                    command: "node",
+                    args: [mockAgentPath],
+                    env: {
+                      ...process.env,
+                      T3_ACP_SESSION_LIFECYCLE: "1",
+                      T3_ACP_V2_MANAGEMENT: "1",
+                      T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                      T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Migrate Sessions to Postgres"}',
+                      T3_ACP_OMIT_MODEL_OPTIONS: omitModelOptions ? "1" : "0",
+                    },
+                  },
+                }),
+        });
+        const textGeneration = yield* makeAcpRegistryTextGeneration({
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent", customModels }),
+          environment: process.env,
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+        const result = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Move session storage from Redis to Postgres",
+          modelSelection: { instanceId, model },
+        });
+
+        expect(result.title).toBe("Migrate Sessions to Postgres");
+        failResolution = true;
+        const failure = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Generate a title",
+            modelSelection: { instanceId, model: "default" },
+          })
+          .pipe(Effect.result);
+        expect(failure).toMatchObject({
+          _tag: "Failure",
+          failure: { detail: "The ACP text generation request failed." },
+        });
+        const requests = (yield* fs.readFileString(requestLogPath))
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line));
+        expect(
+          requests.filter((request) => request.method === "session/set_config_option"),
+        ).toHaveLength(writes);
+        expect(requests.filter((request) => request.method === "session/set_model")).toHaveLength(
+          0,
+        );
+        expect(requests.filter((request) => request.method === "session/delete")).toEqual([
+          expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 
   it("distinguishes authentication failures from generic probe failures", () => {
     const advertised = normalizeAcpRegistryAuthMethods([

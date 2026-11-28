@@ -1,5 +1,5 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, test } from "bun:test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,24 +10,16 @@ import hono from "../src/forms/hono.ts";
 const source = Effect.fn(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const filename = yield* path.fromFileUrl(
-    new URL(`../${file}`, import.meta.url),
-  );
+  const filename = yield* path.fromFileUrl(new URL(`../${file}`, import.meta.url));
   return yield* fs.readFileString(filename);
 });
 
 test("all three stack configurations import without running deployment effects", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const effect = yield* Effect.tryPromise(
-        () => import("../alchemy.run.ts"),
-      );
-      const native = yield* Effect.tryPromise(
-        () => import("../alchemy.native.ts"),
-      );
-      const preview = yield* Effect.tryPromise(
-        () => import("../alchemy.preview.ts"),
-      );
+      const effect = yield* Effect.tryPromise(() => import("../alchemy.run.ts"));
+      const native = yield* Effect.tryPromise(() => import("../alchemy.native.ts"));
+      const preview = yield* Effect.tryPromise(() => import("../alchemy.preview.ts"));
       expect(effect.default).toBeDefined();
       expect(native.default).toBeDefined();
       expect(preview.default).toBeDefined();
@@ -70,9 +62,7 @@ test("composition declares one Project and one Backend for every feature module"
       }
       const features = yield* source("src/features.ts");
       expect(features).toContain('enableAI === "true" ? yield* ai : undefined');
-      expect(features).toContain(
-        'enableForms === "true" ? yield* forms : undefined',
-      );
+      expect(features).toContain('enableForms === "true" ? yield* forms : undefined');
       expect(features.match(/Config\.withDefault\("false"\)/g)).toHaveLength(2);
       for (const file of ["src/ai/index.ts", "src/ai/EffectApi.ts"]) {
         const ai = yield* source(file);
@@ -87,9 +77,7 @@ test("cron writes are idempotent and the preview only enables its own upload tri
     Effect.gen(function* () {
       const events = yield* source("src/Events.ts");
       const migration = yield* source("migrations/0002_scheduled_runs.sql");
-      expect(events).toContain(
-        'Neon.CronEventSource("Nightly", { cron: "0 2 * * *" }',
-      );
+      expect(events).toContain('Neon.CronEventSource("Nightly", { cron: "0 2 * * *" }');
       expect(events).toContain("ON CONFLICT DO NOTHING");
       expect(migration).toContain("invocation_id text PRIMARY KEY");
       const preview = yield* source("alchemy.preview.ts");
@@ -125,10 +113,7 @@ const invokeNativeAI = Effect.fn(function* (options: {
           () =>
             new Request(`https://example.invalid${options.path ?? "/chat"}`, {
               method,
-              body:
-                method === "POST"
-                  ? (options.body ?? '{"prompt":"Hello"}')
-                  : undefined,
+              body: method === "POST" ? (options.body ?? '{"prompt":"Hello"}') : undefined,
               headers: {
                 "content-type": "application/json",
                 ...(options.authorization === undefined
@@ -150,18 +135,16 @@ const invokeNativeAI = Effect.fn(function* (options: {
 });
 
 for (const authorization of [undefined, "Bearer wrong"]) {
-  test.serial(
-    `native AI authenticates before parsing: ${authorization ?? "missing"}`,
-    () =>
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const response = yield* invokeNativeAI({
-            authorization,
-            body: "not-json",
-          });
-          expect(response.status).toBe(401);
-        }),
-      ),
+  test.serial(`native AI authenticates before parsing: ${authorization ?? "missing"}`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const response = yield* invokeNativeAI({
+          authorization,
+          body: "not-json",
+        });
+        expect(response.status).toBe(401);
+      }),
+    ),
   );
 }
 
@@ -173,69 +156,57 @@ for (const body of [
   '{"prompt":" "}',
   JSON.stringify({ prompt: "x".repeat(4001) }),
 ]) {
-  test.serial(
-    `native AI rejects invalid prompts before the paid gate: ${body.slice(0, 30)}`,
-    () =>
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const response = yield* invokeNativeAI({
-            authorization: "Bearer offline-example-secret",
-            body,
-          });
-          expect(response.status).toBe(400);
-        }),
-      ),
+  test.serial(`native AI rejects invalid prompts before the paid gate: ${body.slice(0, 30)}`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const response = yield* invokeNativeAI({
+          authorization: "Bearer offline-example-secret",
+          body,
+        });
+        expect(response.status).toBe(400);
+      }),
+    ),
   );
 }
 
 for (const paid of [undefined, "false", "1"]) {
-  test.serial(
-    `native AI refuses inference without exact opt-in: ${paid ?? "unset"}`,
-    () =>
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const response = yield* invokeNativeAI({
-            authorization: "Bearer offline-example-secret",
-            paid,
-          });
-          expect(response.status).toBe(503);
-          const body = yield* Effect.tryPromise(() => response.text());
-          expect(body).not.toContain("offline-example-secret");
-        }),
-      ),
+  test.serial(`native AI refuses inference without exact opt-in: ${paid ?? "unset"}`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const response = yield* invokeNativeAI({
+          authorization: "Bearer offline-example-secret",
+          paid,
+        });
+        expect(response.status).toBe(503);
+        const body = yield* Effect.tryPromise(() => response.text());
+        expect(body).not.toContain("offline-example-secret");
+      }),
+    ),
   );
 }
 
-test.serial(
-  "native streaming UI and public handler forms remain usable offline",
-  () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const page = yield* invokeNativeAI({ path: "/", method: "GET" });
-        expect(page.status).toBe(200);
-        const html = yield* Effect.tryPromise(() => page.text());
-        expect(html).toContain('id="cancel"');
-        expect(html).toContain("AbortController");
-        expect(html).toContain("text-delta");
-        expect(html).not.toContain("offline-example-secret");
-        expect(
-          (yield* invokeNativeAI({ path: "/missing", method: "GET" })).status,
-        ).toBe(404);
-        const request = yield* Effect.sync(
-          () => new Request("https://example.invalid/health"),
-        );
-        const bareResponse = yield* Effect.sync(() => bare(request));
-        expect(yield* Effect.tryPromise(() => bareResponse.json())).toEqual({
-          path: "/health",
-        });
-        const result = yield* Effect.sync(() => hono.fetch(request));
-        const honoResponse =
-          result instanceof Response
-            ? result
-            : yield* Effect.tryPromise(() => result);
-        expect(yield* Effect.tryPromise(() => honoResponse.json())).toEqual({
-          ok: true,
-        });
-      }),
-    ),
+test.serial("native streaming UI and public handler forms remain usable offline", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const page = yield* invokeNativeAI({ path: "/", method: "GET" });
+      expect(page.status).toBe(200);
+      const html = yield* Effect.tryPromise(() => page.text());
+      expect(html).toContain('id="cancel"');
+      expect(html).toContain("AbortController");
+      expect(html).toContain("text-delta");
+      expect(html).not.toContain("offline-example-secret");
+      expect((yield* invokeNativeAI({ path: "/missing", method: "GET" })).status).toBe(404);
+      const request = yield* Effect.sync(() => new Request("https://example.invalid/health"));
+      const bareResponse = yield* Effect.sync(() => bare(request));
+      expect(yield* Effect.tryPromise(() => bareResponse.json())).toEqual({
+        path: "/health",
+      });
+      const result = yield* Effect.sync(() => hono.fetch(request));
+      const honoResponse =
+        result instanceof Response ? result : yield* Effect.tryPromise(() => result);
+      expect(yield* Effect.tryPromise(() => honoResponse.json())).toEqual({
+        ok: true,
+      });
+    }),
+  ),
 );

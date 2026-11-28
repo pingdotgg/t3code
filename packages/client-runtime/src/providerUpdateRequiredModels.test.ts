@@ -1,47 +1,54 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatProviderUpdateRequiredNotice } from "./providerUpdateRequiredModels.ts";
+import {
+  formatProviderUpdateRequiredNotice,
+  providerUpdateChannelLags,
+} from "./providerUpdateRequiredModels.ts";
 
 describe("formatProviderUpdateRequiredNotice", () => {
-  it("names the CLI and the version that unlocks every listed model", () => {
-    expect(
-      formatProviderUpdateRequiredNotice({
-        driver: ProviderDriverKind.make("claudeAgent"),
-        updateRequiredModels: [
-          { slug: "a", name: "Model A", minVersion: "2.1.9" },
-          { slug: "b", name: "Model B", minVersion: "2.1.10" },
-        ],
-      }),
-    ).toBe("Update Claude Code to v2.1.10 or newer to use Model A and Model B.");
-    expect(
-      formatProviderUpdateRequiredNotice({ driver: ProviderDriverKind.make("codex") }),
-    ).toBeNull();
-  });
-
-  it("names only the gated models a search matches", () => {
-    const provider = {
+  it("does not ask for an update the install's own channel cannot deliver", () => {
+    const homebrewClaude = {
       driver: ProviderDriverKind.make("claudeAgent"),
       updateRequiredModels: [
-        { slug: "claude-a", name: "Model A", minVersion: "2.1.9" },
-        { slug: "claude-b", name: "Model B", minVersion: "2.1.10" },
+        { slug: "claude-fable-5-2", name: "Claude Fable 5.2", minVersion: "2.1.321" },
       ],
+      versionAdvisory: {
+        status: "current" as const,
+        currentVersion: "2.1.311",
+        latestVersion: "2.1.311",
+        updateCommand: "brew upgrade --cask claude-code",
+        canUpdate: true,
+        checkedAt: null,
+        message: null,
+      },
     };
-    expect(formatProviderUpdateRequiredNotice(provider, " model a ")).toBe(
-      "Update Claude Code to v2.1.9 or newer to use Model A.",
-    );
-    expect(formatProviderUpdateRequiredNotice(provider, "gpt")).toBeNull();
-  });
 
-  it("names the release, not a prerelease of it", () => {
+    const notice = formatProviderUpdateRequiredNotice(homebrewClaude);
+
+    expect(notice).toBe(
+      "Using Claude Fable 5.2 requires Claude Code v2.1.321 or newer, but the claude-code Homebrew cask only has v2.1.311. Switch to the claude-code@latest cask: brew uninstall --cask claude-code && brew install --cask claude-code@latest",
+    );
+    expect(providerUpdateChannelLags(homebrewClaude)).toBe(true);
     expect(
       formatProviderUpdateRequiredNotice({
-        driver: ProviderDriverKind.make("codex"),
-        updateRequiredModels: [
-          { slug: "a", name: "A", minVersion: "2.1.0-beta" },
-          { slug: "b", name: "B", minVersion: "2.1.0" },
-        ],
+        ...homebrewClaude,
+        versionAdvisory: { ...homebrewClaude.versionAdvisory, updateCommand: null },
       }),
-    ).toBe("Update the Codex CLI to v2.1.0 or newer to use A and B.");
+    ).toBe(
+      "Using Claude Fable 5.2 requires Claude Code v2.1.321 or newer, but the newest this install can update to is v2.1.311. Install Claude Code another way or wait for a newer release.",
+    );
+    expect(
+      formatProviderUpdateRequiredNotice({
+        ...homebrewClaude,
+        versionAdvisory: { ...homebrewClaude.versionAdvisory, latestVersion: "2.1.330" },
+      }),
+    ).toBe("Update Claude Code to v2.1.321 or newer to use Claude Fable 5.2.");
+    expect(
+      providerUpdateChannelLags({
+        ...homebrewClaude,
+        versionAdvisory: { ...homebrewClaude.versionAdvisory, latestVersion: "2.1.330" },
+      }),
+    ).toBe(false);
   });
 });

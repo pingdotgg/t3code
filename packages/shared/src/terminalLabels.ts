@@ -1,6 +1,4 @@
-import type { TerminalSummary } from "@t3tools/contracts";
-
-function terminalNumber(terminalId: string): string | undefined {
+export function terminalNumber(terminalId: string): string | undefined {
   return /^term(?:inal)?-(\d+)(?:-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})?$/i.exec(
     terminalId,
   )?.[1];
@@ -15,21 +13,7 @@ export function getTerminalLabel(terminalId: string): string {
   return terminalId;
 }
 
-export function resolveTerminalSessionLabel(
-  terminalId: string,
-  summary: Pick<TerminalSummary, "label"> | null | undefined,
-): string {
-  const trimmed = summary?.label?.trim();
-  if (trimmed && trimmed.length > 0) {
-    return trimmed;
-  }
-  return getTerminalLabel(terminalId);
-}
-
-/**
- * When metadata is unavailable, callers append a UUID so an unseen host session
- * cannot be reused accidentally.
- */
+/** Append a UUID when metadata is unavailable to avoid reusing unseen host sessions. */
 export function nextTerminalId(
   existingTerminalIds: ReadonlyArray<string>,
   uniqueSuffix?: string,

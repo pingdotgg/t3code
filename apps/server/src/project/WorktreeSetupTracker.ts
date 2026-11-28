@@ -11,8 +11,10 @@ import {
   WORKTREE_SETUP_STAGE_ORDER,
   WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -56,12 +58,13 @@ export class WorktreeSetupTracker extends Context.Service<
       phase: "done" | "failed" | "cancelled",
       error?: string | null,
     ) => Effect.Effect<WorktreeSetupSnapshot | null>;
-    /**
-     * Called right before the turn is dispatched so a late cancel cannot roll
-     * back a thread whose agent has already started.
-     */
+    /** Call just before dispatch so late cancellation cannot roll back a started agent's thread. */
     readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Holds a newly allocated workspace through blocking preparation and any rollback. */
+    readonly holdWorkspace: (threadId: ThreadId) => Effect.Effect<Effect.Effect<void>>;
+    readonly workspaceIsHeld: (threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly awaitWorkspaceRelease: (threadId: ThreadId) => Effect.Effect<void>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
     readonly stream: (threadId: ThreadId) => Stream.Stream<WorktreeSetupSnapshot | null>;
   }
@@ -70,7 +73,9 @@ export class WorktreeSetupTracker extends Context.Service<
 const TAIL_LINE_LIMIT = 4;
 
 function clampText(text: string, maxLength: number): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
+  if (text.length <= maxLength) return text;
+  const end = splitsSurrogatePair(text, maxLength - 1) ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}\u2026`;
 }
 
 const clampDetail = (detail: string | null): string | null =>
@@ -98,13 +103,16 @@ function emptyStage(id: WorktreeSetupStageId): WorktreeSetupStage {
 
 export const make = Effect.gen(function* () {
   const setups = yield* Ref.make(new Map<ThreadId, TrackedSetup>());
+  const workspaceHolds = new Map<
+    ThreadId,
+    { count: number; readonly released: Deferred.Deferred<void> }
+  >();
   const changes = yield* PubSub.unbounded<{
     readonly threadId: ThreadId;
     readonly snapshot: WorktreeSetupSnapshot | null;
   }>();
   const retentionFibers = new Map<ThreadId, Fiber.Fiber<void, never>>();
-  // Sequences keep increasing across setups of the same thread so a stream
-  // opened during a previous setup still accepts the next one's first snapshot.
+  // Keep sequences increasing across setups so existing subscribers accept the next setup's first snapshot.
   const lastSequenceByThread = new Map<ThreadId, number>();
 
   const publish = (threadId: ThreadId, snapshot: WorktreeSetupSnapshot | null) =>
@@ -142,13 +150,12 @@ export const make = Effect.gen(function* () {
       return next;
     }).pipe(
       Effect.andThen(publish(threadId, null)),
-      // A subscriber that outlives retention sees `null` here and accepts any
-      // sequence after it, so the counter can start over for this thread.
+      // After retention, subscribers see null and accept any sequence; the counter can reset.
       Effect.tap(() => Effect.sync(() => lastSequenceByThread.delete(threadId))),
     );
 
-  const begin: WorktreeSetupTracker["Service"]["begin"] = (input) =>
-    Effect.gen(function* () {
+  const begin: WorktreeSetupTracker["Service"]["begin"] = Effect.fn("WorktreeSetupTracker.begin")(
+    function* (input) {
       yield* clearRetention(input.threadId);
       const startedAt = yield* nowIso;
       const ordered = WORKTREE_SETUP_STAGE_ORDER.filter((id) => input.stages.includes(id));
@@ -172,7 +179,8 @@ export const make = Effect.gen(function* () {
         return next;
       });
       yield* publish(input.threadId, snapshot);
-    });
+    },
+  );
 
   const update: WorktreeSetupTracker["Service"]["update"] = (threadId, mutate) =>
     modify(threadId, (tracked) => ({ ...tracked, snapshot: mutate(tracked.snapshot) })).pipe(
@@ -235,44 +243,45 @@ export const make = Effect.gen(function* () {
       ),
     }));
 
-  const finish: WorktreeSetupTracker["Service"]["finish"] = (threadId, phase, error) =>
-    Effect.gen(function* () {
-      const endedAt = yield* nowIso;
-      const snapshot = yield* modify(threadId, (tracked) => ({
-        fiber: null,
-        snapshot: {
-          ...tracked.snapshot,
-          phase,
-          endedAt,
-          error:
-            error === undefined || error === null
-              ? null
-              : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
-          stages: tracked.snapshot.stages.map((entry) =>
-            entry.status === "running"
-              ? {
-                  ...entry,
-                  status: phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
-                  endedAt,
-                }
-              : entry,
-          ),
-        },
-      }));
-      if (!snapshot) return null;
-      yield* clearRetention(threadId);
-      const fiber = yield* remove(threadId).pipe(
-        Effect.delay(FINISHED_RETENTION),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
-          }),
+  const finish: WorktreeSetupTracker["Service"]["finish"] = Effect.fn(
+    "WorktreeSetupTracker.finish",
+  )(function* (threadId, phase, error) {
+    const endedAt = yield* nowIso;
+    const snapshot = yield* modify(threadId, (tracked) => ({
+      fiber: null,
+      snapshot: {
+        ...tracked.snapshot,
+        phase,
+        endedAt,
+        error:
+          error === undefined || error === null
+            ? null
+            : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
+        stages: tracked.snapshot.stages.map((entry) =>
+          entry.status === "running"
+            ? {
+                ...entry,
+                status: phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
+                endedAt,
+              }
+            : entry,
         ),
-        Effect.forkDetach,
-      );
-      retentionFibers.set(threadId, fiber);
-      return snapshot;
-    });
+      },
+    }));
+    if (!snapshot) return null;
+    yield* clearRetention(threadId);
+    const fiber = yield* remove(threadId).pipe(
+      Effect.delay(FINISHED_RETENTION),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
+        }),
+      ),
+      Effect.forkDetach,
+    );
+    retentionFibers.set(threadId, fiber);
+    return snapshot;
+  });
 
   const markUncancellable: WorktreeSetupTracker["Service"]["markUncancellable"] = (threadId) =>
     Ref.update(setups, (current) => {
@@ -283,33 +292,56 @@ export const make = Effect.gen(function* () {
       return next;
     });
 
-  const cancel: WorktreeSetupTracker["Service"]["cancel"] = (threadId) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(setups);
-      const tracked = current.get(threadId);
-      if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) {
-        return false;
-      }
-      yield* Fiber.interrupt(tracked.fiber);
-      return true;
-    });
+  const cancel: WorktreeSetupTracker["Service"]["cancel"] = Effect.fn(
+    "WorktreeSetupTracker.cancel",
+  )(function* (threadId) {
+    const current = yield* Ref.get(setups);
+    const tracked = current.get(threadId);
+    if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) {
+      return false;
+    }
+    yield* Fiber.interrupt(tracked.fiber);
+    return true;
+  });
 
   const get: WorktreeSetupTracker["Service"]["get"] = (threadId) =>
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));
 
-  /**
-   * Each subscriber gets a one-slot sliding mailbox: a slow WebSocket only ever
-   * holds the newest snapshot, so a chatty setup script cannot grow the server
-   * heap.
-   */
+  const holdWorkspace = (threadId: ThreadId) =>
+    Effect.sync(() => {
+      const hold = workspaceHolds.get(threadId) ?? {
+        count: 0,
+        released: Deferred.makeUnsafe<void>(),
+      };
+      hold.count += 1;
+      workspaceHolds.set(threadId, hold);
+      let released = false;
+      return Effect.sync(() => {
+        if (released) return;
+        released = true;
+        hold.count -= 1;
+        if (hold.count > 0) return;
+        workspaceHolds.delete(threadId);
+        Deferred.doneUnsafe(hold.released, Effect.void);
+      });
+    });
+
+  const workspaceIsHeld = (threadId: ThreadId) => Effect.sync(() => workspaceHolds.has(threadId));
+
+  const awaitWorkspaceRelease = (threadId: ThreadId) =>
+    Effect.suspend(() => {
+      const hold = workspaceHolds.get(threadId);
+      return hold === undefined ? Effect.void : Deferred.await(hold.released);
+    });
+
+  // One-slot sliding mailboxes bound slow WebSockets to the newest setup snapshot.
   const stream: WorktreeSetupTracker["Service"]["stream"] = (threadId) =>
     Stream.callback<WorktreeSetupSnapshot | null>(
       (mailbox) =>
         Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changes);
           const initial = yield* get(threadId);
-          // Changes published between subscribing and reading `initial` are
-          // already folded into it. Drop them so the client never steps back.
+          // The initial snapshot already includes queued changes; drop them to avoid stale replay.
           let lastSequence = initial?.sequence ?? -1;
           Queue.offerUnsafe(mailbox, initial);
           yield* Stream.fromSubscription(subscription).pipe(
@@ -336,6 +368,9 @@ export const make = Effect.gen(function* () {
     finish,
     markUncancellable,
     cancel,
+    holdWorkspace,
+    workspaceIsHeld,
+    awaitWorkspaceRelease,
     get,
     stream,
   });

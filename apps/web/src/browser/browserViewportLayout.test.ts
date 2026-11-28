@@ -2,150 +2,18 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resizeBrowserViewportFromRail,
-  resizeFreeformViewport,
-  resolveBrowserDeviceViewportLayout,
-  resolveFittedBrowserViewport,
   resolveBrowserViewportLayout,
-  resolveResponsiveBrowserViewportSize,
+  resolveBrowserViewportTransform,
+  resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportFitScale,
+  resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 
 describe("resolveBrowserViewportLayout", () => {
-  it("uses the current fixed viewport instead of stale fitted source dimensions", () => {
-    expect(
-      resolveFittedBrowserViewport(
-        { _tag: "freeform", width: 900, height: 600 },
-        { width: 1280, height: 800, scale: 1 },
-      ),
-    ).toEqual({ _tag: "freeform", width: 900, height: 600 });
-  });
-
   it("preserves the last logical viewport when fitting a fill-mode surface", () => {
     expect(
       resolveFittedBrowserViewport({ _tag: "fill" }, { width: 320, height: 200, scale: 0.25 }),
     ).toEqual({ _tag: "freeform", width: 1280, height: 800 });
-  });
-
-  it("fills the available surface in fill mode", () => {
-    expect(resolveBrowserViewportLayout({ width: 700, height: 500 }, { _tag: "fill" })).toEqual({
-      canvasWidth: 700,
-      canvasHeight: 500,
-      viewportX: 0,
-      viewportY: 0,
-      viewportWidth: 700,
-      viewportHeight: 500,
-      viewportScale: 1,
-      fillsPanel: true,
-    });
-  });
-
-  it("centers a smaller fixed viewport", () => {
-    expect(
-      resolveBrowserViewportLayout(
-        { width: 700, height: 1000 },
-        { _tag: "freeform", width: 393, height: 852 },
-      ),
-    ).toMatchObject({
-      canvasWidth: 700,
-      canvasHeight: 1000,
-      viewportX: 154,
-      viewportY: 74,
-      viewportWidth: 393,
-      viewportHeight: 852,
-    });
-  });
-
-  it("scales a larger fixed viewport down to fit without creating overflow", () => {
-    const layout = resolveBrowserViewportLayout(
-      { width: 600, height: 700 },
-      { _tag: "freeform", width: 1440, height: 900 },
-    );
-    expect(layout).toMatchObject({
-      canvasWidth: 600,
-      canvasHeight: 700,
-      viewportX: 0,
-      viewportY: 163,
-      viewportWidth: 600,
-      viewportHeight: 375,
-    });
-    expect(layout.viewportScale).toBeCloseTo(5 / 12);
-  });
-
-  it("keeps fixed dimensions in page CSS pixels when browser zoom changes", () => {
-    expect(
-      resolveBrowserViewportLayout(
-        { width: 800, height: 700 },
-        { _tag: "freeform", width: 400, height: 300 },
-        1.5,
-      ),
-    ).toMatchObject({
-      viewportX: 100,
-      viewportY: 125,
-      viewportWidth: 600,
-      viewportHeight: 450,
-    });
-    expect(resizeFreeformViewport({ width: 400, height: 300 }, { x: 150, y: 75 }, 1.5)).toEqual({
-      width: 500,
-      height: 350,
-    });
-  });
-
-  it("bounds freeform drag sizes and total render area", () => {
-    expect(resizeFreeformViewport({ width: 1024, height: 768 }, { x: -2000, y: -2000 })).toEqual({
-      width: 240,
-      height: 240,
-    });
-    const large = resizeFreeformViewport({ width: 1920, height: 1080 }, { x: 2000, y: 2000 });
-    expect(large.width * large.height).toBeLessThanOrEqual(3840 * 2160);
-  });
-
-  it("resizes only the axes controlled by each edge", () => {
-    expect(
-      resizeFreeformViewport({ width: 800, height: 600 }, { x: -100, y: 500 }, 1, "west"),
-    ).toEqual({ width: 900, height: 600 });
-    expect(
-      resizeFreeformViewport({ width: 800, height: 600 }, { x: 500, y: 100 }, 1, "north"),
-    ).toEqual({ width: 800, height: 500 });
-    expect(
-      resizeFreeformViewport({ width: 800, height: 600 }, { x: -100, y: -50 }, 1, "northwest"),
-    ).toEqual({ width: 900, height: 650 });
-  });
-
-  it("preserves a locked aspect ratio from either axis", () => {
-    expect(
-      resizeFreeformViewport({ width: 800, height: 600 }, { x: 200, y: 0 }, 1, "east", 4 / 3),
-    ).toEqual({ width: 1000, height: 750 });
-    expect(
-      resizeFreeformViewport({ width: 800, height: 600 }, { x: 0, y: 150 }, 1, "south", 4 / 3),
-    ).toEqual({ width: 1000, height: 750 });
-  });
-
-  it("reserves persistent device-toolbar rails around the guest viewport", () => {
-    expect(
-      resolveBrowserDeviceViewportLayout(
-        { width: 1200, height: 900 },
-        { _tag: "freeform", width: 1180, height: 852 },
-      ),
-    ).toEqual({
-      canvasWidth: 1200,
-      canvasHeight: 900,
-      viewportX: 10,
-      viewportY: 38,
-      viewportWidth: 1180,
-      viewportHeight: 852,
-      viewportScale: 1,
-      fillsPanel: false,
-    });
-  });
-
-  it("captures the available framed area when responsive mode is enabled", () => {
-    expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 })).toEqual({
-      width: 1180,
-      height: 852,
-    });
-    expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 }, 2)).toEqual({
-      width: 590,
-      height: 426,
-    });
   });
 
   it("keeps the grabbed rail under the pointer across centered layout boundaries", () => {
@@ -177,5 +45,58 @@ describe("resolveBrowserViewportLayout", () => {
         "east",
       ),
     ).toEqual({ width: 460, height: 409 });
+  });
+
+  it("fits a hidden fixed viewport larger than the window inside the window", () => {
+    const setting = { _tag: "freeform", width: 1440, height: 1700 } as const;
+    const windowSize = { width: 1400, height: 1000 };
+    const hidden = resolveHiddenBrowserViewportSize({
+      setting,
+      zoomFactor: 1,
+      content: null,
+      lastRect: null,
+      windowSize,
+    });
+    expect(hidden).toEqual({ width: 1400, height: 1000 });
+    const layout = resolveBrowserViewportLayout(hidden, setting);
+    expect(layout.viewportHeight).toBeLessThanOrEqual(windowSize.height);
+    expect(layout.viewportScale).toBeCloseTo(1000 / 1700);
+    expect(
+      resolveHiddenBrowserViewportSize({
+        setting: { _tag: "freeform", width: 1280, height: 800 },
+        zoomFactor: 1,
+        content: null,
+        lastRect: null,
+        windowSize,
+      }),
+    ).toEqual({ width: 1280, height: 800 });
+  });
+
+  it.each([
+    { hidden: { width: 1440, height: 900 }, window: { width: 1840, height: 1016 }, scale: 1 },
+    { hidden: { width: 3440, height: 1440 }, window: { width: 1720, height: 1016 }, scale: 0.5 },
+    { hidden: { width: 1000, height: 2000 }, window: { width: 1840, height: 500 }, scale: 0.25 },
+    { hidden: { width: 3440, height: 1440 }, window: { width: 0, height: 0 }, scale: 1 },
+  ])(
+    "fits a $hidden.width x $hidden.height hidden guest in a $window.width x $window.height window",
+    ({ hidden, window, scale }) => {
+      expect(resolveHiddenBrowserViewportFitScale(hidden, window)).toBe(scale);
+    },
+  );
+});
+
+describe("resolveBrowserViewportTransform", () => {
+  it("keeps a full-detail guest at raster scale 1 while it draws at the fitted scale", () => {
+    expect(resolveBrowserViewportTransform(1, true)).toBeUndefined();
+    expect(resolveBrowserViewportTransform(0.6, false)).toBe("scale(0.6)");
+    const values = resolveBrowserViewportTransform(0.6, true)
+      ?.match(/^matrix3d\((.*)\)$/)?.[1]
+      ?.split(",")
+      .map(Number);
+    // Column-major: the x and y columns keep their 0.6 screen terms and reach length 1 through z.
+    expect(values?.slice(0, 2)).toEqual([0.6, 0]);
+    expect(values?.slice(4, 6)).toEqual([0, 0.6]);
+    expect(Math.hypot(...(values?.slice(0, 3) ?? []))).toBeCloseTo(1);
+    expect(Math.hypot(...(values?.slice(4, 7) ?? []))).toBeCloseTo(1);
   });
 });

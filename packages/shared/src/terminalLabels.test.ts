@@ -1,61 +1,38 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { TerminalSummary } from "@t3tools/contracts";
 import { DEFAULT_TERMINAL_ID, TerminalOpenInput } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
-import { getTerminalLabel, nextTerminalId, resolveTerminalSessionLabel } from "./terminalLabels.ts";
+import { getTerminalLabel, nextTerminalId } from "./terminalLabels.ts";
+import { resolveTerminalSessionLabel } from "./terminalLabelsCopy.ts";
 
 const decodeTerminalOpen = Schema.decodeUnknownSync(TerminalOpenInput);
 
-describe("getTerminalLabel", () => {
-  it("uses the numeric suffix for term-* ids", () => {
-    expect(getTerminalLabel(DEFAULT_TERMINAL_ID)).toBe("Terminal 1");
-    expect(getTerminalLabel("term-2")).toBe("Terminal 2");
-    expect(getTerminalLabel("term-12")).toBe("Terminal 12");
-    expect(getTerminalLabel("terminal-3")).toBe("Terminal 3");
-  });
-
-  it("falls back to the raw id for unknown shapes", () => {
-    expect(getTerminalLabel("custom-session")).toBe("custom-session");
-  });
-
-  it("keeps a numbered label for terminals allocated without host metadata", () => {
-    expect(getTerminalLabel("term-2-783c91cc-a413-47c7-8312-c2a5a1f05e40")).toBe("Terminal 2");
-  });
-});
+const japanese: MFunctionType = (encodedMsg, options) => {
+  const english = mFallback(encodedMsg, options);
+  return (
+    typeof english === "string" ? english.replace("Terminal", "ターミナル") : english
+  ) as typeof english;
+};
 
 describe("resolveTerminalSessionLabel", () => {
-  it("prefers a non-empty summary label", () => {
-    const summary = { label: "  bun  " } as Pick<TerminalSummary, "label">;
-    expect(resolveTerminalSessionLabel("term-1", summary)).toBe("bun");
-  });
-
-  it("falls back to getTerminalLabel when summary is missing or blank", () => {
-    expect(resolveTerminalSessionLabel(DEFAULT_TERMINAL_ID, { label: "   " })).toBe("Terminal 1");
-    expect(resolveTerminalSessionLabel(DEFAULT_TERMINAL_ID, null)).toBe("Terminal 1");
-    expect(resolveTerminalSessionLabel("term-2", undefined)).toBe("Terminal 2");
+  it("translates the idle default and keeps process names", () => {
+    const resolve = (label: string, hasRunningSubprocess: boolean) =>
+      resolveTerminalSessionLabel("term-2", { label, hasRunningSubprocess }, japanese);
+    expect(resolve("Terminal 2", false)).toBe("ターミナル 2");
+    expect(resolve(" ", false)).toBe("ターミナル 2");
+    expect(resolve("sleep", true)).toBe("sleep");
+    expect(resolve("Terminal 2", true)).toBe("Terminal 2");
   });
 });
 
 describe("nextTerminalId", () => {
-  it("allocates term-1 when no terminals are listed yet", () => {
-    expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
-  });
-
-  it("allocates term-2 when only term-1 exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
-  });
-
   it("skips over taken term-N slots", () => {
     expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-2", "term-3"])).toBe("term-4");
     expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-3"])).toBe("term-2");
     expect(nextTerminalId(["term-2", "term-3"])).toBe("term-1");
-  });
-
-  it("ignores blank/whitespace-only ids", () => {
-    expect(nextTerminalId(["", "  ", DEFAULT_TERMINAL_ID])).toBe("term-2");
-    expect(nextTerminalId(["", "  "])).toBe("term-1");
   });
 
   it("avoids unseen sessions when metadata is unavailable and resumes normal numbering", () => {

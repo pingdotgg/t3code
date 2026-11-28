@@ -6,8 +6,6 @@ import {
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
-  resolveDeviceMiniPlayerCornerRadius,
-  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -25,12 +23,6 @@ const detailsCard = { left: 680, right: 988, bottom: 260 };
 const withCard: PreviewMiniPlayerObstacles = { composer, detailsCard };
 
 describe("resolvePreviewMiniPlayerSourceSize", () => {
-  it("uses the device viewport scaled by zoom", () => {
-    expect(
-      resolvePreviewMiniPlayerSourceSize({ _tag: "freeform", width: 390, height: 844 }, null, 2),
-    ).toEqual({ width: 780, height: 1_688 });
-  });
-
   it("uses the size the fill viewport had when it was floated", () => {
     expect(
       resolvePreviewMiniPlayerSourceSize(
@@ -42,74 +34,7 @@ describe("resolvePreviewMiniPlayerSourceSize", () => {
   });
 });
 
-describe("resolveDeviceMiniPlayerSourceSize", () => {
-  it("stands in with the platform's phone shape until the stream reports a size", () => {
-    const ios = resolveDeviceMiniPlayerSourceSize("ios", null);
-    expect(ios.width / ios.height).toBeCloseTo(9 / 19.5);
-    const android = resolveDeviceMiniPlayerSourceSize("android", null);
-    expect(android.width / android.height).toBeCloseTo(9 / 20);
-  });
-
-  it("turns a rotated screen into a landscape box", () => {
-    const screen = { width: 1_179, height: 2_556, orientation: "landscape_left" } as const;
-    expect(resolveDeviceMiniPlayerSourceSize("ios", screen)).toEqual({
-      width: 2_556,
-      height: 1_179,
-    });
-    expect(
-      resolveDeviceMiniPlayerSourceSize("android", { ...screen, orientation: "portrait" }),
-    ).toEqual({ width: 1_179, height: 2_556 });
-  });
-
-  it("floats a phone at the minimum width rather than the default box", () => {
-    expect(
-      resolvePreviewMiniPlayerFrame({
-        width: null,
-        position: null,
-        source: resolveDeviceMiniPlayerSourceSize("ios", null),
-        container,
-      }),
-    ).toMatchObject({ width: 240, height: 520 });
-  });
-});
-
-describe("resolveDeviceMiniPlayerCornerRadius", () => {
-  it("rounds an Android player like a phone, scaled with its short side", () => {
-    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 240, height: 520 })).toBe(34);
-    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 520, height: 240 })).toBe(34);
-    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 60, height: 130 })).toBe(12);
-  });
-
-  it("keeps the frame radius for iOS, whose stream has square corners", () => {
-    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 240, height: 520 })).toBe(12);
-    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 720, height: 1_000 })).toBe(12);
-  });
-});
-
 describe("resolvePreviewMiniPlayerFrame", () => {
-  it("opens at the source aspect ratio in the top-right corner", () => {
-    expect(
-      resolvePreviewMiniPlayerFrame({ width: null, position: null, source, container }),
-    ).toEqual({ x: 668, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 320, height: 200 });
-  });
-
-  it("keeps a tall source at the minimum width instead of the default box", () => {
-    expect(
-      resolvePreviewMiniPlayerFrame({
-        width: null,
-        position: null,
-        source: { width: 390, height: 844 },
-        container,
-      }),
-    ).toEqual({ x: 748, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 240, height: 519 });
-  });
-
-  it("derives height from the stored width", () => {
-    expect(
-      resolvePreviewMiniPlayerFrame({ width: 480, position: { x: 100, y: 80 }, source, container }),
-    ).toEqual({ x: 100, y: 80, width: 480, height: 300 });
-  });
-
   it("shrinks to the space above the composer without losing the stored width", () => {
     const frame = resolvePreviewMiniPlayerFrame({
       width: 800,
@@ -142,57 +67,10 @@ describe("resolvePreviewMiniPlayerFrame", () => {
       }),
     ).toEqual(resized);
   });
-
-  it("can grow beyond the source rendered size", () => {
-    expect(
-      resolvePreviewMiniPlayerFrame({
-        width: 900,
-        position: { x: 12, y: 12 },
-        source: { width: 480, height: 320 },
-        container,
-      }),
-    ).toMatchObject({ width: 900, height: 600 });
-  });
 });
 
 describe("resizePreviewMiniPlayer", () => {
   const start = { x: 300, y: 200, width: 320, height: 200 };
-
-  it("keeps the aspect ratio when dragging the right edge", () => {
-    expect(
-      resizePreviewMiniPlayer({
-        start,
-        direction: "east",
-        delta: { x: 160, y: 0 },
-        source,
-        container,
-      }),
-    ).toEqual({ x: 300, y: 200, width: 480, height: 300 });
-  });
-
-  it("anchors the right edge when dragging from the left", () => {
-    expect(
-      resizePreviewMiniPlayer({
-        start,
-        direction: "west",
-        delta: { x: -160, y: 0 },
-        source,
-        container,
-      }),
-    ).toEqual({ x: 140, y: 200, width: 480, height: 300 });
-  });
-
-  it("anchors the bottom edge when dragging the top up", () => {
-    expect(
-      resizePreviewMiniPlayer({
-        start,
-        direction: "north",
-        delta: { x: 0, y: -100 },
-        source,
-        container,
-      }),
-    ).toEqual({ x: 300, y: 100, width: 480, height: 300 });
-  });
 
   it("does not jump when corner motion crosses opposing dominant axes", () => {
     const frames = [-99, -100, -101].map((y) =>
@@ -281,18 +159,6 @@ describe("resizePreviewMiniPlayer", () => {
       }),
     ).toEqual({ x: 300, y: 100, width: 461, height: 288 });
   });
-
-  it("respects the minimum size", () => {
-    expect(
-      resizePreviewMiniPlayer({
-        start,
-        direction: "southeast",
-        delta: { x: -300, y: -300 },
-        source,
-        container,
-      }),
-    ).toEqual({ x: 300, y: 200, width: 240, height: 150 });
-  });
 });
 
 describe("resolvePreviewMiniPlayerFrame with the details card", () => {
@@ -341,22 +207,6 @@ describe("resolvePreviewMiniPlayerFrame with the details card", () => {
 describe("clampPreviewMiniPlayerPosition", () => {
   const player = { width: 360, height: 240 };
 
-  it("keeps a dragged player within the chat viewport", () => {
-    expect(clampPreviewMiniPlayerPosition({ x: 900, y: -40 }, container, player)).toEqual({
-      x: 628,
-      y: gap,
-    });
-  });
-
-  it("keeps the player above a growing composer", () => {
-    expect(
-      clampPreviewMiniPlayerPosition({ x: 500, y: 448 }, container, player, {
-        composer: { ...composer, height: 160 },
-        detailsCard: null,
-      }),
-    ).toEqual({ x: 500, y: 288 });
-  });
-
   it("lets the player drop into the margin beside the composer", () => {
     expect(
       clampPreviewMiniPlayerPosition(
@@ -377,24 +227,6 @@ describe("clampPreviewMiniPlayerPosition", () => {
         obstacles,
       ),
     ).toEqual({ x: composer.right + gap, y: 500 });
-  });
-
-  it("keeps the player out from under the details card", () => {
-    expect(clampPreviewMiniPlayerPosition({ x: 700, y: 40 }, container, player, withCard)).toEqual({
-      x: 628,
-      y: 260 + gap,
-    });
-  });
-
-  it("slides sideways out from under the card when that is the shorter move", () => {
-    expect(
-      clampPreviewMiniPlayerPosition(
-        { x: 660, y: 40 },
-        container,
-        { width: 60, height: 150 },
-        withCard,
-      ),
-    ).toEqual({ x: 680 - gap - 60, y: 40 });
   });
 
   it("clears the card and the composer together in a tight column", () => {

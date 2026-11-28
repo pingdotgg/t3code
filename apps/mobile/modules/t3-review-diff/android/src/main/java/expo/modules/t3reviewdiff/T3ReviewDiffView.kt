@@ -31,19 +31,25 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private val onToggleViewedFile by EventDispatcher()
   private val onPressLine by EventDispatcher()
   private val onToggleComment by EventDispatcher()
+  private val onPressNotice by EventDispatcher()
   private var rows: List<DiffRow> = emptyList()
   private var visibleRows: List<DiffRow> = emptyList()
+  private var visibleRowIndices = IntArray(0)
   private var collapsedFileIds: Set<String> = emptySet()
   private var viewedFileIds: Set<String> = emptySet()
   private var selectedRowIds: Set<String> = emptySet()
   private var collapsedCommentIds: Set<String> = emptySet()
   private var initialRowIndex = 0
   private var pendingInitialScroll = false
+  private var initialFileId: String? = null
+  private var pendingScrollFileId: String? = null
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
   private var contentResetKey = ""
-  private var rowsDecodeGeneration = 0
-  private var tokensDecodeGeneration = 0
+
+  @Volatile private var rowsDecodeGeneration = 0
+
+  @Volatile private var tokensDecodeGeneration = 0
   private val payloadDecodeExecutor = Executors.newSingleThreadExecutor()
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
   private val minimumFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
@@ -65,13 +71,16 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         )
       )
     }
+    canvasView.onVerticalAnchorRestored = { verticalScroller.forceFinished(true) }
     canvasView.onRowTap = { row, gesture, target -> handleRowTap(row, gesture, target) }
+    canvasView.onViewportSizeChanged = { applyPendingInitialScroll() }
     canvasView.onVisibleRowsChanged = { first, last ->
       onDebug(
         mapOf(
           "message" to "visible-range",
-          "firstRowIndex" to first,
-          "lastRowIndex" to last,
+          "firstRowIndex" to visibleRowIndices[first],
+          "lastRowIndex" to visibleRowIndices[last],
+          "totalRows" to rows.size,
         ),
       )
       emitVisibleFile(first)
@@ -92,10 +101,19 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   fun setContentResetKey(value: String) {
     if (contentResetKey == value) return
     contentResetKey = value
+    rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
+    canvasView.setViewportEventsPaused(true)
+    verticalScroller.forceFinished(true)
+    horizontalScroller.forceFinished(true)
+    rows = emptyList()
+    visibleRows = emptyList()
+    visibleRowIndices = IntArray(0)
+    canvasView.rows = emptyList()
     canvasView.tokensByRowId = emptyMap()
     lastVisibleFileId = null
     pendingInitialScroll = true
+    pendingScrollFileId = initialFileId
     canvasView.setVerticalOffset(0)
     canvasView.resetHorizontalOffsets()
     applyPendingInitialScroll()
@@ -139,10 +157,6 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     canvasView.style = canvasView.style.copy(rowHeightPx = dp(value))
   }
 
-  fun setContentWidth(value: Float) {
-    canvasView.contentWidthPx = max(width, dp(value).toInt())
-  }
-
   fun setContentInsetBottom(value: Float) {
     canvasView.setPadding(0, 0, 0, max(0, dp(value).toInt()))
     canvasView.setVerticalOffset(canvasView.verticalOffset())
@@ -150,18 +164,33 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun setInitialRowIndex(value: Double) {
-    initialRowIndex = value.toInt().coerceAtLeast(0)
-    pendingInitialScroll = true
+    initialRowIndex = value.toInt()
+    pendingInitialScroll = value.isFinite() && value >= 0
+    canvasView.setViewportEventsPaused(true)
+    applyPendingInitialScroll()
+  }
+
+  fun setInitialFileId(value: String) {
+    val nextFileId = value.takeIf { it.isNotEmpty() }
+    if (nextFileId == initialFileId) return
+    initialFileId = nextFileId
+    pendingScrollFileId = nextFileId
+    canvasView.setViewportEventsPaused(true)
     applyPendingInitialScroll()
   }
 
   fun setRowsJson(value: String) {
     rowsDecodeGeneration += 1
+    canvasView.setViewportEventsPaused(true)
     val generation = rowsDecodeGeneration
-    val prepareLayout = canvasView.prepareRows()
+    val isCancelled = { generation != rowsDecodeGeneration || Thread.currentThread().isInterrupted }
+    val prepareLayout = canvasView.prepareRows(isCancelled)
     payloadDecodeExecutor.execute {
-      val decodedRows = parseRows(value)
+      if (isCancelled()) return@execute
+      val decodedRows = parseRows(value, isCancelled)
+      if (isCancelled()) return@execute
       val codeLayouts = prepareLayout(decodedRows)
+      if (isCancelled()) return@execute
       post {
         if (generation != rowsDecodeGeneration) return@post
         canvasView.useCodeLayouts(codeLayouts)
@@ -176,6 +205,11 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     tokensDecodeGeneration += 1
     val generation = tokensDecodeGeneration
     payloadDecodeExecutor.execute {
+      if (generation != tokensDecodeGeneration ||
+        Thread.currentThread().isInterrupted
+      ) {
+        return@execute
+      }
       val decodedTokens = parseTokensObject(value)
       post {
         if (generation != tokensDecodeGeneration) return@post
@@ -184,7 +218,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     }
   }
 
-  fun setTokensPatchJson(value: String) {
+  fun setTokensPatchJson(value: String, completion: (Boolean) -> Unit) {
+    val contentKey = contentResetKey
     payloadDecodeExecutor.execute {
       try {
         val payload = JSONObject(value)
@@ -193,12 +228,19 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
           payload.optJSONObject("tokensByRowId") ?: JSONObject(),
         )
         post {
-          if (resetKey.isNotEmpty() && resetKey != tokensResetKey) return@post
+          if (contentKey != contentResetKey ||
+            (resetKey.isNotEmpty() && resetKey != tokensResetKey)
+          ) {
+            completion(false)
+            return@post
+          }
           if (decodedTokens.isNotEmpty()) {
             canvasView.tokensByRowId = canvasView.tokensByRowId + decodedTokens
           }
+          completion(true)
         }
       } catch (_: Exception) {
+        post { completion(false) }
       }
     }
   }
@@ -358,17 +400,22 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   private fun rebuildVisibleRows() {
+    canvasView.setViewportEventsPaused(true)
     val filtered = ArrayList<DiffRow>(rows.size)
+    val indices = IntArray(rows.size)
     var currentFileCollapsed = false
-    rows.forEach { row ->
+    rows.forEachIndexed { index, row ->
       if (row.kind == "file") {
         currentFileCollapsed = collapsedFileIds.contains(row.resolvedFileId)
-        filtered.add(row)
-      } else if (!currentFileCollapsed) {
+      }
+      if (row.kind == "file" || !currentFileCollapsed) {
+        indices[filtered.size] = index
         filtered.add(row)
       }
     }
     visibleRows = filtered
+    // JS selects highlights from the full payload, including collapsed rows.
+    visibleRowIndices = indices.copyOf(filtered.size)
     canvasView.rows = filtered
     canvasView.viewedFileIds = viewedFileIds
     canvasView.selectedRowIds = selectedRowIds
@@ -386,6 +433,9 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         }
       }
       "comment" -> onToggleComment(mapOf("commentId" to row.id))
+      "notice" -> if (gesture == "tap" && row.actionable) {
+        onPressNotice(mapOf("rowId" to row.id, "fileId" to row.resolvedFileId))
+      }
       "line" -> {
         val payload = mutableMapOf<String, Any>(
           "rowId" to row.id,
@@ -415,10 +465,20 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   private fun applyPendingInitialScroll() {
-    if (!pendingInitialScroll || visibleRows.isEmpty()) return
-    pendingInitialScroll = false
-    val index = initialRowIndex.coerceIn(0, visibleRows.lastIndex)
-    post { canvasView.setVerticalOffset(canvasView.rowTop(index)) }
+    if (visibleRows.isEmpty() || canvasView.width <= 0 || canvasView.height <= 0) return
+    val fileId = pendingScrollFileId
+    if (fileId != null) {
+      val index = visibleRows.indexOfFirst { it.kind == "file" && it.resolvedFileId == fileId }
+      if (index < 0) return
+      pendingScrollFileId = null
+      pendingInitialScroll = false
+      canvasView.setVerticalOffset(canvasView.rowTop(index))
+    } else if (pendingInitialScroll) {
+      pendingInitialScroll = false
+      val index = initialRowIndex.coerceIn(0, visibleRows.lastIndex)
+      canvasView.setVerticalOffset(canvasView.rowTop(index))
+    }
+    canvasView.setViewportEventsPaused(false)
   }
 
   private fun scrollToY(y: Int, animated: Boolean) {
@@ -433,6 +493,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
       postInvalidateOnAnimation()
     } else {
+      verticalScroller.forceFinished(true)
       canvasView.setVerticalOffset(target)
     }
   }
@@ -477,9 +538,16 @@ internal data class DiffRow(
   val wordDiffRanges: List<DiffWordDiffRange>,
   val commentText: String,
   val commentRangeLabel: String,
-  val commentSectionTitle: String
+  val commentSectionTitle: String,
+  /** A notice drawn in the warning colors. */
+  val tone: String = "",
+  /** A notice that reports taps through `onPressNotice`. */
+  val actionable: Boolean = false,
+  /** Where a cut line's note starts in `content`. */
+  val noteStart: Int? = null
 ) {
   val resolvedFileId: String get() = fileId.ifEmpty { id }
+  val isPlainAscii: Boolean = content.all { it in ' '..'~' }
 }
 
 internal data class DiffWordDiffRange(
@@ -506,7 +574,9 @@ internal data class DiffTheme(
   val addBar: Int,
   val deleteBar: Int,
   val addText: Int,
-  val deleteText: Int
+  val deleteText: Int,
+  val warningText: Int,
+  val warningBackground: Int
 ) {
   companion object {
     fun fallback(scheme: String): DiffTheme = if (scheme == "dark") {
@@ -524,6 +594,8 @@ internal data class DiffTheme(
         deleteBar = Color.rgb(255, 46, 63),
         addText = Color.rgb(94, 204, 113),
         deleteText = Color.rgb(255, 103, 98),
+        warningText = Color.rgb(250, 204, 102),
+        warningBackground = Color.rgb(51, 38, 13),
       )
     } else {
       DiffTheme(
@@ -540,6 +612,8 @@ internal data class DiffTheme(
         deleteBar = Color.rgb(213, 44, 54),
         addText = Color.rgb(25, 130, 67),
         deleteText = Color.rgb(190, 38, 48),
+        warningText = Color.rgb(140, 92, 0),
+        warningBackground = Color.rgb(255, 245, 214),
       )
     }
 
@@ -559,6 +633,8 @@ internal data class DiffTheme(
         deleteBar = color(json, "deleteBar", fallback.deleteBar),
         addText = color(json, "addText", fallback.addText),
         deleteText = color(json, "deleteText", fallback.deleteText),
+        warningText = color(json, "warningText", fallback.warningText),
+        warningBackground = color(json, "warningBackground", fallback.warningBackground),
       )
     } catch (_: Exception) {
       fallback
@@ -588,7 +664,10 @@ internal data class DiffStyle(
   val fileHeaderMetaFontSizePx: Float,
   val fileHeaderMetaFontWeight: String,
   val fileHeaderSubtextFontSizePx: Float,
-  val fileHeaderSubtextFontWeight: String
+  val fileHeaderSubtextFontWeight: String,
+  val codeFontFamily: String,
+  val uiFontFamily: String,
+  val uiBoldFontFamily: String
 ) {
   companion object {
     fun defaults(density: Float): DiffStyle = DiffStyle(
@@ -611,6 +690,9 @@ internal data class DiffStyle(
       fileHeaderMetaFontWeight = "semibold",
       fileHeaderSubtextFontSizePx = 11f * density,
       fileHeaderSubtextFontWeight = "medium",
+      codeFontFamily = "monospace",
+      uiFontFamily = "sans-serif",
+      uiBoldFontFamily = "sans-serif",
     )
 
     fun fromJson(value: String, fallback: DiffStyle, density: Float): DiffStyle = try {
@@ -667,6 +749,9 @@ internal data class DiffStyle(
           "fileHeaderSubtextFontWeight",
           fallback.fileHeaderSubtextFontWeight,
         ),
+        codeFontFamily = json.optString("codeFontFamily", fallback.codeFontFamily),
+        uiFontFamily = json.optString("uiFontFamily", fallback.uiFontFamily),
+        uiBoldFontFamily = json.optString("uiBoldFontFamily", fallback.uiBoldFontFamily),
       )
     } catch (_: Exception) {
       fallback
@@ -690,7 +775,7 @@ private class DiffCanvasView(context: Context) : View(context) {
         rowHitAt(event.y)?.let { hit ->
           val target = if (
             hit.row.kind == "file" &&
-            drawing.fileHeaderCheckboxRect(
+            drawing.fileHeaderCheckboxHitRect(
               hit.top,
               hit.bottom,
               width,
@@ -714,24 +799,38 @@ private class DiffCanvasView(context: Context) : View(context) {
     },
   )
   private var rowOffsets = intArrayOf(0)
+  private var fileHeaderIndices = intArrayOf()
 
   private var codeWrap = CodeWrapLayout.NONE
   private var verticalOffset = 0
   private var horizontalOffset = 0
+
+  private var contentWidthPx = 0
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
   private var lastVisibleRange: Pair<Int, Int>? = null
+  private var viewportEventsPaused = true
   var rows: List<DiffRow> = emptyList()
     set(value) {
       field = value
+      fileHeaderIndices = indexFileHeaders(value)
       headerPathOffsetsByFileId.keys.retainAll(
-        value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
+        fileHeaderIndices.map { value[it].resolvedFileId }.toSet(),
       )
-      rebuildOffsets()
+      rebuildOffsets(preserveAnchor = false)
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
     set(value) {
+      val previous = field
       field = value
-      if (style.wordWrap) rebuildOffsets()
+      if (style.wordWrap) {
+        // ASCII uses fixed-pitch geometry. Native layouts also carry their painted spans.
+        if (codeWrap.needsTokenLayout(previous, value)) {
+          rebuildOffsets()
+        }
+      } else if (drawing.tokensChangeWidth(previous, value, style)) {
+        contentWidthPx = drawing.contentWidth(rows, value, style)
+        setHorizontalOffset(horizontalOffset)
+      }
       invalidate()
     }
   var viewedFileIds: Set<String> = emptySet()
@@ -764,20 +863,17 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
+      drawing.applyFonts(value)
       rebuildOffsets()
-    }
-  var contentWidthPx: Int = (1200 * density).toInt()
-    set(value) {
-      field = max(value, suggestedMinimumWidth)
-      setHorizontalOffset(horizontalOffset)
-      clampHeaderPathOffsets()
-      invalidate()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
   var onVisibleRowsChanged: ((Int, Int) -> Unit)? = null
   var onContentHeightChanged: ((Int) -> Unit)? = null
+  var onVerticalAnchorRestored: (() -> Unit)? = null
+  var onViewportSizeChanged: (() -> Unit)? = null
 
-  fun prepareRows() = drawing.prepareRows(tokensByRowId, style, width)
+  fun prepareRows(isCancelled: () -> Boolean = { false }) =
+    drawing.prepareRows(tokensByRowId, style, width, isCancelled)
   fun useCodeLayouts(layouts: CodeLayoutCache) {
     drawing.codeLayouts = layouts
   }
@@ -791,8 +887,8 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
     super.onSizeChanged(width, height, oldWidth, oldHeight)
-    // Wrapped rows take their height from the width, so a new width is a new layout.
     if (style.wordWrap && width != oldWidth) layoutRows()
+    onViewportSizeChanged?.invoke()
     setVerticalOffset(verticalOffset)
     setHorizontalOffset(horizontalOffset)
     clampHeaderPathOffsets()
@@ -887,19 +983,27 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
   }
 
-  private fun rebuildOffsets() {
-    layoutRows()
+  private fun rebuildOffsets(preserveAnchor: Boolean = true) {
+    layoutRows(preserveAnchor)
     requestLayout()
     invalidate()
   }
 
-  private fun layoutRows() {
+  private fun layoutRows(preserveAnchor: Boolean = true) {
+    // Rows are unchanged here; their old offsets still identify the viewport's code row.
+    val anchorIndex = if (preserveAnchor && rows.isNotEmpty()) rowIndexAt(verticalOffset) else null
+    val intraRowOffset = anchorIndex?.let { verticalOffset - rowOffsets[it] } ?: 0
+    contentWidthPx = drawing.contentWidth(rows, tokensByRowId, style)
     codeWrap = drawing.codeWrapLayout(rows, tokensByRowId, style, width)
     rowOffsets = IntArray(rows.size + 1)
     rows.forEachIndexed { index, row ->
       rowOffsets[index + 1] = rowOffsets[index] + rowHeight(row)
     }
-    setVerticalOffset(verticalOffset)
+    val targetOffset = anchorIndex?.let {
+      rowOffsets[it] + intraRowOffset.coerceIn(0, max(0, rowOffsets[it + 1] - rowOffsets[it] - 1))
+    } ?: verticalOffset
+    if (targetOffset != verticalOffset) onVerticalAnchorRestored?.invoke()
+    setVerticalOffset(targetOffset)
     setHorizontalOffset(horizontalOffset)
     clampHeaderPathOffsets()
     onContentHeightChanged?.invoke(rowOffsets.last())
@@ -913,25 +1017,11 @@ private class DiffCanvasView(context: Context) : View(context) {
     } else {
       (124 * density).toInt()
     }
-    "line" -> codeWrap.rowHeight(row.id, style.rowHeightPx.toInt())
+    "line" -> codeWrap.rowHeight(row, style.rowHeightPx.toInt())
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
 
-  @Suppress("ReturnCount")
-  private fun rowIndexAt(y: Int): Int {
-    if (rows.isEmpty()) return 0
-    var low = 0
-    var high = rows.lastIndex
-    while (low <= high) {
-      val middle = (low + high) ushr 1
-      when {
-        y < rowOffsets[middle] -> high = middle - 1
-        y >= rowOffsets[middle + 1] -> low = middle + 1
-        else -> return middle
-      }
-    }
-    return low.coerceIn(0, rows.lastIndex)
-  }
+  private fun rowIndexAt(y: Int): Int = rowIndexAtOffset(y, rowOffsets, rows.size)
 
   private fun rowHitAt(y: Float): RowHit? {
     stickyFileHeader(firstVisibleRow())?.let { sticky ->
@@ -952,14 +1042,21 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   private fun firstVisibleRow(): Int = rowIndexAt(verticalOffset)
 
+  fun setViewportEventsPaused(paused: Boolean) {
+    viewportEventsPaused = paused
+    if (paused) lastVisibleRange = null else emitVisibleRange()
+  }
+
   private fun emitVisibleRange() {
-    if (rows.isEmpty()) return
+    if (viewportEventsPaused || rows.isEmpty()) return
+    if (width <= 0 || height <= 0) return
     val first = rowIndexAt(verticalOffset)
     val last = rowIndexAt(verticalOffset + max(1, height))
     val range = first to last
-    if (range == lastVisibleRange) return
-    lastVisibleRange = range
-    onVisibleRowsChanged?.invoke(first, last)
+    if (range != lastVisibleRange) {
+      lastVisibleRange = range
+      onVisibleRowsChanged?.invoke(first, last)
+    }
   }
 
   private fun drawRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
@@ -1060,7 +1157,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun maxHeaderPathOffset(fileId: String): Int {
-    val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
+    val rowIndex = fileHeaderIndices.firstOrNull { rows[it].resolvedFileId == fileId } ?: return 0
+    val row = rows[rowIndex]
     val top = 0
     val bottom = rowHeight(row)
     val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
@@ -1119,7 +1217,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.background, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
+    fill(canvas, drawing.noticeFill(row), 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
     val iconSize = 16f * density
     val iconRect = RectF(
       style.fileHeaderHorizontalPaddingPx + 2f * density,
@@ -1127,10 +1225,10 @@ private class DiffCanvasView(context: Context) : View(context) {
       style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
       (top + bottom + iconSize) / 2f,
     )
-    drawing.drawNoticeIcon(canvas, iconRect, theme.mutedText)
+    drawing.drawNoticeIcon(canvas, iconRect, drawing.noticeColor(row))
     drawing.configureUiPaint(
       paint = textPaint,
-      color = theme.mutedText,
+      color = drawing.noticeColor(row),
       size = style.fileHeaderSubtextFontSizePx,
       weight = style.fileHeaderSubtextFontWeight,
     )
@@ -1226,25 +1324,26 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
-      // Keep the diff and syntax colors intact; selection lives in the gutter.
+      // Source files hide the change bar (width 0); the selection marker still needs to show.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
         0f,
         top.toFloat(),
-        style.changeBarWidthPx,
+        maxOf(style.changeBarWidthPx, 4f * density),
         bottom.toFloat()
       )
     }
 
     // Wrapped rows keep the line number and first code line in the first row-height band.
-    val lines = codeWrap.lines(row.id)
+    val lines = codeWrap.lines(row)
     val firstLineBottom = top + lines.firstHeight(style.rowHeightPx.toInt())
     drawScrollableCode(canvas, top, bottom) { codeX ->
       drawing.configureCodePaint(theme.text, 0, style)
-      drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row.content, tokensByRowId[row.id], codeX, baseline, style, lines)
+      val tokens = tokensByRowId[row.id]
+      drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)
@@ -1290,11 +1389,13 @@ private class DiffCanvasView(context: Context) : View(context) {
   @Suppress("ReturnCount")
   private fun stickyFileHeader(firstVisibleIndex: Int): StickyFileHeader? {
     if (rows.isEmpty()) return null
-    val fileIndex = (firstVisibleIndex.coerceIn(0, rows.lastIndex) downTo 0)
-      .firstOrNull { rows[it].kind == "file" }
-      ?: return null
+    val rowIndex = firstVisibleIndex.coerceIn(0, rows.lastIndex)
+    val found = fileHeaderIndices.binarySearch(rowIndex)
+    val slot = if (found >= 0) found else -found - 2
+    if (slot < 0) return null
+    val fileIndex = fileHeaderIndices[slot]
     val headerHeight = rowHeight(rows[fileIndex])
-    val nextFileIndex = ((fileIndex + 1)..rows.lastIndex).firstOrNull { rows[it].kind == "file" }
+    val nextFileIndex = fileHeaderIndices.getOrNull(slot + 1)
     val top = nextFileIndex
       ?.let { min(0, rowOffsets[it] - verticalOffset - headerHeight) }
       ?: 0
@@ -1337,20 +1438,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     canvas.drawLine(0f, bottom - density / 2f, width.toFloat(), bottom - density / 2f, borderPaint)
   }
 
-  private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
-    val metrics = paint.fontMetrics
-    return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
-  }
-
-  private fun ellipsize(value: String, paint: Paint, width: Float): String {
-    if (paint.measureText(value) <= width) return value
-    val suffix = "..."
-    val available = max(0f, width - paint.measureText(suffix))
-    var end = value.length
-    while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-    return value.substring(0, end) + suffix
-  }
-
   private data class StickyFileHeader(
     val index: Int,
     val top: Int,
@@ -1369,35 +1456,76 @@ private class DiffCanvasView(context: Context) : View(context) {
   )
 }
 
+private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
+  val metrics = paint.fontMetrics
+  return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
+}
+
+// A single-line preview never shows this many characters, so longer text is cut before measuring.
+private const val ELLIPSIZE_MAX_CHARS = 500
+
+private fun ellipsize(value: String, paint: Paint, width: Float): String {
+  val truncated = value.length > ELLIPSIZE_MAX_CHARS
+  val capEnd = surrogateSafeEnd(value, ELLIPSIZE_MAX_CHARS)
+  val text = if (truncated) value.substring(0, capEnd) else value
+  if (!truncated && paint.measureText(text) <= width) return value
+  val suffix = "..."
+  val available = max(0f, width - paint.measureText(suffix))
+  val end = surrogateSafeEnd(text, paint.breakText(text, true, available, null))
+  return text.substring(0, end) + suffix
+}
+
+private fun surrogateSafeEnd(value: String, end: Int): Int {
+  val splitsPair = end in 1 until value.length &&
+    Character.isSurrogatePair(value[end - 1], value[end])
+  return if (splitsPair) end - 1 else end
+}
+
+private fun indexFileHeaders(rows: List<DiffRow>): IntArray {
+  val headers = ArrayList<Int>()
+  rows.forEachIndexed { index, row ->
+    if (row.kind == "file") headers.add(index)
+  }
+  return headers.toIntArray()
+}
+
 private fun withAlpha(color: Int, alpha: Int): Int =
   Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 
-private fun parseRows(value: String): List<DiffRow> = try {
-  val array = JSONArray(value)
-  List(array.length()) { index ->
-    val row = array.getJSONObject(index)
-    DiffRow(
-      kind = row.optString("kind"),
-      id = row.optString("id"),
-      fileId = row.optString("fileId"),
-      filePath = row.optString("filePath"),
-      previousPath = row.optNullableString("previousPath"),
-      changeType = row.optString("changeType"),
-      additions = row.optInt("additions"),
-      deletions = row.optInt("deletions"),
-      text = row.optString("text"),
-      content = row.optString("content"),
-      change = row.optString("change", "context"),
-      oldLineNumber = row.optNullableInt("oldLineNumber"),
-      newLineNumber = row.optNullableInt("newLineNumber"),
-      wordDiffRanges = row.optJSONArray("wordDiffRanges")?.let(::parseWordDiffRanges).orEmpty(),
-      commentText = row.optString("commentText"),
-      commentRangeLabel = row.optString("commentRangeLabel"),
-      commentSectionTitle = row.optString("commentSectionTitle"),
-    )
+private fun parseRows(value: String): List<DiffRow> = parseRows(value) { false }
+
+private fun parseRows(value: String, isCancelled: () -> Boolean): List<DiffRow> {
+  return try {
+    val array = JSONArray(value)
+    List(array.length()) { index ->
+      if (isCancelled()) return emptyList()
+      val row = array.getJSONObject(index)
+      DiffRow(
+        kind = row.optString("kind"),
+        id = row.optString("id"),
+        fileId = row.optString("fileId"),
+        filePath = row.optString("filePath"),
+        previousPath = row.optNullableString("previousPath"),
+        changeType = row.optString("changeType"),
+        additions = row.optInt("additions"),
+        deletions = row.optInt("deletions"),
+        text = row.optString("text"),
+        content = row.optString("content"),
+        change = row.optString("change", "context"),
+        oldLineNumber = row.optNullableInt("oldLineNumber"),
+        newLineNumber = row.optNullableInt("newLineNumber"),
+        wordDiffRanges = row.optJSONArray("wordDiffRanges")?.let(::parseWordDiffRanges).orEmpty(),
+        commentText = row.optString("commentText"),
+        commentRangeLabel = row.optString("commentRangeLabel"),
+        commentSectionTitle = row.optString("commentSectionTitle"),
+        tone = row.optString("tone"),
+        actionable = row.optBoolean("actionable"),
+        noteStart = row.optNullableInt("noteStart"),
+      )
+    }
+  } catch (_: Exception) {
+    emptyList()
   }
-} catch (_: Exception) {
-  emptyList()
 }
 
 private fun parseWordDiffRanges(value: JSONArray): List<DiffWordDiffRange> = buildList {
@@ -1467,3 +1595,19 @@ private fun JSONObject.floatDp(key: String, fallbackPx: Float, density: Float): 
 
 private fun JSONObject.floatSp(key: String, fallbackPx: Float, density: Float): Float =
   if (has(key)) optDouble(key).toFloat() * density else fallbackPx
+
+@Suppress("ReturnCount")
+private fun rowIndexAtOffset(y: Int, rowOffsets: IntArray, rowCount: Int): Int {
+  if (rowCount == 0) return 0
+  var low = 0
+  var high = rowCount - 1
+  while (low <= high) {
+    val middle = (low + high) ushr 1
+    when {
+      y < rowOffsets[middle] -> high = middle - 1
+      y >= rowOffsets[middle + 1] -> low = middle + 1
+      else -> return middle
+    }
+  }
+  return low.coerceIn(0, rowCount - 1)
+}

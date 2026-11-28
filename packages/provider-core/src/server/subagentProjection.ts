@@ -18,10 +18,12 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { derive } from "./IdAllocator.ts";
+import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -38,8 +40,14 @@ export function subagentThreadTitle(input: {
   if (detail === undefined) {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }
-  const clipped = detail.length > 72 ? `${detail.slice(0, 69)}...` : detail;
-  return clipped;
+  if (detail.length <= 72) return detail;
+  let end = 69;
+  const previous = detail.charCodeAt(end - 1);
+  const next = detail.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${detail.slice(0, end)}...`;
 }
 
 export function makeSubagentChildThread(input: {
@@ -54,12 +62,16 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...inherited,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
+    titleRegeneration: null,
+    titleRenamed: false,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -82,6 +94,11 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    autoSettleDisabledAt: null,
+    // A guest link belongs to the thread it was made for.
+    guestShare: null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -98,7 +115,6 @@ export function makeSubagentConversationArtifacts(input: {
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
   readonly text: string;
-  /** Whether a user message is the script a workflow run executes; unset for older callers. */
   readonly workflowScript?: boolean;
   readonly ordinal: number;
   readonly now: DateTime.Utc;
@@ -164,8 +180,148 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+/** A delegated result, led by a note when the provider reported running another model than requested. */
+export function withExecutedModelNote(
+  result: string,
+  requestedModel: string,
+  executedModel: string | null | undefined,
+): string {
+  return executedModel == null || executedModel === requestedModel
+    ? result
+    : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
+}
+
+/** Run signal of the notice that carries a provider's stop reason on a completed run. */
+export const PROVIDER_STOP_REASON_SIGNAL = "provider-stop-reason";
+
+/** Turn item types `subagentResultForRun` reads; load at least these for its projection. */
+export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
+  "assistant_message",
+  "error",
+  "system_notice",
+  "run_interrupt_result",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+/** The item carrying a provider's stop reason for a run, which its delegated result ends with. */
+export function subagentStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+) {
+  // Codex ends a hook-stopped turn as completed or interrupted, depending on its version.
+  const ids = [
+    derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL }),
+    derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+  ];
+  return projection.turnItems.find(
+    (
+      item,
+    ): item is Extract<
+      OrchestrationV2TurnItem,
+      { readonly type: "system_notice" | "run_interrupt_result" }
+    > =>
+      ids.includes(item.id) &&
+      (item.type === "system_notice" || item.type === "run_interrupt_result"),
+  );
+}
+
+function withStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+  text: string,
+): string {
+  const notice = subagentStopNotice(projection, run);
+  return notice === undefined ? text : `${text}\n\n${notice.message}`;
+}
+
+type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
+
+/**
+ * Monitor-update runs that are never a task's work: queued ones, which can wait on a usage limit
+ * without a hold, and completed ones, which only acknowledged the update. One executing, or one
+ * that ended without completing, may have stopped or lost the work the task waits on.
+ */
+export function monitorUpdateRunIds(
+  messages: ReadonlyArray<MonitorNotice>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
+) {
+  const updateRunIds = new Set(
+    messages
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
+      .map((message) => message.runId),
+  );
+  return new Set(
+    runs.flatMap((run) =>
+      (run.status === "completed" || run.status === "queued") && updateRunIds.has(run.id)
+        ? [run.id]
+        : [],
+    ),
+  );
+}
+
+/**
+ * The same task's completed runs before `run`, latest first: where its report is when `run`
+ * completed without saying anything. Ends at another task's run or at any other outcome.
+ */
+export function delegatedTaskReportRuns(
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly messages: ReadonlyArray<MonitorNotice>;
+  },
+  run: OrchestrationV2Run,
+): ReadonlyArray<OrchestrationV2Run> {
+  if (run.status !== "completed") return [];
+  const monitorRuns = monitorUpdateRunIds(projection.messages, projection.runs);
+  const earlier = projection.runs
+    .filter(
+      (candidate) =>
+        candidate.id !== run.id &&
+        candidate.startedAt !== null &&
+        candidate.status !== "rolled_back" &&
+        !monitorRuns.has(candidate.id) &&
+        runRanAfter(run, candidate),
+    )
+    .toSorted((a, b) => (runRanAfter(a, b) ? -1 : 1));
+  const end = earlier.findIndex(
+    (candidate) =>
+      candidate.status !== "completed" || candidate.delegatedTaskId !== run.delegatedTaskId,
+  );
+  return end === -1 ? earlier : earlier.slice(0, end);
+}
+
+/**
+ * `runs` scopes where a run that completed without saying anything finds its report, see
+ * `delegatedTaskReportRuns`. The projection must hold the assistant records of every run given.
+ */
 export function subagentResultForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns"> & {
+    readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+  },
+  run: OrchestrationV2Run,
+) {
+  const result = resultOfRun(projection, run);
+  if (
+    run.status !== "completed" ||
+    result.messageId !== null ||
+    result.turnItemId !== null ||
+    subagentStopNotice(projection, run) !== undefined
+  )
+    return result;
+  for (const earlier of delegatedTaskReportRuns(
+    { runs: projection.runs ?? [], messages: projection.messages },
+    run,
+  )) {
+    const report = resultOfRun(projection, earlier);
+    if (report.messageId !== null || report.turnItemId !== null) return report;
+  }
+  return result;
+}
+
+function resultOfRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): {
   readonly text: string;
@@ -189,8 +345,7 @@ export function subagentResultForRun(
       candidate.role === "assistant" &&
       candidate.text.trim().length > 0,
   );
-  // Turn item order is authoritative: providers can finalize every message of a turn at once,
-  // so message timestamps can tie. They only order messages that have no turn item.
+  // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
     messages.find((candidate) => candidate.id === turnItem?.messageId) ??
     messages.toSorted(
@@ -205,87 +360,133 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
+  const reportBeforeFailure =
+    failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
+      ? (message?.text ?? turnItem.text)
+      : undefined;
+  const report = message?.text ?? turnItem?.text;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
-    message?.text ??
-    turnItem?.text ??
-    (run.status === "completed"
-      ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`);
+    (failure?.type === "error"
+      ? reportBeforeFailure === undefined
+        ? failure.failure.message
+        : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
+      : undefined) ??
+    withStopNotice(
+      projection,
+      run,
+      report ??
+        (run.status === "completed"
+          ? "Child task completed without an assistant result."
+          : `Child task ended with status ${run.status}.`),
+    );
+  const executedModel = latestProviderTurnForAttempt(
+    projection.providerTurns,
+    run.activeAttemptId,
+  )?.model;
   return {
-    text,
+    text:
+      executedModel === undefined
+        ? text
+        : withExecutedModelNote(text, run.modelSelection.model, executedModel),
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
 }
 
-export function delegatedTaskProgress(projection: {
-  readonly runs: OrchestrationV2ThreadProjection["runs"];
-  readonly messages: ReadonlyArray<
-    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
-  >;
-  readonly subagents: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
-  >;
-  readonly providerThreads: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
-  >;
-}) {
+export function subagentHoldsCompletion(
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+): boolean {
+  return (
+    isOrchestrationV2WorkActive(task.status) ||
+    // Publishing a child's result precedes scheduling its parent's wake.
+    // The parent still owes that follow-up even between those transactions.
+    (task.status !== "idle" &&
+      (task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed"))
+  );
+}
+
+/**
+ * `unsettled`: the task has no result and no cancel, so a Monitor-woken run that completed
+ * continued its wait and is its work, not an acknowledgement after its report. A cancel keeps
+ * the run it stopped as the result.
+ */
+export function delegatedTaskProgress(
+  projection: {
+    readonly runs: OrchestrationV2ThreadProjection["runs"];
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "notification" | "createdBy">
+    >;
+    readonly subagents: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
+    >;
+    readonly providerThreads: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
+    >;
+  },
+  options?: { readonly unsettled?: boolean },
+) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
+  const monitorRuns = monitorUpdateRunIds(
+    projection.messages,
+    options?.unsettled === true
+      ? projection.runs.filter((run) => run.status === "queued")
+      : projection.runs,
   );
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  const active = workRuns.some(
-    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  const held = (run: OrchestrationV2Run) => run.status === "queued" && run.queueHeld === true;
+  const active = workRuns.some((run) => !terminal(run.status) && !held(run));
+  // Held wakes wait on nobody, but a held message the user wrote is the child's next work.
+  const userRunIds = new Set(
+    projection.messages.flatMap((message) =>
+      message.createdBy === "user" && message.notification === undefined && message.runId !== null
+        ? [message.runId]
+        : [],
+    ),
   );
+  const awaitsUserRun = workRuns.some((run) => held(run) && userRunIds.has(run.id));
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        task.completionDelivery?.state === "pending" ||
-        task.completionDelivery?.state === "claimed",
-    ) ||
-    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+    projection.subagents.some(subagentHoldsCompletion) ||
+    projection.providerThreads.some((thread) =>
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
+    );
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      active || resultRun === undefined
+      active || awaitsUserRun || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
+    /** Working only because of a held message the user wrote, which a cancel does not wait for. */
+    onlyAwaitsUserRun: awaitsUserRun && !active && resultRun !== undefined,
   };
 }
 
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
-  type: "subagent.updated" | "node.updated" | "turn-item.updated",
+  type: "subagent.updated" | "node.updated" | "turn-item.updated" | "provider-turn.updated",
 ): ReadonlySet<string> {
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
 
-export const endOrphanedNativeSubagent = <E>(input: {
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
-  readonly subagentId: NodeId;
-  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
-  readonly completedAt?: DateTime.Utc;
-  readonly result?: string | null;
-  readonly now: DateTime.Utc;
-  readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
-  readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
+export const endOrphanedNativeSubagent = Effect.fn("subagentProjection.endOrphanedNativeSubagent")(
+  function* <E>(input: {
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
+    readonly subagentId: NodeId;
+    readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+    readonly completedAt?: DateTime.Utc;
+    readonly result?: string | null;
+    readonly now: DateTime.Utc;
+    readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly allocateEventId: () => Effect.Effect<EventId, E>;
+  }) {
     const { now, status, subagentId, completedAt = now } = input;
     const subagent = input.projection.subagents.find((entry) => entry.id === subagentId);
     if (subagent?.origin !== "provider_native") return [];
@@ -350,74 +551,97 @@ export const endOrphanedNativeSubagent = <E>(input: {
       });
     }
     return events;
-  });
+  },
+);
 
-export const endRunlessRootTurns = <E>(input: {
+export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootTurns")(function* <
+  E,
+>(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "nodes" | "providerTurns" | "turnItems"
+  >;
   readonly status: "completed" | "failed" | "interrupted" | "cancelled";
   readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
-    const { now, status, completedAt = now } = input;
-    const endedNodeIds = writtenIds(input.emitted, "node.updated");
-    const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
-    const scope = {
-      threadId: input.threadId,
-      providerInstanceId: input.providerInstanceId,
-      occurredAt: now,
-    };
-    const events: Array<OrchestrationV2DomainEvent> = [];
-    for (const node of input.projection.nodes) {
+}) {
+  const { now, status, completedAt = now } = input;
+  const endedNodeIds = writtenIds(input.emitted, "node.updated");
+  const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
+  const endedProviderTurnIds = writtenIds(input.emitted, "provider-turn.updated");
+  const scope = {
+    threadId: input.threadId,
+    providerInstanceId: input.providerInstanceId,
+    occurredAt: now,
+  };
+  const events: Array<OrchestrationV2DomainEvent> = [];
+  for (const node of input.projection.nodes) {
+    if (
+      node.kind !== "root_turn" ||
+      node.runId !== null ||
+      !isOrchestrationV2WorkActive(node.status)
+    ) {
+      continue;
+    }
+    if (!endedNodeIds.has(node.id)) {
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "node.updated",
+        nodeId: node.id,
+        payload: { ...node, status, completedAt },
+      });
+    }
+    for (const item of input.projection.turnItems) {
       if (
-        node.kind !== "root_turn" ||
-        node.runId !== null ||
-        !isOrchestrationV2WorkActive(node.status)
+        item.nodeId !== node.id ||
+        item.runId !== null ||
+        !isOrchestrationV2WorkActive(item.status) ||
+        endedItemIds.has(item.id)
       ) {
         continue;
       }
-      if (!endedNodeIds.has(node.id)) {
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "node.updated",
-          nodeId: node.id,
-          payload: { ...node, status, completedAt },
-        });
-      }
-      for (const item of input.projection.turnItems) {
-        if (
-          item.nodeId !== node.id ||
-          item.runId !== null ||
-          !isOrchestrationV2WorkActive(item.status) ||
-          endedItemIds.has(item.id)
-        ) {
-          continue;
-        }
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "turn-item.updated",
-          nodeId: node.id,
-          payload: {
-            ...item,
-            status:
-              status === "completed" &&
-              (item.type === "command_execution" || item.type === "dynamic_tool")
-                ? "failed"
-                : status,
-            completedAt,
-            updatedAt: now,
-            ...(item.type === "reasoning" || item.type === "assistant_message"
-              ? { streaming: false }
-              : {}),
-          },
-        });
-      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "turn-item.updated",
+        nodeId: node.id,
+        payload: {
+          ...item,
+          status:
+            status === "completed" &&
+            (item.type === "command_execution" || item.type === "dynamic_tool")
+              ? "failed"
+              : status,
+          completedAt,
+          updatedAt: now,
+          ...(item.type === "reasoning" || item.type === "assistant_message"
+            ? { streaming: false }
+            : {}),
+        },
+      });
     }
-    return events;
-  });
+    for (const providerTurn of input.projection.providerTurns) {
+      if (
+        providerTurn.nodeId !== node.id ||
+        providerTurn.runAttemptId !== null ||
+        !isOrchestrationV2WorkActive(providerTurn.status) ||
+        endedProviderTurnIds.has(providerTurn.id)
+      ) {
+        continue;
+      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "provider-turn.updated",
+        nodeId: node.id,
+        payload: { ...providerTurn, status, completedAt },
+      });
+    }
+  }
+  return events;
+});

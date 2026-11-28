@@ -3,7 +3,7 @@
   <g opacity=".18">
     <path d="M24 24h1152v582h-1152v-582Zm1 1h1150v580h-1150v-580Z" fill="#3f5a2a" fill-rule="evenodd"/>
   </g>
-  <image x="470" y="48" width="260" height="260" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzNmNWEyYSIgc3Ryb2tlLXdpZHRoPSIxLjEiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOS41Ii8+PHBhdGggZD0iTTEyIDIxLjIyNSBMNC4wMTA5IDcuMzg3NSBMMTkuOTg5MSA3LjM4NzUgWiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEuMSIgZmlsbD0iIzlhNGYyNyIgc3Ryb2tlPSJub25lIi8+PC9zdmc+" preserveAspectRatio="none"/>
+  <image x="470" y="48" width="260" height="260" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzNmNWEyYSIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOS41Ii8+PHBhdGggZD0iTTEyIDIxLjEyNSBMNC4wOTc1IDcuNDM3NSBMMTkuOTAyNSA3LjQzNzUgWiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEuMyIgZmlsbD0iIzlhNGYyNyIgc3Ryb2tlPSJub25lIi8+PC9zdmc+" preserveAspectRatio="none"/>
   <g fill="#2a2620">
     <use href="#g0" x="419.9" y="395"/>
     <use href="#g1" x="481.74" y="395"/>
@@ -55,17 +55,17 @@
     <use href="#g24" x="715.89" y="507"/>
   </g>
   <g fill="#85714f">
-    <use href="#g31" x="1033" y="577"/>
-    <use href="#g32" x="1043.8" y="577"/>
-    <use href="#g33" x="1054.6" y="577"/>
-    <use href="#g34" x="1065.4" y="577"/>
-    <use href="#g35" x="1076.2" y="577"/>
-    <use href="#g36" x="1087" y="577"/>
-    <use href="#g37" x="1097.8" y="577"/>
-    <use href="#g38" x="1108.6" y="577"/>
-    <use href="#g39" x="1119.4" y="577"/>
-    <use href="#g40" x="1130.2" y="577"/>
-    <use href="#g41" x="1141" y="577"/>
+    <use href="#g31" x="1033.19" y="577"/>
+    <use href="#g32" x="1043.99" y="577"/>
+    <use href="#g33" x="1054.79" y="577"/>
+    <use href="#g34" x="1065.59" y="577"/>
+    <use href="#g35" x="1076.39" y="577"/>
+    <use href="#g36" x="1087.19" y="577"/>
+    <use href="#g37" x="1097.99" y="577"/>
+    <use href="#g38" x="1108.79" y="577"/>
+    <use href="#g39" x="1119.59" y="577"/>
+    <use href="#g40" x="1130.39" y="577"/>
+    <use href="#g41" x="1141.19" y="577"/>
   </g>
   <defs>
     <path id="g0" d="M-3.28 0l.37-1.95 8.63-1.13h2.19l9.68 1.13-.37 1.95Zm6.94 0 37.76-75.42h3.44l10.59 75.42h-9.65l-8.1-63.16h.5l-.25.38-30.86 62.78Zm15.5-26.14v-2.78h27.89v2.78Zm16.2 26.14.37-1.95 12.32-1.43 4.98.01 9.17 1.42-.37 1.95Z"/>

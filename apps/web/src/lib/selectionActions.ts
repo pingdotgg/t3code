@@ -1,6 +1,7 @@
 export type SelectionActionPoint = { x: number; y: number };
 
 export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
+const SELECTION_SCROLL_SETTLE_MS = 150;
 
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
@@ -25,6 +26,19 @@ export function resolveSelectionActionPosition(options: {
   };
 }
 
+type SelectionRect = { left: number; top: number; right: number; bottom: number };
+
+export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
+  let { left, top, right, bottom } = rect;
+  for (const clip of clips) {
+    left = Math.max(left, clip.left);
+    top = Math.max(top, clip.top);
+    right = Math.min(right, clip.right);
+    bottom = Math.min(bottom, clip.bottom);
+  }
+  return right > left && bottom > top;
+}
+
 /**
  * Interactive popovers pass getActionElement to keep editing their fields from replacing the
  * captured source selection.
@@ -32,11 +46,20 @@ export function resolveSelectionActionPosition(options: {
 export function observeSelectionActions({
   element,
   getActionElement,
+  restoreAfterScroll = false,
+  immediateMultiClick = false,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
+  restoreAfterScroll?: boolean;
+  /**
+   * Show double- and triple-click selections at once instead of waiting out the multi-click
+   * interval. Their pointer is withheld so the action anchors below the selection, clear of
+   * the spot where a following click lands.
+   */
+  immediateMultiClick?: boolean;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
@@ -45,6 +68,7 @@ export function observeSelectionActions({
   let pointerDown = false;
   let gestureActive = false;
   let dismissed = false;
+  let restorable = false;
   let pointer: SelectionActionPoint | null = null;
   let timer: number | null = null;
   let frame: number | null = null;
@@ -62,6 +86,7 @@ export function observeSelectionActions({
     pointerDown = gestureActive = false;
     pointer = null;
     dismissed = true;
+    restorable = false;
   };
   const dismiss = () => {
     cancel();
@@ -72,6 +97,7 @@ export function observeSelectionActions({
     onDismiss("interaction");
   };
   const schedule = (delay: number) => {
+    restorable = true;
     cancelPending();
     timer = view.setTimeout(() => {
       timer = null;
@@ -92,6 +118,7 @@ export function observeSelectionActions({
     const inside = element.contains(event.target as Node);
     gestureActive = false;
     dismissed = true;
+    restorable = false;
     pointer = null;
     if (inside) onDismiss("interaction");
     else if (getActionElement?.()) onDismiss("cancel");
@@ -112,8 +139,9 @@ export function observeSelectionActions({
     pointerDown = false;
     if (!gestureActive) return;
     gestureActive = false;
-    pointer = { x: event.clientX, y: event.clientY };
-    schedule(event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+    const multiClick = event.detail >= 2;
+    pointer = multiClick && immediateMultiClick ? null : { x: event.clientX, y: event.clientY };
+    schedule(multiClick && !immediateMultiClick ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
@@ -135,7 +163,8 @@ export function observeSelectionActions({
     // Autoscroll during a drag must not cancel that gesture's eventual release.
     if (!pointerDown) {
       pointer = null;
-      dismissed = true;
+      if (restoreAfterScroll && !dismissed && restorable) schedule(SELECTION_SCROLL_SETTLE_MS);
+      else dismissed = true;
     }
     onDismiss("cancel");
   };

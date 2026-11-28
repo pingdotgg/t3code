@@ -8,8 +8,23 @@ import {
 } from "./chatAttachment.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
+import { EnvironmentThemeId } from "./server.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
+
+/**
+ * The wire tag of a source control host's credentialed media. It names GitHub because GitHub had
+ * it first, and servers and clients of different releases must keep understanding each other.
+ */
+export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
+
+export const NativeAppIconReference = Schema.Union([
+  ToolActivityNativeAppReference,
+  Schema.TaggedStruct("app-path", {
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
+]);
+export type NativeAppIconReference = typeof NativeAppIconReference.Type;
 
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
@@ -19,17 +34,20 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
+    // Written relative to the thread's workspace, so only that host's file is meant.
+    hostOnly: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
-    /** Generic attachments download by default. Document viewers opt into an
-        inline response after deciding the file type is safe to preview. */
+    /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
@@ -40,19 +58,23 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    // A cache-key hint only. The server reads the authoritative path from the
-    // project projection before it issues the signed URL.
+    // Cache-key hint only; the project projection supplies the authoritative path.
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
-    app: ToolActivityNativeAppReference,
+    app: NativeAppIconReference,
   }),
-  // An upload a pull request body points at on GitHub. A private repository serves these only
+  // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the `gh` credential the repository at `cwd` authenticates with.
-  Schema.TaggedStruct("github-media", {
+  // them with the credential the host's driver holds for the repository at `cwd`. `repository`
+  // names the change request's repository, which can differ from the checkout at `cwd`.
+  Schema.TaggedStruct("environment-theme-background", {
+    themeId: EnvironmentThemeId,
+  }),
+  Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+    repository: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
@@ -69,12 +91,17 @@ export const AssetImageDimensions = Schema.Struct({
 export type AssetImageDimensions = typeof AssetImageDimensions.Type;
 
 export const AssetCreateUrlResult = Schema.Struct({
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(/^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u),
+  ),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
   imageDimensions: Schema.optional(AssetImageDimensions),
+  /** Changes only when the file's contents or identity change, unlike `relativeUrl`, which is re-signed on every mint. */
+  fileRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
@@ -108,7 +135,10 @@ export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInp
 
 export const AttachmentCreateUploadUrlResult = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(/^\/api\/attachments\/upload\/(?!\.{1,2}$)[\w.-]+$/u),
+  ),
   expiresAt: Schema.Number,
 });
 export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;
@@ -207,6 +237,8 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   "AssetWorkspaceAssetNotFoundError",
   {
     resource: AssetResource,
+    // Absolute path after home/workspace resolution; absent on older servers.
+    checkedPath: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
@@ -288,12 +320,13 @@ export class AssetSigningKeyLoadError extends Schema.TaggedError<AssetSigningKey
   }
 }
 
-export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<AssetGitHubMediaUrlValidationError>()(
+// The tag predates the rename and stays: clients on either side of an update decode it.
+export class AssetSourceControlMediaUrlValidationError extends Schema.TaggedError<AssetSourceControlMediaUrlValidationError>()(
   "AssetGitHubMediaUrlValidationError",
   {},
 ) {
   override get message(): string {
-    return "Only media hosted by GitHub can be fetched with a GitHub credential.";
+    return "Only media a source control host keeps behind a credential can be fetched with one.";
   }
 }
 
@@ -310,7 +343,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
-  AssetGitHubMediaUrlValidationError,
+  AssetSourceControlMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

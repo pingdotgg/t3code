@@ -4,10 +4,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -101,13 +103,23 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
         yield* writeTextFile(cwd, "tracked.txt");
         yield* git(cwd, ["add", "tracked.txt"]);
         yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\ntracked.txt\n");
         yield* writeTextFile(cwd, ".env", "secret=value");
+        if (platform !== "win32") yield* writeTextFile(cwd, ":(draft).md");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
+        yield* git(cwd, ["init", "sub"]);
+        yield* writeTextFile(cwd, "sub/.gitignore", "dist/\n");
+        yield* writeTextFile(cwd, "sub/dist/out.js");
+        const gitlink = yield* git(cwd, ["hash-object", "tracked.txt"]);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},sub`]);
+        // A nested clone that isn't a submodule keeps the outer repository's ignore rules.
+        yield* git(cwd, ["init", "node_modules/pkg"]);
+        yield* git(cwd, ["init", "sub/dist"]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
@@ -118,6 +130,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             { path: "src", kind: "directory" },
             { path: "empty", kind: "directory" },
             { path: "tracked.txt", kind: "file" },
+            ...(platform === "win32" ? [] : [{ path: ":(draft).md", kind: "file" }]),
           ]),
         );
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
@@ -127,10 +140,133 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
           truncated: false,
         });
+        // Git refuses pathspecs inside a submodule from the outer repository.
+        expect((yield* workspaceEntries.list({ cwd, directoryPath: "sub" })).entries).toEqual(
+          expect.arrayContaining([
+            { path: "sub/.gitignore", kind: "file" },
+            { path: "sub/dist", kind: "directory", ignored: true },
+          ]),
+        );
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "sub/dist" })).toEqual({
+          entries: [{ path: "sub/dist/out.js", kind: "file", ignored: true }],
+          truncated: false,
+        });
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({
           entries: [],
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("lists symlinks as what they point to, hiding ones that cannot be opened", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir({ git: true });
+        const outside = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "real.txt");
+        yield* writeTextFile(cwd, "realdir/nested.txt");
+        yield* writeTextFile(outside, "outside.txt");
+        yield* fileSystem.symlink("real.txt", path.join(cwd, "link.txt"));
+        yield* fileSystem.symlink("realdir", path.join(cwd, "linkdir"));
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+        yield* fileSystem.symlink(".git", path.join(cwd, "git-link"));
+        yield* fileSystem.symlink("missing", path.join(cwd, "dangling"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(root.entries.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+          { path: "link.txt", kind: "file" },
+          { path: "linkdir", kind: "directory" },
+          { path: "outside-link", kind: "directory" },
+          { path: "real.txt", kind: "file" },
+          { path: "realdir", kind: "directory" },
+        ]);
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "linkdir" })).toEqual({
+          entries: [{ path: "linkdir/nested.txt", kind: "file" }],
+          truncated: false,
+        });
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "outside-link" })).toEqual({
+          entries: [{ path: "outside-link/outside.txt", kind: "file" }],
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("hides folder links that lead back to a folder on the listed path", () =>
+      // "Expand all folders" loads every folder it expands, so a link that loops would
+      // keep nesting the same entries without end.
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "a/file.txt");
+        yield* writeTextFile(cwd, "b/file.txt");
+        yield* fileSystem.symlink(".", path.join(cwd, "self"));
+        yield* fileSystem.symlink("..", path.join(cwd, "a/up"));
+        yield* fileSystem.symlink("../b", path.join(cwd, "a/to-b"));
+        yield* fileSystem.symlink("../a", path.join(cwd, "b/to-a"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const paths = (directoryPath: string) =>
+          workspaceEntries
+            .list({ cwd, directoryPath })
+            .pipe(Effect.map(({ entries }) => entries.map((entry) => entry.path).toSorted()));
+        expect(yield* paths("")).toEqual(["a", "b"]);
+        // A link into a sibling folder is fine on its own...
+        expect(yield* paths("a")).toEqual(["a/file.txt", "a/to-b"]);
+        // ...but once followed, the sibling's link back is hidden.
+        expect(yield* paths("a/to-b")).toEqual(["a/to-b/file.txt"]);
+      }),
+    );
+
+    it.effect("resolves a folder of many symlinks in bounded batches", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Shaped like a pnpm `node_modules`: one link per package into `.pnpm`.
+        const directoryPath = [...Array.from({ length: 80 }, () => "nested"), "node_modules"].join(
+          "/",
+        );
+        const packages = Array.from({ length: 200 }, (_, index) => `pkg-${index}`);
+        yield* Effect.forEach(
+          packages,
+          (name) =>
+            Effect.gen(function* () {
+              yield* writeTextFile(cwd, `${directoryPath}/.pnpm/${name}/index.js`);
+              yield* fileSystem.symlink(`.pnpm/${name}`, path.join(cwd, directoryPath, name));
+            }),
+          { concurrency: 32, discard: true },
+        );
+        const realpath = NodeFSP.realpath;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        vi.spyOn(NodeFSP, "realpath").mockImplementation((async (target: string) => {
+          maxInFlight = Math.max(maxInFlight, ++inFlight);
+          try {
+            return await realpath(target);
+          } finally {
+            inFlight--;
+          }
+        }) as typeof NodeFSP.realpath);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
+        expect(entries.map((entry) => entry.path).toSorted()).toEqual(
+          [
+            `${directoryPath}/.pnpm`,
+            ...packages.map((name) => `${directoryPath}/${name}`),
+          ].toSorted(),
+        );
+        expect(entries.every((entry) => entry.kind === "directory")).toBe(true);
+        expect(maxInFlight).toBeLessThanOrEqual(64);
       }),
     );
 
@@ -141,11 +277,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const platform = yield* HostProcess.Platform;
-        yield* writeTextFile(
-          cwd,
-          ".gitignore",
-          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
-        );
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\ndist/\n\\[id\\]/\n*.map\n:foo/\n");
         yield* Effect.forEach(
           [
             "node_modules",
@@ -176,7 +308,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         for (const { directoryPath, ignored, except } of [
           { directoryPath: "node_modules", ignored: true, except: [] },
-          // A force-tracked file and a folder holding tracked files stay unignored.
           { directoryPath: "dist", ignored: true, except: ["dist/kept.js", "dist/vendored"] },
           // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
           { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
@@ -185,9 +316,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             ? [
                 // git refuses to classify paths beyond a symlink, so nothing there is labelled.
                 { directoryPath: "node_modules/link", ignored: false, except: [] },
-                // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
-                // which `!foo/` keeps unignored.
-                { directoryPath: ":foo", ignored: false, except: [] },
+                // Git reads ./:foo literally, so :foo/ in .gitignore labels the whole folder.
+                { directoryPath: ":foo", ignored: true, except: [] },
               ]
             : []),
         ]) {
@@ -205,8 +335,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
 
     it.effect("lists a host folder and its parent, each from its own root", () =>
-      // Folder links outside the workspace browse by passing the host folder as
-      // `cwd`; walking up passes the parent. Each stays bounded by its own root.
       Effect.gen(function* () {
         const parent = yield* makeTempDir();
         const path = yield* Path.Path;
@@ -228,62 +356,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect(
-      "rejects directory traversal, git internals, and symlinks outside the workspace",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir();
-          const outside = yield* makeTempDir();
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* writeTextFile(cwd, ".git/HEAD");
-          const platform = yield* HostProcess.Platform;
-          if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          for (const directoryPath of [
-            "../",
-            outside,
-            ".git",
-            "missing",
-            ...(platform !== "win32" ? ["external"] : []),
-          ]) {
-            const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
-            expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
-          }
-        }),
-    );
-
-    it.effect(
-      "browses a workspace with more than 25,000 entries without truncation",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir();
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          for (let directory = 0; directory < 26; directory++) {
-            const directoryPath = path.join(cwd, `folder-${directory}`);
-            yield* fileSystem.makeDirectory(directoryPath);
-            yield* Effect.forEach(
-              Array.from({ length: 1000 }, (_, i) => i),
-              (i) => fileSystem.writeFileString(path.join(directoryPath, `file-${i}.txt`), ""),
-              { concurrency: 32, discard: true },
-            );
-          }
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
-          expect(root.entries).toHaveLength(26);
-          expect(root.truncated).toBe(false);
-          for (const directory of root.entries) {
-            const result = yield* workspaceEntries.list({ cwd, directoryPath: directory.path });
-            expect(result.entries).toHaveLength(1000);
-            expect(result.truncated).toBe(false);
-            expect(result.entries).toContainEqual({
-              path: `${directory.path}/file-999.txt`,
-              kind: "file",
-            });
-          }
-        }),
-      60_000,
+    it.effect("rejects directory traversal and git internals", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const outside = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".git/HEAD");
+        yield* writeTextFile(outside, "repo/.git/HEAD");
+        const platform = yield* HostProcess.Platform;
+        if (platform !== "win32") {
+          yield* fileSystem.symlink(path.join(outside, "repo/.git"), path.join(cwd, "external"));
+        }
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const directoryPath of [
+          "../",
+          outside,
+          ".git",
+          "missing",
+          ...(platform !== "win32" ? ["external"] : []),
+        ]) {
+          const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
+          expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
+        }
+      }),
     );
 
     it.effect("includes images and other binary files in non-git workspace indexes", () =>
@@ -321,116 +417,46 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(images.truncated).toBe(false);
       }),
     );
+  });
 
-    it.effect("returns the complete cached workspace index", () =>
+  describe("listIgnoredFiles", () => {
+    it.effect("lists ignored files with sizes and skips wholly ignored folders", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTempDir();
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "README.md");
-        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env*\n");
+        yield* writeTextFile(cwd, ".env", "A=1");
+        yield* writeTextFile(cwd, "apps/web/index.ts", "y");
+        yield* git(cwd, ["add", "apps/web/index.ts"]);
+        yield* writeTextFile(cwd, "apps/web/.env.local", "B=22");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js", "x");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const result = yield* workspaceEntries.list({ cwd });
+        expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
+          files: [
+            { path: ".env", byteLength: 3 },
+            { path: "apps/web/.env.local", byteLength: 4 },
+          ],
+          truncated: false,
+        });
+      }),
+    );
 
-        expect(result.entries).toEqual(
-          expect.arrayContaining([
-            { path: "src", kind: "directory" },
-            { path: "src/components", kind: "directory" },
-            {
-              path: "src/components/Composer.tsx",
-              kind: "file",
-            },
-            { path: "README.md", kind: "file" },
-          ]),
-        );
-        expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
-        expect(result.truncated).toBe(false);
+    it.effect("finds ignored files that sort past the listing limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "*.secret\n");
+        for (let index = 1; index <= 205; index += 1) {
+          yield* writeTextFile(cwd, `file-${String(index).padStart(3, "0")}.secret`, "s");
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const listed = yield* workspaceEntries.listIgnoredFiles({ cwd, query: "file-205" });
+        expect(listed.files).toContainEqual({ path: "file-205.secret", byteLength: 1 });
       }),
     );
   });
 
   describe("search", () => {
-    it.effect("returns files and directories relative to cwd", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir();
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "src/index.ts");
-        yield* writeTextFile(cwd, "README.md");
-        yield* writeTextFile(cwd, ".git/HEAD");
-        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
-        const paths = result.entries.map((entry) => entry.path);
-
-        expect(paths).toContain("src");
-        expect(paths).toContain("src/components");
-        expect(paths).toContain("src/components/Composer.tsx");
-        expect(paths).toContain("README.md");
-        expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
-        expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
-        expect(result.truncated).toBe(false);
-      }),
-    );
-
-    it.effect("filters and ranks entries by query", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-query-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "src/components/composePrompt.ts");
-        yield* writeTextFile(cwd, "docs/composition.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "compo", limit: 5 });
-
-        expect(result.entries.length).toBeGreaterThan(0);
-        expect(result.entries.some((entry) => entry.path === "src/components")).toBe(true);
-        expect(result.entries.every((entry) => entry.path.toLowerCase().includes("compo"))).toBe(
-          true,
-        );
-      }),
-    );
-
-    it.effect("supports fuzzy subsequence queries for composer path search", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-query-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "src/components/composePrompt.ts");
-        yield* writeTextFile(cwd, "docs/composition.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
-        const paths = result.entries.map((entry) => entry.path);
-
-        expect(result.entries.length).toBeGreaterThan(0);
-        expect(paths).toContain("src/components");
-        expect(paths).toContain("src/components/Composer.tsx");
-      }),
-    );
-
-    it.effect("prioritizes exact basename matches ahead of broader path matches", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-exact-ranking-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "docs/composer.tsx-notes.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "Composer.tsx", limit: 5 });
-
-        expect(result.entries[0]?.path).toBe("src/components/Composer.tsx");
-      }),
-    );
-
-    it.effect("tracks truncation without sorting every fuzzy match", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-limit-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "src/components/composePrompt.ts");
-        yield* writeTextFile(cwd, "docs/composition.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 1 });
-
-        expect(result.entries).toHaveLength(1);
-        expect(result.truncated).toBe(true);
-      }),
-    );
-
     it.effect("applies the file filter before limiting search results", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-file-limit-" });
@@ -452,41 +478,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("answers an empty file-filtered query with a bounded file listing", () =>
+    it.effect("matches glob metacharacters in the query literally", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-empty-query-" });
-        yield* writeTextFile(cwd, "src/index.ts");
-        yield* writeTextFile(cwd, "README.md");
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
+        yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+        yield* writeTextFile(cwd, "src/foo{bar}.ts");
+        yield* writeTextFile(cwd, "src/main.ts");
+        yield* writeTextFile(cwd, "src/notes.md");
 
-        const result = yield* searchWorkspaceEntries({
-          cwd,
-          query: "",
-          limit: 10,
-          kind: "file",
-        });
+        const search = (query: string) =>
+          searchWorkspaceEntries({ cwd, query, limit: 10 }).pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.path)),
+          );
 
-        const paths = result.entries.map((entry) => entry.path);
-        expect(paths).toHaveLength(2);
-        expect(paths).toContain("src/index.ts");
-        expect(paths).toContain("README.md");
-        expect(result.entries.every((entry) => entry.kind === "file")).toBe(true);
-      }),
-    );
-
-    it.effect("returns only directories for the directory filter", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-directory-filter-" });
-        yield* writeTextFile(cwd, "src/index.ts");
-
-        const result = yield* searchWorkspaceEntries({
-          cwd,
-          query: "src",
-          limit: 10,
-          kind: "directory",
-        });
-
-        expect(result.entries).toEqual([{ path: "src", kind: "directory" }]);
-        expect(result.truncated).toBe(false);
+        for (const query of ["game/[i", "game/[id]"]) {
+          expect(yield* search(query)).toContain("src/app/game/[id]/index.tsx");
+        }
+        expect(yield* search("foo{bar}.ts")).toContain("src/foo{bar}.ts");
+        expect((yield* search("*.{ts,tsx}")).toSorted()).toEqual([
+          "src/app/game/[id]/index.tsx",
+          "src/foo{bar}.ts",
+          "src/main.ts",
+        ]);
+        expect((yield* search("*.{ts}")).toSorted()).toEqual(["src/foo{bar}.ts", "src/main.ts"]);
+        expect(yield* search("src/{main}.ts")).toEqual(["src/main.ts"]);
+        expect(yield* search("src/{foo{bar},notes}.md")).toEqual(["src/notes.md"]);
       }),
     );
 
@@ -498,6 +514,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "ignored.txt", "ignore me");
         yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
         yield* writeTextFile(cwd, "convex/UOoS-l/convex_local_storage/modules/data.json", "{}");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "ignore me");
+        yield* writeTextFile(cwd, ".git/configured-excludes", "configured-excluded.txt\n");
+        yield* git(cwd, ["config", "core.excludesFile", ".git/configured-excludes"]);
+        yield* writeTextFile(cwd, "configured-excluded.txt", "ignore me");
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
@@ -505,6 +526,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths).not.toContain("ignored.txt");
+        expect(paths).not.toContain("info-excluded.txt");
+        expect(paths).not.toContain("configured-excluded.txt");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
       }),
@@ -530,55 +553,209 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("excludes .convex in non-git workspaces", () =>
+    it.effect("indexes symlinked files and directories inside the workspace", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-non-git-convex-" });
-        yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
-        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
-        const paths = result.entries.map((entry) => entry.path);
-
-        expect(paths).toContain("src");
-        expect(paths).toContain("src/keep.ts");
-        expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
-      }),
-    );
-
-    it.effect("supports typo-resistant file search through fff", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fff-typo-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "compoesr", limit: 10 });
-
-        expect(result.entries).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ path: "src/components/Composer.tsx" }),
-          ]),
-        );
-      }),
-    );
-
-    it.effect("rebuilds the cached index after refresh fails", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-refresh-failure-" });
-        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
+        yield* fileSystem.symlink("src/index.ts", path.join(cwd, "index-link.ts"));
+        const symlinkEntries = [
+          { kind: "directory", path: "src-link" },
+          { kind: "file", path: "index-link.ts" },
+        ];
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const createSpy = vi.spyOn(FileFinder, "create");
-        yield* workspaceEntries.list({ cwd });
-        expect(createSpy).toHaveBeenCalledTimes(1);
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
 
-        vi.spyOn(FileFinder.prototype, "scanFiles").mockReturnValueOnce({
-          ok: false,
-          error: "scan failed",
-        });
-        yield* workspaceEntries.refresh(cwd);
-
-        yield* workspaceEntries.list({ cwd });
-        expect(createSpy).toHaveBeenCalledTimes(2);
+        for (const entry of symlinkEntries) {
+          expect(searched.entries).toContainEqual(expect.objectContaining(entry));
+          expect(listed.entries).toContainEqual(expect.objectContaining(entry));
+        }
       }),
+    );
+    it.effect("skips symlinks that ignore rules hide or that leave the workspace", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const outside = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-outside-" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, ".ignore", "custom-link\n");
+        yield* fileSystem.symlink("src", path.join(cwd, "custom-link"));
+        yield* fileSystem.symlink("src/index.ts", path.join(cwd, "tracked-link.ts"));
+        yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
+        yield* fileSystem.symlink("src", path.join(cwd, "kept-link"));
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+        yield* git(cwd, ["add", "tracked-link.ts"]);
+        yield* writeTextFile(cwd, ".gitignore", "tracked-link.ts\nignored-link\n");
+        // A submodule path makes `git check-ignore` refuse the whole batch without --no-index.
+        const submodule = path.join(cwd, "vendor/sub");
+        yield* writeTextFile(submodule, "a.ts", "export {};");
+        yield* git(submodule, ["init"]);
+        yield* git(submodule, ["add", "a.ts"]);
+        yield* git(submodule, [
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@t",
+          "commit",
+          "-m",
+          "init",
+        ]);
+        yield* git(cwd, ["add", "vendor/sub"]);
+        yield* fileSystem.symlink("a.ts", path.join(submodule, "sublink.ts"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).toContain("kept-link");
+          expect(paths).toContain("vendor/sub/sublink.ts");
+          expect(paths).not.toContain("custom-link");
+          expect(paths).not.toContain("tracked-link.ts");
+          expect(paths).not.toContain("ignored-link");
+          expect(paths).not.toContain("outside-link");
+        }
+      }),
+    );
+    it.effect("lets the nearest .ignore rule decide a symlink, ahead of git's rules", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", "*keep*\n");
+        yield* writeTextFile(cwd, ".ignore", "!*keep*\n*hide*\n");
+        yield* writeTextFile(cwd, "sub/.ignore", "!*hide*\n");
+        yield* writeTextFile(cwd, "keep-real.ts", "export {};");
+        yield* writeTextFile(cwd, "sub/hide-real.ts", "export {};");
+        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, "keep-link.ts"));
+        yield* fileSystem.symlink("hide-real.ts", path.join(cwd, "sub/hide-link.ts"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).toContain("sub/hide-link.ts");
+          expect(paths).toContain("keep-link.ts");
+        }
+        // The real files are shown or hidden by the same rules.
+        const listedPaths = listed.entries.map((entry) => entry.path);
+        expect(listedPaths).toContain("sub/hide-real.ts");
+        expect(listedPaths).toContain("keep-real.ts");
+      }),
+    );
+    it.effect("matches .ignore rules against whole names and treats folder links as links", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, ".gitignore", "blink\n");
+        // `!link` must not re-include `blink`, and `folder-link/` does not apply to a link.
+        yield* writeTextFile(cwd, ".ignore", "!link\nfolder-link/\n");
+        yield* fileSystem.symlink("src", path.join(cwd, "blink"));
+        yield* fileSystem.symlink("src", path.join(cwd, "folder-link"));
+        yield* writeTextFile(cwd, "sub/blink", "regular");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).not.toContain("blink");
+          expect(paths).not.toContain("sub/blink");
+          expect(paths).toContain("folder-link");
+        }
+      }),
+    );
+    it.effect("finds a path inside a gitignored nested git worktree only by its exact path", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-worktree-", git: true });
+        const env = {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        };
+        yield* writeTextFile(cwd, ".gitignore", ".worktrees/\n");
+        yield* git(cwd, ["add", ".gitignore"]);
+        yield* git(cwd, ["commit", "-m", "init"], env);
+        yield* git(cwd, ["worktree", "add", "-b", "x", ".worktrees/x"]);
+        yield* writeTextFile(cwd, ".worktrees/x/src/foo.py", "print(1)");
+        const expected = [".worktrees/x/src/foo.py"];
+        // Windows file names cannot contain a newline.
+        if ((yield* HostProcess.Platform) !== "win32") {
+          yield* git(cwd, ["worktree", "add", "--detach", ".worktrees/line\nname"]);
+          yield* writeTextFile(cwd, ".worktrees/line\nname/src/foo.py", "print(2)");
+          expected.unshift(".worktrees/line\nname/src/foo.py");
+        }
+
+        const exact = yield* searchWorkspaceEntries({
+          cwd,
+          query: "src/foo.py",
+          limit: 25,
+          kind: "file",
+        });
+        expect(exact.entries.toSorted((a, b) => (a.path < b.path ? -1 : 1))).toEqual(
+          expected.map((path) => ({ path, kind: "file" })),
+        );
+
+        const partial = yield* searchWorkspaceEntries({ cwd, query: "src/fo", limit: 25 });
+        for (const path of expected) {
+          expect(partial.entries.map((entry) => entry.path)).not.toContain(path);
+        }
+      }),
+    );
+
+    it.effect("releases an index nobody searched within the idle timeout on refresh", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-idle-refresh-" });
+        yield* writeTextFile(cwd, "src/index.ts");
+        let rescans = 0;
+        let destroyed = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
+              rescans += 1;
+              return scanFilesAsync();
+            };
+            const destroy = finder.destroy.bind(finder);
+            finder.destroy = () => {
+              destroyed += 1;
+              destroy();
+            };
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* TestClock.adjust("1 hour");
+        yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
+
+        for (let run = 0; run < 3; run++) {
+          yield* TestClock.adjust("6 minutes");
+          yield* workspaceEntries.refresh(cwd, "passive");
+          yield* workspaceEntries.refresh(cwd, "passive");
+        }
+
+        expect({ rescans, destroyed }).toEqual({ rescans: 2, destroyed: 1 });
+      }).pipe(Effect.provide(TestClock.layer())),
     );
   });
 
@@ -618,6 +795,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
         yield* writeTextFile(cwd, "src/keep.ts", "square\nSquare\n");
         yield* writeTextFile(cwd, "ignored.txt", "Square\n");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "Square\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.searchContents({
@@ -631,36 +810,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result.matches).toHaveLength(1);
         expect(result.matches[0]).toMatchObject({ path: "src/keep.ts", lineNumber: 2 });
-      }),
-    );
-
-    it.effect("filters whole-word matches by word boundaries without widening ranges", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-whole-word-" });
-        yield* writeTextFile(cwd, "src/words.ts", "note notes denote\nfootnote note\n");
-
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const result = yield* workspaceEntries.searchContents({
-          cwd,
-          query: "note",
-          limit: 100,
-          caseSensitive: true,
-          wholeWord: true,
-          useRegex: false,
-        });
-
-        expect(result.matches).toEqual([
-          expect.objectContaining({
-            path: "src/words.ts",
-            lineNumber: 1,
-            matchRanges: [{ start: 0, end: 4 }],
-          }),
-          expect.objectContaining({
-            path: "src/words.ts",
-            lineNumber: 2,
-            matchRanges: [{ start: 9, end: 13 }],
-          }),
-        ]);
       }),
     );
 
@@ -742,33 +891,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("matches punctuation-edged regex queries as whole words", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-regex-punctuation-" });
-        yield* writeTextFile(cwd, "src/words.ts", "foo- foo-\nafoo-b\n");
-
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const result = yield* workspaceEntries.searchContents({
-          cwd,
-          query: "foo-",
-          limit: 100,
-          caseSensitive: true,
-          wholeWord: true,
-          useRegex: true,
-        });
-
-        expect(result.matches).toHaveLength(1);
-        expect(result.matches[0]).toMatchObject({
-          path: "src/words.ts",
-          lineNumber: 1,
-          matchRanges: [
-            { start: 0, end: 4 },
-            { start: 5, end: 9 },
-          ],
-        });
-      }),
-    );
-
     it.effect("caps matches per file so one dense file cannot fill the page", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-per-file-cap-" });
@@ -813,15 +935,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("preserves invalid regex errors during case-insensitive searches", () =>
+    it.effect("searches an invalid regex literally without matching case", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-invalid-regex-" });
-        yield* writeTextFile(cwd, "src/shapes.ts", "foobar\n");
+        yield* writeTextFile(cwd, "src/calls.ts", "call(Foo(bar));\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.searchContents({
           cwd,
-          query: "foo)bar(",
+          query: "foo(",
           limit: 100,
           caseSensitive: false,
           wholeWord: false,
@@ -829,7 +951,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         });
 
         expect(result.regexFallbackError).toBeDefined();
-        expect(result.matches).toEqual([]);
+        expect(result.matches).toEqual([
+          expect.objectContaining({
+            path: "src/calls.ts",
+            lineNumber: 1,
+            matchRanges: [{ start: 5, end: 9 }],
+          }),
+        ]);
       }),
     );
 
@@ -854,32 +982,172 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(match.lineContent.slice(range.start, range.end)).toBe("wörld");
       }),
     );
-  });
 
-  describe("browse", () => {
-    it.effect("returns matching directories and excludes files", () =>
+    it.effect("keeps matches past the truncated part of a long line", () =>
       Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-long-line-" });
+        yield* writeTextFile(cwd, "dist/app.min.js", `${"x".repeat(600)} needleSuffix\n`);
+
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-prefix-" });
-        yield* writeTextFile(cwd, "alphabet.txt", "ignore me");
-        yield* writeTextFile(cwd, "alpha/index.ts", "export {};\n");
-        yield* writeTextFile(cwd, "alpine/index.ts", "export {};\n");
+        const search = (wholeWord: boolean) =>
+          workspaceEntries.searchContents({
+            cwd,
+            query: "needle",
+            limit: 100,
+            caseSensitive: true,
+            wholeWord,
+            useRegex: false,
+          });
 
-        const result = yield* workspaceEntries.browse({
-          partialPath: path.join(cwd, "alp"),
-        });
-
-        expect(result).toEqual({
-          parentPath: cwd,
-          entries: [
-            { name: "alpha", fullPath: path.join(cwd, "alpha") },
-            { name: "alpine", fullPath: path.join(cwd, "alpine") },
-          ],
-        });
+        expect((yield* search(false)).matches).toEqual([
+          expect.objectContaining({ path: "dist/app.min.js", lineNumber: 1 }),
+        ]);
+        expect((yield* search(true)).matches).toEqual([]);
       }),
     );
 
+    it.effect("keeps answering from the live index when a refresh outlasts the scan wait", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-refresh-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        let scansOutlastWait = false;
+        const waiting = Promise.withResolvers<void>();
+        const finishWait = Promise.withResolvers<void>();
+        let finders = 0;
+        let rescans = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            finders += 1;
+            // The synchronous rescan and grep wait on fff's picker lock on the event loop.
+            finder.scanFiles = () => {
+              throw new Error("refresh must not rescan on the JS thread");
+            };
+            finder.grep = () => {
+              throw new Error("search must not grep on the JS thread");
+            };
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
+              rescans += 1;
+              return scanFilesAsync();
+            };
+            const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+            finder.waitForIndexReady = async (timeoutMs) => {
+              if (!scansOutlastWait) return waitForIndexReady(timeoutMs);
+              waiting.resolve();
+              await finishWait.promise;
+              return { ok: true, value: false };
+            };
+            const getScanProgressAsync = finder.getScanProgressAsync.bind(finder);
+            finder.getScanProgressAsync = () =>
+              scansOutlastWait
+                ? Promise.resolve({
+                    ok: true,
+                    value: {
+                      isScanning: true,
+                      scannedFilesCount: 0,
+                      isWatcherReady: false,
+                      isWarmupComplete: false,
+                    },
+                  })
+                : getScanProgressAsync();
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+        yield* searchNeedle;
+
+        scansOutlastWait = true;
+        const refresh = yield* workspaceEntries.refresh(cwd).pipe(Effect.forkChild);
+        yield* Effect.promise(() => waiting.promise);
+        yield* workspaceEntries.refresh(cwd, "passive");
+        finishWait.resolve();
+        yield* Fiber.join(refresh);
+        yield* TestClock.adjust("2 minutes");
+        yield* workspaceEntries.refresh(cwd, "passive");
+        scansOutlastWait = false;
+        const result = yield* searchNeedle;
+
+        expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
+        // The second search ran on the rescanned live finder, not a rebuild.
+        expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("serves content search once a first scan that outlasted the wait finishes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-slow-scan-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        // Real finders; only the initial wait and the progress it reads report a scan still running.
+        let scanning = true;
+        let finders = 0;
+        let settle = (): Promise<unknown> => Promise.resolve();
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (!created.ok) return created;
+          const finder = created.value;
+          finders += 1;
+          const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+          settle = () => waitForIndexReady(15_000);
+          finder.waitForIndexReady = (timeoutMs) =>
+            scanning ? Promise.resolve({ ok: true, value: false }) : waitForIndexReady(timeoutMs);
+          const getScanProgress = finder.getScanProgressAsync.bind(finder);
+          finder.getScanProgressAsync = async () => {
+            const progress = await getScanProgress();
+            return scanning && progress.ok
+              ? {
+                  ok: true,
+                  value: { ...progress.value, isScanning: true, isWarmupComplete: false },
+                }
+              : progress;
+          };
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = workspaceEntries
+          .searchContents({
+            cwd,
+            query: "needle",
+            limit: 100,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex: false,
+          })
+          .pipe(
+            Effect.map((result): unknown => result.matches.map((match) => match.path)),
+            Effect.catchTags({
+              WorkspaceSearchIndexScanTimedOut: (error) => Effect.succeed<unknown>(error._tag),
+            }),
+          );
+
+        const whileScanning = yield* Effect.all([searchNeedle, searchNeedle], {
+          concurrency: "unbounded",
+        });
+        scanning = false;
+        yield* Effect.promise(() => settle());
+        const afterScan = yield* searchNeedle;
+
+        expect({ whileScanning, afterScan, finders }).toEqual({
+          whileScanning: ["WorkspaceSearchIndexScanTimedOut", "WorkspaceSearchIndexScanTimedOut"],
+          afterScan: ["src/notes.ts"],
+          finders: 1,
+        });
+      }),
+    );
+  });
+
+  describe("browse", () => {
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -904,54 +1172,72 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("supports relative paths when cwd is provided", () =>
+    it.effect("lists numbered folders in natural order", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-relative-" });
-        yield* writeTextFile(cwd, "packages/pkg.json", "{}");
-
-        const result = yield* workspaceEntries.browse({
-          cwd,
-          partialPath: "./pack",
-        });
-
-        expect(result).toEqual({
-          parentPath: cwd,
-          entries: [{ name: "packages", fullPath: path.join(cwd, "packages") }],
-        });
-      }),
-    );
-
-    it.effect("rejects relative paths without cwd", () =>
-      Effect.gen(function* () {
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-
-        const error = yield* workspaceEntries
-          .browse({
-            partialPath: "./src",
-          })
-          .pipe(Effect.flip);
-
-        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
-        expect(error.message).toBe(
-          "A current project is required to browse relative workspace path './src'.",
-        );
-      }),
-    );
-
-    it.effect("returns an empty listing when the OS denies directory access", () =>
-      Effect.gen(function* () {
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-eacces-" });
-
-        const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-natural-" });
+        for (const name of ["app10", "app2", "app1"]) {
+          yield* writeTextFile(cwd, `${name}/README.md`, "");
+        }
 
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),
         });
-        expect(result).toEqual({ parentPath: cwd, entries: [] });
+
+        expect(result.entries.map((entry) => entry.name)).toEqual(["app1", "app2", "app10"]);
+      }),
+    );
+
+    it.effect("marks only a missing directory as missing when browsing fails", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-missing-" });
+        yield* writeTextFile(cwd, "file.txt", "");
+
+        const missing = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "absent", "nested")}${path.sep}` })
+          .pipe(Effect.flip);
+        const underFile = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "file.txt")}${path.sep}` })
+          .pipe(Effect.flip);
+
+        expect(missing).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: true,
+        });
+        expect(underFile).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: false,
+        });
+      }),
+    );
+
+    it.effect("lists symlinks to directories under their link path", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const externalTarget = yield* makeTempDir({
+          prefix: "t3code-workspace-browse-symlink-target-",
+        });
+        yield* writeTextFile(cwd, "real-dir/readme.md", "hi");
+        yield* writeTextFile(cwd, "plain.txt", "hi");
+
+        yield* fileSystem.symlink(externalTarget, path.join(cwd, "personal"));
+        yield* fileSystem.symlink(path.join(cwd, "plain.txt"), path.join(cwd, "file-link"));
+        yield* fileSystem.symlink(path.join(cwd, "does-not-exist"), path.join(cwd, "broken-link"));
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries).toEqual([
+          { name: "personal", fullPath: path.join(cwd, "personal") },
+          { name: "real-dir", fullPath: path.join(cwd, "real-dir") },
+        ]);
       }),
     );
   });

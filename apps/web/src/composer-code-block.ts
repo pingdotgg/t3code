@@ -1,24 +1,24 @@
-import { exitCode } from "@tiptap/pm/commands";
+import type { ContentMatch, NodeType } from "@tiptap/pm/model";
 import type { EditorState, Transaction } from "@tiptap/pm/state";
-import { TextSelection } from "@tiptap/pm/state";
+import { Selection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
 import { isClosingFence, parseOpeningFence, serializeSelection } from "~/composer-rich-text-doc";
 
-export const CODE_BLOCK_INDENT = "  ";
+const CODE_BLOCK_INDENT = "  ";
 
-export function leadingWhitespace(line: string): string {
+function leadingWhitespace(line: string): string {
   return /^[ \t]*/.exec(line)?.[0] ?? "";
 }
 
-export function outdentLine(line: string): string {
+function outdentLine(line: string): string {
   if (line.startsWith(CODE_BLOCK_INDENT)) return line.slice(CODE_BLOCK_INDENT.length);
   if (line.startsWith("\t")) return line.slice(1);
   if (line.startsWith(" ")) return line.slice(1);
   return line;
 }
 
-export function indentLines(lines: ReadonlyArray<string>, direction: "in" | "out"): string[] {
+function indentLines(lines: ReadonlyArray<string>, direction: "in" | "out"): string[] {
   return lines.map((line) => {
     if (direction === "in") return line.length === 0 ? line : `${CODE_BLOCK_INDENT}${line}`;
     return outdentLine(line);
@@ -36,8 +36,7 @@ function codeBlockRange(
   const { $from, $to } = state.selection;
   const parent = $from.parent;
   if (parent.type.spec.code !== true) return null;
-  // Same occurrence, not merely equal structure: two identical fences would
-  // otherwise let a selection across them edit through the block boundary.
+  // Structural equality would let selections span identical fences.
   if (!$from.sameParent($to)) return null;
   const from = $from.start();
   return { from, to: from + parent.content.size, text: parent.textContent };
@@ -67,20 +66,36 @@ export function indentedNewlineInCodeBlock(
   return true;
 }
 
+function defaultBlockAt(match: ContentMatch): NodeType | null {
+  for (let index = 0; index < match.edgeCount; index += 1) {
+    const { type } = match.edge(index);
+    if (type.isTextblock && !type.hasRequiredAttrs()) return type;
+  }
+  return null;
+}
+
 export function exitCodeBlockOnTrailingBlankLines(view: EditorView): boolean {
   const { $from, empty } = view.state.selection;
   if (!empty || $from.parent.type.spec.code !== true) return false;
   if ($from.parentOffset !== $from.parent.content.size) return false;
   const trailing = /\n[ \t]*\n[ \t]*$/.exec($from.parent.textContent);
   if (!trailing) return false;
+  const above = $from.node(-1);
+  const after = $from.indexAfter(-1);
+  const exitType = defaultBlockAt(above.contentMatchAt(after));
+  const exitBlock = exitType?.createAndFill();
+  if (!exitType || !exitBlock || !above.canReplaceWith(after, after, exitType)) return false;
+
   const transaction = view.state.tr.delete($from.pos - trailing[0].length, $from.pos);
-  // An unclosed fence runs to the end of the draft; the prose after it would
-  // be read back as code, so leaving it writes the closing fence.
+  // Close the fence on exit so following prose is not read as code.
   if (!$from.parent.attrs.close) {
     transaction.setNodeAttribute($from.before(), "close", `\n${$from.parent.attrs.fence}`);
   }
-  view.dispatch(transaction);
-  return exitCode(view.state, (tr) => view.dispatch(tr.scrollIntoView()));
+  const exitPos = transaction.mapping.map($from.after());
+  transaction.replaceWith(exitPos, exitPos, exitBlock);
+  transaction.setSelection(Selection.near(transaction.doc.resolve(exitPos), 1));
+  view.dispatch(transaction.scrollIntoView());
+  return true;
 }
 
 export function exitCodeBlockOnClosingFence(
@@ -139,7 +154,7 @@ export function indentCodeBlock(
     return true;
   }
 
-  const lineStart = block.text.lastIndexOf("\n", Math.max(0, startOffset - 1)) + 1;
+  const lineStart = startOffset === 0 ? 0 : block.text.lastIndexOf("\n", startOffset - 1) + 1;
   const newlineAfter = block.text.indexOf("\n", Math.max(startOffset, endOffset - 1));
   const lineEnd = newlineAfter === -1 ? block.text.length : newlineAfter;
 
@@ -148,32 +163,28 @@ export function indentCodeBlock(
   if (nextLines.join("\n") === originalLines.join("\n")) return true;
 
   if (dispatch) {
-    const transaction = state.tr.insertText(
-      nextLines.join("\n"),
-      block.from + lineStart,
-      block.from + lineEnd,
-    );
-    const firstDelta = (nextLines[0]?.length ?? 0) - (originalLines[0]?.length ?? 0);
-    const totalDelta = nextLines.join("\n").length - originalLines.join("\n").length;
-    const nextFrom = Math.max(block.from + lineStart, from + firstDelta);
-    const nextTo = Math.max(nextFrom, to + totalDelta);
-    transaction.setSelection(TextSelection.create(transaction.doc, nextFrom, nextTo));
+    const transaction = state.tr;
+    let position = block.from + lineStart;
+    originalLines.forEach((line, index) => {
+      const delta = nextLines[index]!.length - line.length;
+      const start = transaction.mapping.map(position);
+      if (delta > 0) transaction.insertText(CODE_BLOCK_INDENT, start);
+      if (delta < 0) transaction.delete(start, start - delta);
+      position += line.length + 1;
+    });
+    transaction.setSelection(state.selection.map(transaction.doc, transaction.mapping));
     dispatch(transaction.scrollIntoView());
   }
   return true;
 }
 
-/**
- * Tiptap's own input rules only fire on a space, so without this the gesture every markdown editor
- * has — ```` ```ts ```` then Enter — leaves the fence as literal text.
- */
+/** Tiptap's input rules only fire on a space, leaving a fence followed by Enter literal. */
 export function convertCodeFenceOnEnter(
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
 ): boolean {
   const { $from, empty } = state.selection;
-  // Top-level paragraphs only: the list and quote serializers have no line
-  // to write a fence into, so one created inside them would vanish.
+  // List and quote serializers cannot write fences, so allow only top-level paragraphs.
   if (!empty || $from.parent.type.name !== "paragraph" || $from.depth !== 1) return false;
   if ($from.parentOffset !== $from.parent.content.size) return false;
   const opening = parseOpeningFence(serializeSelection(state.doc, $from.start(), $from.end()));

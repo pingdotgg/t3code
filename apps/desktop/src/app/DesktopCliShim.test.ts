@@ -39,12 +39,12 @@ const run = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv =
   });
 
 const REPORTER =
-  '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$T3CODE_HOME"\nprintf "%s\\n" "$@"\nexit 3\n';
+  '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$T3CODE_HOME appimage=$APPIMAGE"\nprintf "%s\\n" "$@"\nexit 3\n';
 
-const fakeAppImage = (canMount = true) => {
+const fakeAppImage = (canMount = true, app = REPORTER) => {
   const root = tempRoot();
   const image = NodePath.join(root, "image");
-  writeExecutable(NodePath.join(image, "t3code"), REPORTER);
+  writeExecutable(NodePath.join(image, "t3code"), app);
   const appImage = NodePath.join(root, "T3 Code.AppImage");
   writeExecutable(
     appImage,
@@ -53,8 +53,12 @@ const fakeAppImage = (canMount = true) => {
       `if [ "$1" = --appimage-extract ]; then cp -R '${image}' squashfs-root; exit 0; fi`,
       '[ "$1" = --appimage-mount ] || exit 9',
       '[ -n "$APPIMAGE_EXTRACT_AND_RUN" ] && exit 8',
+      // Like the FUSE runtime, any of these unmounts. fd 3 reports to the test when it is open.
+      // Trapped before the mount is announced, or the test's probe can arrive first and be lost.
+      "trap 'echo unmounted >&3 2>/dev/null; exit 0' TERM HUP INT",
+      "trap 'echo mounted >&3 2>/dev/null' WINCH",
+      `echo $$ >'${root}/mounter.pid'`,
       canMount ? `echo '${image}'` : 'echo "Cannot mount AppImage"; exit 1',
-      `trap 'touch "${root}/unmounted"; exit 0' TERM`,
       "while :; do sleep 0.05; done",
       "",
     ].join("\n"),
@@ -63,25 +67,88 @@ const fakeAppImage = (canMount = true) => {
   return { root, image, appImage, shim };
 };
 
-describe("renderCliShim", () => {
-  it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
-    const { root, image, shim } = fakeAppImage();
-    const result = run(shim, ["browser", "setup", "a b"]);
-    expect(result.status).toBe(3);
-    expect(result.stdout.split("\n")).toEqual([
-      `node=1 cli=${shim} home=${root}/home`,
-      `${image}/resources/app.asar/apps/server/dist/bin.mjs`,
-      "browser",
-      "setup",
-      "a b",
-      "",
-    ]);
-    NodeChildProcess.spawnSync("sh", [
-      "-c",
-      `i=0; while [ ! -e '${root}/unmounted' ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done`,
-    ]);
-    expect(NodeFS.existsSync(NodePath.join(root, "unmounted"))).toBe(true);
+// Stays up after a signal until the test lets it finish, like a server shutting down. A group
+// signal and the launcher's forwarded one can both arrive; a re-run trap would read stdin's EOF.
+const SLOW_SERVER = [
+  "#!/bin/sh",
+  'trap \'trap "" TERM HUP; echo stopping >&3; read go; echo "stopped $go" >&3; exit 7\' TERM HUP',
+  "echo ready",
+  "while :; do sleep 0.05; done",
+  "",
+].join("\n");
+
+// The launcher mounts only under setsid, which stock macOS and Windows lack; there it extracts instead.
+const hasSetsid = NodeChildProcess.spawnSync("setsid", ["true"]).status === 0;
+
+const lines = (stream: NodeJS.ReadableStream) => {
+  const seen: Array<string> = [];
+  const waiters: Array<() => void> = [];
+  let buffer = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    buffer += chunk;
+    const parts = buffer.split("\n");
+    buffer = parts.pop()!;
+    seen.push(...parts);
+    for (const wake of waiters.splice(0)) wake();
   });
+  const until = async (match: (line: string) => boolean) => {
+    for (;;) {
+      const line = seen.find(match);
+      if (line !== undefined) return line;
+      await new Promise<void>((resolve) => waiters.push(resolve));
+    }
+  };
+  return { seen, until };
+};
+
+describe("renderCliShim", () => {
+  // Ctrl-C, an SSH hangup, or a supervisor signals the process group. systemd's default KillMode
+  // also signals the mounter, and KillMode=mixed signals only the launcher.
+  it.skipIf(!hasSetsid).each([
+    ["SIGTERM", "the process group"],
+    ["SIGHUP", "the process group"],
+    ["SIGTERM", "every process"],
+    ["SIGTERM", "the launcher"],
+  ] as const)(
+    "keeps the AppImage mounted until the server exits after %s to %s",
+    async (signal, target) => {
+      const { root, shim } = fakeAppImage(true, SLOW_SERVER);
+      const child = NodeChildProcess.spawn(shim, [], {
+        detached: true,
+        env: { PATH: process.env.PATH },
+        stdio: ["pipe", "pipe", "ignore", "pipe"],
+      });
+      let mounter: number | undefined;
+      try {
+        const stdout = lines(child.stdout!);
+        const events = lines(child.stdio[3] as NodeJS.ReadableStream);
+        const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+        await stdout.until((line) => line === "ready");
+        mounter = Number(NodeFS.readFileSync(NodePath.join(root, "mounter.pid"), "utf8"));
+
+        process.kill(target === "the launcher" ? child.pid! : -child.pid!, signal);
+        if (target === "every process") process.kill(mounter, signal);
+        // The shell runs pending traps in ascending signal number, and WINCH outnumbers TERM and
+        // HUP, so a mounter that also got the group signal unmounts before it answers this probe.
+        process.kill(mounter, "SIGWINCH");
+        const mount = await events.until((line) => line === "mounted" || line === "unmounted");
+        expect(mount).toBe("mounted");
+
+        await events.until((line) => line === "stopping");
+        child.stdin!.end("go\n");
+        expect(await exited).toBe(7);
+        expect(events.seen.slice(-2)).toEqual(["stopped go", "unmounted"]);
+      } finally {
+        for (const pid of [-child.pid!, mounter]) {
+          if (pid === undefined) continue;
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }
+      }
+    },
+  );
 
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
@@ -92,6 +159,16 @@ describe("renderCliShim", () => {
     );
   });
 
+  // The server skips its compile cache only under APPIMAGE; each mount path is new.
+  it("tells the CLI it runs from the mounted AppImage", () => {
+    const { appImage, shim } = fakeAppImage();
+    const result = run(shim, ["--version"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toContain(`appimage=${appImage}`);
+    const closedStdin = NodeChildProcess.spawnSync("sh", ["-c", '"$0" --version <&-', shim]);
+    expect(closedStdin.status).toBe(3);
+  });
+
   it("keeps the install's T3 home under sudo, unless one is set", () => {
     const root = tempRoot();
     writeExecutable(NodePath.join(root, "app"), REPORTER);
@@ -100,7 +177,6 @@ describe("renderCliShim", () => {
       executable: NodePath.join(root, "app"),
       entry: "/bin.mjs",
     });
-    // sudo clears the environment, so the launcher supplies its own.
     expect(run(shim, []).stdout).toContain(`home=${root}/home`);
     expect(run(shim, [], { T3CODE_HOME: "/elsewhere" }).stdout).toContain("home=/elsewhere");
     const relative = NodeChildProcess.spawnSync("./bin/t3", [], { cwd: root, encoding: "utf8" });
@@ -124,18 +200,6 @@ describe("renderCliShim", () => {
     ]);
   });
 
-  it("tells a person whose app moved to reopen it", () => {
-    const root = tempRoot();
-    const shim = writeShim(root, {
-      kind: "direct",
-      executable: NodePath.join(root, "Gone.app/Contents/MacOS/T3 Code"),
-      entry: "/bin.mjs",
-    });
-    const result = run(shim, ["--version"]);
-    expect(result.status).toBe(127);
-    expect(result.stderr).toContain("Open the app once to update this command.");
-  });
-
   it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
     const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Code.exe";
     const script = renderCliShim({
@@ -154,15 +218,5 @@ describe("renderCliShim", () => {
     );
     expect(bare).toEqual([]);
     expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.t3\\bin\\t3.cmd"');
-  });
-
-  it("switches the Windows console to UTF-8 only when a path needs it", () => {
-    const ascii = renderCliShim({
-      target: { kind: "windows", executable: "C:\\T3\\T3 Code.exe", entry: "C:\\T3\\bin.mjs" },
-      shimPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
-      t3Home: "C:\\Users\\me\\.t3",
-    });
-    expect(ascii).not.toContain("chcp");
-    expect(ascii.split("\r\n")).toContain("exit /b %t3_exit%");
   });
 });

@@ -1,80 +1,164 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import { EnvironmentId, type ReviewDiffFileContentsResult } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { createGitDiffFileContentsLoader } from "./diffFileContents";
+import { getRenderablePatch } from "./diffRendering";
 
-const SOURCE = {
-  environmentId: EnvironmentId.make("environment-1"),
-  cwd: "/workspace",
-  sourceKind: "branch-range" as const,
-  baseRef: "main",
-  headRef: "feature",
-  cacheKey: "comparison-1",
-};
+const originalLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
+const changedLines = originalLines.map((line, index) => (index === 29 ? "line 30 changed" : line));
 
-function fileDiff(type: FileDiffMetadata["type"] = "rename-changed"): FileDiffMetadata {
-  return {
-    type,
-    prevName: "src/old-name.ts",
-    name: "src/new-name.ts",
-  } as FileDiffMetadata;
+function toContents(lines: ReadonlyArray<string>) {
+  return `${lines.join("\n")}\n`;
+}
+
+function parsePartialFileDiff(patch: string): FileDiffMetadata {
+  const renderable = getRenderablePatch(patch, "diff-panel:light", {
+    compactPartialHunkOffsets: true,
+  });
+  if (renderable?.kind !== "files") throw new Error("Expected a parsed patch.");
+  return renderable.files[0]!;
+}
+
+function partialFileDiff(): FileDiffMetadata {
+  const patch = [
+    "diff --git a/src/file01.ts b/src/file01.ts",
+    "index 1111111..2222222 100644",
+    "--- a/src/file01.ts",
+    "+++ b/src/file01.ts",
+    "@@ -27,7 +27,7 @@",
+    " line 27",
+    " line 28",
+    " line 29",
+    "-line 30",
+    "+line 30 changed",
+    " line 31",
+    " line 32",
+    " line 33",
+    "",
+  ].join("\n");
+  return parsePartialFileDiff(patch);
+}
+
+function loaderReturning(oldContents: string, newContents: string) {
+  return createGitDiffFileContentsLoader(
+    async () => AsyncResult.success({ oldContents, newContents }),
+    {
+      environmentId: EnvironmentId.make("environment-diff-contents-test"),
+      cwd: "/repo",
+      sourceKind: "working-tree",
+      baseRef: null,
+      headRef: null,
+      cacheKey: "diff-hash",
+    },
+  );
 }
 
 describe("createGitDiffFileContentsLoader", () => {
-  it("loads both sides with normalized paths and comparison-scoped cache keys", async () => {
-    const getDiffFileContents = vi.fn(async () =>
-      AsyncResult.success({ oldContents: "before\n", newContents: "after\n" }),
-    );
-    const load = createGitDiffFileContentsLoader(getDiffFileContents, SOURCE);
+  it("loads contents that still reproduce the patch", async () => {
+    const loaded = await loaderReturning(
+      toContents(originalLines),
+      toContents(changedLines),
+    )(partialFileDiff());
 
-    await expect(load(fileDiff())).resolves.toEqual({
-      oldFile: {
-        name: "src/old-name.ts",
-        contents: "before\n",
-        cacheKey: "comparison-1:old:src/old-name.ts",
-      },
-      newFile: {
-        name: "src/new-name.ts",
-        contents: "after\n",
-        cacheKey: "comparison-1:new:src/new-name.ts",
-      },
-    });
-    expect(getDiffFileContents).toHaveBeenCalledWith({
-      environmentId: "environment-1",
-      input: {
-        cwd: "/workspace",
-        sourceKind: "branch-range",
-        changeType: "rename-changed",
-        baseRef: "main",
-        headRef: "feature",
-        oldPath: "src/old-name.ts",
-        newPath: "src/new-name.ts",
-      },
-    });
+    expect(loaded.newFile.contents).toBe(toContents(changedLines));
   });
 
-  it("loads a pure rename from its one shared file", async () => {
-    const getDiffFileContents = vi.fn(async () =>
-      AsyncResult.success({ oldContents: "same\n", newContents: "same\n" }),
-    );
-    const load = createGitDiffFileContentsLoader(getDiffFileContents, SOURCE);
+  it.each([
+    {
+      name: "end before the patch's hunk",
+      oldLines: originalLines.slice(0, 30),
+      newLines: changedLines.slice(0, 30),
+    },
+    {
+      name: "have unchanged tails that no longer match between sides",
+      oldLines: originalLines,
+      newLines: [...changedLines, "line 41 appended"],
+    },
+    {
+      name: "changed hunk lines without moving them",
+      oldLines: originalLines,
+      newLines: changedLines.map((line, index) => (index === 30 ? "edited since" : line)),
+    },
+  ])("rejects contents that $name", async ({ oldLines, newLines }) => {
+    const loader = loaderReturning(toContents(oldLines), toContents(newLines));
 
-    await expect(load(fileDiff("rename-pure"))).resolves.toMatchObject({
-      oldFile: null,
-      newFile: { name: "src/new-name.ts", contents: "same\n" },
-    });
+    await expect(loader(partialFileDiff())).rejects.toThrow("changed since the diff was loaded");
   });
 
-  it("passes command failures through to Pierre's expansion handling", async () => {
-    const failure = new Error("revision is not available locally");
-    const getDiffFileContents = vi.fn(async () =>
-      AsyncResult.failure<ReviewDiffFileContentsResult, Error>(Cause.fail(failure)),
+  it.each([
+    {
+      name: "a renamed file",
+      patch: [
+        "diff --git a/ leading.txt b/renamed.txt ",
+        "similarity index 100%",
+        "rename from  leading.txt",
+        "rename to renamed.txt ",
+        "",
+      ],
+      oldPath: " leading.txt",
+      newPath: "renamed.txt ",
+    },
+    {
+      name: "a modified file",
+      patch: [
+        "diff --git a/trailing.txt  b/trailing.txt ",
+        "index 422c2b7..55dce13 100644",
+        "--- a/trailing.txt \t",
+        "+++ b/trailing.txt \t",
+        "@@ -1,2 +1,2 @@",
+        " a",
+        "-b",
+        "+B",
+        "",
+      ],
+      oldPath: "trailing.txt ",
+      newPath: "trailing.txt ",
+    },
+  ])("requests the exact whitespace-edged paths of $name", async ({ patch, oldPath, newPath }) => {
+    const requested: Array<{ oldPath: string; newPath: string }> = [];
+    const loader = createGitDiffFileContentsLoader(
+      async ({ input }) => {
+        requested.push({ oldPath: input.oldPath, newPath: input.newPath });
+        return AsyncResult.success({ oldContents: "a\nb\n", newContents: "a\nB\n" });
+      },
+      {
+        environmentId: EnvironmentId.make("environment-diff-contents-test"),
+        cwd: "/repo",
+        sourceKind: "working-tree",
+        baseRef: null,
+        headRef: null,
+        cacheKey: "diff-hash",
+      },
     );
-    const load = createGitDiffFileContentsLoader(getDiffFileContents, SOURCE);
 
-    await expect(load(fileDiff())).rejects.toBe(failure);
+    await loader(parsePartialFileDiff(patch.join("\n")));
+
+    expect(requested).toEqual([{ oldPath, newPath }]);
+  });
+
+  it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -2,4 +2,4 @@ a",
+      " b",
+      " c",
+      " d",
+      "-e",
+      "\\ No newline at end of file",
+      "+E",
+      "\\ No newline at end of file",
+      "",
+    ].join("\n");
+    const loaded = await loaderReturning(
+      "a\nb\n  c\nd\ne",
+      "a\nb\nc\nd\nE",
+    )(parsePartialFileDiff(patch));
+
+    expect(loaded.oldFile?.contents).toBe("a\nb\n  c\nd\ne");
   });
 });

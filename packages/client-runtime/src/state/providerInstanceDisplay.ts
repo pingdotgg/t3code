@@ -27,7 +27,17 @@ export function resolveProviderInstanceDisplayName(
 }
 
 export function providerInstanceInitials(label: string): string {
-  const words = label.replace(/[_-]+/g, " ").split(/\s+/u).filter(Boolean);
+  // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
+  // inside a word stays ("Theo's Codex" is TC); a quoting one does not
+  // ("Codex 'hub'" is CH). A single camel-case word splits at its humps, so
+  // "ClaudeProx" is CP, but "ClaudeProx Work" keeps its own words and is CW.
+  const toWords = (text: string) =>
+    text
+      .split(/\s+/u)
+      .map((word) => word.replace(/^['’]+|['’]+$/gu, ""))
+      .filter(Boolean);
+  let words = toWords(label.replace(/[^\P{P}'’]+/gu, " "));
+  if (words.length === 1) words = toWords(words[0]!.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2"));
   if (words.length === 0) return "";
   if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
   return words
@@ -42,7 +52,19 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
-// Every entry keeps at least 4.5:1 contrast under the white badge text.
+export function providerAccentForegroundColor(accentColor: string) {
+  const linearChannel = (offset: number) => {
+    const value = Number.parseInt(accentColor.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
+  const blackContrast = (luminance + 0.05) / 0.05;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
+}
+
+// Every entry keeps at least 4.5:1 contrast with its badge initials.
 const AUTO_ACCENT_PALETTE = [
   "#6e40c9",
   "#1a73e8",
@@ -69,14 +91,16 @@ function fnv1a(value: string): number {
  * indistinguishable from a sibling get an automatic color.
  */
 export function resolveProviderInstanceAccentColor(
-  snapshot: Pick<ServerProvider, "instanceId" | "driver" | "accentColor">,
-  siblings: Iterable<Pick<ServerProvider, "instanceId" | "driver">>,
+  snapshot: Pick<ServerProvider, "instanceId" | "driver" | "accentColor" | "enabled">,
+  siblings: Iterable<Pick<ServerProvider, "instanceId" | "driver" | "enabled">>,
 ): string | undefined {
   const explicit = normalizeProviderAccentColor(snapshot.accentColor);
   if (explicit) return explicit;
   if (snapshot.driver === "acpRegistry") return undefined;
   if (snapshot.instanceId === defaultInstanceIdForDriver(snapshot.driver)) return undefined;
   for (const sibling of siblings) {
+    // Matches shouldShowInstanceBadge: a disabled sibling does not make an enabled one ambiguous.
+    if (snapshot.enabled && !sibling.enabled) continue;
     if (sibling.driver === snapshot.driver && sibling.instanceId !== snapshot.instanceId) {
       return AUTO_ACCENT_PALETTE[fnv1a(snapshot.instanceId) % AUTO_ACCENT_PALETTE.length];
     }
@@ -89,16 +113,20 @@ export function shouldShowInstanceBadge(
     readonly driverKind: ProviderDriverKind;
     readonly accentColor?: string | undefined;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   },
   entries: Iterable<{
     readonly driverKind: ProviderDriverKind;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   }>,
 ): boolean {
-  if (entry.accentColor) return true;
+  if (normalizeProviderAccentColor(entry.accentColor)) return true;
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;
+    // Historical threads still need to distinguish accounts that are all disabled.
+    if (entry.enabled && !candidate.enabled) continue;
     if (
       entry.driverKind === "acpRegistry" &&
       candidate.acpRegistryAgentId !== entry.acpRegistryAgentId

@@ -1,81 +1,122 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId } from "@t3tools/contracts";
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  formatComposerContextReference,
+  toComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
+
 import { deriveTimelineMinimapItems, resolveTimelineMinimapPreview } from "./timelineMinimapItems";
-import type { ChatMessage } from "../../types";
 
-function rows(
-  entries: ReadonlyArray<readonly ["user" | "assistant", string]>,
-): MessagesTimelineRow[] {
-  const messages: ChatMessage[] = entries.map(([role, text], index) => ({
-    id: MessageId.make(`message-${index}`),
-    role,
-    text,
-    streaming: false,
-    runId: null,
-    createdAt: new Date(index * 1000).toISOString(),
-    updatedAt: new Date(index * 1000).toISOString(),
-  }));
-  return messages.map((message) => ({
-    kind: "message",
-    id: message.id,
-    createdAt: message.createdAt,
-    message,
-    durationStart: message.createdAt,
-    showAssistantMeta: false,
-    showAssistantCopyButton: false,
-    assistantCopyStreaming: false,
-  }));
-}
+describe("deriveTimelineMinimapItems", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "omits bootstrap text from the minimap label and tooltip (%j)",
+    (prefix) => {
+      const at = "2026-10-01T00:00:00Z";
+      const items = deriveTimelineMinimapItems([
+        {
+          kind: "message",
+          id: "image-only",
+          createdAt: at,
+          showAssistantMeta: false,
+          showAssistantCopyButton: false,
+          assistantCopyStreaming: false,
+          message: {
+            id: MessageId.make("image-only"),
+            role: "user",
+            text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            runId: null,
+            streaming: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        },
+      ]);
+      expect(items).toEqual([{ id: "image-only", rowIndex: 0, userText: "", assistantText: null }]);
+      expect(resolveTimelineMinimapPreview(items[0]!)?.userText).toBeNull();
+    },
+  );
+});
 
-describe("timeline minimap previews", () => {
-  it("previews the last assistant response before the next prompt and retains jump targets", () => {
-    const source = rows([
-      ["user", "  Inspect\n this  "],
-      ["assistant", "Working"],
-      ["assistant", " Done\t now "],
-      ["user", "Next"],
-      ["assistant", "Second answer"],
-    ]);
-    const items = deriveTimelineMinimapItems(source);
-    expect(items).toHaveLength(2);
-    expect(resolveTimelineMinimapPreview(items[0]!)).toEqual({
-      ...items[0],
-      userText: "Inspect this",
-      assistantText: "Done now",
+describe("resolveTimelineMinimapPreview", () => {
+  it("previews a thread autolink as prose, not its URL", () => {
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText:
+        "Started <t3-thread://v2/env-1/thread-1> and [Fix CI](t3-thread://v2/env-1/t2).",
     });
-    expect(source[items[0]!.rowIndex]!.id).toBe(items[0]!.id);
-    expect(resolveTimelineMinimapPreview(items[1]!)?.assistantText).toBe("Second answer");
-    expect(items[0]?.assistantText).toBe(" Done\t now ");
+    expect(preview?.assistantText).toBe("Started a thread and Fix CI.");
   });
 
-  it("handles an unanswered prompt, empty responses, and a closed preview", () => {
-    const items = deriveTimelineMinimapItems(
-      rows([
-        ["user", "First"],
-        ["assistant", " \n\t"],
-        ["user", "Next"],
-      ]),
+  it("previews a quote, a context chip and a file link in the user's message as their text", () => {
+    const quote = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env-1"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make("assistant-1"),
+      text: "The cache misses on a cold start.",
+      start: 0,
+      end: 33,
+      prefix: "",
+      suffix: "",
+    });
+    const file = formatComposerContextReference({
+      kind: "file",
+      contextId: toComposerContextId("readme"),
+      label: "README.md",
+    });
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: `${quote}\nWhere do ${file} and [math.ts](src/math.ts) cover this?`,
+      assistantText: null,
+    });
+    expect(preview?.userText).toBe(
+      "The cache misses on a cold start. Where do README.md and math.ts cover this?",
     );
-    expect(items.map((item) => resolveTimelineMinimapPreview(item)?.assistantText)).toEqual([
-      null,
-      null,
-    ]);
-    expect(resolveTimelineMinimapPreview(null)).toBeNull();
   });
 
-  it("shows fresh streaming text without changing the jump target", () => {
-    const first = deriveTimelineMinimapItems(
-      rows([
-        ["user", "Explain"],
-        ["assistant", "First"],
-      ]),
-    )[0]!;
-    const next = { ...first, assistantText: "First\n second" };
-    expect(resolveTimelineMinimapPreview(next)).toEqual({
-      ...first,
-      assistantText: "First second",
+  it("runs a tight list item's inline text together, as in a paragraph", () => {
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText:
+        "Done:\n\n- **Cache**: warm on start.\n- Run `vp test`, then [ship](https://example.com/ship).",
     });
-    expect(resolveTimelineMinimapPreview(first)?.assistantText).toBe("First");
+    expect(preview?.assistantText).toBe("Done: Cache: warm on start. Run vp test, then ship.");
+    const nested = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText: "- **One**\n  - two\n\n  three\n- ```\n  four\n  ```",
+    });
+    expect(nested?.assistantText).toBe("One two three four");
+  });
+
+  it("leaves footnote markers and the footnote list out of the preview", () => {
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText: "Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.",
+    });
+    expect(preview?.assistantText).toBe("Checked the cache first and it was stale.");
+  });
+
+  it("does not split a surrogate pair at the preview slice boundary", () => {
+    const linkStart = "[Build log](https://example.com/builds/1042/log?sig=";
+    const linkEnd = ") ";
+    const pad = "a".repeat(1_499 - linkStart.length - linkEnd.length);
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: `${linkStart}${pad}${linkEnd}🎉 the release build passed`,
+      assistantText: null,
+    });
+    expect(preview?.userText).toBe("Build log");
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -22,12 +23,13 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectSettingsOverrideSweep from "../provider/ProjectSettingsOverrideSweep.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -36,11 +38,16 @@ import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const layerEventPersistence = EventSink.layer.pipe(
-  Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+  Layer.provideMerge(
+    Layer.merge(
+      EventStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+    ),
+  ),
 );
 const layerServices = Layer.mergeAll(
   LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(layerEventPersistence)),
-  ProjectionMaintenance.layer.pipe(Layer.provide(layerEventPersistence)),
+  ProjectionReplay.layer.pipe(Layer.provide(layerEventPersistence)),
   ProjectStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
@@ -58,6 +65,7 @@ const layerServices = Layer.mergeAll(
             resolve: () => Effect.succeed(null),
           }),
           Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+            invalidate: () => Effect.void,
             resolvePath: () => Effect.succeed(null),
           }),
         ),
@@ -203,7 +211,9 @@ it.effect("retries a partial project deletion without repeating child events or 
         partialCleanup.map((effect) => [effect.thread_id, effect.effect_type]),
         [
           [firstThreadId, "preview.cleanup"],
+          [firstThreadId, "scheduled-tasks.cleanup"],
           [firstThreadId, "terminal.cleanup"],
+          [firstThreadId, "thread-content.purge"],
         ],
       );
 
@@ -226,7 +236,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 4);
+      assert.lengthOf(finalCleanup, 8);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -243,10 +253,22 @@ it.effect("retries a partial project deletion without repeating child events or 
               effect_type: "preview.cleanup",
             },
             {
+              effect_id: `effect:${expectedCommandId}:scheduled-tasks.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "scheduled-tasks.cleanup",
+            },
+            {
               effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
               thread_id: threadId,
               command_id: expectedCommandId,
               effect_type: "terminal.cleanup",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:thread-content.purge`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "thread-content.purge",
             },
           ],
         );
@@ -302,7 +324,7 @@ it.effect(
 
       yield* Effect.gen(function* () {
         const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const service = yield* ProjectService.make;
         assert.deepEqual(yield* importer.reconcileShells, {
@@ -493,9 +515,13 @@ it.effect("deletes a project without force once its imported threads were delete
   }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect(
-  "clears a deleted project's settings overrides so a machine-disabled instance cannot stay alive",
-  () =>
+it.effect.each([
+  { policy: "no", worktreeCleanup: undefined },
+  { policy: "its off", worktreeCleanup: { mode: "off" } as const },
+  { policy: "its legacy", worktreeCleanup: null },
+])(
+  "clears a deleted project's settings overrides, keeping $policy worktree cleanup policy, so a machine-disabled instance cannot stay alive",
+  ({ worktreeCleanup }) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:overrides-cleanup");
       const instanceId = ProviderInstanceId.make("codex_work");
@@ -506,7 +532,11 @@ it.effect(
         const serverSettings = yield* ServerSettings.ServerSettingsService;
         yield* serverSettings.updateSettings({
           projectSettingsOverrides: {
-            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+            [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+              defaultAutoPull: true,
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
+            },
           },
         });
 
@@ -515,8 +545,35 @@ it.effect(
           projectId,
         });
 
-        const settingsAfterDelete = yield* serverSettings.getSettings;
-        assert.isUndefined(settingsAfterDelete.projectSettingsOverrides[projectId]);
+        const entry = (yield* serverSettings.getSettings).projectSettingsOverrides[projectId];
+        if (worktreeCleanup === undefined) {
+          assert.isUndefined(entry);
+        } else {
+          assert.deepStrictEqual(entry, { worktreeCleanup, providerInstances: {} });
+        }
+
+        const liveProjectId = ProjectId.make("project:still-live");
+        const missingProjectId = ProjectId.make("project:missing");
+        yield* seedProject(liveProjectId);
+        // Older deletions or interrupted best-effort cleanup can leave the original overrides on restart.
+        yield* serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+              defaultAutoPull: true,
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
+            },
+            [liveProjectId]: { defaultAutoPull: true },
+            [missingProjectId]: { worktreeCleanup: { mode: "off" } },
+          },
+        });
+        yield* ProjectSettingsOverrideSweep.sweep;
+        assert.deepStrictEqual((yield* serverSettings.getSettings).projectSettingsOverrides, {
+          [liveProjectId]: { defaultAutoPull: true },
+          ...(worktreeCleanup === undefined
+            ? {}
+            : { [projectId]: { worktreeCleanup, providerInstances: {} } }),
+        });
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );

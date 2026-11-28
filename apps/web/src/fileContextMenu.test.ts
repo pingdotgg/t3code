@@ -1,8 +1,39 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import * as NodeAssert from "node:assert/strict";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { buildFileContextMenuItems, resolveFileContextMenuAbsolutePath } from "./fileContextMenu";
+import { resolveFileContextMenuAbsolutePath, useFileContextMenu } from "./fileContextMenu";
+import type { RemoteOpenResolution } from "./remoteOpen";
+
+const state = vi.hoisted(() => ({
+  remoteOpen: { state: { mode: "local-exec" }, isResolved: true } as RemoteOpenResolution,
+  openInEditor: vi.fn(async () => ({ _tag: "Success" })),
+  openRemoteEditorUrl: vi.fn(async (_url: string) => true),
+}));
+
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => ({
+    availableEditors: ["cursor", "file-manager"],
+    shellRevealInFileManager: true,
+    shellRevealInFileManagerKind: "xdg-open",
+    environment: { platform: { os: "linux" } },
+  }),
+}));
+vi.mock("gt-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("gt-react")>()),
+  useMessages: () => (text: string) => text,
+}));
+vi.mock(import("./state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentScope: () => true,
+}));
+vi.mock("./editorMenuIcons", () => ({ useEditorMenuIcons: () => new Map() }));
+vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
+vi.mock(import("./remoteOpen"), async (original) => ({
+  ...(await original()),
+  useRemoteOpenResolution: () => state.remoteOpen,
+  useRemoteCapableEditors: () => ["vscode"],
+  openRemoteEditorUrl: state.openRemoteEditorUrl,
+}));
 
 const BASE_TARGET = {
   environmentId: EnvironmentId.make("environment-local"),
@@ -10,17 +41,7 @@ const BASE_TARGET = {
   workspaceRoot: "/workspace/project",
 };
 
-const EMPTY_CAPABILITIES = {
-  revealLabel: undefined,
-  canOpenDefault: false,
-  editorIds: [],
-};
-
 describe("resolveFileContextMenuAbsolutePath", () => {
-  it("joins workspace-relative diff paths onto the workspace root", () => {
-    expect(resolveFileContextMenuAbsolutePath(BASE_TARGET)).toBe("/workspace/project/src/index.ts");
-  });
-
   it("strips the repository prefix when the repo root is nested in the workspace", () => {
     expect(
       resolveFileContextMenuAbsolutePath({
@@ -54,49 +75,61 @@ describe("resolveFileContextMenuAbsolutePath", () => {
   });
 });
 
-describe("buildFileContextMenuItems", () => {
-  it("offers open, reveal, and an open-with submenu when all are available", () => {
-    const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
-      capabilities: {
-        revealLabel: "Reveal in Finder",
-        canOpenDefault: true,
-        editorIds: ["vscode", "cursor", "file-manager"],
-      },
-    });
+describe("useFileContextMenu", () => {
+  it.each<[string, RemoteOpenResolution]>([
+    ["remote-unavailable", { state: { mode: "remote-unavailable" }, isResolved: true }],
+    ["unresolved", { state: { mode: "local-exec" }, isResolved: false }],
+  ])("offers no open actions when remote open is %s", async (_mode, resolution) => {
+    state.remoteOpen = resolution;
+    state.openInEditor.mockClear();
+    const menu = useFileContextMenu(BASE_TARGET.environmentId);
 
-    expect(items.map((item) => item.id)).toEqual(["open", "reveal-in-folder", "open-with"]);
-    expect(items[0]).toMatchObject({ label: "Open" });
-    expect(items[1]).toMatchObject({ label: "Reveal in Finder" });
-    const openWith = items[2];
-    NodeAssert.ok(openWith);
-    expect(openWith.children?.map((child) => child.id)).toEqual(["editor:vscode", "editor:cursor"]);
+    expect(menu.buildItems(BASE_TARGET)).toEqual([]);
+    await menu.activate("open", BASE_TARGET);
+    await menu.activate("editor:vscode", BASE_TARGET);
+    expect(state.openInEditor).not.toHaveBeenCalled();
   });
 
-  it("offers only the reveal item when just reveal is enabled", () => {
-    const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
-      capabilities: {
-        revealLabel: "Reveal in File Explorer",
-        canOpenDefault: false,
-        editorIds: [],
-      },
-    });
+  it("opens files over SSH remote links instead of on the server host", async () => {
+    state.remoteOpen = {
+      state: { mode: "remote-links", host: { kind: "ssh-alias", host: "box", username: "me" } },
+      isResolved: true,
+    };
+    state.openInEditor.mockClear();
+    state.openRemoteEditorUrl.mockClear();
+    const menu = useFileContextMenu(BASE_TARGET.environmentId);
 
-    expect(items.map((item) => item.id)).toEqual(["reveal-in-folder"]);
-    expect(items[0]).toMatchObject({ label: "Reveal in File Explorer" });
+    expect(menu.buildItems(BASE_TARGET)).toEqual([
+      {
+        id: "open-with",
+        label: "Open with",
+        children: [{ id: "editor:vscode", label: "VS Code" }],
+      },
+    ]);
+    await menu.activate("open", BASE_TARGET);
+    await menu.activate("editor:vscode", BASE_TARGET);
+    await menu.activate("editor:vscode", { ...BASE_TARGET, filePath: "src", isDirectory: true });
+    expect(state.openInEditor).not.toHaveBeenCalled();
+    expect(state.openRemoteEditorUrl.mock.calls).toEqual([
+      ["vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src/index.ts:1:1"],
+      ["vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src?windowId=_blank"],
+    ]);
   });
 
-  it("offers nothing when the path cannot be resolved", () => {
-    expect(
-      buildFileContextMenuItems({
-        hasAbsolutePath: false,
-        capabilities: {
-          revealLabel: "Reveal in Finder",
-          canOpenDefault: true,
-          editorIds: ["vscode"],
-        },
-      }),
-    ).toEqual([]);
+  it("opens files on the server host when remote open is local-exec", async () => {
+    state.remoteOpen = { state: { mode: "local-exec" }, isResolved: true };
+    state.openInEditor.mockClear();
+    const menu = useFileContextMenu(BASE_TARGET.environmentId);
+
+    expect(menu.buildItems(BASE_TARGET).map((item) => item.id)).toEqual([
+      "open",
+      "reveal-in-folder",
+      "open-with",
+    ]);
+    await menu.activate("open", BASE_TARGET);
+    expect(state.openInEditor).toHaveBeenCalledWith({
+      environmentId: BASE_TARGET.environmentId,
+      input: { cwd: "/workspace/project/src/index.ts", editor: "file-manager" },
+    });
   });
 });

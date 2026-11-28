@@ -1,31 +1,33 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
-  isUsageLimitsCommand,
+  displayLimitWindows,
+  cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  hasProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
   collectExternalUsageLinks,
-  collectLimitNotices,
   collectLimitPools,
-  displayLimitWindows,
   elapsedShare,
-  formatResetsIn,
-  limitsNotice,
+  exhaustedUsageWindow,
   paceOf,
-  providersWithLimits,
-  remainingPercent,
+  paceRemainingPercent,
   usesChatGptSharing,
+  resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
+import { collectLimitNotices } from "./usageLimitsCopy.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
 
@@ -55,91 +57,165 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
   };
 }
 
-describe("pace", () => {
+describe("new thread model fallback", () => {
+  const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const fallback = { instanceId: ProviderInstanceId.make("claude"), model: "claude-fable-5-1" };
+  const limited = provider({
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [{ ...window, usedPercent: 100 }],
+    },
+  });
+  const available = provider({
+    instanceId: fallback.instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+  });
+
+  const defaults = {
+    defaultSelection: selection,
+    fallbackSelection: fallback,
+    providers: [limited, available],
+    now,
+  };
   it.each([
-    ["2026-09-03T12:01:00.000Z", "resets in 1m"],
-    ["2026-09-03T12:00:59.999Z", "Resets momentarily"],
-    ["2026-09-03T12:00:00.001Z", "Resets momentarily"],
-    ["2026-09-03T12:00:00.000Z", "resets now"],
-    ["2026-09-03T11:59:59.999Z", "resets now"],
-  ])("formats the reset boundary at %s", (resetsAt, label) => {
-    expect(formatResetsIn({ ...window, resetsAt }, now)).toBe(label);
+    ["exhausted default", {}, fallback],
+    ["explicit selection", { explicitSelection: selection }, selection],
+    ["missing default", { defaultSelection: null }, null],
+    ["no fallback", { fallbackSelection: null }, selection],
+    ["expired window", { now: Date.parse("2026-09-04T00:00:00Z") }, selection],
+    [
+      "environment disabled",
+      {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [fallback.instanceId]: { driver: available.driver, enabled: false, config: {} },
+          },
+        },
+      },
+      selection,
+    ],
+  ] as const)("resolves %s", (_name, overrides, expected) => {
+    expect(resolveNewThreadModelSelection({ ...defaults, ...overrides }).selection).toEqual(
+      expected,
+    );
   });
-
-  it("ignores invalid reset timestamps", () => {
-    expect(formatResetsIn({ ...window, resetsAt: "invalid" }, now)).toBeNull();
+  it.each([
+    { enabled: false },
+    { installed: false },
+    { auth: { status: "unauthenticated" as const } },
+    { availability: "unavailable" as const },
+    { usageLimits: limited.usageLimits },
+  ])("rejects an unusable fallback: %j", (overrides) => {
+    expect(
+      resolveNewThreadModelSelection({
+        ...defaults,
+        providers: [limited, { ...available, ...overrides }],
+      }).selection,
+    ).toEqual(selection);
   });
+  it.each([undefined, "invalid"])("treats an unknown reset as exhausted: %s", (resetsAt) => {
+    expect(
+      exhaustedUsageWindow(
+        provider({
+          usageLimits: {
+            checkedAt: limited.checkedAt,
+            windows: [{ ...window, usedPercent: 100, resetsAt }],
+          },
+        }),
+        now,
+      ),
+    ).toBeDefined();
+  });
+  it.each([
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
+    ["codex", ["individual"], "gpt-5.5", true, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined, undefined],
+    ["opencode", ["budget_model"], "opencode/other", false, ["opencode/limited"], undefined],
+    ["opencode", ["budget_model"], "opencode/limited", true, ["opencode/limited"], undefined],
+    [
+      "opencode",
+      ["budget_set"],
+      "other/model",
+      false,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    [
+      "opencode",
+      ["budget_set"],
+      "opencode/second",
+      true,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    ["opencode", ["budget_empty"], "opencode/other", false, [], undefined],
+    [
+      "opencode",
+      ["budget_all"],
+      "anthropic/claude",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    [
+      "opencode",
+      ["budget_all"],
+      "opencode-go/model",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", true, undefined, ["opencode", "console-custom"]],
+    [
+      "opencode",
+      ["budget_all"],
+      "console-custom/model",
+      true,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+  ] as const)(
+    "matches %s pools %s to %s",
+    (driver, ids, model, usesFallback, modelIds, providerIds) => {
+      const defaultSelection = { ...selection, model };
+      expect(
+        resolveNewThreadModelSelection({
+          ...defaults,
+          defaultSelection,
+          providers: [
+            provider({
+              driver: ProviderDriverKind.make(driver),
+              usageLimits: {
+                checkedAt: limited.checkedAt,
+                windows: ids.map((id) => ({
+                  ...window,
+                  id,
+                  usedPercent: 100,
+                  ...(modelIds === undefined ? {} : { modelIds }),
+                  ...(providerIds === undefined ? {} : { providerIds }),
+                })),
+              },
+            }),
+            available,
+          ],
+        }).selection,
+      ).toEqual(usesFallback ? fallback : defaultSelection);
+    },
+  );
+});
 
+describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
+    expect(paceRemainingPercent(window, now)).toBe(40);
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
-  });
-
-  it("has no pace without a reset or a duration", () => {
-    expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
-    expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
-    expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
-  });
-
-  it("phrases the reset as a countdown", () => {
-    expect(formatResetsIn(window, now)).toBe("resets in 2h 0m");
-    expect(formatResetsIn({ ...window, resetsAt: "2026-09-06T15:30:00.000Z" }, now)).toBe(
-      "resets in 3d 3h",
-    );
-    expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
-      "resets now",
-    );
-  });
-});
-
-describe("limitsNotice", () => {
-  it("explains empty bars and passes provider messages through", () => {
-    const checkedAt = "2026-09-03T11:00:00.000Z";
-    expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
-    expect(limitsNotice({ checkedAt, windows: [] })).toBe("No limits reported.");
-    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "unsupported" } })).toBe(
-      "This account has no subscription limits.",
-    );
-    expect(
-      limitsNotice({
-        checkedAt,
-        windows: [],
-        unavailable: { reason: "probeFailed", message: "Codex timed out." },
-      }),
-    ).toBe("Codex timed out.");
-  });
-});
-
-describe("providersWithLimits", () => {
-  it("keeps only usable providers whose driver reports limits at all", () => {
-    const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
-    const codex = provider({ usageLimits: limits });
-    expect(
-      providersWithLimits([
-        codex,
-        provider({
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("off"),
-          enabled: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("gone"),
-          installed: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("shadow"),
-          availability: "unavailable",
-          usageLimits: limits,
-        }),
-      ]),
-    ).toEqual([codex]);
   });
 });
 
@@ -216,6 +292,46 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("uses the freshest reported plan even when the newest quota has no plan", () => {
+    const snapshot = (label: string | undefined, checkedAt: string, usedPercent: number) =>
+      provider({
+        driver: claude,
+        auth: { status: "authenticated", email: "same@example.com", label },
+        usageLimits: { checkedAt, windows: [{ ...window, usedPercent }] },
+      });
+    const stale = snapshot("Claude Team Subscription", checkedAt, 40);
+    const fresh = snapshot("Claude Max Subscription", "2026-09-03T11:30:00.000Z", 7);
+    const newest = snapshot(undefined, "2026-09-03T12:00:00.000Z", 5);
+    for (const [reports, plan, usedPercent] of [
+      [[stale, fresh], "Claude Max Subscription", 7],
+      [[stale, newest], "Claude Team Subscription", 5],
+      [[stale, fresh, newest], "Claude Max Subscription", 5],
+    ] as const) {
+      for (const order of reports.length === 2
+        ? [reports, reports.toReversed()]
+        : [
+            [stale, fresh, newest],
+            [stale, newest, fresh],
+            [fresh, stale, newest],
+            [fresh, newest, stale],
+            [newest, stale, fresh],
+            [newest, fresh, stale],
+          ]) {
+        const accounts = collectLimitAccounts(
+          new Map(
+            order.map((entry, index) => [
+              EnvironmentId.make(`env-${index}`),
+              { ...laptop, serverConfig: { providers: [entry] } },
+            ]),
+          ),
+        );
+        expect(accounts).toHaveLength(1);
+        expect(accounts[0]?.plan).toBe(plan);
+        expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(usedPercent);
+      }
+    }
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
@@ -282,6 +398,45 @@ describe("pools", () => {
       },
     });
     expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
+  it("merges a local Antigravity login with its hub account by Google account fingerprint", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const local = provider({
+      driver: antigravity,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      auth: { status: "authenticated" },
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 20 }],
+      },
+    });
+    const hubAccount = {
+      id: "antigravity-g@example.com.json",
+      driver: antigravity,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 30 }],
+      },
+    };
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [local],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
@@ -405,44 +560,6 @@ describe("pools", () => {
     expect(account?.redeem).toEqual({ environmentId: "env-b", input: { instanceId: "codex" } });
   });
 
-  it("uses the freshest hub credit and its environment even when the account is also native", () => {
-    const native = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [window], resetCredits: { availableCount: 1 } },
-    });
-    const hubAccount = {
-      id: "codex-same.json",
-      driver: native.driver,
-      email: "same@example.com",
-      usageLimits: {
-        checkedAt: "2026-09-03T11:30:00.000Z",
-        windows: [window],
-        resetCredits: { availableCount: 2, nextCreditId: "credit-2" },
-      },
-    };
-    const input = new Map([
-      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
-      [
-        EnvironmentId.make("env-b"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [],
-            usageLimitSources: [{ ...source, accounts: [hubAccount] }],
-          },
-        },
-      ],
-    ]);
-    const [account] = collectLimitAccounts(input);
-    expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({
-      environmentId: "env-b",
-      input: { sourceId: "hub", accountId: "codex-same.json", creditId: "credit-2" },
-    });
-    hubAccount.usageLimits.resetCredits.availableCount = 0;
-    expect(collectLimitAccounts(input)[0]?.limits.resetCredits?.availableCount).toBe(0);
-  });
-
   it("keeps distinct hub accounts redeemable through their own source", () => {
     const hubAccounts = ["first", "second"].map((id) => ({
       id,
@@ -545,7 +662,7 @@ describe("pools", () => {
     expect(accounts.map((account) => account.key)).toEqual([
       "env-a:business",
       "env-a:personal",
-      "hub:x.json",
+      "env-a:hub:x.json",
     ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
     const withoutEmail = (id: string, workspaceId: string) => {
@@ -575,8 +692,8 @@ describe("pools", () => {
       ],
     ]);
     expect(collectLimitAccounts(sameFile).map((account) => account.key)).toEqual([
-      "hub:a.json:ws-1",
-      "hub:a.json:ws-2",
+      "env-a:hub:a.json:ws-1",
+      "env-b:hub:a.json:ws-2",
     ]);
     expect(accounts[1]?.environments.map((environment) => environment.label)).toEqual([
       "Laptop",
@@ -621,13 +738,168 @@ describe("pools", () => {
     });
     expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
       "env-a:codex",
-      "hub:claude.json",
+      "env-a:hub:claude.json",
     ]);
   });
 
-  it("names an environment once however many of its instances share the account", () => {
-    const shared = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
+  it.each([
+    [
+      "one remote hub under environment-local ids",
+      "http://hub:8317",
+      "laptop-hub",
+      "http://hub:8317",
+      1,
+    ],
+    ["two remote hubs under one id", "http://hub:8317", "hub", "http://hub-8317", 2],
+    [
+      "two remote hubs under paths of one origin",
+      "https://proxy.example/team-a",
+      "hub-b",
+      "https://proxy.example/team-b",
+      2,
+    ],
+    [
+      "a shared IPv6 tailnet hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      "hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      1,
+    ],
+    [
+      "each machine's own localhost hub",
+      "http://localhost:8317",
+      "hub",
+      "http://localhost:8317",
+      2,
+    ],
+    ["each machine's own IPv6 loopback hub", "http://[::1]:8317", "hub", "http://[::1]:8317", 2],
+    [
+      "each machine's own localhost subdomain hub",
+      "http://hub.localhost:8317",
+      "hub",
+      "http://hub.localhost:8317",
+      2,
+    ],
+    [
+      "each machine's own trailing-dot localhost subdomain hub",
+      "http://hub.localhost.:8317",
+      "hub",
+      "http://hub.localhost.:8317",
+      2,
+    ],
+    [
+      "each machine's own mapped IPv4 loopback hub",
+      "http://[::ffff:7f00:1]:8317",
+      "hub",
+      "http://[::ffff:7f00:1]:8317",
+      2,
+    ],
+    ["each machine's own wildcard hub", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
+    ["hubs that report no endpoint", undefined, "hub", undefined, 2],
+  ] as const)(
+    "keeps email-less hub identity across environments: %s",
+    (_, firstEndpoint, secondId, secondEndpoint, count) => {
+      const seat = {
+        id: "claude-team-seat.json",
+        driver: claude,
+        usageLimits: { checkedAt, windows: [window] },
+      };
+      const hubAt = (id: string, endpoint: string | undefined) => ({
+        ...source,
+        id: UsageLimitSourceId.make(id),
+        ...(endpoint ? { origin: new URL(endpoint).origin, endpoint } : {}),
+        accounts: [seat],
+      });
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: { providers: [], usageLimitSources: [hubAt("hub", firstEndpoint)] },
+          },
+        ],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: { providers: [], usageLimitSources: [hubAt(secondId, secondEndpoint)] },
+          },
+        ],
+      ]);
+      const accounts = collectLimitAccounts(input);
+      expect(accounts).toHaveLength(count);
+      expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    },
+  );
+
+  it("keeps public keys apart for different logins in one hub file", () => {
+    const hubAt = (id: string, email: string, usedPercent: number) => ({
+      ...source,
+      id: UsageLimitSourceId.make(id),
+      origin: "https://hub.test",
+      endpoint: "https://hub.test",
+      accounts: [
+        {
+          id: "seat.json",
+          driver: claude,
+          email,
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent }] },
+        },
+      ],
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("first", "old@example.com", 10)],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("second", "new@example.com", 80)],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:first:seat.json",
+      "env-b:second:seat.json",
+    ]);
+    const columns = collectLimitPools(accounts, Date.parse(checkedAt))[0]?.windows[0]?.columns;
+    expect(columns?.map((column) => [column.account.email, column.window?.usedPercent])).toEqual([
+      ["new@example.com", 80],
+      ["old@example.com", 10],
+    ]);
+  });
+
+  it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "a@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const named = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude-work"),
+      displayName: "Work",
+      auth: { status: "authenticated", email: "b@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubAccount = (email: string) => ({
+      id: `claude-${email}.json`,
+      driver: claude,
+      email,
       usageLimits: { checkedAt, windows: [window] },
     });
     const input = new Map([
@@ -636,39 +908,28 @@ describe("pools", () => {
         {
           ...laptop,
           serverConfig: {
-            providers: [shared, { ...shared, instanceId: ProviderInstanceId.make("work") }],
+            providers: [native, named],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  hubAccount("a@example.com"),
+                  hubAccount("b@example.com"),
+                  hubAccount("c@example.com"),
+                ],
+              },
+            ],
           },
         },
       ],
     ]);
-    expect(collectLimitAccounts(input)[0]?.environments).toEqual([
-      { environmentId: "env-a", label: "Laptop" },
+    expect(
+      collectLimitAccounts(input).map(({ displayName, email }) => ({ displayName, email })),
+    ).toEqual([
+      { displayName: null, email: "a@example.com" },
+      { displayName: "Work", email: "b@example.com" },
+      { displayName: null, email: "c@example.com" },
     ]);
-  });
-
-  it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
-    const seat = {
-      id: "claude-team-seat.json",
-      driver: claude,
-      usageLimits: { checkedAt, windows: [window] },
-    };
-    const hub = { ...source, accounts: [seat] };
-    const input = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
-      ],
-      [
-        EnvironmentId.make("env-b"),
-        {
-          entry: { target: { label: "Desktop" } },
-          serverConfig: { providers: [], usageLimitSources: [hub] },
-        },
-      ],
-    ]);
-    const accounts = collectLimitAccounts(input);
-    expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
-    expect(accounts[0]?.displayName).toBe("claude-team-seat");
   });
 
   it("pools Codex windows by kind, whichever slot reported them", () => {
@@ -708,6 +969,52 @@ describe("pools", () => {
         (window) => window.id,
       ),
     ).toEqual(["weekly", "weekly:secondary"]);
+  });
+
+  it("weights pooled Codex quota and resets by each account's plan capacity", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      ["pro", "ChatGPT Pro 200 Subscription", 100],
+                      ["plus", "ChatGPT Plus Subscription", 0],
+                    ].map(([id, plan, usedPercent]) => ({
+                      id: String(id),
+                      email: `${id}@example.com`,
+                      driver: ProviderDriverKind.make("codex"),
+                      plan: String(plan),
+                      usageLimits: {
+                        checkedAt,
+                        windows: [{ ...weekly, id: "secondary", usedPercent: Number(usedPercent) }],
+                      },
+                    })),
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    const [pooledWeekly] = pool?.windows ?? [];
+    // Pro 20x holds 20 of the pool's 21 capacity parts.
+    expect(pooledWeekly?.remainingPercent).toBe(5);
+    expect(
+      pooledWeekly?.resets.map(({ member, restoresPercent }) => [
+        member.account.email,
+        restoresPercent,
+      ]),
+    ).toContainEqual(["pro@example.com", 95]);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
@@ -770,7 +1077,7 @@ describe("pools", () => {
     const [session, week] = pools[0]!.windows;
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
-        account.key === "hub:b"
+        account.key === "env-a:hub:b"
           ? {
               ...account,
               limits: {
@@ -788,12 +1095,13 @@ describe("pools", () => {
       remainingPercent: 40,
       usedPercent: 60,
       pace: "under",
+      paceRemainingPercent: 30,
     });
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
     ).toEqual([
-      ["hub:a", 40],
-      ["hub:b", 20],
+      ["env-a:hub:a", 40],
+      ["env-a:hub:b", 20],
     ]);
     expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
     // Codex reports `primary` for both its five-hour and (on Go) monthly window.
@@ -832,8 +1140,40 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    expect(session?.members.map((member) => member.account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
+
+    // Changing reset order must preserve the rounded percentages for the same readings.
+    for (const { readings, used, left } of [
+      { readings: [94, 94.3, 97.9, 99.8], used: 97, left: 4 },
+      { readings: [70, 87, 85.50000000000001, 1e-30, 1e-30], used: 49, left: 51 },
+    ]) {
+      const resetTimes = readings.map((_, index) => `2026-09-03T1${3 + index}:00:00.000Z`);
+      for (const order of [resetTimes, [...resetTimes].reverse()]) {
+        const [pooled] = collectLimitPools(
+          readings.map((usedPercent, index) => ({
+            key: `pooled-${index}`,
+            driver: claude,
+            displayName: `Pooled ${index}`,
+            email: undefined,
+            plan: undefined,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel: null,
+            redeem: null,
+            limits: { checkedAt, windows: [{ ...window, usedPercent, resetsAt: order[index] }] },
+          })),
+          now,
+        );
+        expect(pooled?.windows[0]).toMatchObject({ usedPercent: used, remainingPercent: left });
+      }
+    }
   });
 });
 
@@ -862,6 +1202,105 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  it.each([
+    {
+      reports: [
+        [14, 14],
+        [14, 14],
+      ],
+      ids: ["autoPercentUsed"],
+      remaining: [86],
+      label: null,
+    },
+    {
+      reports: [
+        [14, 14],
+        [80, 70],
+      ],
+      ids: ["totalPercentUsed", "autoPercentUsed"],
+      remaining: [53, 58],
+      label: "Cursor Models",
+    },
+    {
+      reports: [[undefined, 14]],
+      ids: ["autoPercentUsed"],
+      remaining: [86],
+      label: "Cursor Models",
+    },
+    { reports: [[14, undefined]], ids: ["totalPercentUsed"], remaining: [86], label: null },
+  ])("preserves Cursor totals and scope for $reports", ({ reports, ids, remaining, label }) => {
+    const accounts = reports.map(([total, auto], index) => ({
+      ...account(String(index), [
+        ...(total === undefined ? [] : [{ ...weekly, id: "totalPercentUsed", usedPercent: total }]),
+        ...(auto === undefined ? [] : [{ ...weekly, id: "autoPercentUsed", usedPercent: auto }]),
+      ]),
+      driver: ProviderDriverKind.make("cursor"),
+    }));
+    const pool = collectLimitPools(accounts, now)[0]!;
+    const visible = displayLimitWindows(pool);
+    expect(visible.map((window) => window.id)).toEqual(ids);
+    expect(visible.map((window) => window.remainingPercent)).toEqual(remaining);
+    expect(cursorUsageWindowDetails(ids.at(-1)!, pool)?.label).toBe(label);
+  });
+
+  // regression: #20349 sessions stay visible while the weekly quota is exhausted
+  it.each([
+    ["claudeAgent", "13:00", 40, "14:00", 100],
+    ["codex", "14:00", 100, "14:00", 100],
+    ["claudeAgent", "15:00", 100, "15:00", 100],
+    ["codex", "15:00", 40, "14:00", 60],
+  ] as const)(
+    "%s session resetting at %s with %i percent spent becomes usable at %s with %i percent restored",
+    (driver, sessionReset, usedPercent, usableAt, restoresPercent) => {
+      const at = (time: string) => `2026-09-03T${time}:00.000Z`;
+      const a = {
+        ...account("a", [
+          {
+            ...window,
+            id: driver === "codex" ? "primary" : window.id,
+            usedPercent,
+            resetsAt: at(sessionReset),
+          },
+          {
+            ...weekly,
+            id: driver === "codex" ? "secondary" : weekly.id,
+            usedPercent: 100,
+            resetsAt: at("14:00"),
+          },
+        ]),
+        driver: ProviderDriverKind.make(driver),
+      };
+      const [session] = collectLimitPools([a], now)[0]!.windows;
+      expect.soft(session?.remainingPercent).toBe(0);
+      expect(session?.resets[0]).toMatchObject({
+        at: Date.parse(at(usableAt)),
+        restoresPercent,
+      });
+    },
+  );
+
+  it("excludes weekly-blocked sessions from the pool without changing snapshots or model allowances", () => {
+    const blocked = account("blocked", [
+      window,
+      { ...weekly, usedPercent: 100 },
+      { ...weekly, id: "seven_day_fable", usedPercent: 20 },
+    ]);
+    const accounts = [
+      blocked,
+      account("available", [
+        { ...window, usedPercent: 20 },
+        { ...weekly, usedPercent: 99 },
+        { ...weekly, id: "seven_day_fable", usedPercent: 40 },
+      ]),
+      { ...blocked, key: "cursor", driver: ProviderDriverKind.make("cursor") },
+    ];
+    const snapshot = structuredClone(accounts);
+    const [claude, cursor] = collectLimitPools(accounts, now);
+    expect.soft(claude?.windows.map((row) => row.remainingPercent)).toEqual([40, 1, 70]);
+    expect.soft(cursor?.windows.map((row) => row.remainingPercent)).toEqual([60, 0, 80]);
+    expect(accounts).toEqual(snapshot);
+  });
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [
@@ -882,6 +1321,52 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
+    "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
+    (resetsAt) => {
+      const [pool] = collectLimitPools(
+        [
+          account("session-clock", [
+            { ...window, resetsAt },
+            { ...weekly, usedPercent: 100 },
+          ]),
+          account("weekly-clock", [window, { ...weekly, usedPercent: 100, resetsAt }]),
+        ],
+        now,
+      );
+      expect(pool!.windows[0]).toMatchObject({ remainingPercent: 0, pace: null, resets: [] });
+      expect(pool!.windows[0]!.columns.map((column) => column.window?.resetsAt)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
+  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+    const blocked = account("blocked", [
+      { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
+      { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const available = account("available", [window]);
+    const [before] = collectLimitPools([blocked, available], now);
+    expect(before!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
+    expect(before!.windows[0]!.remainingPercent).toBe(30);
+    const refreshed = {
+      ...blocked,
+      limits: {
+        checkedAt: "2026-09-03T12:00:00.000Z",
+        windows: [blocked.limits.windows[0]!, { ...weekly, usedPercent: 10 }],
+      },
+    };
+    const [after] = collectLimitPools([refreshed, available], now);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    expect(after!.windows[0]!.remainingPercent).toBe(60);
+    expect(after!.windows[0]!.resets[0]).toMatchObject({
+      at: Date.parse("2026-09-03T13:00:00.000Z"),
+      restoresPercent: 20,
+    });
   });
 
   it("preserves gaps without counting missing windows toward pooled quota", () => {
@@ -915,119 +1400,6 @@ describe("pooled account columns", () => {
     );
     expect(keys(pool!)).toEqual([["b", "a"]]);
   });
-
-  it("sorts unknown resets last and breaks ties consistently", () => {
-    const accounts = [
-      account("z", [{ ...window, resetsAt: undefined }]),
-      account("b", [window]),
-      account("a", [window]),
-      account("y", [{ ...window, resetsAt: "invalid" }]),
-    ];
-    expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
-    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
-  });
-});
-
-describe("Cursor limit presentation", () => {
-  const cursorAccount: LimitAccount = {
-    key: "cursor",
-    driver: ProviderDriverKind.make("cursor"),
-    displayName: "Cursor",
-    email: undefined,
-    plan: undefined,
-    accentColor: undefined,
-    environments: [],
-    sourceLabel: "Cursor",
-    redeem: null,
-    limits: {
-      checkedAt: "2026-09-03T11:00:00.000Z",
-      windows: [
-        { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 49 },
-        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 9 },
-        { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 15 },
-      ],
-    },
-  };
-
-  it("hides the combined percentage and orders the two pools", () => {
-    const [pool] = collectLimitPools([cursorAccount], now);
-    const display = displayLimitWindows(pool!);
-    expect(display.map((window) => window.id)).toEqual(["autoPercentUsed", "apiPercentUsed"]);
-  });
-
-  it("keeps the combined percentage as a card if either allowance is missing", () => {
-    const [pool] = collectLimitPools(
-      [
-        {
-          ...cursorAccount,
-          limits: {
-            ...cursorAccount.limits,
-            windows: cursorAccount.limits.windows.filter(
-              (window) => window.id !== "apiPercentUsed",
-            ),
-          },
-        },
-      ],
-      now,
-    );
-    const display = displayLimitWindows(pool!);
-    expect(display.map((window) => window.id)).toEqual(["totalPercentUsed", "autoPercentUsed"]);
-  });
-});
-
-describe("collectLimitNotices", () => {
-  const checkedAt = "2026-09-03T11:00:00.000Z";
-  const claude = ProviderDriverKind.make("claudeAgent");
-  const laptop = { entry: { target: { label: "Laptop" } } };
-  const hub = {
-    id: UsageLimitSourceId.make("hub"),
-    kind: "cliproxy" as const,
-    label: "hub",
-    checkedAt,
-    accounts: [],
-  };
-
-  it("names failures and silence, skips unsupported accounts, and labels environments only when several", () => {
-    const failed = provider({
-      instanceId: ProviderInstanceId.make("claude"),
-      driver: claude,
-      displayName: "Claude Max",
-      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
-    });
-    const apiKey = provider({
-      instanceId: ProviderInstanceId.make("api"),
-      driver: claude,
-      usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
-    });
-    const silent = provider({ usageLimits: { checkedAt, windows: [] } });
-    const one = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: {
-            providers: [failed, apiKey, silent],
-            usageLimitSources: [
-              hub,
-              { ...hub, id: UsageLimitSourceId.make("down"), label: "down", error: "ECONNREFUSED" },
-            ],
-          },
-        },
-      ],
-    ]);
-    expect(collectLimitNotices(one)).toEqual([
-      "Claude Max: Could not read limits.",
-      "codex: No limits reported.",
-      "hub: No accounts reported.",
-      "down: ECONNREFUSED",
-    ]);
-
-    one.set(EnvironmentId.make("env-b"), {
-      entry: { target: { label: "Desktop" } },
-      serverConfig: { providers: [], usageLimitSources: [] },
-    });
-    expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
-  });
 });
 
 describe("/usage-limits", () => {
@@ -1041,6 +1413,7 @@ describe("/usage-limits", () => {
       id: UsageLimitSourceId.make("hub"),
       kind: "cliproxy" as const,
       label: "Accounts",
+      origin: "http://hub:8317",
       checkedAt: limits.checkedAt,
       accounts: [
         {
@@ -1146,7 +1519,29 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
-  it("keeps accounts and custom instances separate, filtering by driver", () => {
+  it("labels hub rows by account id without .json", () => {
+    const hub = [
+      {
+        ...sources[0]!,
+        label: "CLIProxyAPI",
+        accounts: [
+          {
+            id: "claude-b@example.com.json",
+            driver: selected.driver,
+            email: "b@example.com",
+            usageLimits: limits,
+          },
+          { id: "team-seat.json", driver: selected.driver, usageLimits: limits },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], hub, now);
+    expect(
+      report?.accounts.filter((account) => account.sourceLabel).map((account) => account.label),
+    ).toEqual(["CLIProxyAPI · claude-b@example.com", "CLIProxyAPI · team-seat"]);
+  });
+
+  it("keeps unidentified custom instances separate, filtering by driver", () => {
     const report = collectProviderUsageLimits(
       selected.instanceId,
       [
@@ -1185,6 +1580,159 @@ describe("/usage-limits", () => {
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);
+  });
+
+  it("shows a proxied instance the hub accounts its model routes to, of any driver", () => {
+    const routed = [
+      {
+        ...sources[0]!,
+        accounts: sources[0]!.accounts.map((account) =>
+          account.id === "oss" ? { ...account, models: ["gpt-5.6-sol"] } : account,
+        ),
+      },
+    ];
+    const proxy = provider({
+      instanceId: ProviderInstanceId.make("claudex"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", type: "customEndpoint", endpoint: "http://hub:8317" },
+    });
+    // regression: #30778 a local login the hub does not route to is not this thread's account
+    const unrelated = provider({
+      instanceId: ProviderInstanceId.make("codex-personal"),
+      usageLimits: limits,
+      auth: { status: "authenticated", email: "personal@example.com" },
+    });
+    const ids = (instance: ServerProvider, model: string | null) =>
+      collectProviderUsageLimits(
+        instance.instanceId,
+        [selected, proxy, unrelated],
+        routed,
+        now,
+        model,
+      )?.accounts.map((account) => account.id);
+    expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    // regression: #30778 another hub's model list does not decide this hub's routing
+    const other = {
+      ...routed[0]!,
+      id: UsageLimitSourceId.make("other"),
+      origin: "http://other:8317",
+      accounts: [
+        {
+          id: "x",
+          driver: ProviderDriverKind.make("grok"),
+          models: ["gpt-5.6-sol"],
+          usageLimits: limits,
+        },
+      ],
+    };
+    expect(
+      collectProviderUsageLimits(
+        proxy.instanceId,
+        [selected, proxy],
+        [other, ...routed],
+        now,
+        "gpt-5.6-sol",
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["codex", "hub:oss"]);
+    // regression: #30778 a custom endpoint other than the hub does not follow the hub's routing
+    const elsewhere = { ...proxy, auth: { ...proxy.auth, endpoint: "http://other:8317" } };
+    expect(
+      collectProviderUsageLimits(
+        proxy.instanceId,
+        [selected, elsewhere],
+        routed,
+        now,
+        "gpt-5.6-sol",
+      ),
+    ).toBeNull();
+    expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "codex-personal", "hub:oss"]);
+  });
+
+  it("keeps the freshest usable native duplicate and the freshest native credits in either order", () => {
+    const failed = provider({
+      auth: selected.auth,
+      usageLimits: {
+        ...limits,
+        checkedAt: "2026-09-03T11:40:00.000Z",
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const credited = provider({
+      instanceId: ProviderInstanceId.make("codex-credit"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:20:00.000Z",
+        windows: [{ ...window, usedPercent: 50 }],
+        resetCredits: { availableCount: 2 },
+      },
+    });
+    const staleCredit = provider({
+      ...credited,
+      instanceId: ProviderInstanceId.make("codex-stale-credit"),
+      usageLimits: { ...limits, resetCredits: { availableCount: 3 } },
+    });
+    const freshest = provider({
+      instanceId: ProviderInstanceId.make("codex-fresh"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 55 }],
+      },
+    });
+    const duplicates = [failed, staleCredit, credited, freshest];
+    for (const providers of [duplicates, duplicates.toReversed()]) {
+      const report = collectProviderUsageLimits(failed.instanceId, providers, sources, now);
+      expect(report?.accounts.map((account) => account.id)).toEqual(["codex-fresh", "hub:oss"]);
+      expect(report?.accounts[0]).toMatchObject({
+        limits: {
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          windows: [{ usedPercent: 55 }],
+          resetCredits: { availableCount: 2 },
+        },
+        resetCreditInput: { instanceId: "codex-credit" },
+      });
+      expect(report?.accounts[0]?.limits.unavailable).toBeUndefined();
+    }
+  });
+
+  it("merges native workspace duplicates only while the workspace evidence is unambiguous", () => {
+    const known = provider({
+      ...selected,
+      instanceId: ProviderInstanceId.make("workspace-a"),
+      auth: { ...selected.auth, workspaceId: "ws-a" },
+    });
+    const fresh = provider({
+      ...known,
+      instanceId: ProviderInstanceId.make("workspace-a-fresh"),
+      usageLimits: { ...limits, checkedAt: "2026-09-03T11:30:00.000Z" },
+    });
+    const natives = [known, fresh, selected];
+    expect(
+      collectProviderUsageLimits(selected.instanceId, natives, [], now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["workspace-a-fresh"]);
+
+    const unreadable = provider({
+      instanceId: ProviderInstanceId.make("workspace-b"),
+      auth: { ...selected.auth, workspaceId: "ws-b" },
+    });
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [...natives, unreadable],
+        [],
+        now,
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["workspace-a-fresh", "codex"]);
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [...natives, { ...unreadable, usageLimits: limits }],
+        [],
+        now,
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["workspace-a-fresh", "codex", "workspace-b"]);
   });
 
   it("supports a source-only provider and keeps duplicates when the native probe failed", () => {
@@ -1260,6 +1808,33 @@ describe("/usage-limits", () => {
     expect(
       withUsageLimitsCommands([selected], [])[0]?.slashCommands.map((command) => command.name),
     ).toEqual(["usage-limits"]);
+    const unrelated = provider({ driver: ProviderDriverKind.make("claudeAgent") });
+    const disabled = provider({ ...unrelated, enabled: false, usageLimits: limits });
+    const mixed = withUsageLimitsCommands([selected, withWorkspace, unrelated, disabled], []);
+    expect(mixed.map((entry) => entry.slashCommands.map((command) => command.name))).toEqual([
+      ["usage-limits"],
+      ["usage-limits"],
+      [],
+      [],
+    ]);
+    expect(mixed[2]).toBe(unrelated);
+    expect(mixed[3]).toBe(disabled);
+  });
+
+  it("does not offer the command to every provider while an HTTP quota source is down", () => {
+    const unrelated = provider({ driver: ProviderDriverKind.make("claudeAgent") });
+    const httpSource = {
+      id: UsageLimitSourceId.make("http-quota"),
+      kind: "http" as const,
+      label: "My quota server",
+      checkedAt: limits.checkedAt,
+      accounts: [],
+    };
+    const down = { ...httpSource, error: "Could not read the HTTP quota source." };
+    expect(withUsageLimitsCommands([unrelated], [httpSource])[0]).toBe(unrelated);
+    expect(withUsageLimitsCommands([unrelated], [down])[0]).toBe(unrelated);
+    expect(hasProviderUsageLimits(unrelated.driver, [unrelated], [down])).toBe(false);
+    expect(sameUsageLimitCommandCoverage([httpSource], [down])).toBe(true);
   });
 });
 
@@ -1302,24 +1877,6 @@ describe("sameUsageLimitCommandCoverage", () => {
   });
 });
 
-describe("remainingPercent", () => {
-  it("inverts and clamps the reported usage", () => {
-    expect(remainingPercent(window)).toBe(60);
-    expect(remainingPercent({ ...window, usedPercent: 0 })).toBe(100);
-    expect(remainingPercent({ ...window, usedPercent: 100 })).toBe(0);
-    expect(remainingPercent({ ...window, usedPercent: 33.4 })).toBe(67);
-  });
-});
-
-describe("isUsageLimitsCommand", () => {
-  it("recognizes only the standalone local action", () => {
-    expect(isUsageLimitsCommand("  /USAGE-LIMITS\n")).toBe(true);
-    expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
-    expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
-    expect(isUsageLimitsCommand("/usage")).toBe(false);
-  });
-});
-
 describe("external usage settings", () => {
   it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
     const managed = provider({
@@ -1355,31 +1912,157 @@ describe("external usage settings", () => {
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
   });
-  it("omits disabled, uninstalled and signed-out providers", () => {
-    const managed = provider({
+
+  it("shows a notice once when environments with one label report the same failure", () => {
+    const failing = provider({
       usageLimits: {
         checkedAt: "2026-09-03T11:00:00.000Z",
         windows: [],
-        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+        unavailable: { reason: "probeFailed" },
       },
     });
+    const host = { entry: { target: { label: "Host" } }, serverConfig: { providers: [failing] } };
     const presentations = new Map([
-      [
-        EnvironmentId.make("a"),
-        {
-          entry: { target: { label: "A" } },
-          serverConfig: {
-            providers: [
-              { ...managed, enabled: false },
-              { ...managed, installed: false },
-              { ...managed, auth: { status: "unauthenticated" as const } },
-              provider({}),
-            ],
+      [EnvironmentId.make("a"), host],
+      [EnvironmentId.make("b"), host],
+      [EnvironmentId.make("c"), host],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual(["Host · codex: Could not read limits."]);
+  });
+
+  it("names the providers a hub lists when it has no account T3 Code reads", () => {
+    const hub = (unreadProviders?: readonly string[]) =>
+      new Map([
+        [
+          EnvironmentId.make("a"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("hub"),
+                  kind: "cliproxy" as const,
+                  label: "Kimi hub",
+                  checkedAt: "2026-09-03T11:00:00.000Z",
+                  accounts: [],
+                  ...(unreadProviders ? { unreadProviders } : {}),
+                },
+              ],
+            },
           },
+        ],
+      ]);
+    expect(collectLimitNotices(hub(["antigravity", "kimi-ai"]))).toEqual([
+      "Kimi hub: No Codex, Claude, or Grok accounts. Skipped antigravity, kimi-ai.",
+    ]);
+    expect(collectLimitNotices(hub())).toEqual(["Kimi hub: No accounts reported."]);
+  });
+
+  it("shows the reason an account's limits are unsupported, but not a bare unsupported", () => {
+    const unsupported = (message?: string) =>
+      provider({
+        usageLimits: {
+          checkedAt: "2026-09-03T11:00:00.000Z",
+          windows: [],
+          unavailable: { reason: "unsupported", ...(message ? { message } : {}) },
+        },
+      });
+    const notices = (limited: ServerProvider) =>
+      collectLimitNotices(
+        new Map([
+          [
+            EnvironmentId.make("a"),
+            { entry: { target: { label: "Host" } }, serverConfig: { providers: [limited] } },
+          ],
+        ]),
+      );
+    expect(notices(unsupported("Sign in with Google to see Antigravity limits."))).toEqual([
+      "codex: Sign in with Google to see Antigravity limits.",
+    ]);
+    expect(notices(unsupported())).toEqual([]);
+  });
+
+  it("names a hub account whose read failed unless another environment read it", () => {
+    const checkedAt = "2026-09-03T11:00:00.000Z";
+    const account = {
+      id: "claude-tg@example.com.json",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      email: "tg@example.com",
+    };
+    const failed = {
+      ...account,
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: {
+          reason: "probeFailed" as const,
+          message: "The provider refused the hub request (HTTP 429).",
+        },
+      },
+    };
+    const read = {
+      ...account,
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
+    };
+    const hub = (accounts: readonly UsageLimitSourceAccount[]) => ({
+      providers: [],
+      usageLimitSources: [
+        {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy" as const,
+          label: "hub",
+          checkedAt,
+          accounts,
         },
       ],
+    });
+    const desktop = { entry: { target: { label: "Desktop" } }, serverConfig: hub([failed]) };
+    expect(collectLimitNotices(new Map([[EnvironmentId.make("a"), desktop]]))).toEqual([
+      "hub · tg@example.com: The provider refused the hub request (HTTP 429).",
     ]);
-    expect(collectExternalUsageLinks(presentations)).toEqual([]);
+    expect(
+      collectLimitNotices(
+        new Map([
+          [EnvironmentId.make("a"), desktop],
+          [
+            EnvironmentId.make("b"),
+            { entry: { target: { label: "WSL" } }, serverConfig: hub([read]) },
+          ],
+        ]),
+      ),
+    ).toEqual([]);
+    // The row resolves an omitted workspace to the only one known, so the notice must too.
+    expect(
+      collectLimitNotices(
+        new Map([
+          [EnvironmentId.make("a"), desktop],
+          [
+            EnvironmentId.make("b"),
+            {
+              entry: { target: { label: "WSL" } },
+              serverConfig: hub([{ ...read, workspaceId: "ws-1" }]),
+            },
+          ],
+        ]),
+      ),
+    ).toEqual([]);
+    // Without an email, same-named auth files on two environment-local hubs are different accounts.
+    const { email: _failedEmail, ...anonymousFailed } = failed;
+    const { email: _readEmail, ...anonymousRead } = read;
+    expect(
+      collectLimitNotices(
+        new Map([
+          [EnvironmentId.make("a"), { ...desktop, serverConfig: hub([anonymousFailed]) }],
+          [
+            EnvironmentId.make("b"),
+            { entry: { target: { label: "WSL" } }, serverConfig: hub([anonymousRead]) },
+          ],
+        ]),
+      ),
+    ).toEqual([
+      "Desktop · hub · claude-tg@example.com: The provider refused the hub request (HTTP 429).",
+    ]);
   });
 });
 
@@ -1396,63 +2079,5 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
-  });
-});
-
-describe("Antigravity limit presentation", () => {
-  it("keeps the shared Claude/GPT bucket separate from Gemini and pairs their windows", () => {
-    const antigravity = provider({
-      instanceId: ProviderInstanceId.make("antigravity"),
-      driver: ProviderDriverKind.make("antigravity"),
-      usageLimits: {
-        checkedAt: "2026-10-09T12:00:00.000Z",
-        windows: [
-          { ...window, id: "3p-5h", label: "Claude & GPT (shared) · 5-hour", usedPercent: 90 },
-          { ...window, id: "gemini-5h", label: "Gemini · 5-hour", usedPercent: 20 },
-          {
-            ...window,
-            id: "3p-weekly",
-            kind: "weekly",
-            label: "Claude & GPT (shared) · Weekly",
-            usedPercent: 100,
-          },
-          {
-            ...window,
-            id: "gemini-weekly",
-            kind: "weekly",
-            label: "Gemini · Weekly",
-            usedPercent: 10,
-          },
-        ],
-      },
-    });
-    const accounts = collectLimitAccounts(
-      new Map([
-        [
-          EnvironmentId.make("a"),
-          {
-            entry: { target: { label: "Local" } },
-            serverConfig: {
-              providers: [
-                provider({
-                  usageLimits: { checkedAt: "2026-10-09T12:00:00.000Z", windows: [window] },
-                }),
-                antigravity,
-              ],
-            },
-          },
-        ],
-      ]),
-    );
-    const pools = collectLimitPools(accounts, now);
-    expect(pools.map((pool) => pool.driver)).toEqual(["codex", "antigravity"]);
-    const windows = displayLimitWindows(pools[1]!);
-    expect(windows.map((window) => window.id)).toEqual([
-      "gemini-5h",
-      "gemini-weekly",
-      "3p-5h",
-      "3p-weekly",
-    ]);
-    expect(windows.map((window) => window.remainingPercent)).toEqual([80, 90, 10, 0]);
   });
 });

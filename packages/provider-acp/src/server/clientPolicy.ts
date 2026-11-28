@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import type { ProviderRequestKind, RuntimeMode } from "@t3tools/contracts";
+import type { RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -9,6 +9,7 @@ export interface AcpRuntimePolicy {
   readonly cwd: string | null;
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
+  readonly workspace?: { readonly extraRoots: ReadonlyArray<string> } | undefined;
 }
 
 export type AcpPermissionDisposition = "allow" | "ask" | "deny";
@@ -19,12 +20,12 @@ export function unknownRecord(value: unknown): Record<string, unknown> | undefin
     : undefined;
 }
 
+// The path is joined and resolved exactly as written; only the operating system may read it differently.
 function resolveAcpPermissionPath(path: string, cwd: string | null): string | undefined {
-  const trimmed = path.trim();
-  if (trimmed.length === 0) return undefined;
-  if (NodePath.isAbsolute(trimmed)) return trimmed;
+  if (path.trim().length === 0) return undefined;
+  if (NodePath.isAbsolute(path)) return path;
   if (cwd === null || cwd.trim().length === 0) return undefined;
-  return `${cwd}${cwd.endsWith(NodePath.sep) ? "" : NodePath.sep}${trimmed}`;
+  return `${cwd}${cwd.endsWith(NodePath.sep) ? "" : NodePath.sep}${path}`;
 }
 
 function acpPathIsWithinRoot(path: string, root: string): boolean {
@@ -37,16 +38,9 @@ function acpPathIsWithinRoot(path: string, root: string): boolean {
   );
 }
 
-/**
- * `realpath` cannot resolve a file that has not been created yet, so walk up to the deepest
- * existing ancestor and append the missing suffix to that ancestor's canonical path. If an
- * existing entry cannot be canonicalized (for example, a broken symlink), fail closed.
- */
+// Canonicalize existing ancestors for symlink-aware checks of new paths; fail closed on errors.
 function acpCanonicalPathForContainment(path: string): string | undefined {
-  // Do not lexically normalize before realpath. For a path such as
-  // `workspace/link/../file`, the kernel resolves `link` before `..`; an
-  // eager NodePath.resolve would erase that symlink traversal and could turn
-  // an outside target into an apparently in-workspace path.
+  // realpath must resolve symlinks before ..; lexical normalization can hide traversal.
   let candidate = path;
   const missingSuffix: Array<string> = [];
 
@@ -75,9 +69,122 @@ function acpCanonicalPathForContainment(path: string): string | undefined {
   }
 }
 
+/**
+ * Every path a file change touches, each exactly as the agent sent it, or "unknown" when any
+ * part of the change could not be read. An unknown change is never approved by a folder check.
+ */
+export type AcpChangedPaths = ReadonlyArray<string> | "unknown";
+
+/** A change that names more paths than this is treated as unknown rather than resolved one by one. */
+const MAX_ACP_CHANGED_PATHS = 256;
+
+/**
+ * The path as given when policy can resolve it the way the agent will. Blank strings, non-strings
+ * and NUL bytes name no file. A relative path that starts with `~`, has a URL scheme or drive
+ * prefix, or uses backslashes on a POSIX host may mean another file to the agent than it does
+ * when joined to the working directory.
+ */
+function acpCheckablePath(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0 || value.includes("\0")) {
+    return undefined;
+  }
+  if (NodePath.isAbsolute(value)) return value;
+  if (value.startsWith("~") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return undefined;
+  if (NodePath.sep === "/" && value.includes("\\")) return undefined;
+  return value;
+}
+
+/** Both sets together; unknown stays unknown. */
+export function mergeAcpChangedPaths(
+  left: AcpChangedPaths | undefined,
+  right: AcpChangedPaths | undefined,
+): AcpChangedPaths {
+  if (left === "unknown" || right === "unknown") return "unknown";
+  if (left === undefined || left.length === 0) return right ?? [];
+  if (right === undefined || right.length === 0) return left;
+  const merged = [...new Set([...left, ...right])];
+  return merged.length > MAX_ACP_CHANGED_PATHS ? "unknown" : merged;
+}
+
+/** The keys of a tool call's raw input that name a file it changes. */
+export const ACP_RAW_INPUT_PATH_KEYS = ["path", "filePath", "file_path"] as const;
+
+/**
+ * The one reading of which files a tool call changes, for a permission request and for every
+ * notification of the call it names: its locations, its diffs and the path keys of its raw input.
+ * A part without a checkable path, or of a kind this client does not know, makes it all unknown.
+ */
+export function acpChangedPathsOfToolCall(toolCall: {
+  readonly locations?: unknown;
+  readonly content?: unknown;
+  readonly rawInput?: unknown;
+}): AcpChangedPaths {
+  const paths = new Set<string>();
+  let complete = true;
+  const requirePath = (value: unknown) => {
+    const path = acpCheckablePath(value);
+    if (path === undefined) complete = false;
+    else paths.add(path);
+  };
+  const { locations, content, rawInput } = toolCall;
+  if (Array.isArray(locations)) {
+    for (const location of locations) requirePath(unknownRecord(location)?.path);
+  } else if (locations !== undefined && locations !== null) {
+    complete = false;
+  }
+  if (Array.isArray(content)) {
+    for (const value of content) {
+      const entry = unknownRecord(value);
+      if (entry?.type === "content" || entry?.type === "terminal") continue;
+      if (entry?.type !== "diff") {
+        complete = false;
+        continue;
+      }
+      if (entry.changes === undefined || entry.changes === null) {
+        requirePath(entry.path);
+        continue;
+      }
+      if (!Array.isArray(entry.changes)) {
+        complete = false;
+        continue;
+      }
+      if (entry.path !== undefined && entry.path !== null) requirePath(entry.path);
+      for (const value of entry.changes) {
+        const change = unknownRecord(value);
+        switch (change?.operation) {
+          case "move":
+            requirePath(change.oldPath);
+            requirePath(change.path);
+            break;
+          case "add":
+          case "delete":
+          case "modify":
+          // A copy only reads its source.
+          case "copy":
+            requirePath(change.path);
+            break;
+          default:
+            // An operation this client does not know may write where its fields do not show.
+            complete = false;
+        }
+      }
+    }
+  } else if (content !== undefined && content !== null) {
+    complete = false;
+  }
+  const input = unknownRecord(rawInput);
+  if (input !== undefined) {
+    for (const key of ACP_RAW_INPUT_PATH_KEYS) {
+      const value = input[key];
+      if (value !== undefined && value !== null) requirePath(value);
+    }
+  }
+  return complete && paths.size <= MAX_ACP_CHANGED_PATHS ? [...paths] : "unknown";
+}
+
 interface AcpPolicyOperation {
   readonly kind: string | null | undefined;
-  readonly locations: ReadonlyArray<{ readonly path: string }> | null | undefined;
+  readonly changedPaths: AcpChangedPaths;
 }
 
 function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
@@ -90,10 +197,7 @@ function isAcpReadKind(toolKind: string): boolean {
   return toolKind === "read" || toolKind === "search" || toolKind === "think";
 }
 
-/**
- * Reads follow the sandbox alone and never ask. That includes no explicit sandbox, since the
- * strictest runtime mode (approval-required) implies a read-only one.
- */
+/** Reads never ask; an absent sandbox implies read-only in approval-required mode. */
 function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
   switch (unknownRecord(runtimePolicy.sandboxPolicy)?.type) {
     case undefined:
@@ -107,11 +211,13 @@ function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
   }
 }
 
-function acpWorkspaceWriteAllowsMutation(
+/** True when the change names at least one path and every path is inside `cwd`, a sandbox writable root or one of the thread's other folders. */
+function acpMutationStaysInWorkspace(
   runtimePolicy: AcpRuntimePolicy,
   sandboxPolicy: Record<string, unknown>,
-  locations: AcpPolicyOperation["locations"],
+  changedPaths: AcpChangedPaths,
 ): boolean {
+  if (changedPaths === "unknown" || changedPaths.length === 0) return false;
   const cwd =
     typeof runtimePolicy.cwd === "string" && runtimePolicy.cwd.trim().length > 0
       ? (resolveAcpPermissionPath(runtimePolicy.cwd, process.cwd()) ?? null)
@@ -121,23 +227,21 @@ function acpWorkspaceWriteAllowsMutation(
     const canonicalCwd = acpCanonicalPathForContainment(cwd);
     if (canonicalCwd !== undefined) roots.push(canonicalCwd);
   }
-  const writableRoots = sandboxPolicy.writableRoots;
-  if (Array.isArray(writableRoots)) {
-    for (const writableRoot of writableRoots) {
-      if (typeof writableRoot !== "string") continue;
-      const resolved = resolveAcpPermissionPath(writableRoot, cwd);
-      if (resolved === undefined) continue;
-      const canonicalRoot = acpCanonicalPathForContainment(resolved);
-      if (canonicalRoot !== undefined) roots.push(canonicalRoot);
-    }
+  const writableRoots = [
+    ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
+    ...(runtimePolicy.workspace?.extraRoots ?? []),
+  ];
+  for (const writableRoot of writableRoots) {
+    if (typeof writableRoot !== "string") continue;
+    const resolved = resolveAcpPermissionPath(writableRoot, cwd);
+    if (resolved === undefined) continue;
+    const canonicalRoot = acpCanonicalPathForContainment(resolved);
+    if (canonicalRoot !== undefined) roots.push(canonicalRoot);
   }
   if (roots.length === 0) return false;
 
-  if (locations === undefined || locations === null || locations.length === 0) {
-    return false;
-  }
-  for (const location of locations) {
-    const resolved = resolveAcpPermissionPath(location.path, cwd);
+  for (const changedPath of changedPaths) {
+    const resolved = resolveAcpPermissionPath(changedPath, cwd);
     const canonicalPath =
       resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
     if (
@@ -168,10 +272,10 @@ function acpOperationDisposition(
       return "deny";
     case "workspaceWrite":
       if (isAcpMutationKind(toolKind)) {
-        return acpWorkspaceWriteAllowsMutation(
+        return acpMutationStaysInWorkspace(
           runtimePolicy,
           sandboxPolicy ?? {},
-          operation.locations,
+          operation.changedPaths,
         )
           ? "allow"
           : "deny";
@@ -184,10 +288,13 @@ function acpOperationDisposition(
       if (runtimePolicy.runtimeMode === "approval-required") return "deny";
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&
-        runtimePolicy.approvalPolicy === undefined &&
-        !isAcpMutationKind(toolKind)
+        runtimePolicy.approvalPolicy === undefined
       ) {
-        return "ask";
+        // Auto-accept covers file changes in the thread's own folders; the user decides the rest.
+        return isAcpMutationKind(toolKind) &&
+          acpMutationStaysInWorkspace(runtimePolicy, {}, operation.changedPaths)
+          ? "allow"
+          : "ask";
       }
       return "allow";
     default:
@@ -205,7 +312,7 @@ export function acpPermissionDisposition(
 ): AcpPermissionDisposition {
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
-    locations: request.toolCall.locations,
+    changedPaths: acpChangedPathsOfToolCall(request.toolCall),
   });
 }
 
@@ -213,7 +320,7 @@ export function acpMcpToolApprovalElicitationDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.CreateElicitationRequest,
   nativeRequestId?: string,
-): AcpPermissionDisposition | undefined {
+): "ask" | "allow" | undefined {
   if (
     request.mode !== "form" ||
     (unknownRecord(request._meta)?.codex_approval_kind !== "mcp_tool_call" &&
@@ -221,20 +328,19 @@ export function acpMcpToolApprovalElicitationDisposition(
   ) {
     return undefined;
   }
-  // This request comes from T3's authenticated, scope-checked MCP endpoint,
-  // not an arbitrary provider command. Let explicit approval mode surface it
-  // to the user and otherwise allow the endpoint to enforce its own policy.
+  // T3's authenticated MCP endpoint enforces scope; only explicit approval mode needs a user prompt.
   return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
 }
 
 export function acpClientExecuteDisposition(
   runtimePolicy: AcpRuntimePolicy,
 ): AcpPermissionDisposition {
-  return acpOperationDisposition(runtimePolicy, { kind: "execute", locations: undefined });
+  return acpOperationDisposition(runtimePolicy, { kind: "execute", changedPaths: [] });
 }
 
 export interface AcpApprovalGrantInput {
-  readonly kind: ProviderRequestKind;
+  /** The approved request's ACP tool kind, after ID-only requests take their tracked call's kind. */
+  readonly toolKind: string;
   readonly scope: "session" | "turn";
   readonly turnKey: string;
 }
@@ -244,17 +350,14 @@ export interface AcpClientPolicyGrants {
   readonly allowsExecute: (turnKey: string | null) => boolean;
 }
 
-/**
- * ACP does not link an approved tool call to the terminals the agent then creates, so an
- * approved command authorizes client terminals for the approving turn, or for the session on
- * accept-for-session.
- */
+/** ACP cannot link commands to terminals; approved execute requests grant execution for the turn or accepted session. */
 export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
   let sessionExecute = false;
   let turnExecute: string | null = null;
   return {
     recordApproval: (input) => {
-      if (input.kind !== "command") return;
+      // Other kinds also show as command cards, but approving them must not open terminals.
+      if (input.toolKind !== "execute") return;
       if (input.scope === "session") {
         sessionExecute = true;
       } else {

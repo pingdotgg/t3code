@@ -1,3 +1,4 @@
+import { useLocale } from "gt-react-native";
 import { useEffect } from "react";
 
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
@@ -35,11 +36,12 @@ function cancelIdle(handle: number): void {
   clearTimeout(handle);
 }
 
-export function prewarmReviewDiffSection(input: {
+function prewarmReviewDiffSection(input: {
   readonly threadKey: string;
   readonly section: ReviewSectionItem;
+  readonly locale: string;
 }): void {
-  const { section, threadKey } = input;
+  const { section, threadKey, locale } = input;
   if (section.diff === null || section.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) {
     return;
   }
@@ -48,11 +50,12 @@ export function prewarmReviewDiffSection(input: {
     threadKey,
     sectionId: section.id,
     diff: section.diff,
+    locale,
   });
   getCachedNativeReviewDiffData({ parsedDiff, comments: [] });
 }
 
-export function getReviewDiffPrewarmSections(input: {
+function getReviewDiffPrewarmSections(input: {
   readonly threadKey: string;
   readonly sections: ReadonlyArray<ReviewSectionItem>;
   readonly selectedSectionId: string | null;
@@ -104,7 +107,9 @@ export function useReviewDiffPrewarming(input: {
   readonly selectedSectionId: string | null;
 }): void {
   const { sections, selectedSectionId, threadKey } = input;
+  const locale = useLocale();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prewarms pending review diff sections in idle callbacks and cancels the idle handle on cleanup
   useEffect(() => {
     if (!threadKey) {
       return;
@@ -134,7 +139,7 @@ export function useReviewDiffPrewarming(input: {
           return;
         }
         nextSectionIndex += 1;
-        prewarmReviewDiffSection({ threadKey, section });
+        prewarmReviewDiffSection({ threadKey, section, locale });
 
         if (nextSectionIndex < pendingSections.length) {
           scheduleNext();
@@ -149,5 +154,5 @@ export function useReviewDiffPrewarming(input: {
         cancelIdle(idleHandle);
       }
     };
-  }, [sections, selectedSectionId, threadKey]);
+  }, [sections, selectedSectionId, threadKey, locale]);
 }

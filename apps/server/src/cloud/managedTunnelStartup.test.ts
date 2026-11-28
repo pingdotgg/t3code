@@ -1,51 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
-  managedTunnelStartupAction,
   retryManagedTunnelRegistration,
+  watchManagedTunnelOrigin,
 } from "./managedTunnelStartup.ts";
-
-describe("managedTunnelStartupAction", () => {
-  const config = {
-    providerKind: "cloudflare_tunnel" as const,
-    connectorToken: "connector-token",
-    tunnelId: "tunnel-1",
-  };
-
-  it("requests tunnel recovery only when the relay proves it is needed", () => {
-    expect(
-      managedTunnelStartupAction({
-        wantsCliLink: true,
-        registration: { status: "recovery_required", config },
-      }),
-    ).toEqual({ action: "request_recovery", config });
-  });
-
-  it("creates a desired CLI link only when no local managed link exists", () => {
-    expect(
-      managedTunnelStartupAction({
-        wantsCliLink: true,
-        registration: { status: "not_linked" },
-      }),
-    ).toEqual({ action: "reconcile_link" });
-  });
-
-  it.each(["ready", "unavailable", "revoked"] as const)(
-    "does not provision after a %s registration result",
-    (status) => {
-      expect(
-        managedTunnelStartupAction({
-          wantsCliLink: true,
-          registration: { status },
-        }),
-      ).toEqual({ action: "none" });
-    },
-  );
-});
 
 describe("retryManagedTunnelRegistration", () => {
   it.effect("does not fall back or retry when registration is permanently rejected", () =>
@@ -69,63 +30,77 @@ describe("retryManagedTunnelRegistration", () => {
       expect(fallbacks).toBe(0);
     }),
   );
+});
 
-  it.effect("stops retrying after the retry window so startup can fall back", () =>
+describe("watchManagedTunnelOrigin", () => {
+  const localOrigin = "http://127.0.0.1:3773";
+
+  /** Runs the watcher for `minutes`, serving each check the next ingress in `ingress`. */
+  const watch = (input: {
+    readonly ingress: ReadonlyArray<string | null>;
+    readonly minutes: number;
+    readonly failRegistration?: boolean;
+  }) =>
     Effect.gen(function* () {
-      let attempts = 0;
-      const registration = Effect.suspend(() => {
-        attempts += 1;
-        return Effect.fail("relay unavailable" as const);
+      let checks = 0;
+      const registeredAtMinute: Array<number> = [];
+      let minute = 0;
+      const fiber = yield* watchManagedTunnelOrigin({
+        localOrigin,
+        readIngressOrigin: Effect.sync(
+          () => input.ingress[Math.min(checks++, input.ingress.length - 1)] ?? null,
+        ),
+        register: Effect.suspend(() => {
+          registeredAtMinute.push(minute);
+          return input.failRegistration ? Effect.fail("relay unavailable") : Effect.void;
+        }),
+      }).pipe(Effect.forkChild);
+      while (minute < input.minutes) {
+        minute += 1;
+        yield* TestClock.adjust("1 minute");
+      }
+      yield* Fiber.interrupt(fiber);
+      return { checks, registeredAtMinute };
+    });
+
+  it.effect("leaves a matching or unknown ingress alone", () =>
+    Effect.gen(function* () {
+      const result = yield* watch({
+        ingress: [null, `${localOrigin}/`, localOrigin],
+        minutes: 5,
       });
-      const fiber = yield* Effect.forkChild(
-        Effect.flip(retryManagedTunnelRegistration(registration, () => true)),
-        { startImmediately: true },
-      );
-      yield* TestClock.adjust("15 minutes");
-      expect(yield* Fiber.join(fiber)).toBe("relay unavailable");
-      expect(attempts).toBeGreaterThan(5);
-      expect(attempts).toBeLessThan(60);
+      expect(result.checks).toBe(5);
+      expect(result.registeredAtMinute).toEqual([]);
     }),
   );
 
-  it.effect("waits for successful registration before it activates the connector", () =>
+  it.effect("keeps checking after a failed registration", () =>
     Effect.gen(function* () {
-      const firstAttempt = yield* Deferred.make<void>();
-      let attempts = 0;
-      let activations = 0;
-      let reconciliations = 0;
-      const registration = Effect.suspend(() => {
-        attempts += 1;
-        if (attempts === 1) {
-          return Deferred.succeed(firstAttempt, undefined).pipe(
-            Effect.andThen(Effect.fail("relay unavailable" as const)),
-          );
-        }
-        return Effect.succeed({ status: "ready" as const });
+      const result = yield* watch({
+        ingress: ["http://127.0.0.1:46169", "http://127.0.0.1:46169", localOrigin],
+        minutes: 8,
+        failRegistration: true,
       });
-      const startup = retryManagedTunnelRegistration(registration, () => true).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            const action = managedTunnelStartupAction({ wantsCliLink: true, registration: result });
-            if (action.action === "reconcile_link") {
-              reconciliations += 1;
-            }
-            activations += 1;
-          }),
-        ),
-      );
+      expect(result.registeredAtMinute).toEqual([1, 3]);
+      // Minutes 1, 3, and 7; the match at 7 restores the one-minute interval.
+      expect(result.checks).toBe(4);
+    }),
+  );
 
-      const fiber = yield* Effect.forkChild(startup, { startImmediately: true });
-      yield* Deferred.await(firstAttempt);
-      expect(attempts).toBe(1);
-      expect(activations).toBe(0);
+  it.effect("backs off while the relay keeps routing elsewhere", () =>
+    Effect.gen(function* () {
+      const result = yield* watch({ ingress: ["http://127.0.0.1:46169"], minutes: 20 });
+      expect(result.registeredAtMinute).toEqual([1, 3, 7, 15]);
+    }),
+  );
 
-      yield* TestClock.adjust("2 seconds");
-      yield* Fiber.join(fiber);
-
-      expect(attempts).toBe(2);
-      expect(activations).toBe(1);
-      expect(reconciliations).toBe(0);
+  it.effect("keeps the backoff when one check cannot read the ingress", () =>
+    Effect.gen(function* () {
+      const result = yield* watch({
+        ingress: ["http://127.0.0.1:46169", null, "http://127.0.0.1:46169"],
+        minutes: 10,
+      });
+      expect(result.registeredAtMinute).toEqual([1, 5, 9]);
     }),
   );
 });

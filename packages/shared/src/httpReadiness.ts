@@ -7,7 +7,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
-export function describeReadinessCause(cause: unknown): unknown {
+function describeReadinessCause(cause: unknown): unknown {
   if (cause instanceof Error) {
     const tag = (cause as { readonly _tag?: unknown })._tag;
     const nested = (cause as { readonly cause?: unknown }).cause;
@@ -38,6 +38,8 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
+  /** Decides from the body of a successful response whether the listener counts as ready. */
+  readonly accept?: (body: string) => Effect.Effect<boolean>;
   readonly makeError: (info: {
     readonly requestUrl: string;
     readonly probeTimeoutMs: number;
@@ -102,7 +104,18 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
         ),
       ),
     ),
-    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
+    HttpClient.tap((response) =>
+      response.text.pipe(
+        Effect.orElseSucceed(() => ""),
+        Effect.flatMap((body) => input.accept?.(body) ?? Effect.succeed(true)),
+        Effect.flatMap((accepted) =>
+          accepted ? Effect.void : Effect.fail(fail({ kind: "response-not-accepted", attempt })),
+        ),
+        Effect.tapError((cause) =>
+          Ref.set(lastProbeFailure, { attempt, cause: describeReadinessCause(cause) }),
+        ),
+      ),
+    ),
     HttpClient.retry(retryPolicy),
   );
 
@@ -118,26 +131,26 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
         requestUrl,
         attempts: attempt,
       }),
-    onNone: () =>
-      Effect.gen(function* () {
-        const lastFailure = yield* Ref.get(lastProbeFailure);
-        yield* Effect.logWarning("httpReadiness.timedOut", {
+    // The enclosing operation owns the span for this inline handler.
+    onNone: Effect.fnUntraced(function* () {
+      const lastFailure = yield* Ref.get(lastProbeFailure);
+      yield* Effect.logWarning("httpReadiness.timedOut", {
+        baseUrl: input.baseUrl,
+        requestUrl,
+        timeoutMs,
+        intervalMs,
+        probeTimeoutMs,
+        attempts: attempt,
+        lastFailure,
+      });
+      return yield* Effect.fail(
+        fail({
+          kind: "overall-timeout",
           baseUrl: input.baseUrl,
-          requestUrl,
           timeoutMs,
-          intervalMs,
-          probeTimeoutMs,
-          attempts: attempt,
           lastFailure,
-        });
-        return yield* Effect.fail(
-          fail({
-            kind: "overall-timeout",
-            baseUrl: input.baseUrl,
-            timeoutMs,
-            lastFailure,
-          }),
-        );
-      }),
+        }),
+      );
+    }),
   });
 });

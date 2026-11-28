@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, PointerEvent } from "react";
 
 export const PIERRE_TREE_UNSAFE_CSS = `
   :host {
@@ -9,6 +9,8 @@ export const PIERRE_TREE_UNSAFE_CSS = `
     --trees-font-family-override: var(--font-sans);
     --trees-font-size-override: 0.75rem;
   }
+  [data-truncate-content='visible'] { overflow: hidden; text-overflow: ellipsis; }
+  [data-truncate-marker] { display: none; }
   button[data-type='item'], button[data-type='item']::before { border-radius: var(--radius-md); }
   svg[data-icon-name='t3-tree-icon-loading'] { opacity: 0.6; }
   @media (prefers-reduced-motion: no-preference) {
@@ -21,5 +23,24 @@ export function pierreTreeStyle(colorScheme: "light" | "dark"): CSSProperties {
   return {
     colorScheme,
     ["--trees-fg-override" as string]: "var(--contrast-foreground)",
+    ["--trees-fg-muted-override" as string]: "var(--contrast-muted-foreground)",
+    ["--trees-status-ignored-override" as string]: "var(--contrast-muted-foreground)",
   };
+}
+
+// Clipped labels are unreadable and the tree cannot scroll sideways, so a clipped row gets its full name as a native tooltip.
+export function titleClippedPierreTreeRow(event: PointerEvent<HTMLElement>) {
+  const row = event.nativeEvent
+    .composedPath()
+    .find(
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement && node.matches("button[data-type='item']"),
+    );
+  if (!row) return;
+  const label = row.getAttribute("aria-label");
+  const clipped = Array.from(
+    row.querySelectorAll<HTMLElement>("[data-truncate-content='visible']"),
+  ).some((element) => element.scrollWidth > element.clientWidth);
+  if (label && clipped) row.title = label;
+  else row.removeAttribute("title");
 }

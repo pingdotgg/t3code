@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - publish commits and rollbacks
 // move exact directory entries with rename, which the FileSystem service does
 // not expose atomically.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import {
@@ -21,13 +22,17 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import {
+  acquireThemePublishLock,
+  EnvironmentThemeRefusedError,
   MAX_THEME_FILE_BYTES,
   readPublishedThemes,
   readThemeFileGuarded,
 } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 
 const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
@@ -37,6 +42,7 @@ const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
 );
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
+const THEME_JSON_SUFFIX = /\.json$/i;
 
 export class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
   "ThemeSettingsUnreadableError",
@@ -119,6 +125,17 @@ export class ThemePublishError extends Schema.TaggedError<ThemePublishError>()(
   }
 }
 
+export class ThemeDestinationDirectoryError extends Schema.TaggedError<ThemeDestinationDirectoryError>()(
+  "ThemeDestinationDirectoryError",
+  { themeId: Schema.String, destinationPath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.destinationPath} is a directory, so the theme cannot be published as "${this.themeId}". Move it, or pass another id with --id.`;
+  }
+}
+
+const isThemeDestinationDirectoryError = Schema.is(ThemeDestinationDirectoryError);
+
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
 
@@ -149,6 +166,15 @@ export class ThemeFileIdInvalidError extends Schema.TaggedError<ThemeFileIdInval
   }
 }
 
+export class ThemeIdFlagUnusedError extends Schema.TaggedError<ThemeIdFlagUnusedError>()(
+  "ThemeIdFlagUnusedError",
+  { themeId: Schema.String },
+) {
+  override get message(): string {
+    return `--id names a theme file's published id, but "${this.themeId}" is a theme id, not a file.`;
+  }
+}
+
 export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissingError>()(
   "ThemeTargetMissingError",
   {},
@@ -159,24 +185,38 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
 }
 
 const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
+const DEV_STATE_PLACEHOLDER_URL = new URL("http://localhost");
+
+const hasLiveServer = (statePath: string) =>
+  readPersistedServerRuntimeState(statePath).pipe(
+    Effect.map((state) => Option.isSome(state) && isProcessAlive(state.value.pid)),
+    Effect.orElseSucceed(() => false),
+  );
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
   const envHome = Option.filter(yield* envT3Home, (value) => value.trim().length > 0);
   const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);
   const baseDir = yield* resolveBaseDir(Option.getOrUndefined(configuredBaseDir));
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
+  const userdataPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
     baseDirIsExplicit: Option.isSome(configuredBaseDir),
   });
+  // A dev server with an implicit home keeps its state in `dev`; follow it unless a
+  // `userdata` server is running too, the same order `t3 pair` checks.
+  let derivedPaths = userdataPaths;
+  if (
+    Option.isNone(configuredBaseDir) &&
+    !(yield* hasLiveServer(userdataPaths.serverRuntimeStatePath))
+  ) {
+    const devPaths = yield* ServerConfig.deriveServerPaths(baseDir, DEV_STATE_PLACEHOLDER_URL);
+    if (yield* hasLiveServer(devPaths.serverRuntimeStatePath)) derivedPaths = devPaths;
+  }
   return {
     settingsPath: derivedPaths.settingsPath,
     themesDir: derivedPaths.environmentThemesDir,
   };
 });
 
-/**
- * A permission or I/O error must propagate: reading it as "no settings" would
- * have the caller write a fresh sparse file over settings it never saw.
- */
+/** Propagate read errors to avoid overwriting unread settings with a sparse file. */
 const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs
@@ -195,10 +235,7 @@ const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   return { raw, settings };
 });
 
-/**
- * A running server owns this file too, and its write path is an in-process
- * semaphore that cannot serialize against another process.
- */
+/** The server's in-process semaphore cannot serialize writes from this process. */
 const CONCURRENT_WRITE_ATTEMPTS = 5;
 
 const writeDefaultTheme = Effect.fn(function* (input: {
@@ -212,8 +249,7 @@ const writeDefaultTheme = Effect.fn(function* (input: {
     const setAt = DateTime.formatIso(yield* DateTime.now);
     const next =
       input.themeId.length > 0
-        ? // The timestamp is the set-generation: it lets clients apply a re-set
-          // of the same value they already applied once.
+        ? // The timestamp lets clients reapply the same theme.
           { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
         : Object.fromEntries(
             Object.entries(settings).filter(
@@ -287,32 +323,32 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* new ThemeFileColorlessError({ filePath: input.filePath });
   }
 
-  const fileBasename = path.basename(input.filePath, ".json");
+  const fileBasename = path.basename(input.filePath).replace(THEME_JSON_SUFFIX, "");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
-  // The same rules the watcher applies when it reads the directory back, so a
-  // publish cannot report success for a file that will then be skipped.
+  // Match watcher validation so published files will not be skipped.
   if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
     return yield* new ThemeFileIdInvalidError({ themeId, filePath: input.filePath });
   }
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
-  // Neither ends in `.json`, so the watcher never mistakes them for themes.
-  // Both names carry the pid, so concurrent publishers of one id cannot
-  // unlink or restore over each other's staging and rollback copies.
-  const backupPath = `${destinationPath}.rollback-${process.pid}`;
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
-  yield* fs
-    .makeDirectory(input.themesDir, { recursive: true })
-    .pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
+  const whileLocked = yield* acquireThemePublishLock(input.themesDir, themeId);
 
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
 
-  // The staging entry is created O_EXCL after clearing any stale leftover, so a
-  // symlink or file already at that predictable name is never followed or
-  // written through. Written verbatim: appending so much as a newline could
-  // push a file at the size limit past it and have the watcher skip what was
-  // just accepted.
+  const destinationIsDirectory = yield* Effect.try({
+    try: () => NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory() ?? false,
+    catch: publishFailure,
+  });
+  if (destinationIsDirectory) {
+    return yield* new ThemeDestinationDirectoryError({ themeId, destinationPath });
+  }
+
+  const publishedBefore = yield* readPublishedThemes(input.themesDir);
+
+  // O_EXCL prevents following a symlink at the predictable staging path.
+  // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
   const stagedIno = yield* Effect.try({
     try: () => {
       try {
@@ -333,68 +369,98 @@ const publishThemeFile = Effect.fn(function* (input: {
     catch: publishFailure,
   });
 
-  // Whatever occupies the destination -- a theme, a symlink, anything -- is
-  // moved aside in one atomic step rather than inspected and then replaced:
-  // there is no window between a check and the commit, and rollback restores
-  // that exact directory entry instead of a re-read of it.
-  const hadPrevious = yield* Effect.try({
+  const backupPath = yield* Effect.try({
     try: () => {
+      // A fresh path leaves any backup from a crashed publish intact.
+      const rollbackPath = `${destinationPath}.rollback-${NodeCrypto.randomUUID()}`;
+      // A rename onto a regular file rejects a directory even if it appeared after lstat.
+      const fd = NodeFS.openSync(rollbackPath, "wx", 0o600);
+      let saved = false;
       try {
-        NodeFS.renameSync(destinationPath, backupPath);
-        return true;
+        NodeFS.closeSync(fd);
+        NodeFS.renameSync(destinationPath, rollbackPath);
+        saved = true;
+        return rollbackPath;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        if (NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory()) {
+          throw new ThemeDestinationDirectoryError({ themeId, destinationPath });
+        }
         throw error;
+      } finally {
+        if (!saved) {
+          try {
+            NodeFS.unlinkSync(rollbackPath);
+          } catch {}
+        }
       }
     },
-    catch: publishFailure,
-  });
-
-  const revert = Effect.sync(() => {
-    try {
-      NodeFS.unlinkSync(stagingPath);
-    } catch {}
-    try {
-      // The destination is touched only while it is empty or still holds
-      // the exact file this process put there; a concurrent publisher's
-      // newer file wins, and this process's obsolete copy is discarded.
-      const destinationIno = (() => {
+    catch: (cause) => (isThemeDestinationDirectoryError(cause) ? cause : publishFailure(cause)),
+  }).pipe(
+    Effect.onError(() =>
+      Effect.sync(() => {
         try {
-          return NodeFS.lstatSync(destinationPath).ino;
-        } catch {
-          return null;
+          NodeFS.unlinkSync(stagingPath);
+        } catch {}
+      }),
+    ),
+  );
+
+  const revert = whileLocked(
+    Effect.sync(() => {
+      try {
+        NodeFS.unlinkSync(stagingPath);
+      } catch {}
+      try {
+        // Only replace this process's inode or an empty destination; concurrent publishers win.
+        const destinationIno = (() => {
+          try {
+            return NodeFS.lstatSync(destinationPath).ino;
+          } catch {
+            return null;
+          }
+        })();
+        if (backupPath !== null) {
+          if (destinationIno === null || destinationIno === stagedIno) {
+            NodeFS.renameSync(backupPath, destinationPath);
+          } else {
+            NodeFS.unlinkSync(backupPath);
+          }
+        } else if (destinationIno === stagedIno) {
+          NodeFS.unlinkSync(destinationPath);
         }
-      })();
-      if (hadPrevious) {
-        if (destinationIno === null || destinationIno === stagedIno) {
-          NodeFS.renameSync(backupPath, destinationPath);
-        } else {
-          NodeFS.unlinkSync(backupPath);
-        }
-      } else if (destinationIno === stagedIno) {
-        NodeFS.unlinkSync(destinationPath);
-      }
-    } catch {}
-  });
+      } catch {}
+    }),
+  );
   const cleanup = Effect.sync(() => {
     try {
-      if (hadPrevious) NodeFS.unlinkSync(backupPath);
+      if (backupPath !== null) NodeFS.unlinkSync(backupPath);
     } catch {}
   });
 
   yield* Effect.try({
     try: () => NodeFS.renameSync(stagingPath, destinationPath),
     catch: publishFailure,
-  }).pipe(Effect.onError(() => revert));
+  }).pipe(
+    Effect.andThen(
+      Effect.gen(function* () {
+        const published = yield* readPublishedThemes(input.themesDir);
+        const ids = new Set(published.map(({ id }) => id));
+        if (!ids.has(themeId) || publishedBefore.some(({ id }) => !ids.has(id))) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: `could not be published. Check the theme count and total size in ${input.themesDir}.`,
+          });
+        }
+      }),
+    ),
+    Effect.onError(() => revert),
+  );
 
   return { themeId, revert, cleanup };
 });
 
-/**
- * The mobile default is absent on purpose -- web and desktop cannot resolve it
- * and mobile does not follow this setting, so naming it would be the silent
- * no-op this check exists to stop.
- */
+/** Web and desktop cannot resolve the mobile default, and mobile does not follow this setting. */
 const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
   const published = yield* readPublishedThemes(themesDir);
   return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
@@ -408,28 +474,39 @@ const themeSetCommand = Command.make("set", {
   ),
   theme: Argument.String("theme").pipe(
     Argument.withDescription(
-      'A theme id (a built-in, or one this machine publishes — themes/nightfall.json is "nightfall"), or a path to a theme JSON file to publish and set in one step.',
+      'A theme id (a built-in, or one this machine publishes, where themes/nightfall.json is "nightfall"), or a path to a theme JSON file to publish and set in one step.',
     ),
   ),
 }).pipe(
-  Command.withDescription("Set the environment's theme; connected clients switch to it."),
+  Command.withDescription(
+    "Set the environment's theme. The web app this server serves and the desktop app on this machine switch to it; a desktop app connected from another machine does not.",
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const target = yield* expandHomePath(flags.theme.trim());
+      let target = yield* expandHomePath(flags.theme.trim());
       if (target.length === 0) {
         return yield* new ThemeTargetMissingError();
       }
       const paths = yield* resolveThemePaths(flags.baseDir);
 
-      // Path-shaped first, existence second. Deciding on existence alone would
-      // make `t3 theme set ocean` publish ./ocean whenever the cwd happens to
-      // hold a file by that name, instead of selecting the built-in.
+      // A bare theme id must not publish a same-named file that happens to exist in cwd.
       const looksLikePath =
-        target.endsWith(".json") ||
+        THEME_JSON_SUFFIX.test(target) ||
         target.includes("/") ||
         target.includes("\\") ||
         target.startsWith("~");
+      if (looksLikePath) {
+        // Spaces stay part of the path when the argument names a file as typed. Win32 drops
+        // trailing spaces from ordinary paths, so only leading ones can name another file there.
+        const expanded = yield* expandHomePath(flags.theme);
+        const asTyped =
+          (yield* HostProcess.Platform) === "win32" && !expanded.startsWith("\\\\?\\")
+            ? expanded.replace(/ +$/, "")
+            : expanded;
+        const info = yield* fs.stat(asTyped).pipe(Effect.option);
+        if (Option.isSome(info) && info.value.type === "File") target = asTyped;
+      }
       const targetIsFile =
         looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;
@@ -447,6 +524,8 @@ const themeSetCommand = Command.make("set", {
         cleanupPublish = published.cleanup;
       } else if (looksLikePath) {
         return yield* new ThemeFileUnreadableError({ filePath: target });
+      } else if (Option.isSome(flags.id)) {
+        return yield* new ThemeIdFlagUnusedError({ themeId: target });
       } else if (isEnvironmentThemeId(target)) {
         const known = yield* resolvableThemeIds(paths.themesDir);
         if (!known.includes(target)) {
@@ -466,7 +545,7 @@ const themeSetCommand = Command.make("set", {
           ? `Published ${target} as "${themeId}" and set it as the environment theme.\n`
           : `Environment theme set to "${themeId}" in ${paths.settingsPath}.\n`,
       );
-    }),
+    }).pipe(Effect.scoped),
   ),
 );
 

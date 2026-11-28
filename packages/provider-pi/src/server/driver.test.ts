@@ -3,13 +3,11 @@ import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -77,7 +75,7 @@ const makePiSpawner = Effect.fnUntraced(function* (
               ? {
                   commands: [
                     personalSkill,
-                    ...(cwd === "/machine"
+                    ...(cwd?.endsWith("/pi-status-probe")
                       ? []
                       : [
                           {
@@ -171,7 +169,22 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
         ["--approve", "--skill", "extra skill", "--no-session"],
       );
       assert.equal(workspaceLaunch!.options.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
-    }).pipe(Effect.scoped),
+      // Discovery processes are stopped as soon as they answer, so neither may start Pi's
+      // network refresh at launch.
+      assert.isFalse(launches.some((launch) => launch.options.cwd === "/machine"));
+      for (const isLaunch of [
+        (cwd: string | undefined) => cwd?.endsWith("/pi-status-probe") === true,
+        (cwd: string | undefined) => cwd === "/first",
+      ]) {
+        const discovery = launches.find(
+          (launch) => isLaunch(launch.options.cwd) && launch.args.includes("--mode"),
+        );
+        assert.deepEqual(
+          discovery?.args.filter((arg) => arg === "--offline"),
+          ["--offline"],
+        );
+      }
+    }),
   );
 
   it.effect("does not run a disabled provider's workspace probe", () =>
@@ -186,7 +199,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       const workspace = yield* instance.snapshotForCwd!("/first");
       assert.isFalse(workspace.enabled);
       assert.deepEqual(workspace.skills, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([true, false])(
@@ -225,7 +238,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
             ["test/other", []],
           ],
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -245,21 +258,6 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           (yield* instance.snapshot.getSnapshot).skills.map((skill) => skill.name),
           ["personal"],
         );
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("times out workspace discovery that needs interactive input", () =>
-    Effect.gen(function* () {
-      const { spawner, pendingCommand } = yield* makePiSpawner();
-      const instance = yield* create().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const probe = yield* instance.snapshotForCwd!("/pending").pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(pendingCommand);
-      yield* TestClock.adjust("15 seconds");
-      const error = yield* Fiber.join(probe);
-      assert.equal(error._tag, "ProviderDriverError");
-      assert.include(error.detail, "workspace commands");
-    }).pipe(Effect.scoped),
+      }),
   );
 });

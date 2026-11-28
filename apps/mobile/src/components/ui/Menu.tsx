@@ -11,6 +11,7 @@ import type { ColorValue, PressableProps } from "react-native";
 import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { withMenuActionIconColors } from "../../lib/menu-action-colors";
+import { perfProbe } from "../../features/development/perf-probe-hooks";
 import type { MenuProps } from "./Menu.types";
 
 const ThemedMenuView = withUniwind(
@@ -51,25 +52,23 @@ export function Menu(props: MenuProps) {
   let children = menuProps.children;
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
     const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
+    /* oxlint-disable react/refs -- Cloning the trigger installs event callbacks; the refs are accessed when those callbacks run. */
     children = cloneElement(child, {
       onTouchStart: (event) => {
-        // Reset for a new touch, not onPressIn, which also fires when a
-        // finger moves out of the row and back during the same gesture.
+        // onPressIn can repeat within one gesture when a finger leaves and re-enters the row.
         menuPress.current.isPreparing = false;
         menuPress.current.suppressPress = menuPress.current.isOpen;
         pendingPress.current = null;
         child.props.onTouchStart?.(event);
       },
       onPress: (event) => {
-        // Accessibility clicks have no touch identifier and must not inherit
-        // cancellation from a previous physical gesture.
+        // Accessibility clicks lack touch identifiers and must ignore previous touch cancellation.
         const isTouch = typeof event.nativeEvent.identifier === "number";
         if (isTouch ? menuPress.current.suppressPress : menuPress.current.isOpen) {
           return;
         }
         if (isTouch && menuPress.current.isPreparing) {
-          // A release can arrive between native menu preparation and display.
-          // Let UIKit's display/cancel callback decide this press's outcome.
+          // A release can precede native display; let UIKit's display/cancel callback decide its outcome.
           event.persist();
           pendingPress.current = () => child.props.onPress?.(event);
           return;
@@ -77,6 +76,7 @@ export function Menu(props: MenuProps) {
         child.props.onPress?.(event);
       },
     });
+    /* oxlint-enable react/refs */
     menuProps.onMenuInteractionStart = () => {
       menuPress.current.isPreparing = true;
       props.onMenuInteractionStart?.();
@@ -91,9 +91,7 @@ export function Menu(props: MenuProps) {
     menuProps.onCloseMenu = () => {
       menuPress.current.isPreparing = false;
       menuPress.current.isOpen = false;
-      // Keep this gesture cancelled even if dismissal precedes finger-up.
-      // A separate JS long-press timer would also swallow holds that never
-      // open the native menu.
+      // Keep cancellation through finger-up even if the menu dismisses first.
       const press = pendingPress.current;
       pendingPress.current = null;
       props.onCloseMenu?.();
@@ -102,6 +100,13 @@ export function Menu(props: MenuProps) {
       }
     };
   }
+  const { onPressAction } = props;
+  const probe = perfProbe;
+  if (probe && onPressAction)
+    menuProps.onPressAction = (event) => {
+      probe.menuAction();
+      onPressAction(event);
+    };
   return (
     <ThemedMenuView
       {...menuProps}

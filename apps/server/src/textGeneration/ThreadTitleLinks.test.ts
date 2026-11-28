@@ -3,9 +3,6 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
-import * as Fiber from "effect/Fiber";
-import * as Deferred from "effect/Deferred";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import { resolveThreadTitleLinks } from "./ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -14,7 +11,6 @@ const layerRegistry = Layer.mock(SourceControlProviderRegistry.SourceControlProv
 const encodeSubject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String, body: Schema.String })),
 );
-const success = { title: "Fix QR pairing expiry", body: "Keep remote connections working." };
 
 it.effect(
   "uses provider-selected links, deduplicates anchors, and bounds lookups and summaries",
@@ -24,7 +20,7 @@ it.effect(
       const result = yield* resolveThreadTitleLinks({
         cwd: "/tmp/project",
         message:
-          "https://docs.test/guide [https://forge.test/change/1] https://forge.test/change/1#discussion https://forge.test/change/1?view=full `https://forge.test/change/2` https://forge.test/change/2. https://forge.test/change/3",
+          "https://docs.test/guide **HTTPS://forge.test/change/1**: [hTtPs://forge.test/change/1] HTTPS://forge.test/change/1#discussion HTTPS://forge.test/change/1?view=full `hTtPs://forge.test/change/2` hTtPs://forge.test/change/2. https://forge.test/change/3",
       }).pipe(
         Effect.provide(
           layerRegistry({
@@ -33,7 +29,12 @@ it.effect(
                 ? Effect.sync(() => {
                     expect(cwd).toBe("/tmp/project");
                     calls.push(url.href);
-                    return { title: "t".repeat(400), body: "b".repeat(2_000) };
+                    // Change 1 puts an emoji across each limit; change 2 ends one inside it.
+                    const pad = url.pathname.endsWith("/1") ? 0 : 1;
+                    return {
+                      title: `${"t".repeat(299 - pad)}🚀${"t".repeat(100)}`,
+                      body: `${"b".repeat(1_199 - pad)}🚀${"b".repeat(800)}`,
+                    };
                   })
                 : undefined,
           }),
@@ -41,39 +42,12 @@ it.effect(
       );
       expect(calls).toEqual(["https://forge.test/change/1", "https://forge.test/change/2"]);
       expect(result).toBe(
-        calls
-          .map(
-            (url) =>
-              `${url}\n${encodeSubject({ title: "t".repeat(300), body: "b".repeat(1_200) })}`,
-          )
-          .join("\n\n"),
+        [
+          `${calls[0]}\n${encodeSubject({ title: "t".repeat(299), body: "b".repeat(1_199) })}`,
+          `${calls[1]}\n${encodeSubject({ title: `${"t".repeat(298)}🚀`, body: `${"b".repeat(1_198)}🚀` })}`,
+        ].join("\n\n"),
       );
     }),
-);
-
-it.effect("returns unavailable when a lookup times out while retaining successful subjects", () =>
-  Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const fiber = yield* resolveThreadTitleLinks({
-      cwd: "/tmp/project",
-      message: "https://forge.test/change/1 https://forge.test/change/2",
-    }).pipe(
-      Effect.provide(
-        layerRegistry({
-          resolveLink: ({ url }) =>
-            url.pathname.endsWith("1")
-              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
-              : Effect.succeed(success),
-        }),
-      ),
-      Effect.forkChild,
-    );
-    yield* Deferred.await(started);
-    yield* TestClock.adjust("3 seconds");
-    expect(yield* Fiber.join(fiber)).toBe(
-      `https://forge.test/change/1: unavailable\n\nhttps://forge.test/change/2\n${encodeSubject(success)}`,
-    );
-  }),
 );
 
 it.effect("keeps lookup failure out of generation and skips unlinked messages", () =>

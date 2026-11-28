@@ -1,11 +1,13 @@
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import type { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
 export interface RelayClientTracingConfig {
@@ -18,8 +20,10 @@ export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly runtime: string;
+  readonly serviceInstanceId: string;
   readonly client: string;
   readonly component?: string;
+  readonly attributes?: Readonly<Record<string, string>> | undefined;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -33,11 +37,7 @@ class LocalTracer extends Context.Reference("@t3tools/shared/relayTracing/LocalT
   defaultValue: () => Option.none<Tracer.Tracer>(),
 }) {}
 
-/**
- * Exports every span `effect` creates through the product tracer. Use it only
- * around T3 Connect work; wrap local work inside it with
- * {@link withLocalTracing} so it stays off the product tracer.
- */
+/** Export only T3 Connect spans; wrap local work with {@link withLocalTracing}. */
 export const withRelayClientTracing = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
@@ -58,10 +58,7 @@ export const withRelayClientTracing = <A, E, R>(
     ),
   );
 
-/**
- * Its spans stay in the local trace and are never exported, so a relay span can
- * time the work without shipping what the user's machine did to answer it.
- */
+/** Keep local work in the local trace without exporting machine details through relay spans. */
 export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   LocalTracer.pipe(
     Effect.flatMap(
@@ -72,25 +69,12 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
     ),
   );
 
-function cleanTraceStack(error: Error): string {
-  const stack = error.stack ?? `${error.name}: ${error.message}`;
-  const lines = stack.split("\n");
-  const effectFrameIndex = lines.findIndex(
-    (line, index) => index > 0 && /(?:Generator\.next|~effect\/Effect)/.test(line),
-  );
-  return effectFrameIndex < 0 ? stack : lines.slice(0, effectFrameIndex).join("\n");
-}
-
+// Relay exports keep error types. Messages and stacks can contain customer data.
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
-  const message =
-    value instanceof Error
-      ? value.message
-      : typeof value === "object" &&
-          value !== null &&
-          "message" in value &&
-          typeof value.message === "string"
-        ? value.message
-        : String(value);
+  const name =
+    typeof value === "object" && value !== null && "name" in value && typeof value.name === "string"
+      ? value.name
+      : "Error";
 
   let cause: Error | undefined;
   if (typeof value === "object" && value !== null && !seen.has(value)) {
@@ -100,21 +84,9 @@ function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
     }
   }
 
-  const error = new Error(message, cause ? { cause } : undefined);
-  if (value instanceof Error) {
-    error.name = value.name;
-    error.stack = cleanTraceStack(value);
-  } else if (
-    typeof value === "object" &&
-    value !== null &&
-    "name" in value &&
-    typeof value.name === "string"
-  ) {
-    error.name = value.name;
-  }
-  if (cause) {
-    error.stack = `${error.stack ?? `${error.name}: ${error.message}`}\nCaused by: ${cause.stack ?? `${cause.name}: ${cause.message}`}`;
-  }
+  const error = new Error(name, cause ? { cause } : undefined);
+  error.name = name;
+  error.stack = cause ? `${name}\nCaused by: ${cause.stack}` : name;
   return error;
 }
 
@@ -137,18 +109,56 @@ function traceSafeExit(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, un
   );
 }
 
-function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
+// Relay-traced requests can target a user's machine, including over LAN or Tailscale.
+const REQUEST_ADDRESS_ATTRIBUTES = new Set([
+  "url.full",
+  "url.query",
+  "server.address",
+  "server.port",
+]);
+
+export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   return Tracer.make({
     span(options) {
       const span = delegate.span(options);
       const end = span.end.bind(span);
+      const attribute = span.attribute.bind(span);
       span.end = (endTime, exit) => {
         try {
           end(endTime, traceSafeExit(exit));
         } catch {}
       };
+      span.attribute = (key, value) => {
+        if (!REQUEST_ADDRESS_ATTRIBUTES.has(key)) attribute(key, value);
+      };
+      // Effect adds raw logs to span events.
+      span.event = () => {};
       return span;
     },
+    ...(delegate.context ? { context: delegate.context } : {}),
+  });
+}
+
+/** A batch queued before an opt-out is dropped when its turn to be sent comes. */
+const layerSendWhile = (isEnabled: () => boolean) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.map(
+      HttpClient.HttpClient,
+      HttpClient.transform((send, request) =>
+        isEnabled()
+          ? send
+          : Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 202 })),
+            ),
+      ),
+    ),
+  );
+
+/** Spans started while `isEnabled` says no stay local instead of being exported. */
+function gatedTracer(delegate: Tracer.Tracer, isEnabled: () => boolean): Tracer.Tracer {
+  return Tracer.make({
+    span: (options) => (isEnabled() ? delegate.span(options) : Tracer.nativeTracer.span(options)),
     ...(delegate.context ? { context: delegate.context } : {}),
   });
 }
@@ -156,6 +166,7 @@ function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
 export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
+  options?: { readonly isEnabled?: () => boolean },
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
   if (config === null) {
     return Layer.succeed(RelayClientTracer, Option.none());
@@ -172,15 +183,28 @@ export function layer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.namespace": "t3code",
+        "service.instance.id": resource.serviceInstanceId,
         "service.runtime": resource.runtime,
-        "service.component": resource.component ?? "relay-client",
-        "t3.client.surface": resource.client,
+        "t3code.component": resource.component ?? "relay-client",
+        "t3code.client.surface": resource.client,
+        ...resource.attributes,
       },
     },
-  }).pipe(Layer.provide(OtlpSerialization.layerJson));
+  }).pipe(
+    Layer.provide(OtlpSerialization.layerJson),
+    // An operator's OTEL_RESOURCE_ATTRIBUTES describe their machines for their own receiver.
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+    options?.isEnabled ? Layer.provide(layerSendWhile(options.isEnabled)) : identity,
+  );
 
   return Layer.effect(
     RelayClientTracer,
-    Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
+    Tracer.Tracer.pipe(
+      Effect.map(nonInterferingTracer),
+      Effect.map((tracer) =>
+        options?.isEnabled ? gatedTracer(tracer, options.isEnabled) : tracer,
+      ),
+      Effect.asSome,
+    ),
   ).pipe(Layer.provide(layerTracer));
 }

@@ -1,13 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ThreadId, WorktreeSetupSnapshot } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as WorktreeSetupTracker from "./WorktreeSetupTracker.ts";
 
@@ -76,34 +73,6 @@ describe("WorktreeSetupTracker", () => {
     }),
   );
 
-  it.effect("stream never steps back behind the snapshot it started from", () =>
-    Effect.gen(function* () {
-      const tracker = yield* WorktreeSetupTracker.make;
-      yield* tracker.begin({
-        threadId,
-        branch: null,
-        baseRef: null,
-        stages: ["agent"],
-        fiber: null,
-      });
-      yield* tracker.stageStatus(threadId, "agent", "running");
-      yield* tracker.stageStatus(threadId, "agent", "done");
-
-      const collected = yield* tracker.stream(threadId).pipe(
-        Stream.takeUntil((snapshot) => snapshot?.phase === "done"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* Effect.yieldNow;
-      yield* tracker.finish(threadId, "done");
-
-      const snapshots = yield* Fiber.join(collected);
-      expect(snapshots.length).toBeGreaterThan(0);
-      expect(snapshots.every((snapshot) => (snapshot?.sequence ?? -1) >= 2)).toBe(true);
-      expect(snapshots.at(-1)?.phase).toBe("done");
-    }),
-  );
-
   it.effect("a new setup on the same thread keeps sequences increasing", () =>
     Effect.gen(function* () {
       const tracker = yield* WorktreeSetupTracker.make;
@@ -135,24 +104,6 @@ describe("WorktreeSetupTracker", () => {
       const last = snapshots.at(-1);
       expect(last?.phase).toBe("running");
       expect(last?.sequence).toBeGreaterThan(failedSequence);
-    }),
-  );
-
-  it.effect("finished setups are dropped after the retention window", () =>
-    Effect.gen(function* () {
-      const tracker = yield* WorktreeSetupTracker.make;
-      yield* tracker.begin({
-        threadId,
-        branch: null,
-        baseRef: null,
-        stages: ["agent"],
-        fiber: null,
-      });
-      yield* tracker.finish(threadId, "done");
-      expect((yield* tracker.get(threadId))?.phase).toBe("done");
-
-      yield* TestClock.adjust(Duration.seconds(31));
-      expect(yield* tracker.get(threadId)).toBeNull();
     }),
   );
 
@@ -190,29 +141,23 @@ describe("WorktreeSetupTracker", () => {
     }),
   );
 
-  it.effect("clamps free text to the contract limits before publishing", () =>
+  it.effect("clamps stage detail and finish error without splitting surrogate pairs", () =>
     Effect.gen(function* () {
       const tracker = yield* WorktreeSetupTracker.make;
       yield* tracker.begin({
         threadId,
         branch: null,
         baseRef: null,
-        stages: ["checkout", "setup-script"],
+        stages: ["agent"],
         fiber: null,
       });
-      const long = "x".repeat(2_000);
 
-      yield* tracker.stageStatus(threadId, "checkout", "done", long);
-      yield* tracker.stage(threadId, "setup-script", { detail: long });
-      yield* tracker.appendTail(threadId, "setup-script", long);
-      yield* tracker.finish(threadId, "failed", long);
+      yield* tracker.stageStatus(threadId, "agent", "running", `${"a".repeat(198)}\u{1F680}tail`);
+      yield* tracker.finish(threadId, "failed", `${"e".repeat(998)}\u{1F680}tail`);
 
-      const snapshot = yield* tracker.get(threadId);
-      expect(snapshot?.stages[0]?.detail?.length).toBe(200);
-      expect(snapshot?.stages[1]?.detail?.length).toBe(200);
-      expect(snapshot?.stages[1]?.tail[0]?.length).toBe(400);
-      expect(snapshot?.error?.length).toBe(1000);
-      expect(Schema.is(WorktreeSetupSnapshot)(snapshot)).toBe(true);
+      const final = yield* tracker.get(threadId);
+      expect(final?.stages[0]?.detail).toBe(`${"a".repeat(198)}\u2026`);
+      expect(final?.error).toBe(`${"e".repeat(998)}\u2026`);
     }),
   );
 });

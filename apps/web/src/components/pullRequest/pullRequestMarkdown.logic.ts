@@ -1,52 +1,102 @@
-import {
-  findAndReplaceText,
-  type MarkdownNode,
-  type TextMatch,
-} from "~/vendor/mdast-find-and-replace";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-references";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { Nodes } from "hast";
 
-export {
-  splitPullRequestBody,
+import {
+  splitPullRequestBody as splitBody,
   type PullRequestBodySegment,
 } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  markdownReferenceDefinitions,
+  wordsHast,
+  type MarkdownExtensions,
+} from "~/markdown/wordsHast";
 
-const AUTOLINK_CANDIDATE_PATTERN = /#[1-9]\d*|[0-9a-f]{40}/giu;
-const AUTOLINK_WORD_CHARACTER_PATTERN = /[A-Za-z0-9_]/u;
-const AUTOLINK_COMMIT_PREFIX_PATTERN = /[\s([{]/u;
-const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
+export type { PullRequestBodySegment };
 
-export function remarkPullRequestAutolinks(options: { readonly repositoryUrl: string }) {
-  const repositoryUrl = options.repositoryUrl.replace(/\/+$/u, "");
-  return (tree: MarkdownNode) => {
-    findAndReplaceText(
-      tree,
-      AUTOLINK_CANDIDATE_PATTERN,
-      (matched: string, match: TextMatch) => {
-        const reference = matched.startsWith("#");
-        const before = match.input[match.index - 1];
-        const after = match.input[match.index + matched.length];
-        if (
-          (before !== undefined &&
-            (reference
-              ? AUTOLINK_WORD_CHARACTER_PATTERN.test(before)
-              : !AUTOLINK_COMMIT_PREFIX_PATTERN.test(before))) ||
-          (after !== undefined && AUTOLINK_WORD_CHARACTER_PATTERN.test(after))
-        ) {
-          return false;
-        }
-        return {
-          type: "link",
-          url: reference
-            ? `${repositoryUrl}/issues/${matched.slice(1)}`
-            : `${repositoryUrl}/commit/${matched}`,
-          data: {
-            hProperties: {
-              dataPullRequestAutolink: reference ? "reference" : "commit",
-            },
-          },
-          children: [{ type: "text", value: reference ? matched : matched.slice(0, 7) }],
-        };
+export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+  return splitBody(body, markdownReferenceDefinitions);
+}
+
+const NO_EXTENSIONS: MarkdownExtensions = {};
+const markdownExtensions = new Map<string, MarkdownExtensions>();
+
+/**
+ * One extension object per repository, so every comment of a pull request shares one markdown
+ * renderer and its parse cache instead of parsing again on each render.
+ */
+export function pullRequestMarkdownExtensions(
+  changeRequest: { readonly provider: string; readonly url: string } | null,
+): MarkdownExtensions {
+  if (changeRequest === null) return NO_EXTENSIONS;
+  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
+    .repositoryUrl;
+  if (repositoryUrl === undefined) return NO_EXTENSIONS;
+  const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
+  let extensions = markdownExtensions.get(key);
+  if (extensions === undefined) {
+    extensions = {
+      changeRequest: {
+        repositoryUrl,
+        autolinks: changeRequestReferenceAutolinker(changeRequest),
       },
-      AUTOLINK_IGNORED_TYPES,
-    );
-  };
+      githubEmoji: changeRequest.provider === "github",
+    };
+    markdownExtensions.set(key, extensions);
+  }
+  return extensions;
+}
+
+const PREVIEW_MARKDOWN = {
+  math: false,
+  breaks: false,
+  escapeHtml: false,
+  insights: false,
+  extensions: NO_EXTENSIONS,
+};
+const GITHUB_PREVIEW_MARKDOWN = {
+  ...PREVIEW_MARKDOWN,
+  extensions: { githubEmoji: true },
+};
+
+const PREVIEW_BLOCK_TAGS = new Set([
+  "blockquote",
+  "br",
+  "dd",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "summary",
+  "table",
+  "td",
+  "th",
+  "tr",
+  "ul",
+]);
+
+function commentPreviewText(node: Nodes): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "element" && node.tagName === "img") {
+    return typeof node.properties.alt === "string" ? node.properties.alt : "";
+  }
+  if (!("children" in node)) return "";
+  const text = node.children.map(commentPreviewText).join("");
+  return node.type === "element" && PREVIEW_BLOCK_TAGS.has(node.tagName) ? ` ${text} ` : text;
+}
+
+export function pullRequestCommentPreview(body: string, provider: string): string {
+  const options = provider === "github" ? GITHUB_PREVIEW_MARKDOWN : PREVIEW_MARKDOWN;
+  return commentPreviewText(wordsHast(body, options)).replace(/\s+/gu, " ").trim();
 }

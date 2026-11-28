@@ -1,6 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import {
   executeAtomQuery,
   settlePromise,
@@ -8,20 +8,25 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
+import { useGT, useMessages } from "gt-react-native";
 import { use, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   canPerformPullRequestAction,
   openOnProviderLabel,
-  PR_ACTION_LABELS,
+  pullRequestActionLabel,
 } from "./pullRequestActions";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
+import { m as resolveMessage } from "../../i18n/messages";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -31,8 +36,10 @@ export function usePullRequestListActions(
   ) => void,
 ) {
   const registry = use(RegistryContext);
-  const navigation = useNavigation();
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const gt = useGT();
+  const m = useMessages();
+  const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -57,6 +64,7 @@ export function usePullRequestListActions(
     action: PullRequestAction | "request-review",
   ) => {
     const { environmentId } = entry;
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
     if (pending.current) return;
     pending.current = true;
     setBusyKey(scopedPullRequestListKey(entry));
@@ -76,19 +84,35 @@ export function usePullRequestListActions(
           !pr.capabilities.reviewers.request ||
           !pr.viewerPermissions.requestReviewers
         )
-          throw new Error("Review requests aren't available for this pull request.");
-        if (Platform.OS === "android") {
-          selectAndroidWorkspace({ name: "PullRequest", params: params(entry) }, params(entry));
-        } else navigation.navigate("PullRequestReviewers", params(entry));
+          throw new Error(
+            gt(
+              "Review requests aren't available for this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+              {
+                term: changeRequestTermKind(terminology),
+              },
+            ),
+          );
+        openDetail(
+          { name: "PullRequest", params: params(entry) },
+          { name: "PullRequestReviewers", params: params(entry) },
+        );
         return;
       }
       if (
         !registry.get(composerPullRequests.runAction.permissionAtom(environmentId)) ||
         !canPerformPullRequestAction(pr, action)
       )
-        throw new Error("This action isn't available for this pull request.");
+        throw new Error(
+          gt(
+            "This action isn't available for this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+            {
+              term: changeRequestTermKind(terminology),
+            },
+          ),
+        );
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value !== undefined) return;
       onChanged(
         entry,
         action === "close"
@@ -103,16 +127,19 @@ export function usePullRequestListActions(
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Couldn't update this pull request",
-        cause instanceof Error ? cause.message : "Try again.",
+        gt(
+          "Couldn't update this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term: changeRequestTermKind(terminology) },
+        ),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+          : gt("Try again."),
       );
     }
   };
   const select = (entry: EnvironmentPullRequestListEntry, action: string) => {
     if (action === "open") {
-      if (Platform.OS === "android")
-        selectAndroidWorkspace({ name: "PullRequest", params: params(entry) });
-      else navigation.navigate("PullRequest", params(entry));
+      selectDetail({ name: "PullRequest", params: params(entry) });
       return;
     }
     if (action === "request-review") {
@@ -124,7 +151,7 @@ export function usePullRequestListActions(
       return;
     }
     if (action === "provider") {
-      void Linking.openURL(entry.url);
+      void tryOpenExternalUrl(entry.url, "pull-request");
       return;
     }
     if (action === "share") {
@@ -135,60 +162,71 @@ export function usePullRequestListActions(
       (value) => value === action,
     );
     if (!supported) return;
-    Dialog.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
-      { text: "Cancel", style: "cancel" },
+    const label = pullRequestActionLabel(
+      supported,
+      sourceControlClients.get(entry.provider).changeRequest,
+      m,
+    );
+    Dialog.alert(gt("{action}?", { action: label }), `#${entry.number} · ${entry.title}`, [
+      { text: gt("Cancel"), style: "cancel" },
       {
-        text: PR_ACTION_LABELS[supported],
+        text: label,
         style: supported === "close" ? "destructive" : "default",
         onPress: () => void perform(entry, supported),
       },
     ]);
   };
-  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
-    {
-      id: "open",
-      title: "Open pull request",
-      image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
-    },
-    ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
-      ? [
-          {
-            id: "request-review",
-            title: "Request review",
-            image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
-          },
-          {
-            id: entry.isDraft ? "ready" : "draft",
-            title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-            image: Platform.OS === "ios" ? "pencil" : "edit",
-          },
-          {
-            id: "close",
-            title: "Close pull request",
-            image: Platform.OS === "ios" ? "xmark" : "close",
-            attributes: { destructive: true },
-          },
-        ]
-      : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => {
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
+    return [
+      {
+        id: "open",
+        title: gt(
+          "Open {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term: changeRequestTermKind(terminology) },
+        ),
+        image: "arrow.up.right",
+      },
+      ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
-              id: "reopen",
-              title: "Reopen pull request",
-              image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+              id: "request-review",
+              title: gt("Request review"),
+              image: "person.badge.plus",
+            },
+            {
+              id: entry.isDraft ? "ready" : "draft",
+              title: entry.isDraft ? gt("Mark ready for review") : gt("Convert to draft"),
+              image: "pencil",
+            },
+            {
+              id: "close",
+              title: pullRequestActionLabel("close", terminology, m),
+              image: "xmark",
+              attributes: { destructive: true },
             },
           ]
-        : []),
-    {
-      id: "share",
-      title: "Share…",
-      image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
-    },
-    { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
-    {
-      id: "provider",
-      title: openOnProviderLabel(entry.provider),
-      image: Platform.OS === "ios" ? "safari" : "open_in_browser",
-    },
-  ];
+        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+          ? [
+              {
+                id: "reopen",
+                title: pullRequestActionLabel("reopen", terminology, m),
+                image: "arrow.clockwise",
+              },
+            ]
+          : []),
+      {
+        id: "share",
+        title: gt("Share…"),
+        image: "square.and.arrow.up",
+      },
+      { id: "copy", title: gt("Copy link"), image: "link" },
+      {
+        id: "provider",
+        title: openOnProviderLabel(entry.provider, m),
+        image: "safari",
+      },
+    ];
+  };
   return { actions, select, busyKey };
 }

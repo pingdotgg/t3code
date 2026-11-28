@@ -1,0 +1,431 @@
+diff --git a/dev/lib/math-flow.js b/dev/lib/math-flow.js
+--- a/dev/lib/math-flow.js
++++ b/dev/lib/math-flow.js
+@@ -4,7 +4,7 @@
+ 
+ import {ok as assert} from 'devlop'
+ import {factorySpace} from 'micromark-factory-space'
+-import {markdownLineEnding} from 'micromark-util-character'
++import {markdownLineEnding, markdownSpace} from 'micromark-util-character'
+ import {codes, constants, types} from 'micromark-util-symbol'
+ 
+ /** @type {Construct} */
+@@ -32,6 +32,9 @@
+       ? tail[2].sliceSerialize(tail[1], true).length
+       : 0
+   let sizeOpen = 0
++  let closed = false
++  let slashes = 0
++  let trailingAfterClose = false
+ 
+   return start
+ 
+@@ -79,7 +82,32 @@
+     }
+ 
+     effects.exit('mathFlowFenceSequence')
+-    return factorySpace(effects, metaBefore, types.whitespace)(code)
++
++    return factorySpace(effects, afterOpeningWhitespace, types.whitespace)(code)
++  }
++
++  /**
++   * After opening fence whitespace, check for same-line content.
++   *
++   * ```markdown
++   * > | $$ 1 + 1 $$
++   *        ^
++   * ```
++   *
++   * @type {State}
++   */
++  function afterOpeningWhitespace(code) {
++    if (code === codes.eof || markdownLineEnding(code)) {
++      return metaAfter(code)
++    }
++
++    effects.exit('mathFlowFence')
++
++    if (self.interrupt) {
++      return ok(code)
++    }
++
++    return beforeContentChunk(code)
+   }
+ 
+   /**
+@@ -230,6 +258,14 @@
+       )(code)
+     }
+ 
++    if (code === codes.dollarSign) {
++      return effects.attempt(
++        {tokenize: tokenizeInlineClosingFence, partial: true},
++        after,
++        resumeContentAfterFailedClose
++      )(code)
++    }
++
+     effects.enter('mathFlowValue')
+     return contentChunk(code)
+   }
+@@ -247,13 +283,74 @@
+    * @type {State}
+    */
+   function contentChunk(code) {
++    const escaped = slashes % 2 === 1
++    slashes = code === codes.backslash ? slashes + 1 : 0
+     if (code === codes.eof || markdownLineEnding(code)) {
+       effects.exit('mathFlowValue')
+       return beforeContentChunk(code)
+     }
+ 
++    if (code === codes.dollarSign && !escaped) {
++      effects.exit('mathFlowValue')
++      return effects.attempt(
++        {tokenize: tokenizeInlineClosingFence, partial: true},
++        after,
++        resumeContentAfterFailedClose
++      )(code)
++    }
++
+     effects.consume(code)
+     return contentChunk
++  }
++
++  /**
++   * Resume content after a failed inline closing fence attempt.
++   *
++   * @type {State}
++   */
++  function resumeContentAfterFailedClose(code) {
++    if (trailingAfterClose) return nok(code)
++    effects.enter('mathFlowValue')
++    effects.consume(code)
++    return contentChunk
++  }
++
++  /** @type {Tokenizer} */
++  function tokenizeInlineClosingFence(effects, ok, nok) {
++    let size = 0
++    return sequenceStart
++
++    function sequenceStart(code) {
++      effects.enter('mathFlowFence')
++      effects.enter('mathFlowFenceSequence')
++      return sequenceClose(code)
++    }
++
++    function sequenceClose(code) {
++      if (code === codes.dollarSign) {
++        size++
++        effects.consume(code)
++        return sequenceClose
++      }
++
++      if (size < sizeOpen) {
++        return nok(code)
++      }
++
++      effects.exit('mathFlowFenceSequence')
++      return factorySpace(effects, afterSequenceClose, types.whitespace)(code)
++    }
++
++    function afterSequenceClose(code) {
++      if (code === codes.eof || markdownLineEnding(code)) {
++        effects.exit('mathFlowFence')
++        closed = true
++        return ok(code)
++      }
++
++      trailingAfterClose = true
++      return nok(code)
++    }
+   }
+ 
+   /**
+@@ -269,6 +366,7 @@
+    * @type {State}
+    */
+   function after(code) {
++    if (!closed) return nok(code)
+     effects.exit('mathFlow')
+     return ok(code)
+   }
+@@ -357,6 +455,7 @@
+     function afterSequenceClose(code) {
+       if (code === codes.eof || markdownLineEnding(code)) {
+         effects.exit('mathFlowFence')
++        closed = true
+         return ok(code)
+       }
+ 
+diff --git a/dev/lib/math-tex-flow.js b/dev/lib/math-tex-flow.js
+--- a/dev/lib/math-tex-flow.js
++++ b/dev/lib/math-tex-flow.js
+@@ -7,6 +7,10 @@
+ import {markdownLineEnding} from 'micromark-util-character'
+ import {codes, constants, types} from 'micromark-util-symbol'
+ 
++// Only EOF proves that every later opener in this flow lacks a closing fence.
++/** @type {WeakMap<TokenizeContext, number>} */
++const failedUntil = new WeakMap()
++
+ /** @type {Construct} */
+ export const mathTexFlow = {
+   tokenize: tokenizeMathFenced,
+@@ -26,6 +30,7 @@
+  */
+ function tokenizeMathFenced(effects, ok, nok) {
+   const self = this
++  let closed = false
+   const tail = self.events[self.events.length - 1]
+   const initialSize =
+     tail && tail[1].type === types.linePrefix
+@@ -47,6 +52,7 @@
+    * @type {State}
+    */
+   function start(code) {
++    if ((failedUntil.get(self) || 0) > self.now().offset) return nok(code)
+     assert(code === codes.backslash, 'expected `\\`')
+     effects.enter('mathFlow')
+     effects.enter('mathFlowFence')
+@@ -90,6 +96,7 @@
+    * @type {State}
+    */
+   function metaAfter(code) {
++    if (code !== codes.eof && !markdownLineEnding(code)) return nok(code)
+     effects.exit('mathFlowFence')
+ 
+     if (self.interrupt) {
+@@ -245,6 +252,10 @@
+    * @type {State}
+    */
+   function after(code) {
++    if (!closed) {
++      if (code === codes.eof) failedUntil.set(self, self.now().offset)
++      return nok(code)
++    }
+     effects.exit('mathFlow')
+     return ok(code)
+   }
+@@ -327,6 +338,7 @@
+     function afterSequenceClose(code) {
+       if (code === codes.eof || markdownLineEnding(code)) {
+         effects.exit('mathFlowFence')
++        closed = true
+         return ok(code)
+       }
+ 
+diff --git a/dev/lib/math-tex-text.js b/dev/lib/math-tex-text.js
+--- a/dev/lib/math-tex-text.js
++++ b/dev/lib/math-tex-text.js
+@@ -1,5 +1,5 @@
+ /**
+- * @import {Construct, Previous, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
++ * @import {Construct, Event, Previous, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
+  */
+ 
+ import {ok as assert} from 'devlop'
+@@ -7,6 +7,12 @@
+ import {codes, types} from 'micromark-util-symbol'
+ import {mathText} from './math-text.js'
+ 
++// Failed scans are local to a text tokenizer and delimiter, never shared across documents.
++/** @type {WeakMap<Array<Event>, Record<number, number>>} */
++const failedUntil = new WeakMap()
++/** @type {WeakMap<Array<Event>, Record<number, number>>} */
++const singleLineFailedUntil = new WeakMap()
++
+ /** @type {Construct} */
+ export const mathTexText = {
+   tokenize: tokenizeMathText,
+@@ -21,10 +27,12 @@
+  */
+ function tokenizeMathText(effects, ok, nok) {
+   const self = this
++  const failures = self.mathSingleLine ? singleLineFailedUntil : failedUntil
+   /** @type {Token} */
+   let token
+   /** @type {number} */
+   let openSequenceCode
++  let substantive = false
+ 
+   return start
+ 
+@@ -66,6 +74,8 @@
+       return nok(code)
+     }
+ 
++    if ((failures.get(self.events)?.[code] || 0) > self.now().offset) return nok(code)
++
+     openSequenceCode = code
+     effects.consume(code)
+     effects.exit('mathTextSequence')
+@@ -83,8 +93,8 @@
+    * @type {State}
+    */
+   function between(code) {
+-    if (code === codes.eof) {
+-      return nok(code)
++    if (code === codes.eof || code === codes.graveAccent || (self.mathSingleLine && markdownLineEnding(code))) {
++      return unmatched(code)
+     }
+ 
+     if (code === codes.backslash) {
+@@ -124,6 +134,8 @@
+    * @type {State}
+    */
+   function data(code) {
++    if (code === codes.graveAccent) return unmatched(code)
++    if (code !== codes.backslash && code !== codes.eof && code !== codes.space && code !== codes.comma && !markdownLineEnding(code) && !(code >= codes.digit0 && code <= codes.digit9)) substantive = true
+     if (
+       code === codes.eof ||
+       code === codes.space ||
+@@ -138,6 +150,13 @@
+     return data
+   }
+ 
++  function unmatched(code) {
++    const ends = failures.get(self.events) || {}
++    ends[openSequenceCode] = self.now().offset
++    failures.set(self.events, ends)
++    return nok(code)
++  }
++
+   /**
+    * In closing sequence.
+    *
+@@ -155,6 +174,7 @@
+         ? codes.rightParenthesis
+         : codes.rightSquareBracket
+     if (code === closeSequenceCode) {
++      if (openSequenceCode === codes.leftSquareBracket && !substantive) return nok(code)
+       effects.consume(code)
+       effects.exit('mathTextSequence')
+       effects.exit('mathText')
+@@ -180,5 +200,8 @@
+  */
+ function previous(code) {
+   // If there is a previous code, there will always be a tail.
+-  return code !== codes.backslash
++  return (
++    code !== codes.backslash ||
++    this.events[this.events.length - 1][1].type === types.characterEscape
++  )
+ }
+diff --git a/dev/lib/math-text.js b/dev/lib/math-text.js
+--- a/dev/lib/math-text.js
++++ b/dev/lib/math-text.js
+@@ -10 +10 @@
+-import {markdownLineEnding} from 'micromark-util-character'
++import {markdownLineEnding, markdownLineEndingOrSpace} from 'micromark-util-character'
+@@ -42,6 +42,13 @@
+     let size
+     /** @type {Token} */
+     let token
++    /** @type {boolean} */
++    let openWhitespace
++    /** @type {number | undefined} */
++    let charBeforeClose
++    let slashes = 0
++    let previousData
++    let beforeData
+ 
+     return start
+ 
+@@ -89,6 +96,16 @@
+       }
+ 
+       effects.exit('mathTextSequence')
++      // Reject if opening is followed by line ending
++      if (markdownLineEnding(code)) {
++        return nok(code)
++      }
++      // Track if opening sequence is followed by whitespace
++      openWhitespace =
++        code === codes.space ||
++        code === codes.horizontalTab ||
++        code === codes.comma
++      if (sizeOpen === 1 && openWhitespace) return nok(code)
+       return between(code)
+     }
+ 
+@@ -103,13 +120,14 @@
+      * @type {State}
+      */
+     function between(code) {
+-      if (code === codes.eof) {
++      if (code === codes.eof || code === codes.graveAccent || ((sizeOpen === 1 || self.mathSingleLine) && markdownLineEnding(code))) {
+         return nok(code)
+       }
+ 
+       if (code === codes.dollarSign) {
+         token = effects.enter('mathTextSequence')
+         size = 0
++        charBeforeClose = self.previous
+         return sequenceClose(code)
+       }
+ 
+@@ -144,6 +162,16 @@
+      * @type {State}
+      */
+     function data(code) {
++      if (code === codes.graveAccent) return nok(code)
++      if (code === codes.dollarSign && slashes % 2 === 1) {
++        slashes = 0
++        effects.consume(code)
++        return data
++      }
++      if (code === codes.slash && previousData === codes.slash && beforeData === codes.colon) return nok(code)
++      beforeData = previousData
++      previousData = code
++      slashes = code === codes.backslash ? slashes + 1 : 0
+       if (
+         code === codes.eof ||
+         code === codes.space ||
+@@ -179,9 +207,29 @@
+ 
+       // Done!
+       if (size === sizeOpen) {
+-        effects.exit('mathTextSequence')
+-        effects.exit('mathText')
+-        return ok(code)
++        // Reject if closing is preceded by line ending
++        if (markdownLineEnding(charBeforeClose)) {
++          return nok(code)
++        }
++        // Reject if closing is followed by a digit
++        if (code !== null && code >= codes.digit0 && code <= codes.digit9) {
++          return nok(code)
++        }
++        if (charBeforeClose === codes.comma && !openWhitespace && code !== codes.eof && !markdownLineEndingOrSpace(code) && !/[.,;:)\]}]/.test(String.fromCharCode(code))) {
++          return nok(code)
++        }
++        // Check if closing sequence has matching whitespace pattern
++        const closeWhitespace =
++          charBeforeClose === codes.space ||
++          charBeforeClose === codes.horizontalTab ||
++          (charBeforeClose === codes.comma && openWhitespace)
++        if (openWhitespace === closeWhitespace) {
++          effects.exit('mathTextSequence')
++          effects.exit('mathText')
++          return ok(code)
++        }
++        // Whitespace mismatch: mark as data
++        return nok(code)
+       }
+ 
+       // More or less accents: mark as data.
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -27,7 +27,7 @@
+   "type": "module",
+   "exports": {
+     "development": "./dev/index.js",
+-    "default": "./index.js"
++    "default": "./dev/index.js"
+   },
+   "files": [
+     "dev/",

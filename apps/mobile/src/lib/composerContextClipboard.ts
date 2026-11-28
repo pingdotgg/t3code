@@ -1,4 +1,6 @@
 import { requireNativeModule } from "expo";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   type ComposerContextClipboardFragment,
   type ComposerContextRecord,
@@ -13,12 +15,18 @@ import {
   decodeComposerContextFragment,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
+import {
+  threadContextsOutsideEnvironment,
+  threadLinkContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { environmentSession } from "../state/session";
+import { environmentThreadShells } from "../state/threads";
+import { workspaceConnections } from "../state/workspace";
 import { downloadAttachmentForPreview } from "./attachmentDownload";
 import {
   persistComposerAttachmentFile,
@@ -55,7 +63,7 @@ export function writeComposerContextClipboard(
   const encoded = encodeComposerContextFragment(fragment);
   if (!encoded)
     return Promise.reject(
-      new Error("This context selection is too large to copy. Select fewer items."),
+      new Error(m(msg("This context selection is too large to copy. Select fewer items."))),
     );
   return nativeClipboard().writeContextClipboard(text, encoded);
 }
@@ -65,19 +73,60 @@ export async function importComposerContextClipboard(
   existingCount: number,
   signal: AbortSignal,
   existingContextCount = 0,
+  destinationEnvironmentId?: EnvironmentId,
+  /** The machines the destination links to, whose threads its agent can read too. */
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string> = new Map(),
 ) {
-  const fragment =
+  const copied =
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
-  if (!fragment) return null;
-  const selected = referencedComposerContext(input.text, { version: 1, records: fragment.records });
-  if (existingContextCount + (selected?.records.length ?? 0) > COMPOSER_CONTEXT_MAX_RECORDS)
-    throw new Error("Remove some context items from the draft before pasting more.");
-  const imported = reidentifyComposerContext(input.text, selected?.records ?? [], uuidv4);
+  // A thread link becomes a chip only where this agent can read its machine; others stay links.
+  const threads = threadLinkContextReferences(
+    input.text,
+    copied?.records ?? [],
+    (ref) => appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref))?.title,
+    (record) =>
+      destinationEnvironmentId === undefined ||
+      record.environmentId === destinationEnvironmentId ||
+      linkedEnvironments.has(record.environmentId)
+        ? record.contextId
+        : undefined,
+  );
+  const source =
+    copied?.source ??
+    (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
+  if (!source) return null;
+  const fragment = {
+    source,
+    records: [
+      ...(copied?.records ?? []).filter((record) =>
+        threads.records.every((thread) => thread.contextId !== record.contextId),
+      ),
+      ...threads.records,
+    ],
+  };
+  const selected = referencedComposerContext(threads.text, {
+    version: 1,
+    records: fragment.records,
+  });
+  const imported = reidentifyComposerContext(threads.text, selected?.records ?? [], uuidv4);
+  const skippedThreads =
+    destinationEnvironmentId === undefined
+      ? []
+      : threadContextsOutsideEnvironment({
+          text: imported.text,
+          records: imported.context.records,
+          environmentId: destinationEnvironmentId,
+          linkedEnvironments,
+        });
+  const skippedIds = new Set(skippedThreads.map((record) => record.contextId));
+  const retained = imported.context.records.filter((record) => !skippedIds.has(record.contextId));
+  if (existingContextCount + retained.length > COMPOSER_CONTEXT_MAX_RECORDS)
+    throw new Error(m(msg("Remove some context items from the draft before pasting more.")));
   const attachments: DraftComposerAttachment[] = [];
   const records: ComposerContextRecord[] = [];
   const failures: string[] = [];
   try {
-    for (const record of imported.context.records) {
+    for (const record of retained) {
       checkAborted(signal);
       if (!("attachmentId" in record)) {
         records.push(record);
@@ -85,7 +134,7 @@ export async function importComposerContextClipboard(
       }
       try {
         if (existingCount + attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
-          throw new Error("Attachment limit reached");
+          throw new Error(m(msg("Attachment limit reached")));
         const file = await importAttachment(record, fragment.source.environmentId, signal);
         attachments.push(file);
         records.push({ ...record, attachmentId: file.id });
@@ -94,11 +143,14 @@ export async function importComposerContextClipboard(
         failures.push(record.name);
       }
     }
+    // The last copy can be cancelled after its own check; a cancelled import must not return files nobody will release.
+    checkAborted(signal);
     return {
       text: imported.text,
       context: { version: 1 as const, records },
       attachments,
       failures,
+      skippedThreads: skippedThreads.map((record) => record.title),
     };
   } catch (error) {
     await Promise.all(
@@ -119,7 +171,13 @@ async function importAttachment(
 ): Promise<DraftComposerAttachment> {
   await waitForComposerDraftsLoaded();
   checkAborted(signal);
-  const local = findLocalComposerClipboardAttachment(environmentId, record.attachmentId);
+  const local = findLocalComposerClipboardAttachment(
+    appAtomRegistry
+      .get(workspaceConnections.environmentsAtom)
+      .map((environment) => environment.environmentId),
+    environmentId,
+    record.attachmentId,
+  );
   if (local) {
     if (!local.fileUri && local.type === "image" && local.dataUrl)
       return {
@@ -144,7 +202,7 @@ async function importAttachment(
   const connection = appAtomRegistry.get(
     environmentSession.preparedConnectionValueAtom(environmentId),
   );
-  if (Option.isNone(connection)) throw new Error("Reconnect to the source environment");
+  if (Option.isNone(connection)) throw new Error(m(msg("Reconnect to the source environment")));
   const result = await executeAtomQuery(
     appAtomRegistry,
     assetEnvironment.createUrl({
@@ -158,7 +216,7 @@ async function importAttachment(
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   checkAborted(signal);
   const url = resolveAssetUrl(connection.value.httpBaseUrl, result.value.relativeUrl);
-  if (!url) throw new Error("Attachment URL unavailable");
+  if (!url) throw new Error(m(msg("Attachment URL unavailable")));
   const temporary = await downloadAttachmentForPreview({
     attachment: { name: record.name, mimeType: record.mimeType },
     url,
@@ -197,6 +255,11 @@ async function persistImportedAttachment(
     sizeBytes: new File(fileUri).size,
   };
   return record.kind === "image"
-    ? { ...common, type: "image", previewUri: fileUri }
+    ? {
+        ...common,
+        type: "image",
+        previewUri: fileUri,
+        ...(record.source ? { source: record.source } : {}),
+      }
     : { ...common, type: "file" };
 }

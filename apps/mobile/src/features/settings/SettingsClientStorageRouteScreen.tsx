@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -5,12 +6,12 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachineSymbol";
 import {
   clearClientCacheAtom,
   clientCacheSummaryAtom,
@@ -18,11 +19,13 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { formatBytes } from "../../lib/formatBytes";
 
 export function SettingsClientStorageRouteScreen() {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
@@ -46,10 +49,11 @@ export function SettingsClientStorageRouteScreen() {
       savedConnectionsById[environment.environmentId]?.environmentLabel ??
       environment.environmentId;
     Dialog.confirm({
-      title: `Clear cache for ${label}?`,
-      message:
+      title: gt("Clear cache for {environment}?", { environment: label }),
+      message: gt(
         "This removes offline threads, server metadata, and cached branches for this environment. The saved connection and credentials stay intact.",
-      confirmText: "Clear Cache",
+      ),
+      confirmText: gt("Clear Cache"),
       destructive: true,
       onConfirm: () =>
         clearCache({ type: "environment", environmentId: environment.environmentId }),
@@ -58,25 +62,26 @@ export function SettingsClientStorageRouteScreen() {
 
   const confirmClearAll = () => {
     Dialog.confirm({
-      title: "Clear all client caches?",
-      message:
+      title: gt("Clear all client caches?"),
+      message: gt(
         "This removes offline data for every environment. Connections, credentials, account data, and app preferences stay intact.",
-      confirmText: "Clear All Caches",
+      ),
+      confirmText: gt("Clear All Caches"),
       destructive: true,
       onConfirm: () => clearCache({ type: "all" }),
     });
   };
 
   return (
-    <SettingsScreen title="Client Storage">
+    <SettingsScreen title={gt("Client Storage")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) }}
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Environment caches">
+        <SettingsSection title={gt("Environment caches")}>
           {AsyncResult.isFailure(summaryResult) ? (
             <View className="items-center gap-2 px-6 py-8">
               <SymbolView
@@ -86,16 +91,18 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">Storage unavailable</Text>
+              <Text className="text-center text-base text-foreground">
+                <T>Storage unavailable</T>
+              </Text>
               <Text className="text-center text-sm text-foreground-muted">
-                Restart the app and try again.
+                <T>Restart the app and try again.</T>
               </Text>
             </View>
           ) : !summary ? (
             <View className="items-center gap-3 px-6 py-8">
               <AppActivityIndicator />
               <Text className="text-center text-sm text-foreground-muted">
-                Inspecting cached data…
+                <T>Inspecting cached data…</T>
               </Text>
             </View>
           ) : environmentSummaries.length > 0 ? (
@@ -124,19 +131,25 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">No cached data</Text>
+              <Text className="text-center text-base text-foreground">
+                <T>No cached data</T>
+              </Text>
               <Text className="text-center text-sm text-foreground-muted">
-                Offline cache records will appear here after environments are used.
+                <T>Offline cache records will appear here after environments are used.</T>
               </Text>
             </View>
           )}
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title="Actions">
+          <SettingsSection title={gt("Actions")}>
             <SettingsActionRow
               icon="trash"
-              label={summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
+              label={
+                summary
+                  ? gt("Clear {size}", { size: formatBytes(summary.payloadBytes) })
+                  : gt("Clear caches")
+              }
               tone="danger"
               disabled={isClearing || !summary || summary.recordCount === 0}
               loading={isClearing}
@@ -144,12 +157,14 @@ export function SettingsClientStorageRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Clearing caches never removes environment connections, credentials, account data, or
-            appearance preferences.
+            <T>
+              Clearing caches never removes environment connections, credentials, account data, or
+              appearance preferences.
+            </T>
           </Text>
           {AsyncResult.isFailure(summaryResult) || AsyncResult.isFailure(clearResult) ? (
             <Text selectable className="px-2 text-sm text-danger-foreground">
-              Client storage is temporarily unavailable. Try again after restarting the app.
+              <T>Client storage is temporarily unavailable. Try again after restarting the app.</T>
             </Text>
           ) : null}
         </View>
@@ -166,35 +181,19 @@ function CacheEnvironmentRow(props: {
   readonly first: boolean;
   readonly onClear: () => void;
 }) {
+  const gt = useGT();
   return (
-    <View
-      className={
-        props.first
-          ? "flex-row items-center gap-3 p-4"
-          : "border-t border-border flex-row items-center gap-3 p-4"
-      }
-    >
-      <EnvironmentMachineSymbol kind={props.machine} size={22} tintColorClassName="accent-icon" />
-      <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
-        {props.environmentLabel}
-      </Text>
-      <Pressable
-        accessibilityLabel={`Clear cache for ${props.environmentLabel}`}
-        accessibilityRole="button"
+    <View className={props.first ? undefined : "border-t border-border"}>
+      <SettingsActionRow
+        icon={ENVIRONMENT_MACHINE_SYMBOLS[props.machine]}
+        label={props.environmentLabel}
+        description={gt("Clear {size} of cached data", {
+          size: formatBytes(props.environment.payloadBytes),
+        })}
+        tone="danger"
         disabled={props.disabled}
         onPress={props.onClear}
-        className="rounded-full px-3 py-2 disabled:opacity-40"
-      >
-        <Text className="font-t3-medium tabular-nums text-danger-foreground" numberOfLines={1}>
-          Clear {formatBytes(props.environment.payloadBytes)}
-        </Text>
-      </Pressable>
+      />
     </View>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }

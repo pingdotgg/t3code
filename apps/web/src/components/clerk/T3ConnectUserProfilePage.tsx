@@ -1,4 +1,4 @@
-import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { findErrorTraceId, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -6,36 +6,47 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { ServerIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState } from "react";
 
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
+  useManagedTunnelUsage,
 } from "../../cloud/managedRelayState";
+import { relayFailureReason } from "../../cloud/relayFailureReason";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
+import { T3CHAT_SUBSCRIPTION_URL, TunnelUsageMeter, tunnelUpgradeCopy } from "../cloud/TunnelUsage";
+import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
+import { stackedThreadToast } from "../ui/toastHelpers";
 import {
   ClerkUserProfilePage,
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { m, type MessageResolver } from "../../i18n/messages";
+import { useT3ChatLink } from "./useT3ChatLink";
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
-function linkedAtLabel(value: string): string {
+function linkedAtLabel(value: string, resolve: MessageResolver): string {
   const linkedAt = new Date(value);
   return Number.isNaN(linkedAt.getTime())
-    ? "Link date unavailable"
-    : `Linked ${linkedAtFormatter.format(linkedAt)}`;
+    ? resolve(msg("Link date unavailable"))
+    : resolve(msg("Linked {date}", { date: linkedAtFormatter.format(linkedAt) }));
 }
 
-function endpointLabel(environment: RelayClientEnvironmentRecord): string {
+function endpointLabel(
+  environment: RelayClientEnvironmentRecord,
+  resolve: MessageResolver,
+): string {
   return environment.endpoint.providerKind === "cloudflare_tunnel"
-    ? "Managed tunnel"
-    : "Activity publishing only";
+    ? resolve(msg("Managed tunnel"))
+    : resolve(msg("Activity publishing only"));
 }
 
 function T3ConnectEnvironmentRow(props: {
@@ -46,6 +57,8 @@ function T3ConnectEnvironmentRow(props: {
   readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
 }) {
   const { environment } = props;
+  const gt = useGT();
+  const m = useMessages();
   return (
     <ClerkUserProfileRow icon={<ServerIcon className="size-4" />}>
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
@@ -55,13 +68,13 @@ function T3ConnectEnvironmentRow(props: {
               {environment.label}
             </h3>
             <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
-              {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
+              {linkedAtLabel(environment.linkedAt, m)} · {endpointLabel(environment, m)}
             </p>
           </div>
           <CollapsibleTrigger
             render={
               <Button size="sm" variant="destructive-outline" disabled={props.mutationPending}>
-                Deregister
+                <T>Deregister</T>
               </Button>
             }
           />
@@ -72,17 +85,23 @@ function T3ConnectEnvironmentRow(props: {
             <div
               className="rounded-lg border border-input bg-muted/32 px-5 py-4 shadow-xs/5"
               role="group"
-              aria-label={`Confirm deregistration of ${environment.label}`}
+              aria-label={gt("Confirm deregistration of {environment}", {
+                environment: environment.label,
+              })}
             >
               <h4 className="text-sm leading-4.5 font-semibold text-foreground">
-                Deregister server
+                <T>Deregister server</T>
               </h4>
               <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
-                “{environment.label}” will be removed from this account.
+                <T>
+                  “<Var>{environment.label}</Var>” will be removed from this account.
+                </T>
               </p>
               <p className="mt-4 max-w-xl text-xs leading-4.5 text-muted-foreground">
-                T3 Connect access will be revoked, any managed tunnel will be removed, and a host
-                space will become available. Local connections on your devices are not changed.
+                <T>
+                  T3 Connect access will be revoked, any managed tunnel will be removed, and a host
+                  space will become available. Local connections on your devices are not changed.
+                </T>
               </p>
               <div className="mt-4 flex justify-end gap-2">
                 <Button
@@ -91,7 +110,7 @@ function T3ConnectEnvironmentRow(props: {
                   disabled={props.mutationPending}
                   onClick={() => props.onConfirmationChange(false)}
                 >
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
                 <Button
                   size="sm"
@@ -99,7 +118,7 @@ function T3ConnectEnvironmentRow(props: {
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
                 >
-                  {props.mutationPending ? "Deregistering…" : "Deregister"}
+                  {props.mutationPending ? gt("Deregistering…") : gt("Deregister")}
                 </Button>
               </div>
             </div>
@@ -110,9 +129,62 @@ function T3ConnectEnvironmentRow(props: {
   );
 }
 
+function T3ConnectTunnelUsage() {
+  const usage = useManagedTunnelUsage();
+  const t3Chat = useT3ChatLink();
+  const gt = useGT();
+  const m = useMessages();
+  if (usage.used === null || usage.limit === null) return null;
+  return (
+    <div className="border-t py-4">
+      <TunnelUsageMeter used={usage.used} limit={usage.limit} />
+      {usage.upgrade ? (
+        <p className="mt-2 text-xs leading-4.5 text-muted-foreground">
+          {usage.upgrade === "link" && t3Chat.linkUrl ? (
+            <T>
+              Confirm on{" "}
+              <a
+                className="underline"
+                href={t3Chat.linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                t3.chat
+              </a>
+              , then select Refresh.
+            </T>
+          ) : (
+            <>
+              {tunnelUpgradeCopy(usage.upgrade, m)}{" "}
+              {usage.upgrade === "link" ? (
+                <InlineButton disabled={t3Chat.pending !== null} onClick={() => void t3Chat.link()}>
+                  {t3Chat.pending === "link" ? gt("Opening…") : gt("Link T3 Chat")}
+                </InlineButton>
+              ) : (
+                <a
+                  className="underline"
+                  href={T3CHAT_SUBSCRIPTION_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <T>Upgrade on T3 Chat</T>
+                </a>
+              )}
+            </>
+          )}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function T3ConnectUserProfilePage() {
   const environmentsState = useManagedRelayEnvironments();
+  const gt = useGT();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refreshAfterMutation, {
     reportFailure: false,
   });
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
@@ -138,26 +210,29 @@ export function T3ConnectUserProfilePage() {
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
+    setConfirmingEnvironmentId(null);
 
     if (result._tag === "Success") {
-      setConfirmingEnvironmentId(null);
       setRemovedEnvironments((current) => {
         const linkedAtById = new Map(current.accountId === accountId ? current.linkedAtById : []);
         linkedAtById.set(environment.environmentId, environment.linkedAt);
         return { accountId, linkedAtById };
       });
       environmentsState.refresh();
+      void refreshRelayEnvironments();
       toastManager.add({
         type: "success",
-        title: "Server deregistered",
-        description: "T3 Connect access was revoked and a host space is now available.",
+        title: gt("Server deregistered"),
+        description: gt("T3 Connect access was revoked and a host space is now available."),
       });
       return;
     }
     if (isAtomCommandInterrupted(result)) return;
 
+    // The relay may have removed it before failing.
+    environmentsState.refresh();
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
+    const message = thrownErrorMessage(cause, m) ?? gt("Could not deregister the server.");
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not deregister environment", {
       environmentId: environment.environmentId,
@@ -165,19 +240,23 @@ export function T3ConnectUserProfilePage() {
       traceId,
       cause,
     });
-    toastManager.add({
-      type: "error",
-      title: "Could not deregister server",
-      description: message,
-      data: traceId
-        ? {
-            secondaryActionProps: {
-              children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
-            },
-          }
-        : undefined,
-    });
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: gt("Could not deregister server"),
+        description: relayFailureReason(cause) ?? message,
+        ...(traceId
+          ? {
+              actionProps: {
+                children: gt("Copy trace ID"),
+                onClick: () => void navigator.clipboard?.writeText(traceId),
+              },
+              actionVariant: "outline",
+            }
+          : {}),
+        data: { hideCopyButton: true },
+      }),
+    );
   };
 
   const removedEnvironmentLinkedAt =
@@ -188,26 +267,31 @@ export function T3ConnectUserProfilePage() {
     (environment) =>
       removedEnvironmentLinkedAt.get(environment.environmentId) !== environment.linkedAt,
   );
+  const usage = useManagedTunnelUsage();
+  const refreshAll = usage.refresh;
   const isInitialLoad =
     !environmentsState.accountId || (environmentsState.data === null && !environmentsState.error);
 
   return (
     <ClerkUserProfilePage
       title="T3 Connect"
-      description="Environments registered to your account. Connections on this device are managed in Settings."
+      description={gt(
+        "Environments registered to your account. Connections on this device are managed in Settings.",
+      )}
       action={
         <ClerkUserProfileRefreshButton
           disabled={deregisteringEnvironmentId !== null}
           isPending={environmentsState.isPending}
-          onClick={environmentsState.refresh}
+          onClick={refreshAll}
         />
       }
     >
       <div>
+        <T3ConnectTunnelUsage />
         {environmentsState.error ? (
           <div className="mb-4 border-t border-destructive/35 py-3 text-xs" role="alert">
             <p className="font-medium text-destructive-foreground">
-              Could not load T3 Connect environments
+              <T>Could not load T3 Connect environments</T>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">{environmentsState.error}</p>
           </div>
@@ -215,7 +299,7 @@ export function T3ConnectUserProfilePage() {
 
         {isInitialLoad ? (
           <p className="border-t py-4 text-xs text-muted-foreground" role="status">
-            Loading environments…
+            <T>Loading environments…</T>
           </p>
         ) : environments.length > 0 ? (
           <ul className="border-t">
@@ -239,10 +323,14 @@ export function T3ConnectUserProfilePage() {
                 <ServerIcon />
               </EmptyMedia>
               <EmptyHeader>
-                <EmptyTitle>No T3 Connect environments</EmptyTitle>
+                <EmptyTitle>
+                  <T>No T3 Connect environments</T>
+                </EmptyTitle>
                 <EmptyDescription>
-                  Link an environment from its local Settings to make it available through T3
-                  Connect.
+                  <T>
+                    Link an environment from its local Settings to make it available through T3
+                    Connect.
+                  </T>
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>

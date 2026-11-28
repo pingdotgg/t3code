@@ -6,7 +6,7 @@ import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/htt
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 
-/** The patch is often the largest PR payload and benefits from HTTP compression and flow control. */
+// Large patches benefit from HTTP compression and flow control.
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "pullRequests",

@@ -6,27 +6,39 @@ import type {
   TerminalSummary,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_MAX_TERMINAL_BUFFER_BYTES } from "@t3tools/contracts";
 import {
   appendOutput,
-  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  clearOutput,
   EMPTY_TERMINAL_OUTPUT_STATE,
   resetOutput,
   type TerminalOutputState,
 } from "./terminalOutput.ts";
 
 export {
-  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  terminalOutputReplay,
   terminalOutputText,
   type TerminalOutputCursor,
   type TerminalOutputState,
   type TerminalOutputUpdate,
 } from "./terminalOutput.ts";
+export { DEFAULT_MAX_TERMINAL_BUFFER_BYTES } from "@t3tools/contracts";
+
+/** The PTY grid every renderer of a shared terminal draws. */
+export interface TerminalGrid {
+  readonly cols: number;
+  readonly rows: number;
+}
 
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
+  readonly pid: number | null;
+  readonly supportsConditionalWrites: boolean;
   readonly output: TerminalOutputState;
+  /** Null when the server predates shared terminal geometry. */
+  readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
@@ -36,7 +48,10 @@ export interface TerminalSessionState {
 }
 
 export interface TerminalBufferState {
+  readonly pid: number | null;
+  readonly supportsConditionalWrites: boolean;
   readonly output: TerminalOutputState;
+  readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
@@ -64,7 +79,10 @@ export function selectRunningSubprocessTerminalIds(
 }
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
+  pid: null,
+  supportsConditionalWrites: false,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
+  grid: null,
   status: "closed",
   error: null,
   updatedAt: null,
@@ -74,7 +92,10 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
 
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
+  pid: null,
+  supportsConditionalWrites: false,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
+  grid: null,
   status: "closed",
   error: null,
   hasRunningSubprocess: false,
@@ -102,13 +123,26 @@ function terminalBufferStateFromSnapshot(
   current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,
 ): TerminalBufferState {
   return {
-    output: resetOutput(current.output, snapshot.history, maxBufferBytes),
+    pid: snapshot.pid,
+    supportsConditionalWrites: snapshot.supportsConditionalWrites === true,
+    output: resetOutput(current.output, snapshot, maxBufferBytes),
+    grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
-    error: null,
+    error: snapshot.error ?? null,
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
   };
+}
+
+function nextGrid(
+  current: TerminalGrid | null,
+  source: { readonly cols?: number | undefined; readonly rows?: number | undefined },
+): TerminalGrid | null {
+  if (source.cols === undefined || source.rows === undefined) return current;
+  return current?.cols === source.cols && current.rows === source.rows
+    ? current
+    : { cols: source.cols, rows: source.rows };
 }
 
 function latestTimestamp(left: string | null, right: string | null): string | null {
@@ -123,7 +157,10 @@ export function combineTerminalSessionState(
 ): TerminalSessionState {
   return {
     summary,
+    pid: buffer.pid,
+    supportsConditionalWrites: buffer.supportsConditionalWrites,
     output: buffer.output,
+    grid: buffer.grid,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
@@ -139,12 +176,21 @@ export function applyTerminalAttachStreamEvent(
   maxBufferBytes = DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
 ): TerminalBufferState {
   switch (event.type) {
-    case "snapshot":
-      return {
-        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
-        lifecycleVersion:
-          current.version === 0 ? current.lifecycleVersion : current.lifecycleVersion + 1,
+    case "snapshot": {
+      if (current.version === 0) {
+        return terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current);
+      }
+      // A later snapshot is a new server attachment, as after a socket reconnect. It starts a
+      // new generation because viewers replay their measured grid once per generation.
+      const reattached = {
+        ...current,
+        output: { ...current.output, generation: ++terminalAttachGeneration },
       };
+      return {
+        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, reattached),
+        lifecycleVersion: current.lifecycleVersion + 1,
+      };
+    }
     case "restarted":
       return {
         ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
@@ -161,7 +207,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        output: resetOutput(current.output, "", maxBufferBytes),
+        output: clearOutput(current.output, maxBufferBytes, event.pendingControlSequence),
         error: null,
         version: current.version + 1,
       };
@@ -186,8 +232,10 @@ export function applyTerminalAttachStreamEvent(
         error: event.message,
         version: current.version + 1,
       };
-    case "activity":
-      return current;
+    case "activity": {
+      const grid = nextGrid(current.grid, event);
+      return grid === current.grid ? current : { ...current, grid };
+    }
   }
 }
 

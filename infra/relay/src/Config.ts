@@ -48,6 +48,12 @@ export interface ApnsCredentials {
   readonly environment: ApnsEnvironment;
 }
 
+export interface T3ChatSettings {
+  readonly baseUrl: string;
+  // Shared with T3 Chat: signs link tokens and authenticates relay calls.
+  readonly linkSecret: Redacted.Redacted<string>;
+}
+
 export class RelayConfiguration extends Context.Service<
   RelayConfiguration,
   {
@@ -57,6 +63,8 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
+    /** Verifies Clerk `user.deleted` webhooks; unset leaves the webhook route disabled. */
+    readonly clerkWebhookSigningSecret?: Redacted.Redacted<string>;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
@@ -65,11 +73,9 @@ export class RelayConfiguration extends Context.Service<
     readonly managedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     readonly legacyManagedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     readonly legacyTunnelGraceMinutes?: number;
+    readonly t3Chat?: T3ChatSettings;
   }
 >()("t3code-relay/Config/RelayConfiguration") {}
 
-export const make = (configuration: RelayConfiguration["Service"]) =>
-  RelayConfiguration.of(configuration);
-
 export const layer = (configuration: RelayConfiguration["Service"]) =>
-  Layer.succeed(RelayConfiguration, make(configuration));
+  Layer.succeed(RelayConfiguration, RelayConfiguration.of(configuration));

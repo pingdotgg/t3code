@@ -6,6 +6,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 type DesktopUpdateBridge = Pick<DesktopBridge, "getUpdateState" | "onUpdateState">;
 
@@ -19,7 +22,11 @@ export class DesktopUpdateStateReadError extends Schema.TaggedError<DesktopUpdat
   },
 ) {
   override get message(): string {
-    return `Failed to read the initial desktop update state after ${this.attemptCount} attempts.`;
+    return m(
+      msg("Failed to read the initial desktop update state after {count} attempts.", {
+        count: this.attemptCount,
+      }),
+    );
   }
 }
 
@@ -79,7 +86,7 @@ export function createDesktopUpdateStateAtom(getBridge: () => DesktopUpdateBridg
   );
 }
 
-const desktopUpdateStateAtom = createDesktopUpdateStateAtom(getDesktopUpdateBridge);
+export const desktopUpdateStateAtom = createDesktopUpdateStateAtom(getDesktopUpdateBridge);
 
 export function useDesktopUpdateState(): DesktopUpdateState | null {
   return AsyncResult.getOrElse(useAtomValue(desktopUpdateStateAtom), () => null);

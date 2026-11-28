@@ -32,4 +32,15 @@ export function assertClaudeIdleResumeOutput(
     "idle resume first turn complete",
     "idle resume second turn complete",
   ]);
+  // This recording's Claude Code restarts a resumed process's ledger at zero; nothing is counted twice.
+  assert.deepEqual(
+    projection.providerTurns.map((turn) => [
+      turn.turnTokenUsage?.outputTokens,
+      turn.turnTokenUsage?.otherUsage,
+    ]),
+    [
+      [7, { inputTokens: 0, outputTokens: 0 }],
+      [7, { inputTokens: 0, outputTokens: 0 }],
+    ],
+  );
 }

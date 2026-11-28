@@ -1,6 +1,6 @@
-import * as Cloud from "alchemy/Railway";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloud from "@alchemy.run/railway";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -28,9 +28,7 @@ test.provider(
       );
       expect(site.url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+/);
       const url = String(site.url).replace(/\/+$/, "");
-      const home = yield* Test.getWhenReady(url).pipe(
-        Effect.flatMap((response) => response.text),
-      );
+      const home = yield* Test.getWhenReady(url).pipe(Effect.flatMap((response) => response.text));
       expect(home).toContain("Hello from vinext on Railway!");
       const api = yield* Test.getWhenReady(`${url}/api/hello?name=Alchemy`);
       expect(yield* api.json).toEqual({
@@ -45,10 +43,7 @@ test.provider(
       const source = yield* fs.readFileString(page);
       const marker = "Updated by the vinext development test";
       yield* Effect.acquireUseRelease(
-        fs.writeFileString(
-          page,
-          source.replace("Hello from vinext on Railway!", marker),
-        ),
+        fs.writeFileString(page, source.replace("Hello from vinext on Railway!", marker)),
         () =>
           Test.getWhenReady(url).pipe(
             Effect.flatMap((response) => response.text),
@@ -57,9 +52,7 @@ test.provider(
               times: 20,
               until: (body) => body.includes(marker),
             }),
-            Effect.tap((body) =>
-              Effect.sync(() => expect(body).toContain(marker)),
-            ),
+            Effect.tap((body) => Effect.sync(() => expect(body).toContain(marker))),
           ),
         () => fs.writeFileString(page, source).pipe(Effect.orDie),
       );

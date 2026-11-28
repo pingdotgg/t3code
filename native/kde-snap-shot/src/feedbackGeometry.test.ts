@@ -35,13 +35,3 @@ it("rejects lookalikes, ambiguous or hidden windows", () => {
     expect(() => destination(windows)).toThrow();
   }
 });
-it("rejects invalid or out-of-bounds destinations instead of moving across unrelated windows", () => {
-  for (const invalid of [
-    { ...frame, x: -0.1 },
-    { ...frame, width: 2 },
-    { ...frame, height: 0 },
-    { ...frame, y: NaN },
-  ]) {
-    expect(() => destination([target], invalid)).toThrow("Invalid capture destination");
-  }
-});

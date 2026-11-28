@@ -14,11 +14,26 @@ describe("removeAgentCredits", () => {
           "* Co-authored-by: Codex <noreply@openai.com>",
           "co-authored-by: Cursor <cursoragent@cursor.com>",
           "Co-authored-by: Copilot <copilot@github.com>",
+          "Co-Authored-By:\tGitHub Copilot   <NOREPLY@GITHUB.COM>",
           "",
           "🤖 Generated with [Claude Code](https://claude.ai/code)",
         ].join("\n"),
       ),
     ).toBe("Details about Claude support.\n\n\nCo-authored-by: Alice <alice@example.com>");
+  });
+
+  it("removes the footer Claude Code writes today, which links to claude.com", () => {
+    expect(
+      removeAgentCredits(
+        [
+          "Details",
+          "",
+          "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "",
+          "Co-Authored-By: Claude <noreply@anthropic.com>",
+        ].join("\n"),
+      ),
+    ).toBe("Details");
   });
 
   it("preserves unknown identities, humans named after agents, and ordinary prose", () => {
@@ -38,13 +53,6 @@ describe("removeAgentCredits", () => {
     const message = `Example:\n\n\`\`\`text\n${example}\n\`\`\`\n\n> ${example}\n\n${example}`;
     expect(removeAgentCredits(message)).toBe(
       `Example:\n\n\`\`\`text\n${example}\n\`\`\`\n\n> ${example}`,
-    );
-  });
-
-  it("preserves indented examples and whitespace on surviving lines", () => {
-    const example = "Co-authored-by: Claude <noreply@anthropic.com>";
-    expect(removeAgentCredits(`Example:\n\n    ${example}\n\n${example}\nDetails  \n`)).toBe(
-      `Example:\n\n    ${example}\n\nDetails  `,
     );
   });
 

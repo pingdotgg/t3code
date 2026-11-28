@@ -1,100 +1,50 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+import { expect, it, vi } from "vite-plus/test";
 
-import { deriveProjectIdentity } from "../../projectIdentity";
+import { act, render } from "../../../test/render";
 import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
-let root: Root;
-let container: HTMLDivElement;
+import "~/index.css";
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-function button(name: string) {
-  return vi.waitFor(() => {
-    const match = [...document.querySelectorAll<HTMLElement>("button, [role='radio']")].find(
-      (element) => element.getAttribute("aria-label") === name || element.textContent === name,
-    );
-    if (!match) throw new Error(`No button ${name}`);
-    return match;
-  });
-}
-
-// The modal's inert backdrop covers the unstyled popup, so Playwright pointer clicks land on it.
-async function click(name: string) {
-  const target = await button(name);
-  await act(async () => target.click());
-}
-
-async function openPicker() {
-  const onSelect = vi.fn();
+it("Escape in the icon search clears it without closing the dialog", async () => {
   const onOpenChange = vi.fn();
-  await act(async () =>
-    root.render(
-      <ProjectIconPickerDialog
-        current={null}
-        projectName="Test"
-        open
-        onOpenChange={onOpenChange}
-        onSelect={onSelect}
-      />,
-    ),
+  await using _screen = await render(
+    <ProjectIconPickerDialog
+      current={null}
+      projectName="Project"
+      open
+      onOpenChange={onOpenChange}
+      onSelect={() => {}}
+    />,
   );
-  return { onSelect, onOpenChange };
-}
-
-describe("ProjectIconPickerDialog", () => {
-  it("starts an automatic project on icons in its derived color and saves the picked icon", async () => {
-    const { onSelect, onOpenChange } = await openPicker();
-    const { color } = deriveProjectIdentity("Test");
-    expect((await button("Icons")).getAttribute("aria-pressed")).toBe("true");
-    expect(
-      document.querySelector('[aria-label="Icon color"] [aria-pressed="true"]'),
-    ).not.toBeNull();
-
-    await userEvent.fill(searchBox(), "rocket");
-    await click("Rocket");
-    await click("Save icon");
-
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: "lucide", name: "rocket", color });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("saves a monogram only once the letters are letters or numbers", async () => {
-    const { onSelect } = await openPicker();
-    await click("Monogram");
-    const letters = await vi.waitFor(() => {
-      const input = document.querySelector<HTMLInputElement>("#project-monogram");
-      if (!input) throw new Error("No monogram input");
-      return input;
+  const search = page.getByRole("searchbox", { name: "Search Lucide icons" });
+  await expect.element(search).toHaveAttribute("type", "text");
+  await userEvent.fill(search, "rocket");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    // Safari ends the composition just before the Escape keydown.
+    await act(() => {
+      search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search
+        .element()
+        .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
     });
+    await expect.element(search).toHaveValue("rocket");
+  }
 
-    await userEvent.fill(letters, "t-3");
-    await click("Save icon");
-    expect(onSelect).not.toHaveBeenCalled();
-
-    await userEvent.fill(letters, "t3");
-    await click("Save icon");
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith({
-      kind: "monogram",
-      text: "T3",
-      color: deriveProjectIdentity("Test").color,
-    });
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
+  // Holding Escape repeats the keydown, which must not also close the dialog.
+  await act(() => {
+    search
+      .element()
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }));
   });
+  expect(onOpenChange).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Escape}");
+  expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
 });
-
-function searchBox() {
-  return document.querySelector<HTMLInputElement>('input[aria-label="Search Lucide icons"]')!;
-}

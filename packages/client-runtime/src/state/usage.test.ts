@@ -1,24 +1,20 @@
 import {
   EnvironmentId,
-  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSetupError,
   UsageDay,
   USAGE_CONTRACT_VERSION,
-  type ServerProvider,
+  type UsageModelFilter,
   type UsageSummary,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import {
-  cursorKeychainAccessEnvironments,
-  needsCursorKeychainAccess,
-  refreshUsage,
-  refreshUsageLimits,
-} from "./usage.ts";
+import { refreshUsage, refreshUsageLimits, resetCreditFailureText } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -40,13 +36,13 @@ afterEach(() => {
   for (const registry of registries.splice(0)) registry.dispose();
 });
 
-function harness(ids = ["a"]) {
+function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {}) {
   const registry = AtomRegistry.make();
   registries.push(registry);
   const environments = ids.map((id) => {
     const environmentId = EnvironmentId.make(id);
     const rates = Promise.withResolvers<
-      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, unknown>
+      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, Error>
     >();
     const scan = Promise.withResolvers<UsageSummary>();
     const scanStarted = Promise.withResolvers<void>();
@@ -66,13 +62,18 @@ function harness(ids = ["a"]) {
     if (!environment) throw new Error(`Unknown environment: ${environmentId}`);
     return environment;
   }
+  const requested: { environmentId: EnvironmentId; input: UsageSummaryInput }[] = [];
   const options = {
     registry,
     environmentIds: environments.map((entry) => entry.environmentId),
     input,
     server: {
-      usageSummary: ({ environmentId }: { environmentId: EnvironmentId }) =>
-        get(environmentId).query,
+      usageSummary: (target: { environmentId: EnvironmentId; input: UsageSummaryInput }) => {
+        requested.push(target);
+        return get(target.environmentId).query;
+      },
+      usageModelFilterAtom: (environmentId: EnvironmentId) =>
+        Atom.make<UsageModelFilter | undefined>(modelFilters[environmentId]),
       refreshUsageRates: {
         label: "test:rates",
         requiredScopes: () => [],
@@ -80,14 +81,21 @@ function harness(ids = ["a"]) {
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },
-        ) => get(environmentId).rates.promise,
+        ) =>
+          Effect.promise(() => get(environmentId).rates.promise).pipe(
+            Effect.flatMap((result) =>
+              AsyncResult.isSuccess(result)
+                ? Effect.succeed(result.value)
+                : Effect.failCause(result.cause),
+            ),
+          ),
       },
     },
     presentations: {
       presentationAtom: (environmentId: EnvironmentId) => get(environmentId).presentation,
     },
   } satisfies Parameters<typeof refreshUsage>[0];
-  return { registry, environments, refresh: () => refreshUsage(options) };
+  return { registry, environments, requested, refresh: () => refreshUsage(options) };
 }
 
 describe("manual usage refresh", () => {
@@ -112,6 +120,23 @@ describe("manual usage refresh", () => {
     entry.scan.resolve(summary);
     await refreshing;
     expect(finished).toBe(true);
+  });
+
+  it("rescans each environment with its own configured model filter", async () => {
+    const modelFilter = { include: [{ provider: "claude" as const, model: "orbit-1" }] };
+    const { environments, requested, refresh } = harness(["filtered", "plain"], {
+      filtered: modelFilter,
+    });
+    const refreshing = refresh();
+    for (const entry of environments) {
+      entry.rates.resolve(AsyncResult.success(pricing));
+      entry.scan.resolve(summary);
+    }
+    await refreshing;
+    expect(requested).toEqual([
+      { environmentId: "filtered", input: { ...input, modelFilter } },
+      { environmentId: "plain", input },
+    ]);
   });
 
   it("settles when an environment disconnects during the rescan", async () => {
@@ -142,24 +167,6 @@ describe("manual usage refresh", () => {
     healthy!.scan.resolve(summary);
     await refreshing;
     expect(finished).toBe(true);
-  });
-
-  it("settles when connected state has no usable RPC session", async () => {
-    const {
-      environments: [environment],
-      refresh,
-    } = harness();
-    const entry = environment!;
-    const refreshing = refresh();
-    entry.rates.resolve(
-      AsyncResult.fail(
-        new EnvironmentRpcUnavailableError({
-          environmentId: entry.environmentId,
-          message: "No session",
-        }),
-      ),
-    );
-    await refreshing;
   });
 
   it("replaces a scan that started before pricing was refreshed", async () => {
@@ -194,132 +201,38 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
-  it("runs a fresh check after an in-flight check when settings change", async () => {
-    const id = EnvironmentId.make("limits-after-enable");
+  it("shares an in-flight check and skips duplicate automatic refreshes", async () => {
+    const id = EnvironmentId.make("limits-in-flight");
     const oldCheck = Promise.withResolvers<string>();
     const first = refreshUsageLimits(id, () => oldCheck.promise, true);
     const newCheck = vi.fn(async () => "new limits");
-    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    const manual = refreshUsageLimits(id, newCheck);
+    expect(await refreshUsageLimits(id, newCheck, true)).toBeUndefined();
     expect(newCheck).not.toHaveBeenCalled();
     oldCheck.resolve("old limits");
     expect(await first).toBe("old limits");
-    expect(await afterEnable).toBe("new limits");
-    expect(newCheck).toHaveBeenCalledTimes(1);
-  });
-
-  it("joins manual calls and gates automatic refreshes after success or failure", async () => {
-    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
-    try {
-      for (const fails of [false, true]) {
-        const id = EnvironmentId.make(`limits-${fails}`);
-        const pending = Promise.withResolvers<string>();
-        const refresh = vi.fn(() => pending.promise);
-        const first = refreshUsageLimits(id, refresh, true);
-        await refreshUsageLimits(id, refresh, true);
-        const manual = refreshUsageLimits(id, refresh);
-        const settled = vi.fn();
-        void manual.then(settled, settled);
-        expect(settled).not.toHaveBeenCalled();
-        expect(refresh).toHaveBeenCalledTimes(1);
-        if (fails) {
-          const firstFailure = expect(first).rejects.toThrow("unavailable");
-          const manualFailure = expect(manual).rejects.toThrow("unavailable");
-          pending.reject(new Error("unavailable"));
-          await Promise.all([firstFailure, manualFailure]);
-        } else {
-          pending.resolve("quota");
-          expect(await first).toBe("quota");
-          expect(await manual).toBe("quota");
-        }
-        expect(settled).toHaveBeenCalledTimes(1);
-        const next = vi.fn(async () => undefined);
-        clock.mockReturnValue(300_999);
-        await refreshUsageLimits(id, next, true);
-        expect(next).not.toHaveBeenCalled();
-        clock.mockReturnValue(301_000);
-        await refreshUsageLimits(id, next, true);
-        expect(next).toHaveBeenCalledTimes(1);
-        await refreshUsageLimits(id, next);
-        expect(next).toHaveBeenCalledTimes(2);
-        clock.mockReturnValue(1_000);
-      }
-    } finally {
-      clock.mockRestore();
-    }
+    expect(await manual).toBe("old limits");
+    expect(newCheck).not.toHaveBeenCalled();
   });
 });
 
-describe("needsCursorKeychainAccess", () => {
-  const cursorPrompt: UsageSummary = {
-    ...summary,
-    sources: [
-      {
-        fingerprint: {
-          hostId: "host",
-          provider: "cursor",
-          resolvedHomePath: "/Users/me/.cursor/auth.json",
-          volumeId: "volume",
-        },
-        status: "ok",
-        scannedFiles: 0,
-        skippedFiles: 0,
-        malformedRecords: 0,
-        distinctSessions: 0,
-        message: "Cursor account usage is off on this environment.",
-        action: "enableCursorKeychain",
-      },
-    ],
-  };
-  const cursor = (status: ServerProvider["status"]): ServerProvider => ({
-    instanceId: ProviderInstanceId.make("cursor"),
-    driver: ProviderDriverKind.make("cursor"),
-    enabled: status !== "disabled",
-    installed: status === "ready",
-    version: null,
-    status,
-    auth: { status: "unknown" },
-    checkedAt: "2026-09-05T12:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-  });
-
-  it("offers access only when Cursor is ready on that environment", () => {
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("ready")])).toBe(true);
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("error")])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("disabled")])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, [])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, null)).toBe(false);
-    expect(needsCursorKeychainAccess(summary, [cursor("ready")])).toBe(false);
-  });
-
-  it("stops offering access once any environment reads the Cursor account", () => {
-    const off = { summary: cursorPrompt, needsCursorKeychainAccess: true };
-    const account: UsageSummary = {
-      ...summary,
-      sources: [
-        {
-          fingerprint: {
-            hostId: "cursor.com",
-            provider: "cursor",
-            resolvedHomePath: "cursor-account:abc",
-            volumeId: "abc",
-          },
-          status: "ok",
-          scannedFiles: 1,
-          skippedFiles: 0,
-          malformedRecords: 0,
-          distinctSessions: 1,
-          message: null,
-        },
-      ],
-    };
-    expect(cursorKeychainAccessEnvironments([off, off])).toEqual([off, off]);
-    expect(
-      cursorKeychainAccessEnvironments([
-        off,
-        { summary: account, needsCursorKeychainAccess: false },
-      ]),
-    ).toEqual([]);
+describe("reset credit failure text", () => {
+  it("shows the server's reason, falling back only when there is none", () => {
+    const refused = new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("claude"),
+      operation: "consume-reset-credit",
+      detail: "This provider is disabled.",
+    });
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.fail(refused)))).toBe(
+      "This provider is disabled.",
+    );
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.die("Socket closed")))).toBe(
+      "Socket closed",
+    );
+    for (const cause of [Cause.fail({}), Cause.interrupt()]) {
+      expect(resetCreditFailureText(AsyncResult.failure(cause))).toBe(
+        "Could not use the reset credit.",
+      );
+    }
   });
 });

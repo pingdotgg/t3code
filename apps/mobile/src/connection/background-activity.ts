@@ -24,16 +24,21 @@ import {
 } from "./background-activity-scopes";
 
 const REPORT_INTERVAL_MS = 25_000;
+// Shorter than the interval, so a report that never settles cannot hold up the next one.
+const REPORT_TIMEOUT_MS = 15_000;
 const LEASE_TTL_MS = 45_000;
 const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
 
-// `AppState.currentState` is a loosely typed string that can be unset before
-// the first change event; anything outside the known states reports as unknown.
 function normalizeAppState(
   state: string | null | undefined,
 ): NonNullable<ClientActivityReportInput["appState"]> {
   if (state === "active" || state === "inactive" || state === "background") return state;
   return "unknown";
+}
+
+// Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
+function isForeground(state: string | null | undefined): boolean {
+  return state === "active" || state === "inactive";
 }
 
 export const layerObserver = Layer.succeed(
@@ -57,7 +62,7 @@ export const layerReporter = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
-      const active = appState === "active";
+      const foreground = isForeground(appState);
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -69,9 +74,9 @@ export const layerReporter = Layer.effectDiscard(
                 environmentId: environmentId as EnvironmentId,
                 clientId,
                 clientKind: "mobile",
-                visible: active,
-                focused: active,
-                recentlyInteracted: active,
+                visible: foreground,
+                focused: foreground,
+                recentlyInteracted: foreground,
                 appState: normalizeAppState(appState),
                 scopes: [
                   ...BASELINE_SCOPES,
@@ -81,7 +86,10 @@ export const layerReporter = Layer.effectDiscard(
                 observedAt: DateTime.makeUnsafe(observedAtMs),
               }),
             )
-            .pipe(Effect.ignore),
+            // Not `ignore`: tearing down an environment mid-request interrupts its report,
+            // and an interrupt leaking out here would end the reporting loop for good.
+            // The timeout covers a live connection that never answers, which would stall it.
+            .pipe(Effect.timeout(`${REPORT_TIMEOUT_MS} millis`), Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("mobile.backgroundActivity.report"));
@@ -90,8 +98,9 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
+          const changed = isForeground(appState) !== isForeground(nextState);
           appState = nextState;
-          requestReport();
+          if (changed) requestReport();
         });
         return { removeScopeListener, subscription };
       }),
@@ -110,9 +119,8 @@ export const layerReporter = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
-      Effect.forkScoped,
-    );
+    yield* Effect.sync(() => {
+      if (isForeground(appState)) requestReport();
+    }).pipe(Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)), Effect.forkScoped);
   }),
 );

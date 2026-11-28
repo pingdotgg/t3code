@@ -1,3 +1,4 @@
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -13,6 +14,7 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
@@ -21,6 +23,8 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  /** Set when a cross-repository MR names its source project only by id. */
+  readonly unresolvedSourceProjectId?: number;
 }
 
 const GitLabProjectReferenceSchema = Schema.Struct({
@@ -43,6 +47,7 @@ const GitLabMergeRequestSchema = Schema.Struct({
   web_url: TrimmedNonEmptyString,
   source_branch: TrimmedNonEmptyString,
   target_branch: TrimmedNonEmptyString,
+  sha: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
@@ -54,11 +59,6 @@ const GitLabMergeRequestSchema = Schema.Struct({
   source_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   target_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function normalizeGitLabMergeRequestState(
   state: string | null | undefined,
@@ -107,6 +107,7 @@ function normalizeGitLabMergeRequestRecord(
         ? sourceProjectPath.toLowerCase() !== targetProjectPath.toLowerCase()
         : undefined;
   const headRepositoryOwnerLogin = ownerLoginFromPathWithNamespace(sourceProjectPath);
+  const headSha = trimOptionalString(raw.sha);
 
   return {
     number: raw.iid,
@@ -114,12 +115,31 @@ function normalizeGitLabMergeRequestRecord(
     url: raw.web_url,
     baseRefName: raw.target_branch,
     headRefName: raw.source_branch,
+    ...(headSha ? { headSha } : {}),
     state: normalizeGitLabMergeRequestState(raw.state),
     ...(raw.draft === true || raw.work_in_progress === true ? { isDraft: true } : {}),
     closedAt: raw.closed_at ?? null,
     mergedAt: raw.merged_at ?? null,
     updatedAt: raw.updated_at ?? Option.none(),
     ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
+    ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
+    ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(isCrossRepository === true &&
+    !sourceProjectPath &&
+    typeof raw.source_project_id === "number"
+      ? { unresolvedSourceProjectId: raw.source_project_id }
+      : {}),
+  };
+}
+
+export function withSourceProjectPath(
+  record: NormalizedGitLabMergeRequestRecord,
+  sourceProjectPath: string | null,
+): NormalizedGitLabMergeRequestRecord {
+  const { unresolvedSourceProjectId: _, ...resolved } = record;
+  const headRepositoryOwnerLogin = ownerLoginFromPathWithNamespace(sourceProjectPath);
+  return {
+    ...resolved,
     ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
   };

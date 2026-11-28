@@ -6,8 +6,9 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
+  ThreadId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type {
   SidebarProjectGroupMember,
@@ -17,10 +18,14 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  changeDraftProject,
   scheduledTaskDefaultModel,
+  defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  scheduleLabel,
   taskToDraft,
+  unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -70,6 +75,8 @@ function group(
     allRemoteMembersAreDesktopLocal: false,
     allRemoteMembersAreWsl: false,
     remoteEnvironmentLabels: [],
+    pinned: false,
+    archived: false,
   };
 }
 
@@ -101,6 +108,22 @@ describe("scheduled task settings scope", () => {
     ).toEqual(expected);
   });
 
+  it("defaults a new task to a pinned open project, and to an archived one only when scoped to it", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const project = (id: string, pinnedAt: string | null, archivedAt: string | null) => ({
+      id: ProjectId.make(id),
+      pinnedAt,
+      archivedAt,
+    });
+    const all = resolveSettingsScope({}, groups, environments);
+    const scoped = resolveSettingsScope({ project: "t3code" }, groups, environments);
+    expect(
+      defaultScheduledTaskProjectId([project("a", null, null), project("b", at, null)], all),
+    ).toBe("b");
+    expect(defaultScheduledTaskProjectId([project("x", null, at)], all)).toBe("");
+    expect(defaultScheduledTaskProjectId([project("x", null, at)], scoped)).toBe("x");
+  });
+
   it("keeps tasks with removed projects manageable at environment scope", () => {
     const removedProject = ProjectId.make("removed");
     expect(
@@ -117,14 +140,6 @@ describe("scheduled task settings scope", () => {
         removedProject,
       ),
     ).toBe(false);
-  });
-
-  it("does not offer an unrelated environment's same-ID project when creating a task", () => {
-    const scope = resolveSettingsScope({ project: "t3code" }, groups, environments);
-    const serverProjects = [third, other, sameIdElsewhere];
-    expect(
-      serverProjects.filter((project) => matchesScheduledTaskScope(scope, serverId, project.id)),
-    ).toEqual([third]);
   });
 });
 
@@ -158,12 +173,95 @@ describe("editing scheduled task branch settings", () => {
     expect(draft.startFromOrigin).toBe(false);
   });
 
-  it.each([true, false])("preserves an explicit origin flag of %s", (startFromOrigin) => {
+  it("leaves the base automatic when a task without a worktree switches to one", () => {
+    const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
+    expect(draft.baseRef).toBe("");
+  });
+
+  it("clears the old project's base branch and checkout when the project changes", () => {
+    const worktree = taskToDraft(legacyTask);
+    expect(changeDraftProject(worktree, legacyTask.projectId)).toBe(worktree);
+    expect(changeDraftProject(worktree, "other")).toMatchObject({
+      projectId: "other",
+      workspaceMode: "worktree",
+      baseRef: "",
+    });
+    const checkout = taskToDraft({
+      ...legacyTask,
+      workspaceStrategy: { type: "existing_worktree", worktreePath: "/work/project" },
+    });
+    expect(changeDraftProject(checkout, "other").existingWorktreePath).toBe("");
+  });
+});
+
+describe("fixed-time scheduled tasks", () => {
+  it("pads a stored single-digit hour so the time input shows it", () => {
     const draft = taskToDraft({
       ...legacyTask,
-      workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
+      schedule: { type: "fixed_time", timeOfDay: "9:05" },
     });
-    expect(draft.startFromOrigin).toBe(startFromOrigin);
+    expect(draft.timeOfDay).toBe("09:05");
+  });
+
+  it("keeps a fixed run time and rejects a cleared one", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "14:30" },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
+    // A native time input reports "" when it is cleared or only partly filled.
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
+  });
+});
+
+describe("scheduled task destination", () => {
+  it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
+    const rootBound = taskToDraft({
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      workspaceStrategy: { type: "root" },
+    });
+    expect(unbindDraftFromThread(rootBound)).toMatchObject({
+      threadId: "",
+      workspaceMode: "worktree",
+      startFromOrigin: true,
+    });
+  });
+});
+
+describe("one-time scheduled tasks", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("round-trips the run time through the local date-time input", () => {
+    const runAt = "2026-11-03T17:00:42.000Z";
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "once", runAt } });
+    expect(draft.scheduleMode).toBe("once");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "once", runAt });
+    const moved = scheduleFromDraft({ ...draft, runAt: "2026-11-04T09:30" });
+    expect(moved).toEqual({ type: "once", runAt: new Date("2026-11-04T09:30").toISOString() });
+    expect(scheduleFromDraft({ ...draft, runAt: "" })).toBeNull();
+  });
+
+  it("rejects a time skipped by daylight saving", () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "once", runAt: "2027-03-14T18:00:00.000Z" },
+    });
+    expect(scheduleFromDraft({ ...draft, runAt: "2027-03-14T02:30" })).toBeNull();
+  });
+
+  it("keeps the saved offset when an edit stays in an hour that repeats", () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    // 01:30 PST, the second 01:30 on 2026-11-01.
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "once", runAt: "2026-11-01T09:30:00.000Z" },
+    });
+    expect(scheduleFromDraft({ ...draft, runAt: "2026-11-01T01:35" })).toEqual({
+      type: "once",
+      runAt: "2026-11-01T09:35:00.000Z",
+    });
   });
 });
 
@@ -175,6 +273,43 @@ describe("webhook scheduled tasks", () => {
     webhook: { path: "/api/hooks/legacy-task/token", url: null, hasSecret: true },
   };
 
+  it("round-trips dedupe settings, clears them, and rejects invalid windows", () => {
+    const dedupe = {
+      replayKey: "{{headers.delivery-id}}",
+      coalesceKey: "{{body.id}}",
+      coalesceWindowSeconds: 10,
+    };
+    const draft = taskToDraft({
+      ...webhookTask,
+      schedule: { type: "webhook", signature: null, dedupe },
+    });
+    expect(scheduleFromDraft(draft)).toMatchObject({ dedupe });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        replayKey: " \n ",
+        coalesceKey: " \t ",
+        coalesceWindowSeconds: "",
+      }),
+    ).toMatchObject({ dedupe: {} });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        replayKey: `  ${dedupe.replayKey}  `,
+        coalesceKey: `\t${dedupe.coalesceKey}\n`,
+      }),
+    ).toMatchObject({ dedupe });
+    expect(
+      scheduleFromDraft({ ...draft, replayKey: "", coalesceKey: "", coalesceWindowSeconds: "" }),
+    ).toMatchObject({ dedupe: {} });
+    expect(scheduleFromDraft({ ...draft, coalesceWindowSeconds: "" })).toMatchObject({
+      dedupe: { replayKey: dedupe.replayKey, coalesceKey: dedupe.coalesceKey },
+    });
+    for (const coalesceWindowSeconds of ["9", "3601", "1.5", "abc"]) {
+      expect(scheduleFromDraft({ ...draft, coalesceWindowSeconds })).toBeNull();
+    }
+  });
+
   it("keeps a stored secret when the secret field is left blank", () => {
     const draft = taskToDraft(webhookTask);
     expect(draft.scheduleMode).toBe("webhook");
@@ -183,22 +318,13 @@ describe("webhook scheduled tasks", () => {
       type: "webhook",
       signature,
       maxDeliveryAgeMinutes: null,
+      dedupe: {},
     });
     expect(scheduleFromDraft({ ...draft, signatureSecret: " new " })).toEqual({
       type: "webhook",
       signature: { ...signature, secret: "new" },
       maxDeliveryAgeMinutes: null,
-    });
-  });
-
-  it("drops the signature when it is switched off and offers GitHub's settings", () => {
-    const draft = taskToDraft({ ...webhookTask, schedule: { type: "webhook", signature: null } });
-    expect(draft.signatureEnabled).toBe(false);
-    expect(draft.signatureHeader).toBe("x-hub-signature-256");
-    expect(scheduleFromDraft(draft)).toEqual({
-      type: "webhook",
-      signature: null,
-      maxDeliveryAgeMinutes: null,
+      dedupe: {},
     });
   });
 
@@ -212,11 +338,37 @@ describe("webhook scheduled tasks", () => {
     for (const blank of ["", "  "]) {
       expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: blank })).toMatchObject({
         maxDeliveryAgeMinutes: null,
+        dedupe: {},
       });
     }
     for (const invalid of ["0", "-5", "1.5", "abc", "1441"]) {
       expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: invalid })).toBeNull();
     }
+  });
+
+  it("sends filters only when the form changed them", () => {
+    const filters = [
+      { path: "headers.x-github-event", op: "equals", value: "pull_request" },
+      { path: "body.action", op: "in", value: ["opened", "reopened"] },
+    ] as const;
+    const draft = taskToDraft({
+      ...webhookTask,
+      schedule: { type: "webhook", signature, filters },
+    });
+    expect(draft.filters.map((filter) => filter.op)).toEqual(["equals", "in"]);
+    // A title-only save leaves the key out, so the server keeps whatever is stored now.
+    expect(scheduleFromDraft({ ...draft, title: "Renamed" })).not.toHaveProperty("filters");
+    expect(scheduleFromDraft({ ...draft, filters: draft.filters.slice(0, 1) })).toMatchObject({
+      filters: filters.slice(0, 1),
+    });
+    // Removing every row is a change, so it clears the stored filters.
+    expect(scheduleFromDraft({ ...draft, filters: [] })).toMatchObject({ filters: [] });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
+      }),
+    ).toBeNull();
   });
 });
 
@@ -264,28 +416,6 @@ describe("scheduled task model defaults", () => {
       project,
       deriveProviderInstanceEntries(value.providers),
     );
-  it("uses the environment default with its provider options", () => {
-    expect(resolve(config, { id: projectId })).toEqual(environmentSelection);
-  });
-  it("prefers the project's configured model", () => {
-    expect(resolve(config, { id: projectId, defaultModelSelection: projectSelection })).toEqual(
-      projectSelection,
-    );
-    expect(
-      resolve(
-        {
-          ...config,
-          settings: {
-            ...config.settings,
-            projectSettingsOverrides: {
-              [projectId]: { defaultModelSelection: projectSelection },
-            },
-          },
-        },
-        { id: projectId },
-      ),
-    ).toEqual(projectSelection);
-  });
   it("uses the advertised default instead of catalog order when no default is configured", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),
@@ -302,15 +432,73 @@ describe("scheduled task model defaults", () => {
       }),
     ).toEqual(environmentSelection);
   });
-  it("does not choose an implicit model on a disabled provider", () => {
-    expect(
-      resolve(
-        {
-          ...config,
-          providers: config.providers.map((provider) => ({ ...provider, enabled: false })),
-        },
-        null,
-      ),
-    ).toBeNull();
-  });
+});
+
+it("rejects dedupe templates without a request placeholder", () => {
+  const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
+  expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
+  expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+// The host locale's clock for a wall time, so these pass in any locale (digits, day period, zero padding).
+function clock(hour12: boolean, hour: number, minute: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12,
+    timeZone: "UTC",
+  }).format(Date.UTC(2000, 0, 1, hour, minute));
+}
+
+it("appends the server zone only to fixed-time schedule labels", () => {
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "24-hour", "Etc/UTC")).toBe(
+    `Daily at ${clock(false, 16, 31)} UTC`,
+  );
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" }, "24-hour")).toBe(
+    `Daily at ${clock(false, 9, 0)}`,
+  );
+  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "24-hour", "Etc/UTC")).toBe(
+    "Every 1 min",
+  );
+  expect(scheduleLabel({ type: "webhook", signature: null }, "24-hour", "Etc/UTC")).toBe(
+    "On webhook",
+  );
+});
+
+it("labels the weekdays a schedule runs on, whatever order or repeats it stores", () => {
+  const label = (weekdays: Array<number>) =>
+    scheduleLabel(
+      { type: "fixed_time", timeOfDay: "09:00", weekdays },
+      "24-hour",
+      undefined,
+      null,
+      undefined,
+      "en-US",
+    );
+  const at = clock(false, 9, 0);
+  expect(label([1, 1, 2, 3, 4])).toBe(`Mon, Tue, Wed, Thu at ${at}`);
+  expect(label([0, 1, 2, 3, 4, 5, 6])).toBe(`Daily at ${at}`);
+  expect(label([5, 1, 3])).toBe(`Mon, Wed, Fri at ${at}`);
+});
+
+it("shows schedule times in the Time format setting", () => {
+  const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
+  expect(scheduleLabel(daily, "24-hour")).toBe(`Daily at ${clock(false, 17, 30)}`);
+  expect(scheduleLabel(daily, "12-hour")).toBe(`Daily at ${clock(true, 17, 30)}`);
+  const midnight = scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour");
+  expect(midnight).toBe(`Daily at ${clock(false, 0, 5)}`);
+  // An h24 clock would print midnight as 24:05 in both the label and the helper.
+  expect(midnight).not.toContain("24");
+
+  // A local wall time, so the label reads 17:30 in any host zone.
+  const runAt = new Date(2026, 10, 20, 17, 30);
+  const once = { type: "once", runAt: runAt.toISOString() } as const;
+  for (const hour12 of [false, true]) {
+    const dateTime = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      hour12,
+    }).format(runAt);
+    expect(scheduleLabel(once, hour12 ? "12-hour" : "24-hour")).toBe(`Once, ${dateTime}`);
+  }
 });

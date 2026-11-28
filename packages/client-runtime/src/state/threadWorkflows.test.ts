@@ -2,10 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
-  canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  getUserQueuedThreadRuns,
   resolveLatestMergeBackRun,
+  threadCanSteer,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
 
@@ -13,6 +14,7 @@ const capabilities = (input?: {
   readonly queued?: boolean;
   readonly steer?: boolean;
   readonly restartSteer?: boolean;
+  readonly interrupt?: boolean;
   readonly nativeFork?: boolean;
   readonly portableFork?: boolean;
 }) =>
@@ -21,6 +23,7 @@ const capabilities = (input?: {
       supportsQueuedMessages: input?.queued ?? false,
       supportsActiveSteering: input?.steer ?? false,
       supportsSteeringByInterruptRestart: input?.restartSteer ?? false,
+      supportsInterrupt: input?.interrupt ?? false,
     },
     threads: {
       canForkThread: input?.nativeFork ?? false,
@@ -31,6 +34,58 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it.each([
+    ["queue only", { queued: true }, false, false, false],
+    ["session still attaching", undefined, false, false, true],
+    ["native steering", { steer: true }, false, false, true],
+    ["interrupt and restart", { interrupt: true, restartSteer: true }, false, false, true],
+    ["restart without interrupt", { restartSteer: true }, false, false, false],
+    ["explicit compaction", { steer: true }, true, false, false],
+    ["a run Stop has reached", { steer: true }, false, true, false],
+  ] as const)(
+    "gates composer steering for %s",
+    (_, turns, compactCommandIsActive, stopRequested, expected) => {
+      const projection = {
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [{ id: "active", status: "running", providerThreadId: "provider-thread" }],
+        providerThreads: [{ id: "provider-thread", providerSessionId: "session" }],
+        providerSessions: [
+          ...(turns === undefined
+            ? []
+            : [{ id: "session", status: "running", capabilities: capabilities(turns) }]),
+          { id: "other", status: "ready", capabilities: capabilities({ steer: true }) },
+        ],
+        messages: [],
+        turnItems: stopRequested ? [{ runId: "active", type: "run_interrupt_request" }] : [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      expect(
+        threadCanSteer(projection, {
+          compactCommandIsActive,
+          compactionRunning: false,
+          activeRunId: projection.runs[0]!.id,
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it("skips message history classification when no runs are queued", () => {
+    let metadataReads = 0;
+    const message = {
+      id: "message",
+      get delegatedCompletion() {
+        metadataReads++;
+        return undefined;
+      },
+    };
+    const projection = {
+      runs: [{ id: "active", status: "running", userMessageId: "message", ordinal: 1 }],
+      messages: [message],
+    } as never;
+
+    expect(getUserQueuedThreadRuns(projection)).toEqual([]);
+    expect(metadataReads).toBe(0);
+  });
+
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {
@@ -63,10 +118,11 @@ describe("thread workflows", () => {
         ...projection,
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
   });
 
-  it("sorts queued messages and gates reorder and promotion from capabilities", () => {
+  it("sorts queued messages and gates promotion from capabilities", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
       runs: [
@@ -120,7 +176,7 @@ describe("thread workflows", () => {
         {
           id: "provider-session",
           status: "running",
-          capabilities: capabilities({ queued: true, restartSteer: true }),
+          capabilities: capabilities({ queued: true, interrupt: true, restartSteer: true }),
         },
       ],
     } as never);
@@ -134,8 +190,65 @@ describe("thread workflows", () => {
       [],
     ]);
     expect(state.activeRun?.id).toBe("active");
-    expect(state.canReorder).toBe(true);
     expect(state.canPromoteToSteer).toBe(true);
+    expect(state.canSendNow).toBe(false);
+  });
+
+  it.each(["completed", "interrupted", "cancelled", "failed"])(
+    "allows sending a held message after a %s turn without a live session",
+    (status) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [
+          { id: "previous", status, ordinal: 1 },
+          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2, queueHeld: true },
+        ],
+        messages: [{ id: "message", text: "Send this" }],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as never);
+
+      expect(state.canSendNow).toBe(true);
+      expect(state.canPromoteToSteer).toBe(false);
+      expect(state.isHeld).toBe(true);
+    },
+  );
+
+  it.each(["preparing", "starting", "running", "waiting"])(
+    "does not offer send now while a turn is %s",
+    (status) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [{ id: "active", status, ordinal: 1 }],
+        messages: [],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as never);
+
+      expect(state.canSendNow).toBe(false);
+    },
+  );
+
+  it("offers to skip a running compaction even when the provider cannot steer", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        { id: "compact", status: "running", userMessageId: "message-compact", ordinal: 1 },
+        { id: "queued", status: "queued", userMessageId: "message-queued", ordinal: 2 },
+      ],
+      messages: [
+        { id: "message-compact", role: "user", text: "/compact", attachments: [] },
+        { id: "message-queued", role: "user", text: "Next", attachments: [] },
+      ],
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.canPromoteToSteer).toBe(true);
+    expect(state.promoteSkipsCompaction).toBe(true);
   });
 
   it("keeps held messages visible and clears the hold when they leave the queue", () => {
@@ -249,7 +362,7 @@ describe("thread workflows", () => {
   });
 
   it.each(["preparing", "starting", "waiting"] as const)(
-    "does not promote queued work into a %s run",
+    "defers steering during setup and blocks it while waiting (%s)",
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: "provider-thread" },
@@ -287,76 +400,9 @@ describe("thread workflows", () => {
         ],
       } as never);
 
-      expect(state.canPromoteToSteer).toBe(false);
+      expect(state.canPromoteToSteer).toBe(status !== "waiting");
     },
   );
-
-  it("does not promote queued work until the running provider turn is projected", () => {
-    const state = deriveThreadQueueWorkflowState({
-      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
-      runs: [
-        {
-          id: "active",
-          status: "running",
-          providerThreadId: "provider-thread",
-          activeAttemptId: "attempt-active",
-          ordinal: 1,
-        },
-        { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
-      ],
-      messages: [{ id: "message", text: "Queued" }],
-      providerTurns: [],
-      providerThreads: [
-        {
-          id: "provider-thread",
-          appThreadId: "thread",
-          providerSessionId: "provider-session",
-        },
-      ],
-      providerSessions: [
-        {
-          id: "provider-session",
-          status: "running",
-          capabilities: capabilities({ queued: true, steer: true }),
-        },
-      ],
-    } as never);
-
-    expect(state.canPromoteToSteer).toBe(false);
-  });
-
-  it("does not expose known unsupported queue or fork actions", () => {
-    const projection = {
-      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
-      runs: [{ id: "queued", status: "queued", userMessageId: "message", ordinal: 1 }],
-      messages: [],
-      providerThreads: [
-        {
-          id: "provider-thread",
-          appThreadId: "thread",
-          providerSessionId: "provider-session",
-        },
-      ],
-      providerSessions: [
-        {
-          id: "provider-session",
-          status: "ready",
-          capabilities: capabilities(),
-        },
-      ],
-    } as never;
-    const queue = deriveThreadQueueWorkflowState(projection);
-    const projectedItem = {
-      item: { type: "assistant_message", runId: "run", status: "completed" },
-    } as never;
-
-    expect(queue.canReorder).toBe(false);
-    expect(queue.canPromoteToSteer).toBe(false);
-    expect(canForkProjectedAssistantItem({ projectedItem, capabilities: capabilities() })).toBe(
-      false,
-    );
-    expect(canDetachThreadProviderSession(projection)).toBe(true);
-  });
 
   it("allows native, portable, and capability-unknown exact-run forks", () => {
     const projectedItem = {
@@ -391,17 +437,6 @@ describe("thread workflows", () => {
         { id: "newest-queued", status: "queued", ordinal: 3 },
         { id: "older-completed", status: "completed", ordinal: 1 },
         { id: "newest-finished", status: "waiting", ordinal: 2 },
-      ],
-    } as never;
-
-    expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
-  });
-
-  it("does not let a stale completed run later in storage order hide the waiting checkpoint", () => {
-    const projection = {
-      runs: [
-        { id: "newest-finished", status: "waiting", ordinal: 2 },
-        { id: "older-completed", status: "completed", ordinal: 1 },
       ],
     } as never;
 

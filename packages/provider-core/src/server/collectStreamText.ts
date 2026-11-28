@@ -22,13 +22,13 @@ interface CollectState {
   readonly truncated: boolean;
 }
 
-export const collectUint8StreamText = <E>(input: {
+interface CollectUint8StreamInput<E> {
   readonly stream: Stream.Stream<Uint8Array, E>;
   readonly maxBytes?: number | undefined;
-  readonly truncatedMarker?: string | null | undefined;
-}): Effect.Effect<CollectedUint8StreamText, E> => {
+}
+
+export const collectUint8StreamChunks = <E>(input: CollectUint8StreamInput<E>) => {
   const maxBytes = input.maxBytes ?? Number.POSITIVE_INFINITY;
-  const truncatedMarker = input.truncatedMarker ?? "";
 
   return input.stream.pipe(
     Stream.runFold(
@@ -38,10 +38,7 @@ export const collectUint8StreamText = <E>(input: {
         truncated: false,
       }),
       (state, chunk): CollectState => {
-        /*
-         * keep draining after truncation so the child process can exit normally.
-         * its a know issue that on windows killing after the output cap can force an expensive taskkill operation and hurt performance
-         */
+        // Keep draining after truncation; killing a child on Windows can invoke expensive taskkill.
         if (state.truncated) {
           return state;
         }
@@ -67,17 +64,21 @@ export const collectUint8StreamText = <E>(input: {
         };
       },
     ),
-    Effect.map((state): CollectedUint8StreamText => {
-      const decoded = decodeUtf8(Buffer.concat(state.chunks, state.bytes));
+  );
+};
+
+export const collectUint8StreamText = <E>(
+  input: CollectUint8StreamInput<E> & { readonly truncatedMarker?: string | null | undefined },
+): Effect.Effect<CollectedUint8StreamText, E> =>
+  collectUint8StreamChunks(input).pipe(
+    Effect.map(({ chunks, bytes, truncated }) => {
+      const decoded = decodeUtf8(Buffer.concat(chunks, bytes));
+      const marker = input.truncatedMarker ?? "";
       return {
-        text:
-          state.truncated && truncatedMarker.length > 0
-            ? `${decoded.text}${truncatedMarker}`
-            : decoded.text,
-        bytes: state.bytes,
-        truncated: state.truncated,
+        text: truncated ? decoded.text + marker : decoded.text,
+        bytes,
+        truncated,
         invalidUtf8: decoded.invalidUtf8,
       };
     }),
   );
-};

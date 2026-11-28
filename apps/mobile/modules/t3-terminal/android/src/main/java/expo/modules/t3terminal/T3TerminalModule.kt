@@ -11,9 +11,17 @@ class T3TerminalModule : Module() {
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants(
       "hardwareKeyRevision" to 2,
+      "outputRevision" to 1,
     )
 
     View(T3TerminalView::class) {
+      AsyncFunction("writeOutput") { view: T3TerminalView, data: String, reset: Boolean ->
+        view.writeOutput(data, reset)
+      }
+
+      // The Android input field already clears after every change.
+      AsyncFunction("resetInput") { _: T3TerminalView -> }
+
       Prop("terminalKey") { view: T3TerminalView, terminalKey: String ->
         view.terminalKey = terminalKey
       }
@@ -24,6 +32,10 @@ class T3TerminalModule : Module() {
 
       Prop("fontSize") { view: T3TerminalView, fontSize: Double ->
         view.fontSize = fontSize.toFloat()
+      }
+
+      Prop("fontFamily") { view: T3TerminalView, fontFamily: String ->
+        view.fontFamily = fontFamily
       }
 
       Prop("focusRequest") { view: T3TerminalView, focusRequest: Double ->
@@ -61,7 +73,15 @@ class T3TerminalModule : Module() {
       Prop("captureRequest") { view: T3TerminalView, request: Double ->
         view.captureRequest = request
       }
+
+      Prop("sharedGrid") { view: T3TerminalView, sharedGrid: List<Int> ->
+        view.sharedGrid = sharedGrid
+      }
       Events("onInput", "onResize", "onCapture")
+
+      OnViewDidUpdateProps { view: T3TerminalView ->
+        view.applyPendingBuffer()
+      }
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()

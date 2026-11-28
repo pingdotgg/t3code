@@ -1,42 +1,21 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 import {
   createMobileThemeRuntimeOperations,
-  getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
 } from "./mobileThemeRuntime";
 
 const initialState: MobileThemeRuntimeState = {
   baseFontSize: 16,
+  fontId: "dm-sans",
+  monoFontId: "system",
   themeAppearance: "light",
   themeMode: "system",
 };
 
 describe("mobileThemeRuntime", () => {
-  it("keeps the default palette on Uniwind's built-in appearance themes", () => {
-    expect(getMobileUniwindThemeName("t3-code", "light")).toBe("light");
-    expect(getMobileUniwindThemeName("t3-code", "dark")).toBe("dark");
-  });
-
-  it("maps custom palettes and appearances to registered themes", () => {
-    expect(getMobileUniwindThemeName("t3-chat", "dark")).toBe("t3-chat-dark");
-  });
-
-  it("hydrates text variables and clears the native appearance override", () => {
-    const operations = createMobileThemeRuntimeOperations(null, initialState);
-    const variableOperations = operations.filter(
-      (operation) => operation.kind === "update-text-variables",
-    );
-
-    expect(variableOperations).toHaveLength(12);
-    expect(variableOperations.at(-1)?.themeName).toBe("iris-dark");
-    expect(operations.at(-1)).toEqual({
-      kind: "set-appearance-mode",
-      appearance: "light",
-      themeMode: "system",
-    });
-  });
-
   it("lets system appearance changes flow through the root ScopedTheme only", () => {
     const operations = createMobileThemeRuntimeOperations(initialState, {
       ...initialState,
@@ -46,37 +25,27 @@ describe("mobileThemeRuntime", () => {
     expect(operations).toEqual([]);
   });
 
-  it("updates native appearance once when the selected mode changes", () => {
+  it("swaps the font family variables when the font changes", () => {
     const operations = createMobileThemeRuntimeOperations(initialState, {
       ...initialState,
-      themeAppearance: "dark",
-      themeMode: "dark",
+      fontId: "system",
     });
 
-    expect(operations).toEqual([
-      {
-        kind: "set-appearance-mode",
-        appearance: "dark",
-        themeMode: "dark",
-      },
-    ]);
-  });
-
-  it("updates text variables for every theme without switching palettes", () => {
-    const operations = createMobileThemeRuntimeOperations(initialState, {
-      ...initialState,
-      baseFontSize: 18,
-    });
-
-    expect(operations).toHaveLength(12);
-    expect(operations.every((operation) => operation.kind === "update-text-variables")).toBe(true);
-    expect(operations.at(-1)).toMatchObject({
+    expect(operations[0]).toMatchObject({
       kind: "update-text-variables",
-      themeName: "iris-dark",
+      variables: { "--font-sans": "System", "--font-medium": "System", "--font-bold": "System" },
     });
   });
 
-  it("does no native work when persistence echoes an already-applied state", () => {
-    expect(createMobileThemeRuntimeOperations(initialState, initialState)).toEqual([]);
+  it("swaps the mono family variable when the mono font changes", () => {
+    const operations = createMobileThemeRuntimeOperations(initialState, {
+      ...initialState,
+      monoFontId: "meslo",
+    });
+
+    expect(operations[0]).toMatchObject({
+      kind: "update-text-variables",
+      variables: { "--font-mono": "MesloLGS-NF-Regular" },
+    });
   });
 });

@@ -1,10 +1,4 @@
-/**
- * serve-sim's preview drives its "Simulator" panel by sending shell commands over a token-gated
- * socket. Proxying that would hand any environment session arbitrary command execution on the
- * host, so T3 runs the same underlying commands itself, typed per action: `xcrun simctl ui` and
- * `simctl privacy` for iOS, the `serve-sim-ax-settings` helper that serve-sim bundles for the
- * accessibility toggles, and `adb shell` for Android.
- */
+// serve-sim's preview socket accepts shell commands; use typed actions to avoid arbitrary host execution.
 import {
   type DeviceActionInput,
   type DeviceActionType,
@@ -17,6 +11,7 @@ import {
   type DeviceTextSize,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { DeviceHostReady } from "./DeviceHost.ts";
@@ -67,7 +62,7 @@ const IOS_TOGGLES = new Set([
 ]);
 const ANDROID_TOGGLES = new Set(["reduceMotion", "networkEnabled"]);
 
-export const supportsAction = (platform: DevicePlatform, input: DeviceActionInput): boolean => {
+const supportsAction = (platform: DevicePlatform, input: DeviceActionInput): boolean => {
   const actions = platform === "ios" ? IOS_ACTIONS : ANDROID_ACTIONS;
   if (!actions.has(input.type)) return false;
   if (input.type === "setToggle") {
@@ -107,10 +102,8 @@ const textSizeFromIos = (category: string): DeviceTextSize | undefined => {
   );
   if (entry) return entry[0];
   if (category.startsWith("accessibility")) return "extra-large";
-  if (category.includes("extra")) return "large";
-  return category === "extra-small" || category === "small" || category === "medium"
-    ? "small"
-    : "default";
+  if (category === "extra-small" || category === "small" || category === "medium") return "small";
+  return category.includes("extra") ? "large" : "default";
 };
 
 const textSizeFromAndroid = (scale: number): DeviceTextSize => {
@@ -154,6 +147,9 @@ const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
   motion: ["android.permission.ACTIVITY_RECOGNITION"],
 };
 
+// Android numbers rotations from the display's natural orientation and the emulator's accelerometer
+// reports gravity in that same frame, so both tables are keyed by the orientation a portrait-native
+// device shows at each rotation.
 const ANDROID_GRAVITY: Record<DeviceOrientation, string> = {
   portrait: "0:9.81:0",
   landscape_left: "9.81:0:0",
@@ -165,6 +161,21 @@ const ANDROID_ROTATION: Record<DeviceOrientation, string> = {
   landscape_left: "1",
   portrait_upside_down: "2",
   landscape_right: "3",
+};
+// A landscape-native tablet sits a quarter turn further along that sequence: its portrait is
+// rotation 3 and its landscape is rotation 0.
+const ANDROID_LANDSCAPE_NATIVE_ROTATION: Record<DeviceOrientation, DeviceOrientation> = {
+  portrait: "landscape_right",
+  landscape_left: "portrait",
+  portrait_upside_down: "landscape_left",
+  landscape_right: "portrait_upside_down",
+};
+
+// `wm size` reports the natural-orientation size; an `Override size:` line is what the window
+// manager uses and is printed after `Physical size:`.
+const isLandscapeNative = (wmSize: string | undefined) => {
+  const size = wmSize ? [...wmSize.matchAll(/size: (\d+)x(\d+)/g)].at(-1) : undefined;
+  return size !== undefined && Number(size[1]) > Number(size[2]);
 };
 
 export const runDeviceAction = Effect.fn("DeviceActions.run")(function* (
@@ -188,20 +199,23 @@ const simctl = (run: Runner, udid: string, args: ReadonlyArray<string>, operatio
     Effect.flatMap(ok(operation)),
   );
 
-const axSettings = (ready: DeviceHostReady, udid: string, args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const helper = ready.helpers.serveSimAxSettings;
-    if (!helper) {
-      return yield* new DeviceActionUnavailableError({
-        operation: "accessibility",
-        platform: "ios",
-        reason: "helper_missing",
-      });
-    }
-    return yield* ready
-      .run("xcrun", ["simctl", "spawn", udid, helper, ...args])
-      .pipe(Effect.flatMap(ok("accessibility")));
-  });
+const axSettings = Effect.fn("DeviceActions.axSettings")(function* (
+  ready: DeviceHostReady,
+  udid: string,
+  args: ReadonlyArray<string>,
+) {
+  const helper = ready.helpers.serveSimAxSettings;
+  if (!helper) {
+    return yield* new DeviceActionUnavailableError({
+      operation: "accessibility",
+      platform: "ios",
+      reason: "helper_missing",
+    });
+  }
+  return yield* ready
+    .run("xcrun", ["simctl", "spawn", udid, helper, ...args])
+    .pipe(Effect.flatMap(ok("accessibility")));
+});
 
 const runIos = Effect.fn("DeviceActions.runIos")(function* (
   ready: DeviceHostReady,
@@ -251,8 +265,7 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
       return;
     case "setPermission": {
       if (input.permission === "notifications") {
-        // simctl has no notification permission verb; serve-sim's CLI edits
-        // the BulletinBoard plist for it.
+        // simctl lacks notification permissions; serve-sim edits the BulletinBoard plist.
         yield* serveSimPermissions(ready, udid, input);
         return;
       }
@@ -300,34 +313,37 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
   }
 });
 
-const serveSimPermissions = (
+const serveSimPermissions = Effect.fn("DeviceActions.serveSimPermissions")(function* (
   ready: DeviceHostReady,
   udid: string,
   input: Extract<DeviceActionInput, { type: "setPermission" }>,
-) =>
-  Effect.gen(function* () {
-    const cli = ready.helpers.serveSimCli;
-    if (!cli)
-      return yield* new DeviceActionUnavailableError({
-        operation: "permission",
-        platform: "ios",
-        reason: "helper_missing",
-      });
-    yield* ready
-      .run(ready.nodePath, [
-        cli,
-        "permissions",
-        input.decision,
-        input.permission,
-        input.appId,
-        "-d",
-        udid,
-      ])
-      .pipe(Effect.flatMap(ok("permission")));
-  });
+) {
+  const cli = ready.helpers.serveSimCli;
+  if (!cli)
+    return yield* new DeviceActionUnavailableError({
+      operation: "permission",
+      platform: "ios",
+      reason: "helper_missing",
+    });
+  yield* ready
+    .run(ready.nodePath, [
+      cli,
+      "permissions",
+      input.decision,
+      input.permission,
+      input.appId,
+      "-d",
+      udid,
+    ])
+    .pipe(Effect.flatMap(ok("permission")));
+});
 
 const adb = (run: Runner, serial: string, args: ReadonlyArray<string>, operation: string) =>
   run("adb", ["-s", serial, ...args]).pipe(Effect.flatMap(ok(operation)));
+
+// adb shell joins arguments without escaping before the device's shell parses them.
+const androidShellWord = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 
 const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
   run: Runner,
@@ -335,7 +351,7 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
 ) {
   const serial = input.deviceId;
   const shell = (args: ReadonlyArray<string>, operation: string) =>
-    adb(run, serial, ["shell", ...args], operation);
+    adb(run, serial, ["shell", ...args.map(androidShellWord)], operation);
   switch (input.type) {
     case "setAppearance":
       yield* shell(["cmd", "uimode", "night", input.value === "dark" ? "yes" : "no"], "appearance");
@@ -370,6 +386,10 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         reason: "unsupported",
       });
     case "setOrientation": {
+      const wmSize = yield* quiet(shell(["wm", "size"], "orientation"));
+      const rotation = isLandscapeNative(wmSize)
+        ? ANDROID_LANDSCAPE_NATIVE_ROTATION[input.value]
+        : input.value;
       // `user-rotation lock` only rotates window content on recent images; the display the
       // encoder captures stays put. Tilting the emulator's accelerometer rotates it for real, so
       // that is used whenever the target is an emulator.
@@ -379,13 +399,13 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         yield* adb(
           run,
           serial,
-          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[input.value]],
+          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[rotation]],
           "orientation",
         );
         return;
       }
       yield* shell(
-        ["cmd", "window", "user-rotation", "lock", ANDROID_ROTATION[input.value]],
+        ["cmd", "window", "user-rotation", "lock", ANDROID_ROTATION[rotation]],
         "orientation",
       );
       return;
@@ -399,8 +419,7 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
       );
       return;
     case "clearLocation":
-      // The emulator has no "clear"; leaving the fix in place is the closest
-      // behavior, so this is a no-op that still refreshes the reading.
+      // The emulator cannot clear location; keep the fix and refresh the reading.
       return;
     case "setPermission": {
       const permissions = ANDROID_PERMISSIONS[input.permission];
@@ -412,9 +431,13 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         });
       }
       const verb = input.decision === "grant" ? "grant" : "revoke";
-      for (const permission of permissions) {
-        yield* shell(["pm", verb, input.appId, permission], "permission").pipe(Effect.ignore);
-      }
+      // `pm` rejects a permission the app or system image does not declare, and Photos lists both
+      // the Android 13 and the older storage permission, so fail only when none of them applied.
+      const results = yield* Effect.forEach(permissions, (permission) =>
+        shell(["pm", verb, input.appId, permission], "permission").pipe(Effect.result),
+      );
+      const failure = results.find(Result.isFailure);
+      if (failure && !results.some(Result.isSuccess)) return yield* failure.failure;
       return;
     }
     case "openUrl":
@@ -525,8 +548,7 @@ const readAndroid = Effect.fn("DeviceActions.readAndroid")(function* (run: Runne
       shell(["settings", "get", "system", "font_scale"]),
       shell(["settings", "get", "global", "animator_duration_scale"]),
       shell(["settings", "get", "global", "wifi_on"]),
-      // `dumpsys window windows` stopped printing the focus on API 36; the
-      // unfiltered dump still does.
+      // API 36 dropped focus from `dumpsys window windows`; use the unfiltered dump.
       shell(["dumpsys", "window"]),
     ],
     { concurrency: 5 },

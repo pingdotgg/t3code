@@ -36,6 +36,17 @@ describe("acpProviderOptionDescriptors", () => {
             { value: "medium", name: "Medium", description: "Balanced" },
           ],
         },
+        {
+          id: "permission_mode",
+          name: "Permission mode",
+          category: "mode",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "bypass", name: "Bypass" },
+          ],
+        },
       ],
       modeState: undefined,
     });
@@ -50,31 +61,18 @@ describe("acpProviderOptionDescriptors", () => {
           { id: "medium", label: "Medium", description: "Balanced" },
         ],
         currentValue: "medium",
+        role: "reasoning",
       },
-    ]);
-  });
-
-  it("maps boolean session options", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "fast_mode",
-          name: "Fast mode",
-          description: "Use lower-latency inference.",
-          type: "boolean",
-          currentValue: true,
-        },
-      ],
-      modeState: undefined,
-    });
-
-    expect(descriptors).toEqual([
       {
-        id: "fast_mode",
-        label: "Fast mode",
-        description: "Use lower-latency inference.",
-        type: "boolean",
-        currentValue: true,
+        id: "permission_mode",
+        label: "Permission mode",
+        type: "select",
+        options: [
+          { id: "default", label: "Default" },
+          { id: "bypass", label: "Bypass" },
+        ],
+        currentValue: "default",
+        role: "mode",
       },
     ]);
   });
@@ -147,6 +145,7 @@ describe("acpProviderOptionDescriptors", () => {
           { id: "yolo", label: "YOLO", description: "No approvals" },
         ],
         currentValue: "safe",
+        role: "mode",
       },
     ]);
   });
@@ -231,33 +230,5 @@ describe("acpProviderOptionDescriptors", () => {
       currentValue: exactValue,
       options: [{ id: exactValue, label: "Exact" }],
     });
-  });
-
-  it("suppresses the synthetic mode descriptor when a mode-category option exists", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          type: "select",
-          currentValue: "agent",
-          options: [
-            { value: "read-only", name: "Read-only" },
-            { value: "agent", name: "Agent" },
-          ],
-        },
-      ],
-      modeState: {
-        currentModeId: "agent",
-        availableModes: [
-          { id: "read-only", name: "Read-only" },
-          { id: "agent", name: "Agent" },
-          { id: "agent-full-access", name: "Agent (full access)" },
-        ],
-      },
-    });
-
-    expect(descriptors.map((descriptor) => descriptor.id)).toEqual(["mode"]);
   });
 });

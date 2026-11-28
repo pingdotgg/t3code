@@ -1,10 +1,11 @@
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { T, useGT, useMessages } from "gt-react";
+import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance, useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjectContentSearch } from "~/state/queries";
@@ -14,17 +15,14 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle } from "../ui/toggle";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-/**
- * Result rows are syntax highlighted, so mounting all 500 possible rows at once
- * stalls the UI.
- */
+/** Syntax-highlighting all 500 result rows at once stalls the UI. */
 const VISIBLE_MATCH_WINDOW = 100;
 
 interface MatchGroup {
@@ -61,51 +59,57 @@ function SearchOptionButton(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Toggle
-            aria-label={props.label}
-            disabled={props.disabled}
-            pressed={props.active}
-            size="segmented"
-            variant="segmented"
-            onClick={props.onClick}
-          />
-        }
-      >
-        <span className="font-mono">{props.children}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Toggle
+          aria-label={props.label}
+          disabled={props.disabled}
+          pressed={props.active}
+          size="segmented"
+          variant="segmented"
+          onClick={props.onClick}
+        />
+      }
+      label={props.label}
+    >
+      <span className="font-mono">{props.children}</span>
+    </SharedTooltipTrigger>
   );
 }
 
 function EmptyContentSearchDialog() {
+  const gt = useGT();
   return (
     <CommandPaletteContent
-      aria-label="Search project contents"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search project contents…" }}
+      aria-label={gt("Search project contents")}
+      escapeLabel={gt("Back")}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ disabled: true, placeholder: gt("Search project contents…") }}
       mode="none"
       panelSize="fill"
       testId="project-content-search"
       value=""
     >
       <p className="m-auto px-6 text-center text-muted-foreground text-sm">
-        Open a project to search its files.
+        <T>Open a project to search its files.</T>
       </p>
     </CommandPaletteContent>
   );
 }
+
+const scrollSelectedRowIntoView = (row: HTMLElement | null) => {
+  row?.scrollIntoView({ block: "nearest" });
+};
 
 function OpenContentSearchDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const { resolvedTheme } = useTheme();
+  const renderedAppearance = useRenderedAppearance();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
@@ -114,35 +118,30 @@ function OpenContentSearchDialog(props: {
 
   const [visibleCount, setVisibleCount] = useState(VISIBLE_MATCH_WINDOW);
 
-  const search = useProjectContentSearch({
-    environmentId: target.environmentId,
-    cwd: target.cwd,
-    query,
-    caseSensitive,
-    wholeWord,
-    useRegex,
-  });
+  const search = useProjectContentSearch(
+    {
+      environmentId: target.environmentId,
+      cwd: target.cwd,
+      query,
+      caseSensitive,
+      wholeWord,
+      useRegex,
+    },
+    messages,
+  );
   const canOpenMatches = search.canReadFiles && !search.isPending && search.error === null;
   const matches = search.matches;
-  // New results restart the selection and the rendered window.
   const [resultsFor, setResultsFor] = useState(matches);
   if (resultsFor !== matches) {
     setResultsFor(matches);
     setSelectedIndex(0);
     setVisibleCount(VISIBLE_MATCH_WINDOW);
   }
-  // Keyboard selection past the window grows it before the row has to scroll into view.
   if (selectedIndex >= visibleCount) {
     setVisibleCount(selectedIndex + VISIBLE_MATCH_WINDOW);
   }
   const visibleMatches = matches.slice(0, visibleCount);
   const groups = groupMatches(visibleMatches);
-
-  useEffect(() => {
-    document
-      .querySelector<HTMLElement>(`[data-content-search-result="${selectedIndex}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
 
   const observeLoadMoreSentinel = (sentinel: HTMLElement | null) => {
     if (!sentinel) return;
@@ -169,23 +168,24 @@ function OpenContentSearchDialog(props: {
 
   return (
     <CommandPaletteContent
-      aria-label={`Search file contents in ${target.projectName}`}
-      escapeLabel="Back"
-      footerActionLabel="Open file"
+      aria-label={gt("Search file contents in {project}", { project: target.projectName })}
+      escapeLabel={gt("Back")}
+      footerActionLabel={gt("Open file")}
       inputAccessory={
         <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg border bg-muted/30 p-0.5">
           <SearchOptionButton
             active={caseSensitive}
             disabled={!search.canReadFiles}
-            label="Match case"
+            label={gt("Match case")}
             onClick={() => setCaseSensitive((current) => !current)}
           >
-            Aa
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- match-case glyph; the label carries the meaning */}
+            {"Aa"}
           </SearchOptionButton>
           <SearchOptionButton
             active={wholeWord}
             disabled={!search.canReadFiles}
-            label="Match whole word"
+            label={gt("Match whole word")}
             onClick={() => setWholeWord((current) => !current)}
           >
             <span className="underline decoration-2 underline-offset-2">ab</span>
@@ -193,7 +193,7 @@ function OpenContentSearchDialog(props: {
           <SearchOptionButton
             active={useRegex}
             disabled={!search.canReadFiles}
-            label="Use regular expression"
+            label={gt("Use regular expression")}
             onClick={() => setUseRegex((current) => !current)}
           >
             .*
@@ -203,8 +203,9 @@ function OpenContentSearchDialog(props: {
       inputProps={{
         className: "pe-30",
         disabled: !search.canReadFiles,
-        placeholder: `Search in ${target.projectName}`,
+        placeholder: gt("Search in {project}", { project: target.projectName }),
         onKeyDown: (event) => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "ArrowDown" && matches.length > 0) {
             event.preventDefault();
             setSelectedIndex((current) => (current + 1) % matches.length);
@@ -234,14 +235,24 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <Spinner size="sm" /> Searching…
+              <Spinner size="sm" /> <T>Searching…</T>
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
           ) : search.invalidRegex ? (
-            <span className="text-destructive">Invalid regular expression</span>
+            <span className="text-destructive">
+              <T>Invalid regular expression</T>
+            </span>
+          ) : search.truncated ? (
+            gt("{results}+ results in {files} files", {
+              results: matches.length.toLocaleString(),
+              files: fileCount.toLocaleString(),
+            })
           ) : (
-            `${matches.length.toLocaleString()}${search.truncated ? "+" : ""} results in ${fileCount.toLocaleString()} files`
+            gt("{results} results in {files} files", {
+              results: matches.length.toLocaleString(),
+              files: fileCount.toLocaleString(),
+            })
           )}
         </div>
       ) : null}
@@ -249,12 +260,12 @@ function OpenContentSearchDialog(props: {
       {matches.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
           {search.isCheckingAccess
-            ? "Checking file access…"
+            ? gt("Checking file access…")
             : !search.canReadFiles
               ? search.error
               : search.hasQuery && !search.isPending && !search.error
-                ? "No results found."
-                : "Type to search across your project."}
+                ? gt("No results found.")
+                : gt("Type to search across your project.")}
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>
@@ -284,7 +295,9 @@ function OpenContentSearchDialog(props: {
                     <button
                       type="button"
                       key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
-                      data-content-search-result={match.resultIndex}
+                      ref={
+                        match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
+                      }
                       className={cn(
                         "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs hover:bg-accent/60 disabled:pointer-events-none",
                         match.resultIndex === selectedIndex && "bg-accent text-accent-foreground",
@@ -300,7 +313,7 @@ function OpenContentSearchDialog(props: {
                         <HighlightedSearchLine
                           match={match}
                           path={group.path}
-                          theme={resolvedTheme}
+                          theme={renderedAppearance}
                         />
                       </span>
                     </button>

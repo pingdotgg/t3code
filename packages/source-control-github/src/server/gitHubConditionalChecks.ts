@@ -23,7 +23,10 @@ const HeadSchema = Schema.Struct({
 });
 const decodeHead = Schema.decodeUnknownEffect(Schema.fromJsonString(HeadSchema));
 
+class ChecksUnavailable extends Schema.TaggedError<ChecksUnavailable>()("ChecksUnavailable", {}) {}
+
 const WorkflowRunSchema = Schema.Struct({
+  pull_requests: Schema.optional(Schema.Array(Schema.Struct({ number: Schema.Int }))),
   id: Schema.Int,
   name: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.optional(Schema.NullOr(Schema.String)),
@@ -85,96 +88,107 @@ export const makeChecksRevalidator = Effect.gen(function* () {
               operation: "revalidateChecks",
               status,
             });
-          const get = (endpoint: string, head = false) =>
-            Effect.gen(function* () {
-              const previous = entry.validators.get(endpoint);
-              const response = yield* api
-                .rest({
-                  host: input.host,
-                  operation: "revalidateChecks",
-                  path: endpoint,
-                  ...(previous?.etag ? { ifNoneMatch: previous.etag } : {}),
-                })
-                .pipe(
-                  Effect.catchTags({
-                    GitHubApiNotFoundError: () =>
-                      Effect.sync(() => {
-                        entry.supported = false;
-                        return null;
-                      }),
-                    GitHubApiResponseError: (error) =>
-                      Effect.sync(() => {
-                        entry.supported = !UNSUPPORTED_STATUSES.has(error.status);
-                        return null;
-                      }),
-                  }),
-                );
-              if (response === null) {
-                entry.value = null;
-                return null;
-              }
-              if (response.status === 304 && previous) return previous.next;
-              if (response.status !== 200 || response.truncated) {
-                return yield* fail(response.status);
-              }
+          const get = Effect.fn("gitHubConditionalChecks.get")(function* (
+            endpoint: string,
+            head = false,
+          ) {
+            const previous = entry.validators.get(endpoint);
+            const response = yield* api
+              .rest({
+                host: input.host,
+                operation: "revalidateChecks",
+                path: endpoint,
+                ...(previous?.etag ? { ifNoneMatch: previous.etag } : {}),
+              })
+              .pipe(
+                Effect.catchTags({
+                  GitHubApiNotFoundError: () =>
+                    Effect.sync(() => {
+                      entry.supported = false;
+                      return null;
+                    }),
+                  GitHubApiResponseError: (error) =>
+                    Effect.sync(() => {
+                      entry.supported &&= !UNSUPPORTED_STATUSES.has(error.status);
+                      return null;
+                    }),
+                }),
+              );
+            if (response === null) {
               entry.value = null;
-              if (head) {
-                const decoded = yield* decodeHead(response.body).pipe(
-                  Effect.mapError(() => fail(response.status)),
-                );
-                if (entry.head?.head.sha !== decoded.head.sha) entry.validators.clear();
-                entry.head = decoded;
-              }
-              const validator = {
-                etag: response.headers["etag"]?.trim(),
-                next: /rel="next"/.test(response.headers["link"] ?? ""),
-                body: response.body,
-              };
-              entry.validators.set(endpoint, validator);
-              return validator.next;
-            });
+              return null;
+            }
+            if (response.status === 304 && previous) return previous.next;
+            if (response.status !== 200 || response.truncated) {
+              return yield* fail(response.status);
+            }
+            entry.value = null;
+            if (head) {
+              const decoded = yield* decodeHead(response.body).pipe(
+                Effect.mapError(() => fail(response.status)),
+              );
+              if (entry.head?.head.sha !== decoded.head.sha) entry.validators.clear();
+              entry.head = decoded;
+            }
+            const validator = {
+              etag: response.headers["etag"]?.trim(),
+              next: /rel="next"/.test(response.headers["link"] ?? ""),
+              body: response.body,
+            };
+            entry.validators.set(endpoint, validator);
+            return validator.next;
+          });
           const root = `repos/${input.repository}`;
           if ((yield* get(`${root}/pulls/${input.number}`, true)) === null) return yield* read;
           const head = entry.head;
           if (head === null) return yield* fail(200);
-          const runsEndpoint =
-            head.head.repo?.id !== head.base.repo.id
-              ? `${root}/actions/runs?head_sha=${head.head.sha}&event=pull_request`
-              : null;
+          const runsEndpoint = `${root}/actions/runs?head_sha=${head.head.sha}&event=pull_request`;
           const endpoints = [
             `${root}/commits/${head.head.sha}/check-runs?filter=all`,
             `${root}/commits/${head.head.sha}/status`,
-            ...(runsEndpoint === null ? [] : [runsEndpoint]),
+            runsEndpoint,
           ];
           const runPages: Array<string> = [];
-          for (const endpoint of endpoints) {
-            for (let page = 1; ; page++) {
-              if (page > 100) return yield* fail(200);
-              const paged = `${endpoint}${endpoint.includes("?") ? "&" : "?"}per_page=100&page=${page}`;
-              const next = yield* get(paged);
-              if (next === null) return yield* read;
-              if (endpoint === runsEndpoint) runPages.push(paged);
-              if (!next) break;
-            }
-          }
+          // Each endpoint has its own cursor; only pages within one endpoint depend on each other.
+          // An unavailable endpoint interrupts the others so the fallback read starts at once.
+          const available = yield* Effect.forEach(
+            endpoints,
+            Effect.fn("gitHubConditionalChecks.revalidateEndpoint")(function* (endpoint) {
+              for (let page = 1; ; page++) {
+                if (page > 100) return yield* fail(200);
+                const paged = `${endpoint}${endpoint.includes("?") ? "&" : "?"}per_page=100&page=${page}`;
+                const next = yield* get(paged);
+                if (next === null) return yield* new ChecksUnavailable();
+                if (endpoint === runsEndpoint) runPages.push(paged);
+                if (!next) return;
+              }
+            }),
+            { concurrency: 3, discard: true },
+          ).pipe(
+            Effect.as(true),
+            Effect.catchTags({ ChecksUnavailable: () => Effect.succeed(false) }),
+          );
+          if (!available) return yield* read;
           const now = yield* Clock.currentTimeMillis;
           if (entry.value !== null && now - entry.readAt < 5 * 60_000) return entry.value;
           const pages = runPages.map((endpoint) =>
             decodeWorkflowRuns(entry.validators.get(endpoint)?.body ?? ""),
           );
-          const known =
-            runsEndpoint !== null && pages.every(Option.isSome)
-              ? {
-                  headSha: head.head.sha,
-                  runs: pages.flatMap((page) =>
-                    Option.isSome(page) ? page.value.workflow_runs : [],
-                  ),
-                }
-              : null;
+          const known = pages.every(Option.isSome)
+            ? {
+                headSha: head.head.sha,
+                runs: pages.flatMap((page) =>
+                  Option.isSome(page) ? page.value.workflow_runs : [],
+                ),
+              }
+            : null;
           const fresh = yield* read.pipe(Effect.provideService(KnownWorkflowRuns, known));
           const value = {
             state: fresh.state,
             checks: fresh.checks,
+            ...(fresh.workflowApprovalsRequired === undefined
+              ? {}
+              : { workflowApprovalsRequired: fresh.workflowApprovalsRequired }),
           };
           entry.value =
             fresh.workflowApprovalsRequired !== undefined && fresh.headSha === head.head.sha

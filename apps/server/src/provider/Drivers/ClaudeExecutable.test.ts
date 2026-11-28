@@ -1,14 +1,28 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as FileSystem from "effect/FileSystem";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 
-import { ClaudeExecutableFileCheck, resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
+import {
+  ClaudeExecutableFileCheck,
+  claudeProgramReader,
+  claudeProgramWasReplaced,
+  resolveClaudeSdkExecutablePath,
+} from "./ClaudeExecutable.ts";
 
 const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
 const NPM_SHIM = `${NPM_DIR}\\claude.cmd`;
 const NPM_PACKAGE_EXE = `${NPM_DIR}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`;
 const NPM_PACKAGE_CLI = `${NPM_DIR}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`;
+const WINGET_DIR = "C:\\Users\\dev\\AppData\\Local\\Microsoft\\WinGet";
+const WINGET_SHIM = `${WINGET_DIR}\\Links\\claude.cmd`;
+const WINGET_EXE = `${WINGET_DIR}\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe`;
 
 function withWindowsResolution(input: {
   readonly resolvedCommand: string | undefined;
@@ -18,36 +32,12 @@ function withWindowsResolution(input: {
   return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(SpawnExecutableResolution, () => input.resolvedCommand),
+      Effect.provideService(SpawnExecutableResolution, async () => input.resolvedCommand),
       Effect.provideService(ClaudeExecutableFileCheck, (filePath) => existing.has(filePath)),
     );
 }
 
 describe("resolveClaudeSdkExecutablePath", () => {
-  it.effect("returns the configured path unchanged on non-Windows platforms", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(SpawnExecutableResolution, () => {
-            throw new Error("must not resolve on non-Windows platforms");
-          }),
-        ),
-      ).toBe("claude");
-    }),
-  );
-
-  it.effect("returns the resolved absolute path for native Windows executables", () =>
-    Effect.gen(function* () {
-      const nativeBinary = "C:\\Users\\dev\\.local\\bin\\claude.exe";
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: nativeBinary }),
-        ),
-      ).toBe(nativeBinary);
-    }),
-  );
-
   it.effect("follows an npm launcher shim to the packaged native binary", () =>
     Effect.gen(function* () {
       expect(
@@ -58,6 +48,16 @@ describe("resolveClaudeSdkExecutablePath", () => {
           }),
         ),
       ).toBe(NPM_PACKAGE_EXE);
+    }),
+  );
+
+  it.effect("follows the WinGet launcher to the package's native binary", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
+          withWindowsResolution({ resolvedCommand: WINGET_SHIM, existingFiles: [WINGET_EXE] }),
+        ),
+      ).toBe(WINGET_EXE);
     }),
   );
 
@@ -111,14 +111,43 @@ describe("resolveClaudeSdkExecutablePath", () => {
       ).toBe("claude");
     }),
   );
+});
 
-  it.effect("returns the configured path when command resolution finds nothing", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: undefined }),
-        ),
-      ).toBe("claude");
-    }),
+describe("claudeProgramReader", () => {
+  /** An install as the Claude installer lays it out: one file per version and a link. */
+  const makeInstall = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-program-" });
+    const bin = NodePath.join(root, "bin");
+    const link = NodePath.join(bin, "claude");
+    const version = (name: string) => {
+      const file = NodePath.join(root, "versions", name);
+      NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+      NodeFS.writeFileSync(file, "#!/bin/sh\n", { mode: 0o755 });
+      return file;
+    };
+    NodeFS.mkdirSync(bin);
+    NodeFS.symlinkSync(version("1.0.0"), link);
+    return {
+      bin,
+      update: () => {
+        NodeFS.unlinkSync(link);
+        NodeFS.symlinkSync(version("1.0.1"), link);
+      },
+    };
+  });
+
+  it.effect("follows a bare command name through PATH", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bin, update } = yield* makeInstall;
+        const readProgram = yield* claudeProgramReader("claude", { PATH: bin });
+        const startedFrom = yield* readProgram;
+        expect(startedFrom).toBeDefined();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
+        update();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

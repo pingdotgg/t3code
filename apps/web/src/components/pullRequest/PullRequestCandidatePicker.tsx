@@ -1,7 +1,4 @@
-/**
- * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
- * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
- */
+// Menu typeahead consumes search keystrokes; use a combobox.
 import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
@@ -13,8 +10,8 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestPeopleGhost } from "./PullRequestGhosts";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestCandidatePicker<T>({
   icon,
@@ -35,7 +32,6 @@ export function PullRequestCandidatePicker<T>({
   truncated,
   truncatedLabel,
   candidateKey,
-  disabled,
   onSelect,
   children,
 }: {
@@ -57,22 +53,20 @@ export function PullRequestCandidatePicker<T>({
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  disabled: boolean;
   onSelect: (candidate: T) => void;
   children: (candidate: T) => ReactNode;
 }) {
   if (!allowed) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" aria-disabled="true" aria-label={label}>
-              {icon}
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">{disabledReason}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <Button size="icon-xs" variant="ghost" aria-disabled="true" aria-label={label}>
+            {icon}
+          </Button>
+        }
+        label={disabledReason}
+        side="bottom"
+      />
     );
   }
 
@@ -91,9 +85,7 @@ export function PullRequestCandidatePicker<T>({
       }}
       open={open}
       onOpenChange={(nextOpen, details) => {
-        // Cancelled rather than ignored, so the combobox also skips its own close work: freezing
-        // the query and returning focus to the trigger, either of which would take the next
-        // keystroke away from the box.
+        // Item-press closure steals search focus and the next keystroke.
         if (!nextOpen && details.reason === "item-press") {
           details.cancel();
           return;
@@ -115,7 +107,7 @@ export function PullRequestCandidatePicker<T>({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
         />
-        <ComboboxList className="max-h-72">
+        <ComboboxList scrollAreaClassName="max-h-72">
           {isPending ? (
             <PullRequestPeopleGhost rows={4} />
           ) : error !== null ? (
@@ -128,13 +120,7 @@ export function PullRequestCandidatePicker<T>({
             </p>
           ) : (
             candidates.map((candidate, index) => (
-              <ComboboxItem
-                key={keys[index]}
-                hideIndicator
-                index={index}
-                value={keys[index]}
-                disabled={disabled}
-              >
+              <ComboboxItem key={keys[index]} hideIndicator index={index} value={keys[index]}>
                 {children(candidate)}
               </ComboboxItem>
             ))

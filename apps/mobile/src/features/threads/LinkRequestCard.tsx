@@ -1,0 +1,545 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  ANOTHER_ADDRESS,
+  type LinkableMachine,
+  linkDestination,
+  linkRequestAnswerInput,
+  linkRequestDefaultAccess,
+  linkRequestDisplay,
+  linkRequestFailureMessage,
+  linkRequestInitialMachine,
+  type LinkRequestItem,
+  linkRequestTarget,
+  rankMachinesByHint,
+} from "@t3tools/client-runtime/link-request";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthAccessWriteScope,
+  type AuthMcpClientAccess,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { useMemo, useRef, useState } from "react";
+import { Pressable, ScrollView, View, type ColorValue } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import type { MessageResolver } from "../../i18n/messages";
+import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
+import { mintPairingCodeOn } from "../../state/peerPairingCode";
+import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { SettingsSection } from "../settings/components/SettingsSection";
+import { Button } from "../../components/ui/Button";
+import { Sheet } from "../../components/ui/Sheet";
+import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
+
+/** The same five levels as web's access picker: read-only, then the runtime modes. */
+export const LINK_ACCESS_CHOICES: ReadonlyArray<{
+  readonly access: AuthMcpClientAccess;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    access: "read-only",
+    label: msg("Read only"),
+    description: msg("Read projects and threads. Cannot start, message or change anything."),
+  },
+  ...RUNTIME_MODE_CHOICES.map((choice) => ({ ...choice, access: choice.mode })),
+];
+const accessLabel = (access: AuthMcpClientAccess, resolve: MessageResolver) => {
+  const label = LINK_ACCESS_CHOICES.find((choice) => choice.access === access)?.label;
+  return label === undefined ? access : resolve(label);
+};
+
+const LINK_SYMBOL: AppSymbolName = { ios: "link", android: "desktop_windows" };
+
+/** Whether the agent left the machine for the user to pick. */
+const picksMachine = (item: LinkRequestItem) =>
+  item.environmentId === undefined && item.url === undefined;
+
+/**
+ * Feed card for a link an agent asked the user to make. The user picks the
+ * access in a sheet; the pairing code lives only in that sheet's state and
+ * the RPC payload, and is never logged, alerted, or persisted.
+ */
+export function LinkRequestCard(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly iconColor: ColorValue;
+}) {
+  const m = useMessages();
+  const { item, visibility } = props.projectedItem;
+  if (item.type !== "link_request") return null;
+  const display = linkRequestDisplay(item, visibility, (access) => accessLabel(access, m), m);
+  if (display.kind === "pending") {
+    return <PendingLinkRequest environmentId={props.environmentId} item={item} />;
+  }
+  const icon: AppSymbolName =
+    display.kind === "pending-elsewhere"
+      ? LINK_SYMBOL
+      : display.outcome === "linked"
+        ? "checkmark"
+        : display.outcome === "failed"
+          ? "xmark"
+          : "minus";
+  return (
+    <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
+      <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
+      <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
+        {display.label}
+      </Text>
+    </View>
+  );
+}
+
+function PendingLinkRequest(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: LinkRequestItem;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const { item } = props;
+  const [open, setOpen] = useState(false);
+  const [declining, setDeclining] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
+    label: "decline link request",
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const canAnswer = useAtomValue(
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
+  );
+  const decline = async () => {
+    const input = linkRequestAnswerInput(item, { type: "decline" });
+    if (input === null) return;
+    setDeclining(true);
+    setError(null);
+    const result = await answer({ environmentId: props.environmentId, input }).finally(() =>
+      setDeclining(false),
+    );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setError(linkRequestFailureMessage(squashAtomCommandFailure(result), m));
+    }
+  };
+
+  return (
+    <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
+      <View className="gap-1">
+        <Text className="font-t3-bold text-base text-foreground">
+          {item.url === undefined
+            ? gt("Link a machine to this environment")
+            : gt("Link {target} to this environment", { target: linkDestination(item.url) })}
+        </Text>
+        {item.reason.trim() ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
+        ) : null}
+      </View>
+      {error !== null ? (
+        <Text
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          className="font-sans text-sm text-danger-foreground"
+        >
+          {error}
+        </Text>
+      ) : null}
+      {canAnswer ? (
+        <>
+          <Button
+            label={picksMachine(item) ? gt("Choose machine…") : gt("Review link…")}
+            disabled={declining}
+            onPress={() => setOpen(true)}
+            tone="primary"
+            fullWidth
+          />
+          <View className="flex-row justify-end">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: declining }}
+              disabled={declining}
+              hitSlop={8}
+              className="px-1 py-1 active:opacity-60 disabled:opacity-50"
+              onPress={() => void decline()}
+            >
+              <Text className="font-sans text-xs text-foreground-muted">
+                {gt("Decline", { $context: "verb, refuses the link request" })}
+              </Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <Text className="font-sans text-xs text-foreground-muted">
+          <T>Only a session that manages access here can answer this.</T>
+        </Text>
+      )}
+      {open ? (
+        <LinkRequestSheet
+          environmentId={props.environmentId}
+          item={item}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function LinkRequestSheet(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: LinkRequestItem;
+  readonly onClose: () => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const { item } = props;
+  const insets = useSafeAreaInsets();
+  const pickMachine = picksMachine(item);
+  const listed = useLinkableMachines(props.environmentId, true);
+  const machines = useMemo(() => rankMachinesByHint(listed, item.hint), [listed, item.hint]);
+  const [choice, setChoice] = useState<string | null>(null);
+  const [address, setAddress] = useState(item.url ?? "");
+  const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
+  const [pairingCode, setPairingCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  // Submit then a tap can both run before a re-render; this guard is synchronous.
+  const inFlight = useRef(false);
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
+    label: "answer link request",
+    // The failure cause holds the request, and with it the code; keep it out of the console.
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const selected = choice ?? linkRequestInitialMachine(item, machines);
+  const target = linkRequestTarget(item, machines, selected, m);
+  const targetName =
+    target.kind === "machine"
+      ? target.label
+      : item.url === undefined
+        ? null
+        : linkDestination(item.url);
+  const targetId = target.kind === "machine" ? target.environmentId : null;
+  const connected = usePreparedConnection(targetId);
+  const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
+  const needsAddress =
+    target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
+  // This phone mints a code there when it is connected with a session that may
+  // create pairing links, and only for its own addresses: anything can answer
+  // as that machine at one typed in, so that one gets a code the user fetched.
+  const canMint =
+    targetId !== null &&
+    !needsAddress &&
+    Option.isSome(connected) &&
+    mayMint &&
+    !mintFailed.has(targetId);
+  const useExisting = target.kind === "machine" && target.linked;
+  const ready =
+    target.kind !== "none" &&
+    (useExisting ||
+      ((!needsAddress || address.trim().length > 0) && (canMint || pairingCode.trim().length > 0)));
+
+  const prepareAnswer = async () => {
+    if (target.kind === "none") return null;
+    if (target.kind === "machine" && target.linked) {
+      return linkRequestAnswerInput(item, {
+        type: "use-existing",
+        environmentId: target.environmentId,
+      });
+    }
+    let code = pairingCode;
+    if (canMint && targetId !== null) {
+      const minted = await mintPairingCodeOn(targetId, access);
+      if (Result.isFailure(minted)) {
+        setMintFailed((failed) => new Set(failed).add(targetId));
+        setError(linkRequestFailureMessage(minted.failure, m));
+        return null;
+      }
+      code = minted.success;
+    }
+    return linkRequestAnswerInput(item, {
+      type: "link",
+      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
+      access,
+      pairingCode: code,
+    });
+  };
+
+  const submit = async () => {
+    if (inFlight.current || target.kind === "none") return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    const input = await prepareAnswer();
+    const result =
+      input === null ? null : await answer({ environmentId: props.environmentId, input });
+    inFlight.current = false;
+    setBusy(false);
+    if (result === null) return;
+    if (result._tag === "Success") {
+      setPairingCode("");
+      props.onClose();
+    } else if (!isAtomCommandInterrupted(result)) {
+      setError(linkRequestFailureMessage(squashAtomCommandFailure(result), m));
+    }
+  };
+
+  return (
+    <Sheet
+      title={
+        pickMachine || targetName === null
+          ? gt("Link a machine")
+          : gt("Link {targetName}", { targetName })
+      }
+      onClose={props.onClose}
+      // An answer that lands after a close would still link, and would close a reopened sheet.
+      dismissDisabled={busy}
+    >
+      <ScrollView
+        nestedScrollEnabled
+        className="flex-1 bg-sheet-solid"
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="gap-5 p-5"
+        contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View className="gap-1">
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+            <T>
+              Agents here can then launch, message and wait on threads there. It appears under
+              Authorized clients in that machine's Sharing & access, where it can be revoked.
+            </T>
+          </Text>
+          {item.url !== undefined && target.kind === "machine" ? (
+            <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
+              {item.url}
+            </Text>
+          ) : null}
+        </View>
+        {needsAddress && !useExisting && address.trim() ? (
+          <View
+            accessibilityRole="alert"
+            className="gap-1 rounded-xl border border-warning-border bg-warning p-3"
+          >
+            <Text className="font-t3-bold text-sm text-warning-foreground">
+              <T>Check this address</T>
+            </Text>
+            <Text className="font-sans text-xs leading-snug text-warning-foreground">
+              <T>
+                This app cannot confirm it is one of your machines. The pairing code you paste is
+                sent there.
+              </T>
+            </Text>
+            <Text selectable className="font-sans text-xs leading-snug text-warning-foreground">
+              {linkDestination(address)}
+            </Text>
+          </View>
+        ) : null}
+        {pickMachine ? (
+          <SettingsSection title={gt("Machine")}>
+            {machines.map((machine, index) => (
+              <MachineRow
+                key={machine.environmentId}
+                machine={machine}
+                selected={selected === machine.environmentId}
+                separated={index > 0}
+                disabled={busy}
+                onPress={() => {
+                  setChoice(machine.environmentId);
+                  setError(null);
+                }}
+              />
+            ))}
+            <SettingsChoiceRow
+              label={gt("Another address…")}
+              description={gt(
+                "Link a machine this app does not know, by its https or Tailscale address.",
+              )}
+              selected={selected === ANOTHER_ADDRESS}
+              separated={machines.length > 0}
+              disabled={busy}
+              onPress={() => {
+                setChoice(ANOTHER_ADDRESS);
+                setError(null);
+              }}
+            />
+          </SettingsSection>
+        ) : null}
+        {needsAddress && item.url === undefined ? (
+          <View className="gap-2">
+            <TextInput
+              accessibilityLabel={gt("Address")}
+              placeholder="https://machine.tailnet.ts.net"
+              value={address}
+              onChangeText={setAddress}
+              editable={!busy}
+              autoCorrect={false}
+              autoCapitalize="none"
+              keyboardType="url"
+              spellCheck={false}
+            />
+            {target.kind === "machine" ? (
+              <Text className="font-sans text-xs text-foreground-muted">
+                <T>
+                  This app has no address for <Var>{target.label}</Var> that another machine can
+                  reach. Enter its https or Tailscale address.
+                </T>
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+        {useExisting ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+            <T>
+              This environment is already linked to <Var>{targetName}</Var>. The agent can use that
+              link as it is; change its access in Settings → Environments.
+            </T>
+          </Text>
+        ) : target.kind === "none" ? null : (
+          <>
+            {canMint ? null : (
+              <View className="gap-2">
+                <TextInput
+                  accessibilityLabel={gt("Pairing code")}
+                  placeholder={gt("Paste the code")}
+                  value={pairingCode}
+                  onChangeText={setPairingCode}
+                  editable={!busy}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  autoComplete="one-time-code"
+                  textContentType="oneTimeCode"
+                  spellCheck={false}
+                />
+                <Text className="font-sans text-xs text-foreground-muted">
+                  {targetName === null ? (
+                    <T>
+                      Create a link on a machine: Settings → Sharing & access → Authorized clients →
+                      Create link, then paste its code here.
+                    </T>
+                  ) : (
+                    <T>
+                      Create a link on <Var>{targetName}</Var>: Settings → Sharing & access →
+                      Authorized clients → Create link, then paste its code here.
+                    </T>
+                  )}
+                </Text>
+              </View>
+            )}
+            <SettingsSection title={gt("What agents here may do there")}>
+              {LINK_ACCESS_CHOICES.map((choice, index) => (
+                <SettingsChoiceRow
+                  key={choice.access}
+                  label={m(choice.label)}
+                  description={m(choice.description)}
+                  selected={choice.access === access}
+                  separated={index > 0}
+                  disabled={busy}
+                  onPress={() => setAccess(choice.access)}
+                />
+              ))}
+            </SettingsSection>
+            <Text className="font-sans text-xs text-foreground-muted">
+              <T>
+                An agent here never gets more there than its own mode here either. Threads it starts
+                there cannot change that environment's own threads, projects or settings.
+              </T>
+            </Text>
+          </>
+        )}
+        {error !== null ? (
+          <Text
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            className="font-sans text-sm text-danger-foreground"
+          >
+            {error}
+          </Text>
+        ) : null}
+        <Button
+          label={
+            busy
+              ? gt("Linking…")
+              : useExisting
+                ? gt("Use this link")
+                : gt("Link", { $context: "verb, confirms linking the machine" })
+          }
+          disabled={busy || !ready}
+          onPress={() => void submit()}
+          tone="primary"
+          fullWidth
+        />
+        <Button
+          label={gt("Cancel")}
+          tone="secondary"
+          disabled={busy}
+          onPress={props.onClose}
+          fullWidth
+        />
+      </ScrollView>
+    </Sheet>
+  );
+}
+
+/** One machine in the sheet's list: its glyph, name, and whether it is linked or reachable. */
+function MachineRow(props: {
+  readonly machine: LinkableMachine;
+  readonly selected: boolean;
+  readonly separated: boolean;
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+}) {
+  const gt = useGT();
+  const { machine } = props;
+  const status = machine.linked
+    ? gt("Linked")
+    : machine.connected
+      ? null
+      : machine.connectOnly
+        ? "T3 Connect"
+        : gt("Not connected");
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ checked: props.selected, disabled: props.disabled }}
+      className={
+        props.separated
+          ? "flex-row items-center gap-3 border-t border-border-subtle p-4 active:opacity-70"
+          : "flex-row items-center gap-3 p-4 active:opacity-70"
+      }
+      disabled={props.disabled}
+      onPress={props.onPress}
+    >
+      <EnvironmentMachineSymbol
+        kind={machine.machine}
+        size={18}
+        tintColorClassName="accent-foreground-muted"
+      />
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="text-lg text-foreground android:text-base" numberOfLines={1}>
+          {machine.label}
+        </Text>
+        {status === null ? null : <Text className="text-sm text-foreground-muted">{status}</Text>}
+      </View>
+      {props.selected ? (
+        <SymbolView
+          name="checkmark"
+          size={18}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+          weight="semibold"
+        />
+      ) : null}
+    </Pressable>
+  );
+}

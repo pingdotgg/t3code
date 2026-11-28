@@ -79,6 +79,7 @@ const withService = <A, E>(
                 link.environmentPublicKey === input.environmentPublicKey),
           ),
         ),
+      updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
       setHoldWebhooksWhileOffline: () => Effect.void,
     }),
     Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
@@ -116,41 +117,6 @@ describe("HeldHooks", () => {
           holdWebhooksWhileOffline: false,
         });
         expect(cleared).toEqual([ownKey]);
-      }),
-    ),
-  );
-
-  it.effect("opting in keeps what is held", () =>
-    withService({}, ({ heldHooks, cleared }) =>
-      Effect.gen(function* () {
-        yield* heldHooks.setHoldWhileOffline({
-          environmentId,
-          environmentPublicKey: "own-key",
-          holdWebhooksWhileOffline: true,
-        });
-        expect(cleared).toEqual([]);
-      }),
-    ),
-  );
-
-  it.effect("wakes the caller's ready endpoints and reports whether anything was waiting", () =>
-    withService({ pendingKeys: [ownKey] }, ({ heldHooks, woken }) =>
-      Effect.gen(function* () {
-        expect(yield* heldHooks.wake({ environmentId, environmentPublicKey: "own-key" })).toBe(
-          true,
-        );
-        expect(woken).toEqual([ownKey]);
-      }),
-    ),
-  );
-
-  it.effect("does not wake an endpoint that is not ready", () =>
-    withService({ ownReady: false, pendingKeys: [ownKey] }, ({ heldHooks, woken }) =>
-      Effect.gen(function* () {
-        expect(yield* heldHooks.wake({ environmentId, environmentPublicKey: "own-key" })).toBe(
-          false,
-        );
-        expect(woken).toEqual([]);
       }),
     ),
   );

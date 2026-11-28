@@ -14,10 +14,6 @@ import {
 import type { GrokSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-/**
- * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
- * headless `total_cost_usd_ticks`.
- */
 export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 
 function grokCostTicksToUsd(ticks: unknown): number | null {
@@ -31,6 +27,7 @@ interface GrokUsageTotals {
   readonly cachedReadTokens: number;
   readonly cacheCreationTokens: number;
   readonly reasoningTokens: number;
+  readonly modelCalls: number;
   readonly costUsdTicks: number | null;
 }
 
@@ -43,6 +40,7 @@ function readGrokUsageTotals(value: unknown): GrokUsageTotals | null {
     cachedReadTokens: tokenCount(record["cachedReadTokens"]),
     cacheCreationTokens: tokenCount(record["cacheCreationTokens"]),
     reasoningTokens: tokenCount(record["reasoningTokens"]),
+    modelCalls: tokenCount(record["modelCalls"]),
     costUsdTicks:
       typeof record["costUsdTicks"] === "number" && Number.isFinite(record["costUsdTicks"])
         ? record["costUsdTicks"]
@@ -96,6 +94,7 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   const usageRecord = usage as Record<string, unknown>;
 
   const sessionId = typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
+  // T3's prompt ids restart with each Grok process, so a resumed session reuses them.
   const promptId = typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
 
   const meta = paramsRecord["_meta"];
@@ -139,8 +138,9 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
         totals: grokTotalsToUsage(topLevel),
         reportedCostUsd: grokCostTicksToUsd(topLevel.costUsdTicks),
         speed: "standard",
+        ...(topLevel.modelCalls > 1 ? { modelCalls: topLevel.modelCalls } : {}),
         // No prompt id means we cannot tell two same-second updates apart.
-        dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:grok`,
+        dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:grok`,
       },
     ];
   }
@@ -169,6 +169,12 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
     if (reportedCostUsd === null && remainingCostUsd !== null && untickedTokenDenominator > 0) {
       reportedCostUsd = remainingCostUsd * (totalTokens(totals) / untickedTokenDenominator);
     }
+    const calls =
+      entry.totals.modelCalls > 0
+        ? entry.totals.modelCalls
+        : modelEntries.length === 1
+          ? topLevel.modelCalls
+          : 1;
 
     results.push({
       provider: "grok",
@@ -178,7 +184,9 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
       totals,
       reportedCostUsd,
       speed: "standard",
-      dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,
+      ...(calls > 1 ? { modelCalls: calls } : {}),
+      dedupeKey:
+        promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:${entry.model}`,
     });
   }
   return results;
@@ -209,8 +217,7 @@ export const grokUsageReader: ProviderUsageReader<GrokSettings, Path.Path> = {
       environment.GROK_HOME?.trim() || path.join(homeDirectory, ".grok"),
       homeDirectory,
     );
-    // Sessions also ship multi-megabyte `chat_history` and `events` logs that
-    // never carry usage; only `updates.jsonl` does.
+    // Only updates.jsonl carries usage; skip large chat_history and events logs.
     return [{ dir: path.resolve(home, "sessions"), fileName: "updates.jsonl" }];
   }),
 };

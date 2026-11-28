@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
@@ -57,8 +57,7 @@ export const EDITORS = [
   {
     id: "antigravity",
     label: "Antigravity",
-    // `agy` is the standalone Antigravity CLI, not the IDE. The IDE bundle
-    // ships `antigravity-ide`, so it comes first for install-folder lookups.
+    // The IDE ships antigravity-ide; agy is the standalone CLI.
     commands: ["antigravity-ide", "agy-ide"],
     launchStyle: "goto",
   },
@@ -158,9 +157,16 @@ export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
-  /** Reveal (select) `cwd` in the file manager instead of opening it. Only
-      honored by the "file-manager" editor; clients must check the server's
-      `shellRevealInFileManager` config flag before sending this. */
+  /** When present, cwd is an exact path; {} opens it without a position. Omit for diagnostic suffix parsing. */
+  position: Schema.optional(
+    Schema.Struct({
+      line: Schema.optional(PositiveInt),
+      column: Schema.optional(PositiveInt),
+    }),
+  ),
+  /** Workspace the target belongs to; JetBrains IDEs open positioned files in this project. */
+  projectRoot: Schema.optional(TrimmedNonEmptyString),
+  /** Only for file-manager; requires the server's shellRevealInFileManager capability. */
   reveal: Schema.optional(Schema.Boolean),
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
@@ -177,10 +183,25 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+// `goto` editors share VS Code's `file:line:col` addressing, so their remote schemes also open
+// a local file as `<scheme>://file/<absolute path>[:line[:col]]`. Zed and JetBrains differ.
+export const LOCAL_FILE_LINK_SCHEMES: ReadonlyArray<string> = EDITORS.flatMap((editor) =>
+  editor.launchStyle === "goto" && "remoteScheme" in editor ? [editor.remoteScheme] : [],
+);
+
+export const isLocalEditorFileUrl = (url: URL): boolean =>
+  LOCAL_FILE_LINK_SCHEMES.includes(url.protocol.slice(0, -1)) &&
+  url.host === "file" &&
+  url.username.length === 0 &&
+  url.password.length === 0 &&
+  url.pathname.length > 1;
+
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
+  readonly username?: string;
   readonly absolutePath: string;
+  readonly isFile?: boolean;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -194,6 +215,9 @@ export const buildRemoteOpenUrl = (input: {
       ideHint: editor.jetbrainsProductCode,
       projectHint: input.absolutePath.replaceAll("\\", "/"),
     });
+    if (input.username !== undefined) {
+      params.set("u", input.username);
+    }
     return `${scheme}://gateway/ssh/environment?${params.toString()}`;
   }
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
@@ -201,16 +225,30 @@ export const buildRemoteOpenUrl = (input: {
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedHost = encodeURIComponent(input.host);
   if (input.editor === "zed") {
-    // Zed's remote server resolves a rooted path on the system drive, so a
-    // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
-    // drives are untested and kept as is rather than silently remapped, and a
-    // POSIX path that happens to start with `/C:` is left alone.
+    // Zed roots paths on the system drive, so omit the Windows drive prefix.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
     const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
-    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+    // Zed reads this segment as ssh URL userinfo, so the `@` stays literal.
+    const zedDestination =
+      input.username === undefined
+        ? encodedHost
+        : `${encodeURIComponent(input.username)}@${encodedHost}`;
+    return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  const plainDestination =
+    input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  // Remote-SSH splits the decoded authority on "+", so a destination containing one must use its
+  // hex-encoded JSON form instead.
+  const destination = plainDestination.includes("+")
+    ? Array.from(
+        new TextEncoder().encode(JSON.stringify({ hostName: input.host, user: input.username })),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("")
+    : plainDestination;
+  // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
+  // Without windowId=_blank, a folder link replaces the user's last active window.
+  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : "?windowId=_blank"}`;
 };
 
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
@@ -219,6 +257,7 @@ export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
+  username: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 
@@ -267,6 +306,18 @@ export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<E
   }
 }
 
+export class ExternalLauncherRevealTargetMissingError extends Schema.TaggedError<ExternalLauncherRevealTargetMissingError>()(
+  "ExternalLauncherRevealTargetMissingError",
+  {
+    editor: EditorId,
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `No file or folder exists at ${this.target}`;
+  }
+}
+
 const ExternalLauncherSpawnFields = {
   command: Schema.String,
   args: Schema.Array(Schema.String),
@@ -303,6 +354,7 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherUnsupportedTargetError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
 ]);

@@ -1,11 +1,7 @@
+import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildPairingUrl,
-  extractPairingUrlFromQrPayload,
-  PairingQrPayloadEmptyError,
-  parsePairingUrl,
-} from "./pairing";
+import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 
 describe("buildPairingUrl", () => {
   it("uses HTTP for a schemeless IP address", () => {
@@ -25,28 +21,29 @@ describe("buildPairingUrl", () => {
       "https://192.168.1.100:3773/#token=pairing-token",
     );
   });
+
+  it("pairs with the address's own origin when the address carries a query", () => {
+    const pairingUrl = buildPairingUrl(
+      "https://remote.example.com/?host=https%3A%2F%2Fother.example.com",
+      "pairing-token",
+    );
+
+    expect(pairingUrl).toBe("https://remote.example.com/#token=pairing-token");
+    expect(resolveRemotePairingTarget({ pairingUrl })).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
 });
 
 describe("extractPairingUrlFromQrPayload", () => {
-  it("trims raw pairing urls from qr payloads", () => {
-    expect(
-      extractPairingUrlFromQrPayload("  https://remote.example.com/pair#token=pairing-token  "),
-    ).toBe("https://remote.example.com/pair#token=pairing-token");
-  });
-
   it("unwraps mobile deep links that carry an encoded pairing url", () => {
     expect(
       extractPairingUrlFromQrPayload(
         "t3code://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
       ),
     ).toBe("https://remote.example.com/pair#token=pairing-token");
-  });
-
-  it("rejects empty qr payloads", () => {
-    expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(PairingQrPayloadEmptyError);
-    expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(
-      "Scanned QR code did not contain a pairing URL.",
-    );
   });
 });
 

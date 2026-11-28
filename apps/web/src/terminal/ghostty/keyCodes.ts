@@ -1,3 +1,5 @@
+import { isMacPlatform, US_SHIFTED_TO_UNSHIFTED_KEYS } from "@t3tools/shared/keybindings";
+
 // This order mirrors GhosttyKey in ghostty/vt/key/event.h. The values are
 // intentionally derived from the official W3C-aligned enum instead of
 // maintaining a second keyboard protocol.
@@ -188,38 +190,37 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+// With NumLock off, keypad digits report navigation keys; Ghostty encodes those as keypad variants.
+const NUMPAD_NAVIGATION_KEYS = new Map<string, number>(
+  (
+    [
+      ["ArrowDown", "NumpadArrowDown"],
+      ["ArrowLeft", "NumpadArrowLeft"],
+      ["ArrowRight", "NumpadArrowRight"],
+      ["ArrowUp", "NumpadArrowUp"],
+      ["Clear", "NumpadBegin"],
+      ["Delete", "NumpadDelete"],
+      ["End", "NumpadEnd"],
+      ["Home", "NumpadHome"],
+      ["Insert", "NumpadInsert"],
+      ["PageDown", "NumpadPageDown"],
+      ["PageUp", "NumpadPageUp"],
+    ] as const
+  ).map(([key, code]) => [key, ghosttyKeyForCode(code)]),
+);
+
 export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
-  // Android browsers can omit the physical code for keys such as Backspace.
-  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+  return (
+    (event.code.startsWith("Numpad") && NUMPAD_NAVIGATION_KEYS.get(event.key)) ||
+    ghosttyKeyForCode(event.code) ||
+    // Android browsers can omit the physical code for keys such as Backspace.
+    ghosttyKeyForCode(event.key)
+  );
 }
 
 export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
-
-const shiftedToUnshiftedCharacter = new Map<string, string>([
-  ["!", "1"],
-  ["@", "2"],
-  ["#", "3"],
-  ["$", "4"],
-  ["%", "5"],
-  ["^", "6"],
-  ["&", "7"],
-  ["*", "8"],
-  ["(", "9"],
-  [")", "0"],
-  ["~", "`"],
-  ["_", "-"],
-  ["+", "="],
-  ["{", "["],
-  ["}", "]"],
-  ["|", "\\"],
-  [":", ";"],
-  ['"', "'"],
-  ["<", ","],
-  [">", "."],
-  ["?", "/"],
-]);
 
 let keyboardLayoutMapPromise: Promise<GhosttyKeyboardLayoutMap | undefined> | undefined;
 
@@ -238,13 +239,14 @@ export function loadGhosttyKeyboardLayoutMap(): Promise<GhosttyKeyboardLayoutMap
   return promise;
 }
 
-// Browsers do not expose consumed modifiers; treat Shift as consumed for
-// unchorded character input.
+// Browsers omit consumed modifiers; macOS Option composes layout characters too.
 export function ghosttyConsumedMods(
   event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
 ): number {
-  if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
-  return [...event.key].length === 1 ? 1 : 0;
+  if (event.ctrlKey || event.metaKey || [...event.key].length !== 1) return 0;
+  if (event.altKey && !isMacPlatform(platform)) return 0;
+  return (event.shiftKey ? 1 : 0) | (event.altKey ? 1 << 2 : 0);
 }
 
 export function ghosttyUnshiftedCodepoint(
@@ -258,14 +260,13 @@ export function ghosttyUnshiftedCodepoint(
   }
   if (/^[A-Z]$/u.test(event.key)) return event.key.charCodeAt(0) + 32;
   if (event.shiftKey) {
-    const unshiftedCharacter = shiftedToUnshiftedCharacter.get(event.key);
+    const unshiftedCharacter = US_SHIFTED_TO_UNSHIFTED_KEYS.get(event.key);
     if (unshiftedCharacter) return unshiftedCharacter.codePointAt(0) ?? 0;
     const lowercase = event.key.toLowerCase();
     if (lowercase !== event.key && [...lowercase].length === 1) {
       return lowercase.codePointAt(0) ?? 0;
     }
-    // Without layout data the unshifted form of a shifted key is unknowable;
-    // reporting the shifted character as unshifted corrupts Kitty alternate keys.
+    // Without layout data, the unshifted character is unknown; guessing corrupts Kitty alternate keys.
     return 0;
   }
   return event.key.codePointAt(0) ?? 0;

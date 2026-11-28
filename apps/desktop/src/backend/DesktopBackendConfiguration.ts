@@ -2,15 +2,23 @@ import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import {
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  isValidDesktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -19,6 +27,7 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopCliShim from "../app/DesktopCliShim.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -74,27 +83,25 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_NO_BROWSER",
   "T3CODE_HOST",
   "T3CODE_DESKTOP_WS_URL",
-  "T3CODE_DESKTOP_LAN_ACCESS",
   "T3CODE_DESKTOP_LAN_HOST",
   "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
 ] as const;
 
-// Env vars that the WSL backend needs but Windows process.env won't forward
-// across the wsl.exe boundary without WSLENV.
+// Windows forwards these variables into WSL only through WSLENV.
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",
+  "DO_NOT_TRACK",
+  "T3CODE_FEATURE_FLAGS",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
   "T3CODE_OTEL_SDK_DISABLED",
   "OTEL_SDK_DISABLED",
   "T3CODE_OTLP_HEADERS",
   "T3CODE_OTLP_PROTOCOL",
-  // Forwarded without a WSLENV flag, so the values arrive untranslated. The
-  // server prefers an OTEL endpoint over the bootstrap envelope, so the T3 URLs
-  // travel as variables to keep winning inside the distro as they do on Windows.
+  // Untranslated T3 URLs must override bootstrap endpoints inside WSL, as they do on Windows.
   "T3CODE_OTLP_TRACES_URL",
   "T3CODE_OTLP_METRICS_URL",
   "T3CODE_OTLP_LOGS_URL",
@@ -113,6 +120,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_TRACES_EXPORTER",
   "OTEL_METRICS_EXPORTER",
   "OTEL_LOGS_EXPORTER",
+  "OTEL_RESOURCE_ATTRIBUTES",
 ] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -145,10 +153,7 @@ const mergeWslEnv = (
 
   const additions = forwardedEnvNames.filter((name) => !seenNames.has(name));
 
-  // Preserve the user's WSLENV exactly as Windows handed it to us — empty
-  // "::" segments and duplicate entries are harmless no-ops to WSL and not
-  // ours to normalize — and only append the secrets we need to forward
-  // across the wsl.exe boundary.
+  // Preserve empty segments and duplicates in the user's WSLENV; only append required variables.
   const parts = [existing, ...additions].filter((part) => part.length > 0);
   return parts.length > 0 ? parts.join(":") : undefined;
 };
@@ -244,7 +249,37 @@ interface SharedBootstrapInput {
   readonly bootstrapToken: string;
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
+  readonly hostScope: string;
 }
+
+// Matches the server's DESKTOP_HOST_SCOPE_ENV.
+const DESKTOP_HOST_SCOPE_ENV = "T3CODE_DESKTOP_HOST_SCOPE";
+const HOST_SCOPE_FILE_NAME = "desktop-host-scope";
+const HOST_SCOPE_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * Not a credential: it only tells this install's Windows and WSL servers that
+ * they run on one machine, so usage both read from one Windows directory counts
+ * once. Persisted so summaries from earlier launches still match.
+ */
+const readOrCreateHostScope = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const random = yield* SecureRandom.SecureRandom;
+  const scopePath = environment.path.join(environment.stateDir, HOST_SCOPE_FILE_NAME);
+  const existing = (yield* fileSystem
+    .readFileString(scopePath)
+    .pipe(Effect.orElseSucceed(() => ""))).trim();
+  if (HOST_SCOPE_PATTERN.test(existing)) return existing;
+  const scope = Hex.encode(yield* random.randomBytes(16).pipe(Effect.orDie));
+  yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(scopePath, scope)),
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not persist the desktop host scope.", { cause }),
+    ),
+  );
+  return scope;
+});
 
 type WslPreflightRuntime =
   | {
@@ -253,10 +288,7 @@ type WslPreflightRuntime =
     }
   | {
       readonly kind: "node-script";
-      // Absolute path to the node binary the preflight validated after the
-      // shared remote resolver repaired PATH. The launch must use this exact
-      // path so it doesn't fall through to a different/old node than the one
-      // node-pty was probed with.
+      // Launch the exact Node path probed with node-pty, even if later PATH lookup would resolve another version.
       readonly nodePath: string;
       readonly linuxEntryPath: string;
     };
@@ -267,6 +299,7 @@ interface WslPreflightSuccess {
   readonly windowsEntryPath: string;
   readonly runtime: WslPreflightRuntime;
   readonly resolvedPath: string;
+  readonly t3Home: string | null;
   readonly runtimeId?: string;
 }
 
@@ -386,7 +419,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
-  let stagedFailure: { readonly runtimeId: string; readonly reason: string } | undefined;
+  let stagedFailure: { readonly reason: string } | undefined;
   const failedStaged = (failure: { readonly reason: string }) =>
     ({
       _tag: "Failed",
@@ -395,12 +428,16 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     }) as const;
 
   if (input.runtimeArchive !== null) {
-    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
-    if (runtime.ok) {
-      // The staged runtime supplies its own Node and node-pty. Provider PATH
-      // discovery must not require either dependency for runtime readiness.
-      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
-      if (stagedProbe.ok) {
+    // Staged runtimes bundle Node and node-pty; provider PATH discovery must not require them.
+    // Probe first: the runtime cache lives under the login shell's T3CODE_HOME.
+    const stagedProbe = yield* wslEnv.probeRuntime(runningDistro);
+    if (stagedProbe.ok) {
+      const runtime = yield* wslEnv.prepareRuntime(
+        runningDistro,
+        input.runtimeArchive,
+        stagedProbe.t3Home,
+      );
+      if (runtime.ok) {
         yield* wslServerTree.cleanupLegacy;
         return {
           _tag: "Ready",
@@ -408,19 +445,21 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           windowsEntryPath: environment.backendEntryPath,
           runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
           resolvedPath: stagedProbe.resolvedPath,
+          t3Home: stagedProbe.t3Home,
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
       }
-      yield* Effect.logWarning(
-        "The staged WSL runtime did not start; retrying from the mounted server tree.",
-        { reason: stagedProbe.reason },
-      );
-      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
-    } else {
+      stagedFailure = { reason: runtime.reason };
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
         { reason: runtime.reason },
       );
+    } else {
+      yield* Effect.logWarning(
+        "The staged WSL runtime probe failed; retrying from the mounted server tree.",
+        { reason: stagedProbe.reason },
+      );
+      stagedFailure = { reason: stagedProbe.reason };
     }
   }
 
@@ -437,17 +476,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     nodePtyOptions,
   );
   if (!nodePtyResult.ok) {
-    // Substituting the staged verdict for a transient mounted failure would
-    // turn a retryable failure into a fatal one, ending the WSL attempt (and,
-    // in wsl-only mode, persisting Windows) before the slow /mnt path had a
-    // chance to answer and clear the bad cache.
+    // Only substitute a staged failure for a fatal mounted failure; transient /mnt failures must remain retryable.
     return stagedFailure && nodePtyResult.fatal
       ? failedStaged(stagedFailure)
       : failedNodePty(nodePtyResult);
-  }
-
-  if (stagedFailure) {
-    yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
   return {
@@ -460,19 +492,16 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
     },
     resolvedPath: nodePtyResult.resolvedPath,
+    t3Home: nodePtyResult.t3Home,
   } as const;
 });
 
-// In WSL2 mirrored mode the distro's eth0 IP equals the host's, which is the
-// signature we use to detect that mode and switch the renderer URL to loopback.
+// In WSL2 mirrored mode, eth0 matches a host IP; use loopback for the renderer.
 const isLocalHostIpv4 = (ip: string): boolean => {
   const interfaces = NodeOS.networkInterfaces();
   for (const list of Object.values(interfaces)) {
     if (!list) continue;
     for (const entry of list) {
-      // os.networkInterfaces() reports IPv4 `family` as the string "IPv4" on
-      // the Node build Electron ships (41 / Node 22, verified), but some Node
-      // builds report the numeric 4.
       const family = String(entry.family);
       if ((family === "IPv4" || family === "4") && entry.address === ip) return true;
     }
@@ -501,6 +530,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
+      readonly desktopAppUpdate: boolean;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -519,12 +549,12 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       desktopBootstrapSecret: input.bootstrapSecret,
-      // Failed Windows probes leave server hydration enabled for another attempt.
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
+      desktopAppUpdate: input.desktopAppUpdate,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
       ...Option.match(input.resourceMonitorPath, {
@@ -536,10 +566,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
 
     return {
       executablePath: process.execPath,
-      // Packaged builds only, so a dev instance never shares the cache with the
-      // prod app it is often run from. `--require` rather than NODE_COMPILE_CACHE,
-      // so the setting does not leak into the provider and terminal processes
-      // the backend starts.
+      // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
       args: [
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
         environment.backendEntryPath,
@@ -551,7 +578,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        [DESKTOP_HOST_SCOPE_ENV]: input.hostScope,
       },
       extendEnv: true,
       bootstrap,
@@ -563,10 +592,16 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   },
 );
 
+interface LaunchReadiness {
+  readonly secret: string;
+  readonly probe: Effect.Effect<DesktopBackendManager.BackendReadinessProbe>;
+}
+
 const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl")(function* (
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly readiness: LaunchReadiness;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -579,26 +614,21 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const env = yield* HostProcess.Environment;
 
-  // wslhost forwarding is unreliable on some Windows hosts: the desktop's
-  // readiness probe and the renderer's saved-env-style fetch both saw "Failed
-  // to fetch" when the backend only bound to 127.0.0.1 inside WSL. Binding to
-  // 0.0.0.0 plus advertising the WSL IP as the renderer-visible URL avoids that
-  // dependency.
+  // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
   const wslBindHost = "0.0.0.0";
 
   const bootstrap = {
     mode: "desktop" as const,
     noBrowser: true,
     port: input.port,
-    // Omit t3Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
-    // the SQLite file with the primary).
+    // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
-    // PortSchema rejects 0, so when tailscale serve is disabled we still need a
-    // valid number in this slot.
+    desktopReadinessSecret: input.readiness.secret,
+    // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
     ...buildObservabilityFragment(input.observabilitySettings),
@@ -639,9 +669,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     allowBuild: !environment.isPackaged,
   });
 
-  // Every operation after preflight uses the same concrete distro. In
-  // default-tracking mode this closes the race where the system default
-  // changes between probing and spawning the backend.
+  // Pin the preflight distro so a default change cannot race backend startup.
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
@@ -656,10 +684,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
-  const forwardedEnv: Record<string, string> = {};
-  const forwardedEnvNames: string[] = [];
+  const forwardedEnv: Record<string, string> = { [DESKTOP_HOST_SCOPE_ENV]: input.hostScope };
+  const forwardedEnvNames: string[] = [DESKTOP_HOST_SCOPE_ENV];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
-    const value = process.env[name];
+    const value = env[name];
     if (value !== undefined && value.length > 0) {
       forwardedEnv[name] = value;
       forwardedEnvNames.push(name);
@@ -667,7 +695,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   }
 
   const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(env)) {
     if (key === "T3CODE_HOME") continue;
     parentEnvWithoutT3Home[key] = value;
   }
@@ -684,18 +712,18 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env is already a complete process.env minus T3CODE_HOME; pass it
-    // verbatim instead of letting the spawner re-merge process.env on top.
+    // env already excludes T3CODE_HOME; merging the host env would restore it.
     extendEnv: false,
     bootstrap,
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
+    // wsl.exe carries no control channel, so the backend proves over HTTP that it is this launch.
+    readinessProbe: input.readiness.probe,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };
 
-  // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
-  // config resolution lands in dev/ instead of userdata/.
+  // Explicit --dev-url keeps WSL state in dev/ rather than userdata/.
   const devUrlArgs = Option.match(environment.devServerUrl, {
     onNone: () => [] as ReadonlyArray<string>,
     onSome: (url) => ["--dev-url", url.href],
@@ -715,10 +743,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   }
 
-  // The WSL server spawns commands its providers reference by name — `npm`/`npx`
-  // for provider updates, and the installed CLIs themselves (e.g. `codex`). Those
-  // live on the user's login-shell PATH, which `wsl.exe --exec` does NOT put on
-  // the process PATH, so `npm install -g ...` fails with NotFound.
+  // wsl.exe --exec omits the login-shell PATH needed to find provider CLIs and npm.
   const runtime = preflight.runtime;
   const launchPath =
     runtime.kind === "executable"
@@ -733,20 +758,26 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...baseConfig,
     args: [
       ...distroArgs,
+      // WSL otherwise inherits the Windows-mounted desktop working directory.
+      "--cd",
+      "~",
       "--exec",
       "env",
       `PATH=${launchPath}`,
+      ...(preflight.t3Home === null ? [] : [`T3CODE_HOME=${preflight.t3Home}`]),
       ...command,
       "--bootstrap-fd",
       "0",
       ...devUrlArgs,
     ],
     preflightFailure: Option.none(),
-    ...(preflight.runtimeId === undefined ? {} : { wslRuntimeId: preflight.runtimeId }),
+    ...(preflight.runtimeId === undefined
+      ? {}
+      : { wslRuntimeId: preflight.runtimeId, wslT3Home: preflight.t3Home }),
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
@@ -755,19 +786,23 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
-  const crypto = yield* Crypto.Crypto;
-  // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
-  // crypto.randomBytes is a yield point, and resolvePrimary + resolveWsl can
-  // resolve concurrently; with a plain Ref both could observe None, generate
-  // distinct secrets, and one would overwrite the other — leaving the two
-  // backends deriving mismatched tokens and breaking the shared-token invariant
-  // the renderer relies on.
+  const desktopState = yield* DesktopState.DesktopState;
+  const mac = yield* Mac.Mac;
+  const random = yield* SecureRandom.SecureRandom;
+  // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
+  const hostScope = yield* Effect.cached(
+    readOrCreateHostScope.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      Effect.provideService(SecureRandom.SecureRandom, random),
+    ),
+  );
   const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
       onSome: (secret) => Effect.succeed([secret, current] as const),
       onNone: () =>
-        crypto.randomBytes(32).pipe(
+        random.randomBytes(32).pipe(
           Effect.map((bytes) => {
             const secret = Hex.encode(bytes);
             return [secret, Option.some(secret)] as const;
@@ -776,12 +811,28 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // A secret per launch: only the backend started with it can pass that launch's probe.
+  const makeLaunchReadiness = Effect.gen(function* () {
+    const secret = Hex.encode(yield* random.randomBytes(32));
+    const probe = Effect.gen(function* () {
+      const challenge = Hex.encode(yield* random.randomBytes(16).pipe(Effect.orDie));
+      return {
+        path: `${DESKTOP_READINESS_PROOF_PATH}?${DESKTOP_READINESS_CHALLENGE_PARAM}=${challenge}`,
+        accept: (body: string) =>
+          isValidDesktopReadinessProof(secret, challenge, body).pipe(
+            Effect.provideService(Mac.Mac, mac),
+          ),
+      };
+    });
+    return { secret, probe } satisfies LaunchReadiness;
+  });
+
   const sharedInputs = Effect.gen(function* () {
     const bootstrapSecret = yield* getOrCreateBootstrapSecret;
-    const bootstrapToken = currentDesktopBootstrapToken(
+    const bootstrapToken = yield* currentDesktopBootstrapToken(
       bootstrapSecret,
       yield* Clock.currentTimeMillis,
-    );
+    ).pipe(Effect.provideService(Mac.Mac, mac));
     const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -790,6 +841,7 @@ export const make = Effect.gen(function* () {
       bootstrapToken,
       bootstrapSecret,
       observabilitySettings,
+      hostScope: yield* hostScope,
     } satisfies SharedBootstrapInput;
   });
 
@@ -802,6 +854,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      readiness: yield* makeLaunchReadiness,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -826,31 +879,27 @@ export const make = Effect.gen(function* () {
       resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
+      desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
   });
 
-  // Dispatch happens at resolve time so toggling wsl-only between restarts
-  // is picked up on the next start cycle (the pool's primary instance is
-  // created once at layer init, but configResolve fires on each restart).
+  // Resolve on each restart so toggling wsl-only takes effect without recreating the pool.
   const describePrimary = Effect.gen(function* () {
     const persistedSettings = yield* settings.get;
     const wslRequested = persistedSettings.wslOnly && persistedSettings.wslBackendEnabled;
-    // Only honor wsl-only when WSL is actually usable. If the user
-    // persisted wsl-only but WSL has since become unavailable (wsl.exe
-    // removed, no distro), fall back to the Windows primary instead of
-    // looping forever on preflight failures: the Connections backend
-    // control is hidden while WSL is unavailable, so a stuck WSL primary
-    // would otherwise leave no in-app way back to Windows.
+    // When WSL is unavailable its controls are hidden; fall back to Windows to keep recovery possible.
     const useWsl = wslRequested && (yield* wslEnvironment.isAvailable);
     return { useWsl, wslRequested, distro: persistedSettings.wslDistro };
   });
 
   const currentBootstrapToken = Effect.gen(function* () {
     const secret = yield* getOrCreateBootstrapSecret;
-    return currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+    return yield* currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis).pipe(
+      Effect.provideService(Mac.Mac, mac),
+    );
   });
 
   return DesktopBackendConfiguration.of({
@@ -874,20 +923,25 @@ export const make = Effect.gen(function* () {
       }
       return distro ? `WSL (${distro})` : "WSL";
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimaryLabel")),
-    resolveWsl: (input) =>
-      Effect.gen(function* () {
+    // The span options depend on each request's port and distro.
+    resolveWsl: Effect.fnUntraced(
+      function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        const readiness = yield* makeLaunchReadiness;
+        return yield* resolveWslStartConfig({ ...shared, ...input, readiness }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
-      }).pipe(
-        Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
-          attributes: { port: input.port, distro: input.distro ?? null },
-        }),
-      ),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
+            attributes: { port: input.port, distro: input.distro ?? null },
+          }),
+        ),
+    ),
   });
 });
 

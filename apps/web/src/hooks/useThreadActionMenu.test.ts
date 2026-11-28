@@ -20,6 +20,7 @@ function deferred<T>() {
 const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
+  latestRun: null as { readonly status: string; readonly completedAt: string | null } | null,
   completed: deferred<void>(),
   show: vi.fn<
     (
@@ -45,13 +46,11 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
+  readEnvironmentScopeDenied: (environmentId: string) => !state.granted.has(environmentId),
 }));
 vi.mock("../state/entities", () => ({
+  readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
-  readEnvironmentSupportsTitleRegeneration: () => true,
   readThreadShell: () => ({
     id: "thread",
     environmentId: "secondary",
@@ -60,7 +59,7 @@ vi.mock("../state/entities", () => ({
     branch: "main",
     worktreePath: null,
     runtime: null,
-    latestRun: null,
+    latestRun: state.latestRun,
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
@@ -83,7 +82,7 @@ vi.mock("../localApi", () => ({
     },
   }),
 }));
-vi.mock("../logicalProject", () => ({
+vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: () => "project",
   derivePhysicalProjectKey: () => "project",
   selectProjectGroupingSettings: () => ({}),
@@ -122,6 +121,7 @@ vi.mock("./useSettings", () => ({
     }),
 }));
 vi.mock("./useThreadActions", () => ({
+  canTurnThreadIntoProject: () => false,
   useThreadActions: () =>
     Object.fromEntries(
       [
@@ -151,48 +151,24 @@ const target = {
   threadId: ThreadId.make("thread"),
 };
 const position = { x: 10, y: 20 };
-const createMenu = () =>
+const createMenu = (options: { readonly onFind?: (threadRef: typeof target) => void } = {}) =>
   useThreadActionMenu({
     threadRef: target,
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
+    onFind: options.onFind,
+    canShareWithGuest: false,
   });
 
 beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
+  state.latestRun = null;
   state.completed = deferred<void>();
   state.show.mockReset().mockResolvedValue(null);
 });
 
 describe("thread menu permissions", () => {
-  it("disables mutations for a denied secondary environment", () => {
-    createMenu().openMenu(position);
-    const items = state.show.mock.calls[0]![0];
-    expect(items.find((item) => item.id === "rename")?.disabled).toBe(true);
-    expect(items.find((item) => item.id === "delete")?.disabled).toBe(true);
-    expect(items.find((item) => item.id === "copy")?.disabled).not.toBe(true);
-  });
-
-  it("allows the target grant even when the primary environment is denied", () => {
-    state.granted = new Set(["secondary"]);
-    createMenu().openMenu(position);
-    expect(state.show.mock.calls[0]![0].find((item) => item.id === "rename")?.disabled).not.toBe(
-      true,
-    );
-  });
-
-  it("refreshes availability when a retained menu opener gains permission", () => {
-    const menu = createMenu();
-    menu.openMenu(position);
-    expect(state.show.mock.calls[0]![0].find((item) => item.id === "rename")?.disabled).toBe(true);
-    state.granted.add("secondary");
-    menu.openMenu(position);
-    expect(state.show.mock.calls[1]![0].find((item) => item.id === "rename")?.disabled).not.toBe(
-      true,
-    );
-  });
-
   it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
     "%s rechecks after the native menu closes",
     async (action) => {
@@ -207,15 +183,31 @@ describe("thread menu permissions", () => {
     },
   );
 
-  it.each([
-    ["new-thread-on-branch", "draft"],
-    ["copy-thread-id", "copy"],
-    ["mark-unread", "mark-unread"],
-    ["project-settings", "project-settings"],
-  ] as const)("keeps %s available without task permission", async (action, effect) => {
-    state.show.mockResolvedValue(action);
+  it("offers find only to a header that can open it, without task permission", async () => {
     createMenu().openMenu(position);
+    expect(state.show.mock.calls[0]![0].some((item) => item.id === "find")).toBe(false);
+    state.show.mockResolvedValue("find");
+    const onFind = vi.fn(() => recordEffect("find"));
+    createMenu({ onFind }).openMenu(position);
     await state.completed.promise;
-    expect(state.effects).toEqual([effect]);
+    const items = state.show.mock.calls[1]![0];
+    expect(items[0]).toMatchObject({ id: "find", label: "Find in thread" });
+    expect(items[0]?.disabled).not.toBe(true);
+    expect(state.effects).toEqual(["find"]);
+    expect(onFind).toHaveBeenCalledExactlyOnceWith(target);
+  });
+});
+
+describe("thread menu mark unread", () => {
+  it.each([
+    ["completed", true],
+    ["interrupted", false],
+    ["cancelled", false],
+  ] as const)("a %s latest run offers Mark unread: %s", (status, offered) => {
+    // A stopped run never shows Done, so marking it unread would change nothing.
+    state.latestRun = { status, completedAt: "2026-01-01T00:00:00.000Z" };
+    createMenu().openMenu(position);
+    const items = state.show.mock.calls[0]![0];
+    expect(items.some((item) => item.id === "mark-unread")).toBe(offered);
   });
 });

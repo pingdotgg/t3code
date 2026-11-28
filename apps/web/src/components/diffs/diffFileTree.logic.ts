@@ -1,7 +1,13 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { FileTreeBatchOperation, FileTreeSortComparator, GitStatus } from "@pierre/trees";
+import type {
+  FileTreeBatchOperation,
+  FileTreeIconConfig,
+  FileTreeSortComparator,
+  GitStatus,
+} from "@pierre/trees";
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
+import { basenameOfPath, resolvePierreIconForEntry, T3_PIERRE_ICONS } from "~/pierre-icons";
 
 export interface DiffFileTreeEntry {
   readonly path: string;
@@ -35,6 +41,37 @@ export function diffFileTreeEntries(
   return [...statusByPath].map(([path, status]) => ({ path, status }));
 }
 
+// Pierre cannot store a file and a directory at the same path. Give only those
+// files an invisible suffix, keeping real paths at the diff/viewer boundary.
+export function diffFileTreeModel(paths: ReadonlyArray<string>) {
+  const directories = new Set(collectDirectoryPaths(paths));
+  // Icon overrides match basenames case-insensitively, so aliases must also avoid
+  // real names in other directories, including names that already contain the suffix.
+  const occupiedNames = new Set(paths.flatMap((path) => path.toLowerCase().split("/")));
+  const selectionByModelPath = new Map<string, string>();
+  const modelBySelectionPath = new Map<string, string>();
+  const byFileName: FileTreeIconConfig["byFileName"] = { ...T3_PIERRE_ICONS.byFileName };
+  const modelPaths = paths.map((path) => {
+    if (!directories.has(`${path}/`)) return path;
+    let modelPath = path;
+    do {
+      modelPath += "\u200b";
+    } while (occupiedNames.has(basenameOfPath(modelPath).toLowerCase()));
+    occupiedNames.add(basenameOfPath(modelPath).toLowerCase());
+    selectionByModelPath.set(modelPath, path);
+    modelBySelectionPath.set(path, modelPath);
+    const icon = resolvePierreIconForEntry(path, "file");
+    if (icon !== null) byFileName[basenameOfPath(modelPath)] = icon;
+    return modelPath;
+  });
+  return {
+    paths: modelBySelectionPath.size === 0 ? paths : modelPaths,
+    selectionPath: (modelPath: string) => selectionByModelPath.get(modelPath) ?? modelPath,
+    modelPath: (path: string) => modelBySelectionPath.get(path) ?? path,
+    icons: modelBySelectionPath.size === 0 ? T3_PIERRE_ICONS : { ...T3_PIERRE_ICONS, byFileName },
+  };
+}
+
 export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> {
   const directories = new Set<string>();
   for (const path of paths) {
@@ -46,19 +83,6 @@ export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArr
     }
   }
   return [...directories];
-}
-
-export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
-  const positions = new Map<string, number>();
-  paths.forEach((path, index) => {
-    positions.set(path, index);
-    let directory = "";
-    for (const segment of path.split("/").slice(0, -1)) {
-      directory += `${segment}/`;
-      if (!positions.has(directory)) positions.set(directory, index);
-    }
-  });
-  return positions;
 }
 
 export function compareDiffFileTreeEntries(
@@ -92,7 +116,6 @@ export function buildDiffFileTreeUpdates(
   for (const path of previousPaths) {
     if (!next.has(path)) updates.push({ type: "remove", path });
   }
-  // Deepest first: a directory can only go once everything under it has.
   const removedDirectories = [...previousDirectories]
     .filter((directory) => !nextDirectories.has(directory))
     .toSorted((left, right) => pathDepth(right) - pathDepth(left));
@@ -100,7 +123,6 @@ export function buildDiffFileTreeUpdates(
     updates.push({ type: "remove", path: directory, recursive: true });
   }
 
-  // Shallowest first: a file's directory has to exist before the file does.
   const addedDirectories = [...nextDirectories]
     .filter((directory) => !previousDirectories.has(directory))
     .toSorted((left, right) => pathDepth(left) - pathDepth(right));

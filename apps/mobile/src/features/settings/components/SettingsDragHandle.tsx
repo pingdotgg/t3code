@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useEffectEvent, useState } from "react";
 import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -13,39 +14,33 @@ export function SettingsDragHandle(props: {
   readonly onEnd: (translation: number, cancelled: boolean) => void;
   readonly onStep: (direction: "up" | "down") => void;
 }) {
-  // Gesture callbacks fire outside render, so effect events give them the
-  // latest props while the gesture object itself stays stable.
+  const gt = useGT();
   const onStart = useEffectEvent(() => props.onStart());
   const onMove = useEffectEvent((translation: number) => props.onMove(translation));
   const onEnd = useEffectEvent((translation: number, cancelled: boolean) =>
     props.onEnd(translation, cancelled),
   );
-  const [gesture] = useState(() => {
-    let translation = 0;
-    return Gesture.Pan()
+  // The worklets plugin copies the values these callbacks close over when the gesture is built,
+  // so the drop reads its translation from the final event rather than a tracked variable.
+  const [gesture] = useState(() =>
+    Gesture.Pan()
       .minDistance(0)
       .shouldCancelWhenOutside(false)
       .runOnJS(true)
-      .onStart(() => {
-        translation = 0;
-        onStart();
-      })
-      .onUpdate((event) => {
-        translation = event.translationY;
-        onMove(event.translationY);
-      })
-      .onFinalize((_, success) => onEnd(translation, !success));
-  });
+      .onStart(() => onStart())
+      .onUpdate((event) => onMove(event.translationY))
+      .onFinalize((event, success) => onEnd(event.translationY, !success)),
+  );
   return (
     <GestureDetector gesture={gesture}>
       <View
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
+        accessibilityLabel={gt("Reorder {item}", { item: props.title })}
         accessibilityActions={[
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp ? [{ name: "decrement", label: gt("Move up") }] : []),
+          ...(props.canMoveDown ? [{ name: "increment", label: gt("Move down") }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");

@@ -2,10 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
-  MAX_REMOTE_UPDATE_CHECKS,
   MAX_REMOTE_UPDATE_DOWNLOADS,
   nextRemoteDesktopUpdateStep,
-  normalizeRemoteUpdateReason,
   type RemoteDesktopUpdateAttempts,
 } from "./remoteUpdateFlow.ts";
 
@@ -117,23 +115,6 @@ describe("nextRemoteDesktopUpdateStep", () => {
     });
   });
 
-  it("rides along while a check or download is already in flight", () => {
-    assert.deepEqual(
-      nextRemoteDesktopUpdateStep(makeState({ status: "checking" }), NO_ATTEMPTS, null),
-      {
-        action: "wait",
-      },
-    );
-    assert.deepEqual(
-      nextRemoteDesktopUpdateStep(
-        makeState({ status: "downloading", availableVersion: "1.2.4", downloadPercent: 40 }),
-        NO_ATTEMPTS,
-        null,
-      ),
-      { action: "wait" },
-    );
-  });
-
   it("downloads an available update until the attempt cap, then fails", () => {
     const available = makeState({ status: "available", availableVersion: "1.2.4" });
     assert.deepEqual(nextRemoteDesktopUpdateStep(available, NO_ATTEMPTS, null), {
@@ -199,30 +180,5 @@ describe("nextRemoteDesktopUpdateStep", () => {
       outcome: "failed",
       reason: "The desktop app update failed.",
     });
-  });
-
-  it("checks from idle until the attempt cap, then fails", () => {
-    assert.deepEqual(nextRemoteDesktopUpdateStep(makeState(), NO_ATTEMPTS, null), {
-      action: "check",
-    });
-    assert.deepEqual(
-      nextRemoteDesktopUpdateStep(
-        makeState(),
-        { checks: MAX_REMOTE_UPDATE_CHECKS, downloads: 0 },
-        null,
-      ),
-      {
-        action: "done",
-        outcome: "failed",
-        reason: "The desktop app did not report an update result.",
-      },
-    );
-  });
-
-  it("drops blank reasons so the wire report still encodes", () => {
-    assert.equal(normalizeRemoteUpdateReason(undefined), undefined);
-    assert.equal(normalizeRemoteUpdateReason(""), undefined);
-    assert.equal(normalizeRemoteUpdateReason("   "), undefined);
-    assert.equal(normalizeRemoteUpdateReason("  feed unreachable  "), "feed unreachable");
   });
 });

@@ -1,132 +1,47 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as NetService from "@t3tools/shared/Net";
-import { SshPasswordPromptError } from "@t3tools/ssh/errors";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 
-import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
-import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { resolveDesktopSshCliRunner } from "./DesktopSshEnvironment.ts";
 
-function makeTempHomeDir() {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-env-test-" });
-  });
-}
-
-describe("sshEnvironment", () => {
-  it("keeps prompt presentation diagnostics distinct from the legacy wrapper message", () => {
-    const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
-      requestId: "prompt-1",
-      destination: "devbox",
-      operation: "send-prompt-request",
-      cause: new Error("renderer send failed"),
-    });
-
-    assert.equal(cause.message, "Failed to present SSH password prompt for devbox.");
-    assert.equal(
-      DesktopSshEnvironment.toSshPasswordPromptError(cause).message,
-      "T3 Code window is not available for SSH authentication.",
-    );
-  });
-
-  it("treats password prompt timeouts as cancellable authentication prompts", () => {
-    assert.equal(
-      DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(
-        new SshPasswordPromptError({
-          message: "SSH authentication timed out for devbox.",
-          cause: new DesktopSshPasswordPrompts.DesktopSshPromptTimedOutError({
-            requestId: "prompt-1",
-            destination: "devbox",
-          }),
-        }),
-      ),
-      true,
-    );
-  });
-
-  it.effect("wires desktop host discovery through the ssh package runtime", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDir = yield* makeTempHomeDir();
-      const sshDir = path.join(homeDir, ".ssh");
-      yield* fs.makeDirectory(path.join(sshDir, "config.d"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(sshDir, "config"),
-        ["Host devbox", "  HostName devbox.example.com", "Include config.d/*.conf", ""].join("\n"),
-      );
-      yield* fs.writeFileString(
-        path.join(sshDir, "config.d", "team.conf"),
-        [
-          "Host staging",
-          "  HostName staging.example.com",
-          "Host *",
-          "  ServerAliveInterval 30",
-          "",
-        ].join("\n"),
-      );
-      yield* fs.writeFileString(
-        path.join(sshDir, "known_hosts"),
-        [
-          "known.example.com ssh-ed25519 AAAA",
-          "|1|hashed|entry ssh-ed25519 AAAA",
-          "[bastion.example.com]:2222 ssh-ed25519 AAAA",
-          "",
-        ].join("\n"),
-      );
-
-      const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
-      const hosts = yield* sshEnvironment.discoverHosts({ homeDir });
-      assert.deepEqual(hosts, [
-        {
-          alias: "bastion.example.com",
-          hostname: "bastion.example.com",
-          username: null,
-          port: null,
-          source: "known-hosts",
-        },
-        {
-          alias: "devbox",
-          hostname: "devbox",
-          username: null,
-          port: null,
-          source: "ssh-config",
-        },
-        {
-          alias: "known.example.com",
-          hostname: "known.example.com",
-          username: null,
-          port: null,
-          source: "known-hosts",
-        },
-        {
-          alias: "staging",
-          hostname: "staging",
-          username: null,
-          port: null,
-          source: "ssh-config",
-        },
-      ]);
+const packagedEnvironment = DesktopEnvironment.DesktopEnvironment.pipe(
+  Effect.provide(
+    DesktopEnvironment.layer({
+      dirname: "/Applications/T3 Code.app/Contents/Resources/app.asar/dist-electron",
+      homeDirectory: "/Users/alice",
+      platform: "darwin",
+      processArch: "arm64",
+      appVersion: "0.0.22",
+      appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+      isPackaged: true,
+      resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+      runningUnderArm64Translation: false,
     }).pipe(
-      Effect.provide(
-        DesktopSshEnvironment.layer().pipe(
-          Layer.provideMerge(
-            Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
-              request: () => Effect.die("unexpected password prompt request"),
-              resolve: () => Effect.die("unexpected password prompt resolution"),
-            }),
-          ),
-          Layer.provideMerge(NodeServices.layer),
-          Layer.provideMerge(NodeHttpClient.layerUndici),
-          Layer.provideMerge(NetService.layer),
-        ),
+      Layer.provide(
+        Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest({})),
       ),
-      Effect.scoped,
     ),
+  ),
+);
+
+describe("resolveDesktopSshCliRunner", () => {
+  it.effect("downloads the remote runner from the release mirror", () =>
+    Effect.gen(function* () {
+      const environment = yield* packagedEnvironment;
+
+      const runner = resolveDesktopSshCliRunner(environment, {
+        [CLI_RELEASE_BASE_URL_ENV]: "https://mirror.example.com/t3code",
+      });
+
+      assert.deepStrictEqual(runner, {
+        archiveVersion: "0.0.22",
+        releaseBaseUrl: "https://mirror.example.com/t3code",
+      });
+    }),
   );
 });

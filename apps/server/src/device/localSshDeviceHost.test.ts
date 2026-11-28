@@ -11,6 +11,7 @@ import {
 } from "./localSshDeviceHost.ts";
 
 const host = (target: string, port?: number) => ({
+  kind: "ssh" as const,
   id: target,
   label: target,
   target,
@@ -20,12 +21,13 @@ const spawner = ChildProcessSpawner.make((command) =>
   Effect.gen(function* () {
     if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
     expect(command.args).toContain("-G");
-    const target = command.args.at(-1);
+    const target = command.args.map(String).at(-1);
     const configs: Record<string, string> = {
       "mac-mini": "hostname 100.65.180.100\nport 22\n",
       remote: "hostname 192.0.2.1\nport 22\n",
       loopback: "hostname 127.0.1.1\nport 22\n",
       ipv6: "hostname ::1\nport 22\n",
+      mapped: "hostname ::ffff:127.0.0.1\nport 22\n",
       forwarded: "hostname 127.0.0.1\nport 2222\n",
       proxy: "hostname 127.0.0.1\nport 22\nproxyjump bastion\n",
       command: "hostname 127.0.0.1\nport 22\nproxycommand nc remote 22\n",
@@ -58,7 +60,7 @@ const provide = <A, E>(
 it.effect("skips SSH aliases resolving to this machine, including loopback", () =>
   provide(
     Effect.gen(function* () {
-      for (const target of ["mac-mini", "loopback", "ipv6"]) {
+      for (const target of ["mac-mini", "loopback", "ipv6", "mapped"]) {
         expect(yield* isLocalSshDeviceHost(host(target))).toBe(true);
       }
     }),
@@ -78,9 +80,18 @@ it.effect("keeps remote, forwarded, proxied, and unresolved destinations", () =>
 it.effect("removes only self targets from a fanned-out host list", () =>
   provide(
     Effect.gen(function* () {
+      const eas = {
+        kind: "eas" as const,
+        id: "eas",
+        label: "Expo Simulators",
+        accessToken: "",
+        maxSessionMinutes: 30,
+        idleMinutes: 10,
+        maxConcurrentSessions: 2,
+      };
       expect(
-        yield* remoteSshDeviceHosts([host("mac-mini"), host("remote"), host("forwarded")]),
-      ).toEqual([host("remote"), host("forwarded")]);
+        yield* remoteSshDeviceHosts([host("mac-mini"), eas, host("remote"), host("forwarded")]),
+      ).toEqual([eas, host("remote"), host("forwarded")]);
     }),
   ),
 );

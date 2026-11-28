@@ -1,11 +1,15 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
   planPinnedReorder,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ThreadMoveDestination =
   | "up"
@@ -69,9 +73,13 @@ function rowId(row: OrderRow): string {
   return `${row.environmentId}:${row.id}`;
 }
 
+function storedKey(row: OrderRow, section: PendingThreadOrder["section"]) {
+  return (section === "pinned" ? row.pinOrderKey : row.activeOrderKey) ?? null;
+}
+
 function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   return {
-    key: (section === "pinned" ? row.pinOrderKey : row.activeOrderKey) ?? null,
+    key: section === "pinned" ? storedKey(row, section) : activeThreadSortKey(row),
     anchor: section === "pinned" ? (row.pinnedAt ?? "") : (row.unsettledAt ?? row.createdAt),
   };
 }
@@ -83,12 +91,13 @@ export function createThreadMovePlanner(input: {
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
 }) {
   const orderedIds = input.ordered.map(rowId);
-  const keysById = new Map(
-    (input.allThreads ?? input.ordered).map((row) => [
-      rowId(row),
-      rowOrder(row, input.section).key,
-    ]),
-  );
+  // Hidden rows keep their stored key: only stored keys can collide with a write.
+  const keysById = new Map([
+    ...(input.allThreads ?? input.ordered).map(
+      (row) => [rowId(row), storedKey(row, input.section)] as const,
+    ),
+    ...input.ordered.map((row) => [rowId(row), rowOrder(row, input.section).key] as const),
+  ]);
   const writableIds = new Set(
     (input.allThreads ?? input.ordered)
       .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
@@ -112,12 +121,7 @@ export interface ThreadMoveAvailability {
   readonly canMoveDown: boolean;
 }
 
-/**
- * Batch form of "call `createThreadMovePlanner` once per card": one pass over
- * the section answers up/down availability for every ordered row, so list
- * construction stays linear instead of one full planner probe (array copies,
- * hidden-key rescans) per row on the minute-tick rebuild path.
- */
+/** Compute per section; per-card planner probes make minute ticks quadratic. */
 export function computeThreadMoveAvailability(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
@@ -143,17 +147,15 @@ export function computeThreadMoveAvailability(input: {
   const writableIds = new Set<string>();
   for (const row of input.allThreads ?? input.ordered) {
     const id = rowId(row);
-    keysById.set(id, rowOrder(row, input.section).key);
+    keysById.set(id, storedKey(row, input.section));
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
+  for (const row of rows) keysById.set(rowId(row), rowOrder(row, input.section).key);
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);
   });
-  // A swap permutes two rows without changing the multiset, so the assignment
-  // set differs from the unswapped baseline at at most those two positions, and
-  // mismatch/writability tallies computed once per section answer each row with
-  // a constant-size delta.
+  // Swaps affect at most two positions; precomputed totals allow constant-size availability checks.
   const midpoints = new Map<string, string | null>();
   const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
     const memoKey = `${beforeKey ?? ""}\u0000${afterKey ?? ""}`;
@@ -295,12 +297,19 @@ export function threadDropLifecycle(
 
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
-export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
+export function threadDragAction(
+  source: ThreadDragSection,
+  destination: ThreadDragSection,
+  resolve: MessageResolver = m,
+) {
   if (destination === "snoozed") return null;
-  if (destination === "settled") return source === "settled" ? null : "Settle";
-  if (source === destination) return "Reorder";
-  if (destination === "pinned") return "Pin";
-  if (source === "pinned") return "Unpin";
-  if (source === "settled") return "Unsettle";
-  return "Unsnooze";
+  if (destination === "settled")
+    return source === "settled"
+      ? null
+      : resolve(msg("Settle", { $context: "verb, thread action" }));
+  if (source === destination) return resolve(msg("Reorder", { $context: "verb, thread action" }));
+  if (destination === "pinned") return resolve(msg("Pin", { $context: "verb, thread action" }));
+  if (source === "pinned") return resolve(msg("Unpin", { $context: "verb, thread action" }));
+  if (source === "settled") return resolve(msg("Unsettle", { $context: "verb, thread action" }));
+  return resolve(msg("Unsnooze", { $context: "verb, thread action" }));
 }

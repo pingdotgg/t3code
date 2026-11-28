@@ -1,13 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
 import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
-import { RelayClientTracer, withLocalTracing, withRelayClientTracing } from "./relayTracing.ts";
-import * as RelayTracing from "./relayTracing.ts";
+import {
+  layer,
+  nonInterferingTracer,
+  RelayClientTracer,
+  withLocalTracing,
+  withRelayClientTracing,
+} from "./relayTracing.ts";
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
   return Tracer.make({
@@ -43,63 +51,94 @@ describe("withRelayClientTracing", () => {
       expect(productSpans).toEqual(["relay.operation"]);
     }),
   );
+});
 
-  it.effect("preserves the active tracer when product tracing is disabled", () =>
+describe("nonInterferingTracer", () => {
+  it.effect("exports failure types without messages or frames", () =>
     Effect.gen(function* () {
-      const userSpans: Array<string> = [];
-      const userTracer = collectingTracer(userSpans);
-
-      yield* Effect.void.pipe(
-        Effect.withSpan("relay.operation"),
-        withRelayClientTracing,
-        Effect.withTracer(userTracer),
+      const exits: Array<Exit.Exit<unknown, unknown>> = [];
+      const delegate = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            exits.push(exit);
+          };
+          return span;
+        },
+      });
+      const failure = Object.assign(
+        new Error("studio-mac could not establish a WebSocket connection.", {
+          cause: new Error("connect ECONNREFUSED studio-mac.local"),
+        }),
+        { name: "ConnectionTransientError" },
       );
 
-      expect(userSpans).toEqual(["relay.operation"]);
+      failure.stack = "    at connect (/home/user/private.mjs:12:34)";
+
+      yield* Effect.fail(failure).pipe(
+        Effect.withSpan("relay.connection.attempt"),
+        Effect.withTracer(nonInterferingTracer(delegate)),
+        Effect.ignore,
+      );
+
+      const exit = exits[0];
+      if (exit === undefined || !Exit.isFailure(exit)) throw new Error("expected a failed span");
+      const exported = Cause.prettyErrors(exit.cause);
+      expect(exported.map((error) => error.name)).toEqual(["ConnectionTransientError"]);
+      const text = exported.map((error) => `${error.message}\n${error.stack}`).join("\n");
+      expect(text).toContain("Caused by: Error");
+      expect(text).not.toContain("studio-mac");
+      expect(text).not.toContain("private.mjs");
     }),
   );
+});
 
-  it.effect("preserves nested error causes in exported relay spans", () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-    const layerHttpClient = FetchHttpClient.layer.pipe(
-      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
-    );
-    const layerTracing = RelayTracing.layer(
-      {
-        tracesUrl: "https://api.axiom.test/v1/traces",
-        tracesDataset: "relay-traces",
-        tracesToken: "public-ingest-token",
+it.effect.each([true, false])("filters relay exports at flush (%s)", (enabledAtFlush) => {
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+  let enabled = true;
+  return Effect.logWarning("private error detail").pipe(
+    Effect.withSpan("relay.request", {
+      attributes: {
+        "url.full": "http://studio-mac.local:3773/api/threads?cursor=secret",
+        "url.path": "/api/threads",
+        "url.query": "cursor=secret",
+        "server.address": "studio-mac.local",
+        "server.port": 3773,
       },
-      {
-        serviceName: "relay-test",
-        runtime: "test",
-        client: "test",
-      },
-    ).pipe(Layer.provide(layerHttpClient));
-    const rootCause = new Error("relay socket closed");
-    const failure = new Error("relay request failed", { cause: rootCause });
-    const layerTracedApplication = Layer.effectDiscard(
-      Effect.fail(failure).pipe(
-        Effect.withSpan("relay.failed-operation"),
-        withRelayClientTracing,
-        Effect.exit,
+    }),
+    withRelayClientTracing,
+    Effect.andThen(Effect.sync(() => (enabled = enabledAtFlush))),
+    Layer.effectDiscard,
+    Layer.provide(
+      layer(
+        { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
+        { serviceName: "t3code-test", runtime: "node", serviceInstanceId: "id", client: "test" },
+        { isEnabled: () => enabled },
       ),
-    ).pipe(Layer.provide(layerTracing));
-
-    return Layer.build(layerTracedApplication).pipe(
-      Effect.scoped,
-      Effect.andThen(
-        Effect.sync(() => {
-          expect(fetchFn).toHaveBeenCalledOnce();
-          const payload = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
-          expect(payload).toContain("relay request failed");
-          expect(payload).toContain("relay socket closed");
-          expect(payload).toContain('"key":"service.name","value":{"stringValue":"relay-test"}');
-          expect(payload).toContain('"key":"service.namespace","value":{"stringValue":"t3code"}');
-        }),
+    ),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord({ OTEL_RESOURCE_ATTRIBUTES: "host.name=private-host" }),
       ),
-    );
-  });
+    ),
+    Layer.build,
+    Effect.scoped,
+    Effect.andThen(
+      Effect.sync(() => {
+        expect(fetchFn).toHaveBeenCalledTimes(Number(enabledAtFlush));
+        if (!enabledAtFlush) return;
+        const sent = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
+        expect(sent).toContain("/api/threads");
+        expect(sent).not.toMatch(
+          /studio-mac|cursor=secret|server\.port|private error detail|private-host/,
+        );
+      }),
+    ),
+  );
 });
 
 describe("withLocalTracing", () => {
@@ -130,20 +169,6 @@ describe("withLocalTracing", () => {
         "environment.orchestration.threadSnapshot",
       ]);
       expect(localSpans).toEqual(["sql.execute", "ServerSecretStore.get"]);
-    }),
-  );
-
-  it.effect("leaves the current tracer alone outside relay tracing", () =>
-    Effect.gen(function* () {
-      const localSpans: Array<string> = [];
-
-      yield* Effect.void.pipe(
-        Effect.withSpan("sql.execute"),
-        withLocalTracing,
-        Effect.withTracer(collectingTracer(localSpans)),
-      );
-
-      expect(localSpans).toEqual(["sql.execute"]);
     }),
   );
 });

@@ -1,7 +1,18 @@
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
+import { FetchHttpClient } from "effect/http";
+
+import * as RelayConfiguration from "../Config.ts";
+import * as ApnsClient from "./ApnsClient.ts";
+import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as DeliveryAttempts from "./DeliveryAttempts.ts";
+import type { SignedApnsDeliveryJob } from "./apnsDeliveryJobs.ts";
 
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
@@ -58,9 +69,9 @@ function makeLiveActivities(
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
+    listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
-    markStartQueued: () => Effect.void,
-    clearStartQueued: () => Effect.void,
+
     invalidateDeliveryToken: () => Effect.void,
     ...overrides,
   };
@@ -95,6 +106,7 @@ function makeEnvironmentLinks(
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
     findActiveManagedForEnvironment: () => Effect.succeed([]),
+    updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
     ...overrides,
@@ -105,8 +117,8 @@ function makeApnsDeliveries(
   overrides: Partial<ApnsDeliveries.ApnsDeliveries["Service"]> = {},
 ): ApnsDeliveries.ApnsDeliveries["Service"] {
   return {
+    processBatch: () => Effect.void,
     sendForTarget: () => Effect.succeed(null),
-    sendPushNotificationForTarget: () => Effect.succeed(null),
     sendLiveActivity: () =>
       Effect.succeed({
         deviceId: "device",
@@ -197,6 +209,73 @@ describe("AgentActivityPublisher", () => {
     );
   });
 
+  it.effect.each([
+    {
+      name: "skips the activity query without a running iOS Live Activity",
+      activityToken: null,
+      listCalls: 0,
+    },
+    {
+      name: "aggregates activity for a running iOS Live Activity",
+      activityToken: "activity-token",
+      listCalls: 1,
+    },
+  ])("$name", ({ activityToken, listCalls }) => {
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    const ios = { ...target("ios"), activity_push_token: activityToken };
+    let listed = 0;
+    const hasAggregate: boolean[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state,
+      });
+      expect(listed).toBe(listCalls);
+      expect(hasAggregate).toEqual([listCalls > 0]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  listForUser: () =>
+                    Effect.sync(() => {
+                      listed += 1;
+                      return [state];
+                    }),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      hasAggregate.push(input.aggregate !== null);
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: () => Effect.succeed(null),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),
@@ -268,446 +347,127 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect("publishes listed targets through the APNs delivery service", () => {
-    const firstTarget = target("device-1");
-    const secondTarget = target("device-2");
-    const deliveryResult: RelayDeliveryResult = {
-      deviceId: "device-1",
-      kind: "live_activity_start",
-      ok: true,
-      apnsStatus: 200,
-      apnsReason: null,
-      apnsId: "apns-id",
-    };
-    const sentTargets: Array<string> = [];
-    const deliveryLookups: Array<{
-      readonly environmentId: string;
-      readonly environmentPublicKey: string;
-    }> = [];
-    const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
-      [];
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        return yield* publisher.publish({
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-          threadId: "thread",
-          state,
-        });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({
-                    upsert: (input) =>
-                      Effect.sync(() => {
-                        upserts.push(input);
-                      }),
+  it.effect.each([
+    { phase: "waiting_for_input", pushToStartToken: null, body: "Input: Project" },
+    { phase: "waiting_for_approval", pushToStartToken: "start-token", body: "Approval: Project" },
+  ] as const)(
+    "queues $phase notifications for notification-only links and respects link opt-out",
+    ({ phase, pushToStartToken, body }) => {
+      const publishedState: RelayAgentActivityState = { ...state, phase };
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      let notificationsEnabled = true;
+      let liveActivitiesEnabled = false;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(
+          AgentActivityRows.AgentActivityRows,
+          makeAgentActivityRows({
+            listForUser: () =>
+              liveActivitiesEnabled
+                ? Effect.succeed([publishedState])
+                : Effect.die("Notification-only delivery must not read rows"),
+          }),
+        ),
+        Layer.succeed(
+          EnvironmentLinks.EnvironmentLinks,
+          makeEnvironmentLinks({
+            listDeliveryUsersForEnvironment: () =>
+              Effect.succeed([
+                { userId: "dev:julius", notificationsEnabled, liveActivitiesEnabled },
+              ]),
+          }),
+        ),
+        Layer.succeed(
+          LiveActivities.LiveActivities,
+          makeLiveActivities({
+            listTargets: () =>
+              Effect.succeed([
+                {
+                  ...target("device-1"),
+                  push_token: "apns-device-token",
+                  push_to_start_token: pushToStartToken,
+                  preferences_json: JSON.stringify({
+                    liveActivitiesEnabled: true,
+                    notificationsEnabled: true,
+                    notifyOnApproval: true,
+                    notifyOnInput: true,
+                    notifyOnCompletion: true,
+                    notifyOnFailure: true,
                   }),
-                ),
-                Layer.succeed(
-                  EnvironmentLinks.EnvironmentLinks,
-                  makeEnvironmentLinks({
-                    listDeliveryUsersForEnvironment: (input) =>
-                      Effect.sync(() => {
-                        deliveryLookups.push(input);
-                        return [
-                          {
-                            userId: "dev:julius",
-                            notificationsEnabled: true,
-                            liveActivitiesEnabled: true,
-                          },
-                        ];
-                      }),
-                  }),
-                ),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    listTargets: () => Effect.succeed([firstTarget, secondTarget]),
-                  }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => {
-                        sentTargets.push(input.target.device_id);
-                        return input.target.device_id === "device-1" ? deliveryResult : null;
-                      }),
-                  }),
-                ),
-              ),
-            ),
+                },
+              ]),
+          }),
+        ),
+        Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
+          send: (job) =>
+            Effect.sync(() => {
+              queuedJobs.push(job);
+            }),
+        }),
+        Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
+          pruneExpired: Effect.succeed(0),
+          claimSourceJob: () => Effect.succeed("claimed" as const),
+          completeSourceJob: () => Effect.void,
+        }),
+        RelayConfiguration.layer({
+          relayIssuer: "https://relay.example.test",
+          apns: {
+            environment: "sandbox",
+            teamId: "team-id",
+            keyId: "key-id",
+            privateKey: Redacted.make("unused-key"),
+            bundleId: "com.t3tools.t3code.dev",
+          },
+          apnsDeliveryJobSigningSecret: Redacted.make("job-signing-secret"),
+          clerkSecretKey: Redacted.make("clerk-secret"),
+          clerkPublishableKey: "pk_test_test",
+          clerkJwtAudience: "t3-code-relay",
+          cloudMintPrivateKey: Redacted.make("cloud-private-key"),
+          cloudMintPublicKey: "cloud-public-key",
+          managedEndpointBaseDomain: undefined,
+          managedEndpointNamespace: undefined,
+        }),
+      );
+      const deliveriesLayer = ApnsDeliveries.layer.pipe(
+        Layer.provide(NodeCryptoLayer.layerMac),
+        Layer.provide(
+          ApnsClient.layer.pipe(
+            Layer.provide(ApnsProviderTokens.layer),
+            Layer.provide(FetchHttpClient.layer),
           ),
         ),
+        Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
       );
-
-      expect(sentTargets).toEqual(["device-1", "device-2"]);
-      expect(deliveryLookups).toEqual([
-        {
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-        },
-      ]);
-      expect(upserts).toMatchObject([
-        {
-          environmentPublicKey: "environment-public-key",
-          state: {
-            environmentId: "env",
-            threadId: "thread",
-          },
-        },
-      ]);
-      expect(result).toEqual({ ok: true, deliveries: [deliveryResult] });
-    });
-  });
-
-  it.effect("ends the last remote Live Activity with a terminal content state", () => {
-    const completedState: RelayAgentActivityState = {
-      ...state,
-      phase: "completed",
-      headline: "Done",
-      updatedAt: "1970-01-01T00:00:10.000Z",
-    };
-    const sentAggregates: Array<
-      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-    > = [];
-    const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
-      [];
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        return yield* publisher.publish({
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-          threadId: "thread",
-          state: completedState,
-        });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({
-                    upsert: (input) =>
-                      Effect.sync(() => {
-                        upserts.push(input);
-                      }),
-                    listForUser: () => Effect.succeed([]),
-                  }),
-                ),
-                Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    listTargets: () =>
-                      Effect.succeed([
-                        {
-                          ...target("device-1"),
-                          push_to_start_token: null,
-                          activity_push_token: "activity-token",
-                          remote_started_at: "1970-01-01T00:00:00.000Z",
-                        },
-                      ]),
-                  }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => {
-                        sentAggregates.push(input);
-                        return {
-                          deviceId: input.target.device_id,
-                          kind: "live_activity_end",
-                          ok: true,
-                          apnsStatus: null,
-                          apnsReason: null,
-                          apnsId: "queued",
-                        };
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result.deliveries).toMatchObject([
-        {
-          deviceId: "device-1",
-          kind: "live_activity_end",
-          ok: true,
-        },
-      ]);
-      expect(upserts).toEqual([
-        {
-          environmentPublicKey: "environment-public-key",
-          state: completedState,
-        },
-      ]);
-      expect(sentAggregates).toHaveLength(1);
-      expect(sentAggregates[0]?.aggregate).toMatchObject({
-        activeCount: 0,
-        subtitle: "Agent work completed",
-        activities: [
-          {
-            environmentId: completedState.environmentId,
-            threadId: completedState.threadId,
-            phase: "completed",
-            status: "Done",
-          },
-        ],
-      });
-    });
-  });
-
-  it.effect("queues push notifications for notification-only environment links", () => {
-    const notificationState: RelayAgentActivityState = {
-      ...state,
-      phase: "waiting_for_input",
-      headline: "Needs input",
-    };
-    const liveAggregates: Array<
-      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-    > = [];
-    const pushAggregates: Array<
-      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendPushNotificationForTarget"]>[0]
-    > = [];
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        return yield* publisher.publish({
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-          threadId: "thread",
-          state: notificationState,
-        });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({
-                    listForUser: () => Effect.succeed([]),
-                  }),
-                ),
-                Layer.succeed(
-                  EnvironmentLinks.EnvironmentLinks,
-                  makeEnvironmentLinks({
-                    listDeliveryUsersForEnvironment: () =>
-                      Effect.succeed([
-                        {
-                          userId: "dev:julius",
-                          notificationsEnabled: true,
-                          liveActivitiesEnabled: false,
-                        },
-                      ]),
-                  }),
-                ),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    listTargets: () =>
-                      Effect.succeed([
-                        {
-                          ...target("device-1"),
-                          push_token: "apns-device-token",
-                          push_to_start_token: null,
-                        },
-                      ]),
-                  }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => {
-                        liveAggregates.push(input);
-                        return null;
-                      }),
-                    sendPushNotificationForTarget: (input) =>
-                      Effect.sync(() => {
-                        pushAggregates.push(input);
-                        return {
-                          deviceId: input.target.device_id,
-                          kind: "push_notification",
-                          ok: true,
-                          queued: true,
-                          apnsStatus: null,
-                          apnsReason: null,
-                          apnsId: null,
-                        };
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(liveAggregates).toMatchObject([{ aggregate: null }]);
-      expect(pushAggregates).toHaveLength(1);
-      expect(pushAggregates[0]?.aggregate).toMatchObject({
-        activeCount: 1,
-        activities: [
-          {
-            phase: "waiting_for_input",
-            status: "Input",
-            threadId: notificationState.threadId,
-          },
-        ],
-      });
-      expect(result.deliveries).toMatchObject([
-        {
-          deviceId: "device-1",
-          kind: "push_notification",
-          queued: true,
-        },
-      ]);
-    });
-  });
-
-  it.effect(
-    "delivers notifications without querying activity rows when Live Activities are disabled",
-    () => {
-      const notificationState: RelayAgentActivityState = {
-        ...state,
-        phase: "waiting_for_approval",
-        headline: "Needs approval",
-      };
-      const liveAggregates: Array<
-        Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-      > = [];
-      const pushAggregates: Array<
-        Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendPushNotificationForTarget"]>[0]
-      > = [];
 
       return Effect.gen(function* () {
-        const result = yield* Effect.gen(function* () {
-          const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-          return yield* publisher.publish({
-            environmentId: "env",
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        const publish = () =>
+          publisher.publish({
+            environmentId: state.environmentId,
             environmentPublicKey: "environment-public-key",
-            threadId: "thread",
-            state: notificationState,
+            threadId: state.threadId,
+            state: publishedState,
           });
-        }).pipe(
-          Effect.provide(
-            layerPublisher.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(
-                    AgentActivityRows.AgentActivityRows,
-                    makeAgentActivityRows({
-                      listForUser: () =>
-                        Effect.die("Notification-only delivery must not read rows"),
-                    }),
-                  ),
-                  Layer.succeed(
-                    EnvironmentLinks.EnvironmentLinks,
-                    makeEnvironmentLinks({
-                      listDeliveryUsersForEnvironment: () =>
-                        Effect.succeed([
-                          {
-                            userId: "dev:julius",
-                            notificationsEnabled: true,
-                            liveActivitiesEnabled: false,
-                          },
-                        ]),
-                    }),
-                  ),
-                  Layer.succeed(
-                    LiveActivities.LiveActivities,
-                    makeLiveActivities({
-                      listTargets: () =>
-                        Effect.succeed([
-                          {
-                            ...target("device-1"),
-                            push_token: "apns-device-token",
-                            push_to_start_token: "push-to-start-token",
-                          },
-                        ]),
-                    }),
-                  ),
-                  Layer.succeed(
-                    ApnsDeliveries.ApnsDeliveries,
-                    makeApnsDeliveries({
-                      sendForTarget: (input) =>
-                        Effect.sync(() => {
-                          liveAggregates.push(input);
-                          return null;
-                        }),
-                      sendPushNotificationForTarget: (input) =>
-                        Effect.sync(() => {
-                          pushAggregates.push(input);
-                          return {
-                            deviceId: input.target.device_id,
-                            kind: "push_notification",
-                            ok: true,
-                            queued: true,
-                            apnsStatus: null,
-                            apnsReason: null,
-                            apnsId: null,
-                          };
-                        }),
-                    }),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
+        expect((yield* publish()).deliveries).toMatchObject([
+          { deviceId: "device-1", kind: "push_notification", queued: true },
+        ]);
+        expect(queuedJobs.map((job) => job.payload)).toMatchObject([
+          { kind: "push_notification", notification: { body, threadId: state.threadId } },
+        ]);
 
-        expect(liveAggregates).toMatchObject([{ aggregate: null }]);
-        expect(pushAggregates).toHaveLength(1);
-        expect(pushAggregates[0]?.aggregate?.activities).toMatchObject([
-          {
-            environmentId: notificationState.environmentId,
-            threadId: notificationState.threadId,
-            phase: "waiting_for_approval",
-          },
-        ]);
-        expect(result.deliveries).toMatchObject([
-          {
-            deviceId: "device-1",
-            kind: "push_notification",
-            queued: true,
-          },
-        ]);
-      });
+        notificationsEnabled = false;
+        liveActivitiesEnabled = true;
+        expect((yield* publish()).deliveries).toEqual([]);
+        expect(queuedJobs).toHaveLength(1);
+      }).pipe(
+        Effect.provide(
+          layerPublisher.pipe(Layer.provide(deliveriesLayer), Layer.provide(dependencies)),
+        ),
+      );
     },
   );
 });
 
 describe("isExpiredAgentActivityState", () => {
-  const hourMs = 60 * 60 * 1_000;
-
-  it("expires running rows after two hours without an update", () => {
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(state, 2 * hourMs - 1)).toBe(false);
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(state, 2 * hourMs + 1)).toBe(true);
-  });
-
-  it("keeps waiting rows for a day", () => {
-    const waiting: RelayAgentActivityState = { ...state, phase: "waiting_for_approval" };
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(waiting, 23 * hourMs)).toBe(false);
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(waiting, 25 * hourMs)).toBe(true);
-  });
-
   it("treats rows with unparseable timestamps as expired", () => {
     expect(
       AgentActivityPublisher.isExpiredAgentActivityState({ ...state, updatedAt: "not-a-date" }, 0),
@@ -724,7 +484,7 @@ describe("makeAggregateState", () => {
       threadId: "thread-fresh" as RelayAgentActivityState["threadId"],
       updatedAt: "1970-01-01T03:00:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [state, fresh],
       terminalState: null,
       nowMs: 3 * hourMs,
@@ -736,7 +496,7 @@ describe("makeAggregateState", () => {
 
   it("returns null when every row has expired and nothing terminal remains", () => {
     expect(
-      AgentActivityPublisher.makeAggregateState({
+      makeAggregateState({
         activeStates: [state],
         terminalState: null,
         nowMs: 3 * hourMs,
@@ -750,7 +510,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T03:00:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [state],
       terminalState,
       nowMs: 3 * hourMs,
@@ -772,7 +532,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [active, justCompleted],
       terminalState: null,
       nowMs: hourMs,
@@ -787,34 +547,13 @@ describe("makeAggregateState", () => {
     expect(aggregate?.updatedAt).toBe("1970-01-01T00:59:00.000Z");
   });
 
-  it("drops finished threads from the aggregate after the display window", () => {
-    const active: RelayAgentActivityState = {
-      ...state,
-      threadId: "thread-active" as RelayAgentActivityState["threadId"],
-      updatedAt: "1970-01-01T00:58:00.000Z",
-    };
-    const staleCompleted: RelayAgentActivityState = {
-      ...state,
-      threadId: "thread-done" as RelayAgentActivityState["threadId"],
-      phase: "completed",
-      updatedAt: "1970-01-01T00:44:00.000Z",
-    };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
-      activeStates: [active, staleCompleted],
-      terminalState: null,
-      nowMs: hourMs,
-    });
-
-    expect(aggregate?.activities).toMatchObject([{ threadId: "thread-active" }]);
-  });
-
   it("keeps showing recently finished work when nothing is active", () => {
     const lingeringCompleted: RelayAgentActivityState = {
       ...state,
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [lingeringCompleted],
       terminalState: null,
       nowMs: hourMs,
@@ -826,7 +565,7 @@ describe("makeAggregateState", () => {
       activities: [{ phase: "completed", status: "Done" }],
     });
     expect(
-      AgentActivityPublisher.makeAggregateState({
+      makeAggregateState({
         activeStates: [{ ...lingeringCompleted, updatedAt: "1970-01-01T00:44:00.000Z" }],
         terminalState: null,
         nowMs: hourMs,
@@ -846,7 +585,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [
         mkActive("a-1"),
         mkActive("a-2"),

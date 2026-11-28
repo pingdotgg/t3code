@@ -12,6 +12,7 @@ import {
   compactAccessibilityTree,
   findAccessibleWindow,
   isWaylandSession,
+  MAX_ACCESSIBILITY_TREE_DEPTH,
 } from "./snapShot.ts";
 
 const ACCESSIBILITY_TIMEOUT_MS = 3_000;
@@ -20,7 +21,7 @@ export type AccessibleWindowIdentity = {
   readonly title: string;
   readonly bounds: Electron.Rectangle;
   readonly clientBounds?: Electron.Rectangle;
-  readonly owner: { readonly processId: number };
+  readonly owner: { readonly processId: number; readonly bundleId?: string };
   readonly accessibilityBoundsReliable?: boolean;
 };
 
@@ -125,7 +126,7 @@ async function readCapturedWindowAccessibility(
   const pidWindows =
     foreground !== undefined
       ? foreground.pid === active.owner.processId
-        ? [foreground.asElement()]
+        ? await foreground.children().catch(() => [])
         : []
       : await windowsForPid(App, active.owner.processId);
   const matchMode = isWaylandSession(platform, process.env) ? "wayland" : "screen-bounds";
@@ -134,6 +135,8 @@ async function readCapturedWindowAccessibility(
     sourceTitle,
     bounds: active.bounds,
     clientBounds: active.clientBounds,
+    platform,
+    bundleId: pidWindows.length > 0 ? active.owner.bundleId : undefined,
   };
   const window = findAccessibleWindow(
     pidWindows.length > 0 || foreground !== undefined ? pidWindows : await windowsFromAppList(App),
@@ -161,7 +164,7 @@ async function readCapturedWindowAccessibility(
         Math.abs(accessibleBounds.x - matchingBounds.x) <= 2 &&
         Math.abs(accessibleBounds.y - matchingBounds.y) <= 2));
   const flatRead = window
-    .tree()
+    .tree(MAX_ACCESSIBILITY_TREE_DEPTH)
     .then((tree) => {
       progress.accessibleText =
         accessibleWindowText(tree, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS) || undefined;
@@ -170,8 +173,7 @@ async function readCapturedWindowAccessibility(
     .catch(() => {
       progress.flatComplete = true;
     });
-  // A decorated screenshot contains more than the accessibility client area. Keep its
-  // frame origin/scale so element coordinates include the actual decoration offset.
+  // Preserve the screenshot frame origin and scale so accessibility coordinates include decorations.
   const sourceBounds =
     matchMode === "wayland" && active.clientBounds
       ? active.bounds

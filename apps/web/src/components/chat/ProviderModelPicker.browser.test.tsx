@@ -1,196 +1,345 @@
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
+  DEFAULT_CLIENT_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ServerProvider,
+  type ModelSelection,
 } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import { useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+
+import { render } from "../../../test/render";
+import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import type { ModelEsque } from "./providerIconUtils";
 
-function providerEntry(instanceId: string, driver: string) {
-  const provider: ServerProvider = {
-    instanceId: ProviderInstanceId.make(instanceId),
-    driver: ProviderDriverKind.make(driver),
-    enabled: true,
-    installed: true,
-    version: null,
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-08-28T00:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
+it("keeps each registry image when adding a model from another ACP agent", async () => {
+  const icons = [
+    "https://cdn.agentclientprotocol.com/registry/icons/picker-explicit.svg",
+    "https://cdn.agentclientprotocol.com/registry/v1/latest/picker-by-id.svg",
+  ];
+  const cache = await caches.open("t3-acp-registry-icons-v1");
+  await using _cachedIcons = {
+    async [Symbol.asyncDispose]() {
+      await Promise.all(icons.map((url) => cache.delete(url)));
+    },
   };
-  return deriveProviderInstanceEntries([provider])[0]!;
-}
+  for (const [index, url] of icons.entries()) {
+    await cache.put(
+      url,
+      new Response(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${11 + index * 6}" height="10"><path d="M0 0h10v10H0z"/></svg>`,
+        { headers: { "content-type": "image/svg+xml" } },
+      ),
+    );
+  }
+  const entries = deriveProviderInstanceEntries(
+    ["First", "Second"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.toLowerCase()),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: `${name} agent`,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
+      ],
+      slashCommands: [],
+      skills: [],
+    })),
+  ).map((entry, index) => ({
+    ...entry,
+    ...(index === 0 ? { acpRegistryIconUrl: icons[0] } : { acpRegistryAgentId: "picker-by-id" }),
+  }));
+  const first = { instanceId: entries[0]!.instanceId, model: "first" };
+  const options = new Map(entries.map((entry) => [entry.instanceId, entry.models]));
 
-afterEach(() => {
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
+  function Picker() {
+    const [selection, setSelection] = useState<ReadonlyArray<ModelSelection>>([first]);
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={first.instanceId}
+        model={first.model}
+        {...(selection.length > 1 ? { selectedModels: selection } : {})}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        onToggleModel={(instanceId, model) => setSelection([...selection, { instanceId, model }])}
+        onInstanceModelChange={(instanceId, model) => setSelection([{ instanceId, model }])}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  const imageWidths = () =>
+    Array.from(
+      screen.container.querySelectorAll<HTMLImageElement>("[data-chat-provider-model-picker] img"),
+      (image) => image.naturalWidth,
+    );
+  await vi.waitFor(() => expect(imageWidths()).toEqual([11]));
+  await screen.getByRole("button", { name: "First model", exact: true }).click();
+  await page.getByRole("button", { name: "Second agent", exact: true }).click();
+  await userEvent.keyboard("{Shift>}");
+  try {
+    await page.getByRole("option", { name: /Second model/ }).click();
+  } finally {
+    await userEvent.keyboard("{/Shift}");
+  }
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(imageWidths()).toEqual([11, 17]));
 });
 
-// Returns the trigger's visible text, which is what the user reads before opening the picker.
-async function triggerText(node: ReactNode) {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => root.render(node));
-  const text = container.querySelector("button")?.textContent ?? "";
-  await act(async () => root.unmount());
-  return text;
-}
+it("keeps a docked picker open after a pick and hands focus to that model's effort", async () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "original", name: "Original model" },
+        { slug: "second", name: "Second model" },
+        { slug: "plain", name: "Plain model" },
+      ],
+    ],
+  ]);
+  // The last level is the selected one; "plain" has no effort to pick.
+  const levels: Record<string, ReadonlyArray<string>> = {
+    original: ["Low", "High"],
+    second: ["Medium"],
+    plain: [],
+  };
 
-function renderPicker(input: {
-  instanceId: string;
-  driver: string;
-  model: string;
-  options: ReadonlyArray<ModelEsque>;
-  includeEntry?: boolean;
-  triggerLabel?: string;
-}) {
-  const instanceId = ProviderInstanceId.make(input.instanceId);
-  const entry = providerEntry(input.instanceId, input.driver);
-  return triggerText(
+  function Picker() {
+    const [model, setModel] = useState("original");
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={model}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={(_, selected) => setModel(selected)}
+        effortColumn={(levels[model] ?? []).map((level, index, all) => (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={index === all.length - 1}
+            data-effort-row
+            data-effort-level
+          >
+            {level}
+          </button>
+        ))}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("{ArrowRight}");
+  await expect.element(page.getByRole("radio", { name: "High" })).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  await expect.element(search).toHaveFocus();
+
+  await page.getByRole("option", { name: /Second model/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
+
+  await page.getByRole("option", { name: /Plain model/ }).click();
+  await page.getByRole("option", { name: /Second model/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+});
+
+it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {
+  const instanceId = ProviderInstanceId.make("claude");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      ["a", "b", "c", "c", "d", "d"].map((slug) => ({
+        slug,
+        name: `Model ${slug.toUpperCase()}`,
+      })),
+    ],
+  ]);
+  const keybindings = compileResolvedKeybindingsConfig(
+    ([1, 2, 3, 4, 5, 6] as const).map((index) => ({
+      key: `mod+${index}`,
+      command: `modelPicker.jump.${index}` as const,
+      when: "modelPickerOpen",
+    })),
+  );
+
+  await using screen = await render(
     <ProviderModelPicker
       environmentId={null}
       activeInstanceId={instanceId}
-      model={input.model}
+      model="a"
       lockedProvider={null}
-      instanceEntries={input.includeEntry === false ? [] : [entry]}
-      modelOptionsByInstance={new Map([[instanceId, input.options]])}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      keybindings={keybindings}
+      triggerAriaLabel="Choose model"
       onInstanceModelChange={() => {}}
-      {...(input.triggerLabel ? { triggerLabel: input.triggerLabel } : {})}
     />,
   );
-}
-
-describe("ProviderModelPicker", () => {
-  it("shows a neutral aggregate value without a representative model or availability badge", async () => {
-    const label = await renderPicker({
-      instanceId: "codex_personal",
-      driver: "codex",
-      model: "gpt-5",
-      options: [{ slug: "gpt-5", name: "GPT 5", isUnavailable: true }],
-      triggerLabel: "Mixed values",
-    });
-    expect(label).toContain("Mixed values");
-    expect(label).not.toContain("GPT 5");
-    expect(label).not.toContain("Unavailable");
-  });
-
-  it.each(["", ANTIGRAVITY_DEFAULT_MODEL])(
-    "shows a choice prompt before Antigravity has an account catalog for %s",
-    async (model) => {
-      const label = await renderPicker({
-        instanceId: "antigravity",
-        driver: "antigravity",
-        model,
-        options: [],
-      });
-
-      expect(label).toContain("Choose model");
-      expect(label).not.toContain(ANTIGRAVITY_DEFAULT_MODEL);
-    },
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(page.getByRole("option", { name: /Model A/ })).toBeVisible();
+  await vi.waitFor(() =>
+    expect(
+      page
+        .getByRole("option")
+        .elements()
+        .map((row) => [
+          row.textContent?.match(/Model [A-Z]/)?.[0],
+          row.querySelector("kbd")?.textContent?.slice(-1),
+        ]),
+    ).toEqual([
+      ["Model A", "1"],
+      ["Model B", "2"],
+      ["Model C", "3"],
+      ["Model D", "4"],
+    ]),
   );
+});
 
-  it.each([{ aliases: [ANTIGRAVITY_DEFAULT_MODEL] }, { isDefault: true }])(
-    "shows the actual default model for an Antigravity marker with %j",
-    async (defaultMetadata) => {
-      const label = await renderPicker({
-        instanceId: "google_work",
-        driver: "antigravity",
-        model: ANTIGRAVITY_DEFAULT_MODEL,
-        options: [
-          { slug: "gemini-fast", name: "Gemini Fast" },
-          { slug: "gemini-pro", name: "Gemini Pro", ...defaultMetadata },
-        ],
-      });
-
-      expect(label).toContain("Gemini Pro");
-      expect(label).not.toContain("Gemini Fast");
-      expect(label).not.toContain(ANTIGRAVITY_DEFAULT_MODEL);
-    },
-  );
-
-  it.each(["opencode", "antigravity"])(
-    "keeps the selected model label when the %s account catalog does not contain it",
-    async (driver) => {
-      const label = await renderPicker({
-        instanceId: "team_runtime",
-        driver,
-        model: "missing-model",
-        options: [{ slug: "fallback", name: "Fallback model" }],
-      });
-
-      expect(label).toContain("missing-model");
-      expect(label).not.toContain("Fallback model");
-    },
-  );
-
-  it.each(["codex", "claudeAgent", "cursor", "grok"])(
-    "uses the first option label for a missing %s model",
-    async (driver) => {
-      const label = await renderPicker({
-        instanceId: `${driver}_work`,
-        driver,
-        model: "missing-model",
-        options: [{ slug: "fallback-model", name: "Fallback model" }],
-      });
-
-      expect(label).toContain("Fallback model");
-      expect(label).not.toContain("missing-model");
-    },
-  );
-
-  it("prefers a matching model for OpenCode", async () => {
-    const label = await renderPicker({
-      instanceId: "custom_runtime",
-      driver: "opencode",
-      model: "openrouter/selected",
-      options: [
-        { slug: "openrouter/fallback", name: "Fallback model" },
-        { slug: "openrouter/selected", name: "Selected model" },
+it("opens on the active provider when every favorite belongs to a disabled provider", async () => {
+  const entries = deriveProviderInstanceEntries(
+    ["Codex", "Claude"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.toLowerCase()),
+      driver: ProviderDriverKind.make(name.toLowerCase()),
+      enabled: name === "Codex",
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
       ],
-    });
-
-    expect(label).toContain("Selected model");
-    expect(label).not.toContain("Fallback model");
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+  const [codex, claude] = entries;
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    favorites: [{ provider: claude!.instanceId, model: "claude" }],
   });
+  using _settings = {
+    [Symbol.dispose]: () => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS),
+  };
 
-  it("uses the first option when the active instance entry is missing", async () => {
-    const label = await renderPicker({
-      instanceId: "missing_instance",
-      driver: "opencode",
-      model: "missing-model",
-      options: [{ slug: "fallback-model", name: "Fallback model" }],
-      includeEntry: false,
-    });
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={codex!.instanceId}
+      model="codex"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(page.getByRole("option", { name: /Codex model/ })).toBeVisible();
+});
 
-    expect(label).toContain("Fallback model");
-    expect(label).not.toContain("missing-model");
-  });
+it("keeps the touch keyboard down while choosing a provider", async () => {
+  const entries = deriveProviderInstanceEntries(
+    ["Codex", "Claude"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.toLowerCase()),
+      driver: ProviderDriverKind.make(name.toLowerCase()),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
+      ],
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+  const [codex] = entries;
+  const matchMedia = window.matchMedia.bind(window);
+  using _touch = vi.spyOn(window, "matchMedia").mockImplementation((query) =>
+    query === "(pointer: coarse)"
+      ? ({
+          matches: true,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        } as MediaQueryList)
+      : matchMedia(query),
+  );
 
-  it("keeps instance initials visible in the resting trigger", async () => {
-    const activeEntry = providerEntry("codex_personal", "codex");
-    const label = await triggerText(
-      <ProviderModelPicker
-        environmentId={null}
-        activeInstanceId={activeEntry.instanceId}
-        model="gpt-5"
-        lockedProvider={null}
-        instanceEntries={[providerEntry("codex", "codex"), activeEntry]}
-        modelOptionsByInstance={new Map()}
-        size="xs"
-        onInstanceModelChange={() => {}}
-      />,
-    );
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={codex!.instanceId}
+      model="codex"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const search = page.getByPlaceholder("Search models...");
+  const popup = search.element().closest('[data-slot="popover-popup"]');
+  await vi.waitFor(() => expect(document.activeElement).toBe(popup));
 
-    expect(label).toContain("CP");
-  });
+  await page.getByRole("button", { name: /^Claude/ }).click();
+  await expect.element(page.getByRole("option", { name: /Claude model/ })).toBeVisible();
+  await expect.element(search).not.toHaveFocus();
 });

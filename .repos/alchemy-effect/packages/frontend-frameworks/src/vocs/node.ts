@@ -1,3 +1,4 @@
+import * as NodePath from "node:path";
 /**
  * `@alchemy.run/frontend-frameworks/vocs/node` — the Node container deploy
  * target for Vocs.
@@ -12,21 +13,20 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as NodePath from "node:path";
 import { runBuildChild } from "../core/BuildChild.ts";
 import { isInsideDevChild, runDevChild } from "../core/DevChild.ts";
-import {
-  NODE_BUNDLE_CONDITIONS,
-  NODE_SERVE_ENTRY_FILE_NAME,
-  relativeClientDirExpression,
-  writeNodeServeEntry,
-} from "../core/NodeServe.ts";
 import {
   DeployTargetError,
   Framework,
   makeDeployTarget,
   type Framework as FrameworkService,
 } from "../core/index.ts";
+import {
+  NODE_BUNDLE_CONDITIONS,
+  NODE_SERVE_ENTRY_FILE_NAME,
+  relativeClientDirExpression,
+  writeNodeServeEntry,
+} from "../core/NodeServe.ts";
 import type { VocsTarget } from "./Target.ts";
 import { make as makeVocsLayer } from "./Vocs.ts";
 
@@ -50,39 +50,27 @@ const makeNodeAdapterTarget = (
       conditions: [...NODE_BUNDLE_CONDITIONS],
     },
     adapter: (context) =>
-      Effect.succeed(
-        NodePath.join(context.wakuDirectory, "dist/adapters/node.js"),
-      ),
+      Effect.succeed(NodePath.join(context.wakuDirectory, "dist/adapters/node.js")),
     vitePlugins: () => Effect.sync(() => []),
     finish: (output) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         if (output.distDirectory === undefined) {
-          return yield* Effect.fail(
-            fail("The vocs build produced no dist directory"),
-          );
+          return yield* fail("The vocs build produced no dist directory");
         }
         if (output.clientDirectory === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The vocs build produced no client directory for the Node serve entry",
-            ),
+          return yield* fail(
+            "The vocs build produced no client directory for the Node serve entry",
           );
         }
         const serverDir = path.join(output.distDirectory, "server");
         const serverIndex = path.join(serverDir, "index.js");
         const hasServerIndex = yield* fs
           .exists(serverIndex)
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to probe the built server entry", error),
-            ),
-          );
+          .pipe(Effect.mapError((error) => fail("Failed to probe the built server entry", error)));
         if (!hasServerIndex) {
-          return yield* Effect.fail(
-            fail(`The vocs build produced no server entry at ${serverIndex}`),
-          );
+          return yield* fail(`The vocs build produced no server entry at ${serverIndex}`);
         }
         yield* fs
           .writeFileString(
@@ -90,21 +78,14 @@ const makeNodeAdapterTarget = (
             `${JSON.stringify({ type: "module" }, null, 2)}\n`,
           )
           .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to write dist/server/package.json", error),
-            ),
+            Effect.mapError((error) => fail("Failed to write dist/server/package.json", error)),
           );
         const servePath = path.join(serverDir, NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output,
           servePath,
-          serveModuleName: path
-            .join("server", NODE_SERVE_ENTRY_FILE_NAME)
-            .replaceAll("\\", "/"),
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            output.clientDirectory,
-          ),
+          serveModuleName: path.join("server", NODE_SERVE_ENTRY_FILE_NAME).replaceAll("\\", "/"),
+          clientDirExpression: relativeClientDirExpression(servePath, output.clientDirectory),
           handler: {
             kind: "fetch",
             imports: `import { INTERNAL_runFetch } from "./index.js";`,

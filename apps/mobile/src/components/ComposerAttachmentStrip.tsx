@@ -1,12 +1,17 @@
-import { FilePreviewGallery, useFilePreviewGallery } from "./FilePreviewGallery";
+import { useGT } from "gt-react-native";
+import { FilePreviewGallery, useFilePreviewGallery } from "./ui/FilePreviewGallery";
 import { composerImageGallery } from "../lib/composerImageGallery";
 import { SymbolView } from "./ui/AppSymbol";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { useEffect, useMemo, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { Paths } from "expo-file-system";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
+import { AppActivityIndicator } from "./ui/AppActivityIndicator";
+import { MaterializedPreviewKey, materializedPreviewAtom } from "../lib/composerImagePreview";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import {
   isFileBackedComposerAttachment,
@@ -15,10 +20,11 @@ import {
   type DraftComposerImageAttachment,
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
+import { rememberDraftImage } from "../lib/sentImageHandoff";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./ui/NativePresentation";
-import type { FilePreviewSource } from "./FilePreviewModal";
+import type { FilePreviewSource } from "./ui/FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -39,6 +45,8 @@ export interface ComposerAttachmentStripProps {
   readonly imageSize?: number;
   readonly imageBorderRadius?: number;
   readonly removeButtonPlacement?: "overlay" | "gutter";
+  /** Pasted images still being prepared, shown as placeholders after the attachments. */
+  readonly pendingImageCount?: number;
 }
 
 type ComposerAttachmentThumbnailProps = {
@@ -56,17 +64,28 @@ type ComposerAttachmentThumbnailProps = {
 };
 
 export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
+  const gt = useGT();
   const upload = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
   return (
     <View style={{ width: props.size, height: props.size }}>
       <ComposerAttachmentContent {...props} />
+      {upload?.status === "failed" ? (
+        <View
+          pointerEvents="none"
+          className="absolute inset-0 border-2 border-danger-foreground"
+          style={{ borderRadius: props.borderRadius }}
+        />
+      ) : null}
       {upload && upload.status !== "ready" ? (
         <Pressable
           accessibilityRole={upload.status === "failed" ? "button" : "text"}
           accessibilityLabel={
             upload.status === "failed"
-              ? `Retry uploading ${props.attachment.name}`
-              : `Uploading ${props.attachment.name}, ${Math.floor(upload.progress * 100)}%`
+              ? gt("Retry uploading {name}", { name: props.attachment.name })
+              : gt("Uploading {name}, {percent}%", {
+                  name: props.attachment.name,
+                  percent: Math.floor(upload.progress * 100),
+                })
           }
           accessibilityHint={upload.status === "failed" ? upload.reason : undefined}
           disabled={upload.status !== "failed"}
@@ -84,7 +103,7 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
           />
           {!props.compact ? (
             <Text className="text-2xs text-white">
-              {upload.status === "failed" ? "Retry" : `${Math.floor(upload.progress * 100)}%`}
+              {upload.status === "failed" ? gt("Retry") : `${Math.floor(upload.progress * 100)}%`}
             </Text>
           ) : null}
         </Pressable>
@@ -93,70 +112,31 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
   );
 }
 
-const PREVIEW_CACHE_DIRECTORY = "t3-composer-previews";
-
-/**
- * Fabric re-parses an image source URL on every layout pass of the node, and a
- * multi-megabyte data URL makes each Fabric commit slow enough that concurrent
- * UI-thread commits (the question card's coverage animation) win the race every
- * time until the renderer aborts.
- */
+/** Fabric re-parses URLs each layout; large data URLs can stall and abort commits. */
 const INLINE_PREVIEW_FALLBACK_MAX_CHARS = 256_000;
 
-async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<string | null> {
-  const comma = dataUrl.indexOf(",");
-  if (comma < 0) return null;
-  const { Directory, File, Paths } = await import("expo-file-system");
-  const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? "image/jpeg";
-  const extension = (mimeType.split("/")[1] ?? "jpg").replace("jpeg", "jpg");
-  const directory = new Directory(Paths.cache, PREVIEW_CACHE_DIRECTORY);
-  directory.create({ idempotent: true, intermediates: true });
-  const file = new File(directory, `${id}.${extension}`);
-  if (!file.exists) {
-    file.create();
-    await file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
-  }
-  return file.uri;
-}
+const noMaterializedPreview = Atom.make(AsyncResult.initial<string | null>()).pipe(
+  Atom.withLabel("composer-image-preview:none"),
+);
 
 function useComposerImagePreviewUri(attachment: DraftComposerImageAttachment): string | null {
-  const { id, fileUri, previewUri } = attachment;
-  const [rebased, setRebased] = useState<{ fileUri: string; uri: string } | null>(null);
-  const [materialized, setMaterialized] = useState<{ id: string; uri: string | null } | null>(null);
+  const { fileUri, previewUri } = attachment;
   const inlinePreview = fileUri === undefined && previewUri.startsWith("data:");
-  useEffect(() => {
-    if (fileUri === undefined) return;
-    let cancelled = false;
-    void (async () => {
-      const { Paths } = await import("expo-file-system");
-      const owned = resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri);
-      if (!cancelled && owned !== null && owned !== previewUri) setRebased({ fileUri, uri: owned });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fileUri, previewUri]);
-  useEffect(() => {
-    if (!inlinePreview) return;
-    let cancelled = false;
-    void materializeDataUrlPreview(id, previewUri)
-      .then((uri) => {
-        if (!cancelled && uri !== null) setMaterialized({ id, uri });
-      })
-      .catch((error: unknown) => {
-        console.warn("[composer-attachments] could not cache an image preview", error);
-        if (!cancelled) setMaterialized({ id, uri: null });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, inlinePreview, previewUri]);
-  if (fileUri !== undefined && rebased?.fileUri === fileUri) return rebased.uri;
-  if (fileUri !== undefined) return previewUri.startsWith("data:") ? fileUri : previewUri;
+  const materialized = useAtomValue(
+    inlinePreview
+      ? materializedPreviewAtom(new MaterializedPreviewKey(attachment))
+      : noMaterializedPreview,
+  );
+  if (fileUri !== undefined) {
+    // Reinstalls move the app container, so a stored file URI may point at the old one.
+    const owned = resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri);
+    if (owned !== null) return owned;
+    return previewUri.startsWith("data:") ? fileUri : previewUri;
+  }
   if (inlinePreview) {
-    if (materialized?.id !== id) return null;
+    if (!AsyncResult.isSuccess(materialized)) return null;
     return (
-      materialized.uri ??
+      materialized.value ??
       (previewUri.length <= INLINE_PREVIEW_FALLBACK_MAX_CHARS ? previewUri : null)
     );
   }
@@ -166,6 +146,7 @@ function useComposerImagePreviewUri(attachment: DraftComposerImageAttachment): s
 function ComposerImageAttachment(
   props: ComposerAttachmentThumbnailProps & { readonly attachment: DraftComposerImageAttachment },
 ) {
+  const gt = useGT();
   const { attachment } = props;
   const withGallery = useFilePreviewGallery();
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
@@ -175,7 +156,7 @@ function ComposerImageAttachment(
     <PresentationSource identifier={sourceIdentifier}>
       <Pressable
         accessibilityRole="imagebutton"
-        accessibilityLabel={`Open ${attachment.name}`}
+        accessibilityLabel={gt("Open {name}", { name: attachment.name })}
         disabled={!props.onPressPreview}
         onPress={() =>
           props.onPressPreview?.(
@@ -197,6 +178,13 @@ function ComposerImageAttachment(
           style={style}
           className="bg-subtle"
           resizeMode="cover"
+          onLoad={({ nativeEvent: { source } }) => {
+            if (previewUri !== null)
+              rememberDraftImage(attachment.id, {
+                uri: previewUri,
+                aspectRatio: source.width / source.height,
+              });
+          }}
         />
       </Pressable>
     </PresentationSource>
@@ -231,17 +219,20 @@ function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
 function ComposerFileAttachment(
   props: ComposerAttachmentThumbnailProps & { readonly attachment: DraftComposerFileAttachment },
 ) {
+  const gt = useGT();
   const { attachment } = props;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
   const canPreview = isPdfFile(attachment) && props.onPressPreview !== undefined;
   const sourceIdentifier = `draft-file:${attachment.id}`;
   const onPressDocument = props.onPressDocument;
+  const upload = useComposerAttachmentUploadState(props.environmentId, attachment.id);
+  const showsUploadBadge = upload !== undefined && upload.status !== "ready";
   return (
     <>
       <PresentationSource identifier={sourceIdentifier}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
+          accessibilityLabel={gt("Open {name}", { name: attachment.name })}
           disabled={!canPreview && onPressDocument === undefined}
           onPress={() =>
             canPreview
@@ -256,7 +247,7 @@ function ComposerFileAttachment(
           className={
             props.compact
               ? "items-center justify-center bg-subtle"
-              : "items-center justify-center gap-1 bg-subtle px-2"
+              : `items-center justify-center gap-1 bg-subtle px-2${showsUploadBadge ? " pb-4" : ""}`
           }
           style={style}
         >
@@ -285,15 +276,12 @@ function ComposerVideoAttachment(props: {
   const { attachment } = props;
   const sourceIdentifier = `draft:${attachment.id}`;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
-  const actionsSource = useMemo<MediaActionsSource>(
-    () => ({
-      name: attachment.name,
-      mimeType: videoMimeType(attachment) ?? attachment.mimeType,
-      sourceIdentifier,
-      attachment,
-    }),
-    [attachment, sourceIdentifier],
-  );
+  const actionsSource: MediaActionsSource = {
+    name: attachment.name,
+    mimeType: videoMimeType(attachment) ?? attachment.mimeType,
+    sourceIdentifier,
+    attachment,
+  };
 
   return (
     <VideoAttachmentTile
@@ -309,13 +297,15 @@ function ComposerVideoAttachment(props: {
 }
 
 export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
-  const gallery = useMemo(() => composerImageGallery(props.attachments), [props.attachments]);
+  const gt = useGT();
+  const gallery = composerImageGallery(props.attachments);
   const size = props.imageSize ?? 72;
   const radius = props.imageBorderRadius ?? 16;
   const removeButtonPlacement = props.removeButtonPlacement ?? "overlay";
   const removeButtonGutter = removeButtonPlacement === "gutter" ? 10 : 0;
 
-  if (props.attachments.length === 0) {
+  const pendingImageCount = props.pendingImageCount ?? 0;
+  if (props.attachments.length === 0 && pendingImageCount === 0) {
     return null;
   }
 
@@ -347,6 +337,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 onPressDocument={props.onPressDocument}
               />
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={gt("Remove {name}", { name: attachment.name })}
                 className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
                 style={{
                   top: removeButtonPlacement === "gutter" ? 0 : 4,
@@ -363,6 +355,21 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                   weight="bold"
                 />
               </Pressable>
+            </View>
+          ))}
+          {Array.from({ length: pendingImageCount }, (_, index) => (
+            <View
+              key={`pending-${index}`}
+              accessibilityLabel={gt("Preparing pasted image")}
+              className="items-center justify-center bg-subtle"
+              style={{
+                width: size,
+                height: size,
+                borderRadius: radius,
+                marginTop: removeButtonGutter,
+              }}
+            >
+              <AppActivityIndicator />
             </View>
           ))}
         </View>

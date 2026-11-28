@@ -1,13 +1,18 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
+import { useClosedViewStore } from "../closedViewStore";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
+import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
+import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
@@ -16,16 +21,17 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
+import { readThreadShell, waitForThreadShellRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
 
 /**
- * Closes right panel surfaces for a thread. A surface's live resources go with
- * it: a browser's preview session and a terminal tab's sessions. Closing a
- * browser an agent is driving, or a terminal tab, asks first.
+ * Closing releases preview and terminal sessions, and deletes a side chat that never ran.
+ * Agent-driven browsers and terminal tabs require confirmation.
  */
 export function useRightPanelSurfaceClose(input: {
   readonly threadRef: ScopedThreadRef | null;
@@ -33,6 +39,7 @@ export function useRightPanelSurfaceClose(input: {
 }) {
   const { threadRef, terminalLabelsById } = input;
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const deleteThread = useAtomCommand(threadEnvironment.delete, "side chat delete");
   const canOperatePreview = useEnvironmentScope(
     threadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -45,9 +52,7 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
-    // Without preview access only the local surface goes away. The
-    // server record is in-memory bookkeeping, not a live view, and stays
-    // listed until a client with the scope closes it or the server restarts.
+    // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({
         closePreview,
@@ -62,8 +67,36 @@ export function useRightPanelSurfaceClose(input: {
     ) {
       for (const terminalId of surface.terminalIds) {
         storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId);
+        terminalActions.closeTerminalSession(terminalId, ref);
       }
+    }
+    if (
+      surface.kind === "thread" &&
+      // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs to
+      // its parent's work, and an unlisted side chat is already deleted.
+      readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))?.lineage.sideChat ===
+        true &&
+      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
+    ) {
+      const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+      // The server keeps a side chat with a run or message. Reopen cannot tell one it deleted from
+      // an idle subagent the shell leaves out, so forget the tab once the server has removed it.
+      void deleteThread({
+        environmentId: ref.environmentId,
+        input: { threadId: surface.threadId, onlyIfUnused: true },
+      }).then(async (result) => {
+        if (result._tag !== "Success" || !(await waitForThreadShellRemoval(sideChatRef))) return;
+        const closedViews = useClosedViewStore.getState();
+        for (const entry of closedViews.entries) {
+          if (
+            entry.kind === "panel-tab" &&
+            entry.surface.id === surface.id &&
+            scopedThreadKey(entry.threadRef) === scopedThreadKey(ref)
+          ) {
+            closedViews.remove(entry.id);
+          }
+        }
+      });
     }
   };
   const closeAfterAgentBrowserConfirmation = (
@@ -84,17 +117,24 @@ export function useRightPanelSurfaceClose(input: {
       () => undefined,
     );
   };
-  // The active surface closes last so the panel does not flash through it.
   const finishClose = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     const store = useRightPanelStore.getState();
-    const activeId = selectThreadRightPanelState(store.byThreadKey, threadRef).activeSurfaceId;
-    const ordered = toClose.toSorted(
-      (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
+    const { activeSurfaceId, surfaces } = selectThreadRightPanelState(store.byThreadKey, threadRef);
+    const openIds = new Set(surfaces.map((surface) => surface.id));
+    const closingSurfaces = toClose.filter((surface) => openIds.has(surface.id));
+    if (closingSurfaces.length === 0) return;
+    // Close the tabs before releasing sessions, which can prune the tabs during reconciliation.
+    store.closeSurfaces(
+      threadRef,
+      closingSurfaces.map((surface) => surface.id),
     );
-    for (const surface of ordered) {
+    // The active tab's session closes last so reopening restores it first.
+    const releaseOrder = closingSurfaces.toSorted(
+      (left, right) => Number(left.id === activeSurfaceId) - Number(right.id === activeSurfaceId),
+    );
+    for (const surface of releaseOrder) {
       releaseSurfaceResources(threadRef, surface);
-      store.closeSurface(threadRef, surface.id);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
@@ -103,12 +143,27 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
+    focusPanelTerminalAfterClose(threadRef, activeSurfaceId);
   };
   const labelFor = (terminalId: string) =>
-    terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
   const closeSurfaces = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
-    closeAfterAgentBrowserConfirmation(toClose, () => finishClose(toClose));
+    closeAfterAgentBrowserConfirmation(toClose, () => {
+      const labels = readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+        ? toClose.flatMap((surface) =>
+            surface.kind === "terminal" ? surface.terminalIds.map(labelFor) : [],
+          )
+        : [];
+      const [first, ...rest] = labels;
+      if (first === undefined) {
+        finishClose(toClose);
+        return;
+      }
+      void confirmTerminalClose([first, ...rest]).then((confirmed) => {
+        if (confirmed) finishClose(toClose);
+      });
+    });
   };
 
   const closeSurface = useStableCallback((surface: RightPanelSurface) => {
@@ -142,6 +197,13 @@ export function useRightPanelSurfaceClose(input: {
     closeSurfaces(surfaces.slice(surfaceIndex + 1));
   });
   const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeSelectedSurfaces = useStableCallback(closeSurfaces);
 
-  return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
+  return {
+    closeSurface,
+    closeSelectedSurfaces,
+    closeOtherSurfaces,
+    closeSurfacesToRight,
+    closeAllSurfaces,
+  };
 }

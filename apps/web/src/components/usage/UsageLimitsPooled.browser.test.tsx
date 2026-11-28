@@ -4,179 +4,153 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import type { LimitPresentations } from "@t3tools/shared/usageLimits";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
+import { describe, expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-// Real pointer clicks need the dialog's stacking styles to land above Base UI's modal overlay.
 import "~/index.css";
 
-const consume = vi.hoisted(() => vi.fn());
-vi.mock("../../state/session", () => ({
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
-vi.mock("../../state/server", () => ({ serverEnvironment: { consumeResetCredit: null } }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => consume }));
-vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
-vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: () => null }));
-
+import { render } from "../../../test/render";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 
-const presentations: LimitPresentations = new Map([
-  [
-    EnvironmentId.make("env-a"),
-    {
-      entry: { target: { label: "Test" } },
-      serverConfig: {
-        usageLimitSources: [],
-        providers: [
-          {
-            instanceId: ProviderInstanceId.make("alpha"),
-            driver: ProviderDriverKind.make("codex"),
-            displayName: "Alpha",
-            enabled: true,
-            installed: true,
-            version: null,
-            status: "ready",
-            auth: { status: "authenticated", email: "alpha@example.com" },
-            checkedAt: "2026-09-03T11:00:00Z",
-            models: [],
-            slashCommands: [],
-            skills: [],
-            usageLimits: {
-              checkedAt: "2026-09-03T11:00:00Z",
-              resetCredits: { availableCount: 1 },
-              windows: [
-                {
-                  id: "five_hour",
-                  kind: "session",
-                  label: "Session",
-                  usedPercent: 40,
-                  windowDurationMins: 300,
-                  resetsAt: "2026-09-03T14:00:00Z",
-                },
-              ],
-            },
-          } satisfies ServerProvider,
-        ],
-      },
+const checkedAt = "2026-10-25T16:00:00.000Z";
+
+function managedChatGpt(instanceId: string, displayName: string): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver: ProviderDriverKind.make("codex"),
+    displayName,
+    enabled: true,
+    installed: true,
+    version: "0.164.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "unsupported", message: "Track usage in ChatGPT." },
+      externalUsage: { label: "ChatGPT usage", url: CHATGPT_USAGE_URL },
     },
-  ],
-]);
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  consume.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() => root.render(<UsageLimitsPooled presentations={presentations} now={0} />));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-async function click(label: string) {
-  const button = Array.from(document.querySelectorAll("button")).find(
-    (node) => node.textContent === label || node.getAttribute("aria-label")?.startsWith(label),
-  );
-  expect(button).toBeDefined();
-  await act(() => userEvent.click(button!));
+  };
 }
 
-it("keeps the account badge identity when pooling fresher credits from another named instance", async () => {
-  const environmentId = EnvironmentId.make("env-a");
-  const presentation = presentations.get(environmentId)!;
-  const alpha = presentation.serverConfig!.providers[0]!;
-  const beta = {
-    ...alpha,
-    instanceId: ProviderInstanceId.make("beta"),
-    displayName: "Beta",
-    auth: { ...alpha.auth, email: "beta@example.com" },
-    usageLimits: {
-      ...alpha.usageLimits!,
-      checkedAt: "2026-09-03T11:30:00Z",
-      resetCredits: { availableCount: 2 },
-    },
-  } satisfies ServerProvider;
-  async function renderProviders(providers: ServerProvider[]) {
-    const input = new Map([
+describe("UsageLimitsPooled ChatGPT usage card", () => {
+  it("names the managed connections it covers", async () => {
+    const presentations = new Map([
       [
-        environmentId,
-        { ...presentation, serverConfig: { ...presentation.serverConfig, providers } },
+        EnvironmentId.make("desk"),
+        {
+          entry: { target: { label: "Desk" } },
+          serverConfig: {
+            providers: [
+              managedChatGpt("chatgpt_work", "ChatGPT Work"),
+              managedChatGpt("chatgpt_personal", "ChatGPT Personal"),
+            ],
+          },
+        },
       ],
     ]);
-    await act(() => root.render(<UsageLimitsPooled presentations={input} now={0} />));
-  }
-  function popupIdentity() {
-    const popup = document.querySelector('[data-slot="popover-popup"]')!;
-    const icon = popup.querySelector("[data-provider-accent-color]")!;
-    const badge = icon.querySelector("span[aria-hidden]")!;
-    return {
-      name: icon.nextElementSibling?.textContent,
-      initials: badge.textContent,
-      color: getComputedStyle(badge).backgroundColor,
-    };
-  }
+    await using screen = await render(
+      <UsageLimitsPooled presentations={presentations} now={Date.parse(checkedAt)} />,
+    );
 
-  await renderProviders([alpha, beta]);
-  await click("Alpha:");
-  const original = popupIdentity();
-  expect(original).toMatchObject({ name: "Alpha", initials: "AL" });
-  expect(original.color).not.toBe("rgba(0, 0, 0, 0)");
-  await act(() => userEvent.keyboard("{Escape}"));
-  await expect.poll(() => document.querySelector('[data-slot="popover-popup"]')).toBeNull();
-
-  await renderProviders([alpha, { ...beta, auth: alpha.auth }]);
-  expect(container.querySelectorAll('button[aria-label^="Beta:"]')).toHaveLength(0);
-  const pooled = container.querySelector('button[aria-label^="Alpha:"]')!;
-  expect(pooled.getAttribute("aria-label")).toContain("2 reset credits banked");
-  await click("Alpha:");
-  expect(popupIdentity()).toEqual(original);
+    await expect
+      .element(screen.getByText("ChatGPT Work on Desk, ChatGPT Personal on Desk"))
+      .toBeVisible();
+    await expect
+      .element(screen.getByText("View usage in ChatGPT with your connected account."))
+      .toBeVisible();
+  });
 });
 
-it.each([
-  {
-    label: "success",
-    result: { _tag: "Success", value: { outcome: "reset" } },
-    text: "Reset applied. Your windows have cleared.",
-  },
-  {
-    label: "failure",
-    result: { _tag: "Failure", cause: { error: new Error("Codex rejected the credit.") } },
-    text: "Codex rejected the credit.",
-  },
-])("keeps pending feedback outside the closed popup until $label", async ({ result, text }) => {
-  let answer!: (result: unknown) => void;
-  consume.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-  await click("Alpha:");
-  await click("Use reset");
-  expect(consume).not.toHaveBeenCalled();
-  await click("Cancel");
-  expect(consume).not.toHaveBeenCalled();
-  await click("Alpha:");
-  await click("Use reset");
-  await click("Use credit");
-  expect(consume).toHaveBeenCalledOnce();
-  // Both popups unmount once their exit animations finish.
-  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
-  await expect.poll(() => document.querySelector('[data-slot="popover-popup"]')).toBeNull();
-  const status = document.querySelector('[role="status"]');
-  expect(status?.textContent).toBe("Alpha Using reset credit…");
-  await click("Alpha:");
-  const using = Array.from(document.querySelectorAll("button")).find(
-    (node) => node.textContent === "Using…",
-  );
-  expect(using?.disabled).toBe(true);
-  await act(async () => answer(result));
-  expect(status?.textContent).toBe(`Alpha ${text}`);
+describe("UsageLimitsPooled next refill", () => {
+  it("skips elapsed resets while waiting for refreshed account data", async () => {
+    function account(instanceId: string, usedPercent: number, resetsAt: string): ServerProvider {
+      return {
+        ...managedChatGpt(instanceId, instanceId),
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent, resetsAt }],
+        },
+      };
+    }
+    const presentations = new Map([
+      [
+        EnvironmentId.make("desk"),
+        {
+          entry: { target: { label: "Desk" } },
+          serverConfig: {
+            providers: [
+              account("Work", 20, "2026-10-25T17:00:00.000Z"),
+              account("Personal", 60, "2026-10-25T18:00:00.000Z"),
+            ],
+          },
+        },
+      ],
+    ]);
+    await using screen = await render(
+      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T17:30:00Z")} />,
+    );
+    await expect.element(screen.getByText("↻ +30%", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("↻ +30% in 30m")).toBeVisible();
+
+    await screen.rerender(
+      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
+    );
+    await expect.element(screen.getByText(/^↻ \+\d+%$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("UsageLimitsPooled account badges", () => {
+  it("keeps a custom instance's automatic color when another instance pools into it", async () => {
+    function account(instanceId: string, displayName: string, email: string): ServerProvider {
+      return {
+        ...managedChatGpt(instanceId, displayName),
+        auth: { status: "authenticated", email },
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 40 }],
+        },
+      };
+    }
+    const work = account("codex_work", "Work", "work@example.com");
+    const presentationsFor = (providers: ServerProvider[]) =>
+      new Map([
+        [
+          EnvironmentId.make("desk"),
+          { entry: { target: { label: "Desk" } }, serverConfig: { providers } },
+        ],
+      ]);
+    const badgeColor = async () => {
+      await screen.getByRole("button", { name: /^Work:/ }).click();
+      const icon = document.querySelector(
+        '[data-slot="popover-popup"] [data-provider-accent-color]',
+      );
+      const color = icon?.getAttribute("data-provider-accent-color");
+      await userEvent.keyboard("{Escape}");
+      return color;
+    };
+
+    await using screen = await render(
+      <UsageLimitsPooled
+        presentations={presentationsFor([work, account("codex_home", "Home", "home@example.com")])}
+        now={Date.parse(checkedAt)}
+      />,
+    );
+    const automatic = await badgeColor();
+    expect(automatic).toMatch(/^#[0-9a-f]{6}$/);
+
+    await screen.rerender(
+      <UsageLimitsPooled
+        presentations={presentationsFor([work, account("codex_home", "Home", "work@example.com")])}
+        now={Date.parse(checkedAt)}
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: /^Home:/ })).not.toBeInTheDocument();
+    expect(await badgeColor()).toBe(automatic);
+  });
 });

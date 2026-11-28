@@ -1,20 +1,5 @@
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-
-export function isPullRequestTestFile(path: string): boolean {
-  const segments = path.replaceAll("\\", "/").split("/");
-  const name = segments.at(-1) ?? "";
-  return (
-    segments
-      .slice(0, -1)
-      .some((segment) => /^(?:__tests__|__snapshots__|tests?|spec|e2e)$/i.test(segment)) ||
-    /\.(?:test|spec)\./i.test(name) ||
-    /\.snap$/i.test(name) ||
-    /^(?:test_.+|.+_test)\.py$/i.test(name) ||
-    /_test\.(?:go|rs|rb|c|cc|cpp|h|hpp)$/i.test(name) ||
-    /(?:Test|Tests|Spec)\.(?:java|kt|kts|swift|cs)$/.test(name) ||
-    /_spec\.rb$/i.test(name)
-  );
-}
 
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,
@@ -23,7 +8,7 @@ export function filterPullRequestTestFiles(
 ): ReviewParsedDiff {
   if (!hideTestFiles || parsed.kind !== "files") return parsed;
   const files = parsed.files.filter(
-    (file) => file.path === includePath || !isPullRequestTestFile(file.path),
+    (file) => file.path === includePath || !isTestChangedFile(file.path),
   );
   if (files.length === parsed.files.length) return parsed;
   return {
@@ -33,4 +18,18 @@ export function filterPullRequestTestFiles(
     additions: files.reduce((total, file) => total + file.additions, 0),
     deletions: files.reduce((total, file) => total + file.deletions, 0),
   };
+}
+
+/** Patches to load around `index` (or from the top): the next three files the review will show. */
+export function shownPatchIndices(
+  files: ReadonlyArray<{ readonly path: string }>,
+  hideTestFiles: boolean,
+  index: number | null,
+): ReadonlyArray<number> {
+  const shown = files.flatMap((file, position) =>
+    hideTestFiles && isTestChangedFile(file.path) ? [] : [position],
+  );
+  if (index === null) return shown.slice(0, 3);
+  const position = shown.indexOf(index);
+  return position < 0 ? [index] : shown.slice(position, position + 3);
 }

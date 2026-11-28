@@ -5,11 +5,7 @@ import type { AcpSessionModeState } from "./runtimeModel.ts";
 
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
-/**
- * Agents use it for a real choice (GitHub Copilot's default agent), but T3
- * option IDs must be non-empty. The ACP adapter maps it back to `""` before
- * applying a selection.
- */
+/** Encodes a valid empty ACP choice as a non-empty T3 ID; map back before applying. */
 export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 
 const MAX_OPTION_DESCRIPTORS = 16;
@@ -26,7 +22,12 @@ const boundedOpaqueValue = (value: string, maximumLength: number): string | unde
 const choiceId = (value: string): string | undefined =>
   value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
 
-function flattenSelectChoices(
+/** Mistral Vibe 3.1 sends its reasoning level under `thinking`, a category ACP reserves but never defined. */
+export const isAcpThoughtLevelOption = (option: EffectAcpSchema.SessionConfigOption): boolean =>
+  option.category === "thought_level" ||
+  (option.category === "thinking" && option.type === "select");
+
+export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
   return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
@@ -66,8 +67,7 @@ export function acpProviderOptionDescriptors(input: {
   let hasModeCategory = false;
 
   for (const option of input.configOptions ?? []) {
-    // "model" options surface as the model list; "collaboration_mode" options
-    // are driven by T3's own plan/build interaction mode in the ACP adapter.
+    // Model and collaboration_mode choices use T3 model and interaction controls.
     if (option.category === "model" || option.category === "collaboration_mode") {
       continue;
     }
@@ -86,6 +86,7 @@ export function acpProviderOptionDescriptors(input: {
         ...base,
         type: "boolean",
         currentValue: option.currentValue,
+        ...(option.category === "mode" ? { role: "mode" as const } : {}),
       });
       if (descriptors.length === MAX_OPTION_DESCRIPTORS) return descriptors;
       continue;
@@ -96,7 +97,8 @@ export function acpProviderOptionDescriptors(input: {
       continue;
     }
     if (option.category === "mode") hasModeCategory = true;
-    if (option.category === "thought_level") {
+    const isThoughtLevel = isAcpThoughtLevelOption(option);
+    if (isThoughtLevel) {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
     const currentValue = choiceId(option.currentValue);
@@ -107,6 +109,11 @@ export function acpProviderOptionDescriptors(input: {
       ...(currentValue && choices.some((choice) => choice.id === currentValue)
         ? { currentValue }
         : {}),
+      ...(isThoughtLevel
+        ? { role: "reasoning" as const }
+        : option.category === "mode"
+          ? { role: "mode" as const }
+          : {}),
     });
     if (descriptors.length === MAX_OPTION_DESCRIPTORS) return descriptors;
   }
@@ -121,10 +128,7 @@ export function acpProviderOptionDescriptors(input: {
       })),
     );
     const currentValue = choiceId(modeState.currentModeId);
-    // Some agents mirror one knob through both the modes API and a config
-    // option (codex-acp advertises its thinking levels as modes too). Skip
-    // the synthetic descriptor when an existing descriptor already exposes
-    // the same choice set, so the composer shows the knob once.
+    // Some agents duplicate modes in config options; show each control once.
     const duplicatesKnownModeDescriptor = mirroredModeChoiceSets.some(
       (choiceIds) =>
         choiceIds.size === choices.length && choices.every((choice) => choiceIds.has(choice.id)),
@@ -143,6 +147,7 @@ export function acpProviderOptionDescriptors(input: {
         ...(currentValue && choices.some((choice) => choice.id === currentValue)
           ? { currentValue }
           : {}),
+        role: "mode",
       });
     }
   }

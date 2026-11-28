@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  GitRefName,
+  IsoDateTime,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Producers clamp free text to these before publishing so encoding never fails. */
 export const WORKTREE_SETUP_DETAIL_MAX_LENGTH = 200;
@@ -45,8 +51,8 @@ export const WorktreeSetupSnapshot = Schema.Struct({
   phase: WorktreeSetupPhase,
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
-  branch: Schema.NullOr(TrimmedNonEmptyString),
-  baseRef: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
+  baseRef: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   setupScript: Schema.NullOr(
     Schema.Struct({
@@ -60,8 +66,6 @@ export const WorktreeSetupSnapshot = Schema.Struct({
   sequence: NonNegativeInt,
 });
 export type WorktreeSetupSnapshot = typeof WorktreeSetupSnapshot.Type;
-
-export const WORKTREE_SETUP_ACTIVITY_KIND = "worktree-setup";
 
 export const WorktreeSetupSubscribeInput = Schema.Struct({
   threadId: ThreadId,

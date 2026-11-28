@@ -4,16 +4,29 @@ import {
   type AtomCommandResult,
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { VcsSwitchRefInput, VcsSwitchRefResult } from "@t3tools/contracts";
+import type {
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+} from "@t3tools/contracts";
+import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react-native";
 
-import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
+import { m } from "../../i18n/messages";
+
+const VCS_REF_QUERY_MAX_LENGTH = 256;
 
 export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
   readonly workspaceMode: "local" | "worktree";
+  readonly readRefs: (request: {
+    readonly environmentId: EnvironmentProject["environmentId"];
+    readonly input: VcsListRefsInput;
+  }) => Promise<AtomCommandResult<VcsListRefsResult, E>>;
   readonly switchRef: (request: {
     readonly environmentId: EnvironmentProject["environmentId"];
     readonly input: VcsSwitchRefInput;
@@ -21,17 +34,66 @@ export async function checkoutNewTaskBranch<E>(input: {
 }): Promise<AtomCommandResult<VcsRef, E | Error>> {
   if (!input.project) {
     return AsyncResult.failure(
-      Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
+      Cause.fail(
+        new Error(m(msg("The selected project is unavailable. Reconnect and try again."))),
+      ),
     );
   }
-  if (
-    !shouldCheckoutNewTaskBranch({
-      branchIsCurrent: input.branch.current,
-      branchWorktreePath: input.branch.worktreePath,
-      workspaceMode: input.workspaceMode,
-    })
-  ) {
-    return AsyncResult.success(input.branch);
+  if (input.workspaceMode === "worktree") return AsyncResult.success(input.branch);
+
+  // The picked ref's current flag, remote refs' missing worktrees and historical
+  // thread metadata can all be stale, so Git is asked again before choosing.
+  const localName = localBranchName(input.branch);
+  let cursor: number | undefined;
+  for (;;) {
+    const refs = await input.readRefs({
+      environmentId: input.project.environmentId,
+      input: {
+        cwd: input.project.workspaceRoot,
+        // Bound the substring query; compare the full name across every page.
+        query: localName.slice(0, VCS_REF_QUERY_MAX_LENGTH),
+        refKind: "local",
+        ...(cursor === undefined ? { refresh: true } : { cursor }),
+      },
+    });
+    if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
+    const local = refs.value.refs.find((ref) => ref.name === localName);
+    if (
+      local &&
+      (!input.branch.isRemote || local.upstreamRef === `refs/remotes/${input.branch.name}`) &&
+      (local.current || local.worktreePath)
+    ) {
+      if (local.current) return AsyncResult.success({ ...local, worktreePath: null });
+      if (refs.value.isAtRepositoryRoot === undefined) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error(
+              m(
+                msg(
+                  "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      if (!refs.value.isAtRepositoryRoot) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error(
+              m(
+                msg(
+                  "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      return AsyncResult.success(local);
+    }
+    if (local || refs.value.nextCursor === null) break;
+    cursor = refs.value.nextCursor;
   }
 
   const result = await input.switchRef({
@@ -43,5 +105,12 @@ export async function checkoutNewTaskBranch<E>(input: {
     current: true,
     isRemote: false,
     name: value.refName ?? input.branch.name,
+    worktreePath: null,
   }));
+}
+
+function localBranchName(branch: VcsRef): string {
+  return branch.isRemote
+    ? deriveLocalBranchNameFromRemoteRef(branch.name, branch.remoteName)
+    : branch.name;
 }
