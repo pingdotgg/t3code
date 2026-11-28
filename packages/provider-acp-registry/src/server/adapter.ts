@@ -66,6 +66,7 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
+import { acpSessionParameterConfig } from "@t3tools/provider-acp/server/sessionConfig";
 
 export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
 export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_REGISTRY_PROVIDER);
@@ -265,6 +266,17 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
   const useHttpMcpServers =
     copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
+  // Any ACP agent can accept parameterized model ids and the options they expand into.
+  const clientCapabilitiesMeta = {
+    parameterizedModelPicker: true,
+    ...(isDevin
+      ? {
+          "cognition.ai/subagentSupport": true,
+          "cognition.ai/messageGrouping": true,
+        }
+      : {}),
+    ...(copilotRouting === undefined ? {} : copilotClientCapabilitiesMeta),
+  };
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     // Cancelling a Copilot prompt also kills the background agents it started.
@@ -275,6 +287,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
+    clientCapabilitiesMeta,
+    defaultSessionConfig: acpSessionParameterConfig(options.settings.sessionParameters),
     compactViaAdvertisedCommand: true,
     ...(isAntigravityCli
       ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true, deferMcpTools: "proxy" }
@@ -323,10 +337,6 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       isAntigravityCli || isHermes(initializeResult),
     ...(isDevin
       ? {
-          clientCapabilitiesMeta: {
-            "cognition.ai/subagentSupport": true,
-            "cognition.ai/messageGrouping": true,
-          },
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
@@ -336,7 +346,6 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(copilotRouting === undefined
       ? {}
       : {
-          clientCapabilitiesMeta: copilotClientCapabilitiesMeta,
           deferMcpTools: true,
           registerExtensions: copilotRouting.registerExtensions,
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,

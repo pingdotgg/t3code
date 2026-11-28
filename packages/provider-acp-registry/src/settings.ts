@@ -5,6 +5,12 @@ import * as Schema from "effect/Schema";
 export const AcpRegistryDistributionPreference = Schema.Literals(["auto", "binary", "npx", "uvx"]);
 export type AcpRegistryDistributionPreference = typeof AcpRegistryDistributionPreference.Type;
 
+export const AcpSessionParameter = Schema.Struct({
+  name: Schema.String,
+  value: Schema.String,
+});
+export type AcpSessionParameter = typeof AcpSessionParameter.Type;
+
 export const AcpRegistrySettings = makeProviderSettingsSchema(
   {
     source: Schema.Literals(["registry", "local"]).pipe(
@@ -42,6 +48,10 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
       }),
     ),
     commandArgs: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    sessionParameters: Schema.Array(AcpSessionParameter).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),

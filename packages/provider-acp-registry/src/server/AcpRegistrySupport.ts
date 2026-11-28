@@ -69,6 +69,14 @@ const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
 const PACKAGE_QUERY_TIMEOUT = "30 seconds";
 
+/** User arguments lead so flags such as `--model` sit in front of a distribution subcommand. */
+function withCommandArgs(
+  distributionArgs: ReadonlyArray<string>,
+  commandArgs: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return commandArgs.length === 0 ? distributionArgs : [...commandArgs, ...distributionArgs];
+}
+
 const BoundedAgentId = Schema.String.check(
   Schema.isMaxLength(128),
   Schema.isPattern(/^[a-z0-9][a-z0-9._-]*$/u),
@@ -2199,7 +2207,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         });
       }
       command = resolvedOverride;
-      args = distribution.args;
+      args = withCommandArgs(distribution.args, settings.commandArgs);
     } else if (distribution.kind === "npx" || distribution.kind === "uvx") {
       const installed = yield* withInstallPermit(agent.id)(
         ensureGlobalPackage(
@@ -2210,7 +2218,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ),
       );
       command = installed.executablePath;
-      args = distribution.args;
+      args = withCommandArgs(distribution.args, settings.commandArgs);
       commandBinDirectory = installed.binDirectory;
     } else {
       const target = distribution.binaryTarget!;
@@ -2219,7 +2227,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           Effect.tap(() => consumePreparedBinaryReservation(agent.id)),
         ),
       );
-      args = distribution.args;
+      args = withCommandArgs(distribution.args, settings.commandArgs);
     }
 
     const baseSpawnEnvironment = {

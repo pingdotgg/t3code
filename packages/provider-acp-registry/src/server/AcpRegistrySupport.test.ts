@@ -1107,6 +1107,15 @@ describe("AcpRegistrySupport", () => {
         const custom = yield* resolver.resolve(overridden, "/workspace", environment);
         expect(custom.spawn.command).toBe(systemBinary);
         expect(custom.spawn.args).toEqual(["acp"]);
+        const withArgs = yield* resolver.resolve(
+          settings({
+            commandPath: systemBinary,
+            commandArgs: ["--model", "grok-4.7-high", "--extra"],
+          }),
+          "/workspace",
+          environment,
+        );
+        expect(withArgs.spawn.args).toEqual(["--model", "grok-4.7-high", "--extra", "acp"]);
         expect(requests).toEqual([registryUrl]);
 
         yield* resolver.prepare({ agentId: "example-agent" });

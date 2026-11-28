@@ -39,7 +39,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ACP sign-in conf
   );
 
   it.effect(
-    "does not carry confirmation to a different agent, method, executable, or credential environment",
+    "does not carry confirmation to a different agent, method, executable, arguments, or credential environment",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -55,6 +55,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ACP sign-in conf
           { settings: { ...settings, agentId: "other-agent" } },
           { settings: { ...settings, authMethodId: "enterprise" } },
           { settings: { ...settings, commandPath: "/other/devin" } },
+          { settings: { ...settings, commandArgs: ["--model", "grok-4.7-high"] } },
           { environment: [{ name: "DEVIN_TOKEN", value: "different-token", sensitive: true }] },
           { processEnvironment: { HOME: "/home/other" } },
         ]) {

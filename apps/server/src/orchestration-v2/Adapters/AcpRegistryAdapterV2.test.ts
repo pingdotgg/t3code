@@ -3965,4 +3965,74 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it.effect("sends parameterizedModelPicker when initializing any ACP agent", () =>
+    Effect.gen(function* () {
+      const metaFor = Effect.fn("metaFor")(function* (config: Record<string, unknown>) {
+        let meta: unknown = "unseen";
+        const instanceId = ProviderInstanceId.make("acp-registry-cursor-model-picker");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              meta = input.clientCapabilities._meta;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new EffectAcpErrors.AcpSpawnError({
+                    command: "cursor",
+                    cause: "captured client capabilities",
+                  }),
+                ),
+              ),
+            ),
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        const exit = yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-cursor-model-picker"),
+            providerSessionId: ProviderSessionId.make("session-cursor-model-picker"),
+            modelSelection: { instanceId, model: "grok-4.7-high" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(exit));
+        return meta;
+      });
+      const picker = { parameterizedModelPicker: true };
+
+      assert.deepEqual(yield* metaFor({ agentId: "cursor" }), picker);
+      assert.deepEqual(yield* metaFor({ agentId: "gemini" }), picker);
+      assert.deepEqual(
+        yield* metaFor({ source: "local", commandPath: "/opt/bin/some-agent" }),
+        picker,
+      );
+      assert.deepEqual(yield* metaFor({ agentId: "devin" }), {
+        parameterizedModelPicker: true,
+        "cognition.ai/subagentSupport": true,
+        "cognition.ai/messageGrouping": true,
+      });
+      const copilot = yield* metaFor({ agentId: "github-copilot-cli" });
+      assert.equal(Reflect.get(Object(copilot), "parameterizedModelPicker"), true);
+      assert.deepEqual(Reflect.get(Object(copilot), "github.com/copilot"), {
+        events: [
+          "subagent.started",
+          "subagent.completed",
+          "subagent.failed",
+          "assistant.message_delta",
+          "assistant.reasoning_delta",
+          "session.compaction_complete",
+          "assistant.turn_start",
+          "assistant.idle",
+          "tool.execution_start",
+        ],
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
 });

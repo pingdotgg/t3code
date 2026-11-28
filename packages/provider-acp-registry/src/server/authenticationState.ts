@@ -37,9 +37,8 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
     const filePath = path.join(input.cacheDir, `acp-auth-${yield* hash(input.instanceId)}.json`);
     // Cosmetic settings and model discovery do not change the account binding.
     const binding = yield* hash({
-      ...(input.settings.source === "local"
-        ? { source: "local", commandArgs: input.settings.commandArgs }
-        : {}),
+      commandArgs: input.settings.commandArgs,
+      ...(input.settings.source === "local" ? { source: "local" } : {}),
       agentId: input.settings.agentId,
       commandPath: input.settings.commandPath,
       distribution: input.settings.distribution,

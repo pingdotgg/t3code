@@ -133,6 +133,7 @@ import {
   ACP_EMPTY_OPTION_VALUE,
   ACP_SESSION_MODE_OPTION_ID,
   flattenSelectChoices,
+  withAcpDefaultSessionConfig,
 } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
@@ -567,6 +568,11 @@ export interface AcpAdapterV2Flavor {
   readonly sessionConfigForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => ReadonlyArray<{ readonly id: string; readonly value: string }>;
+  /**
+   * Session options from provider settings. A value the session does not
+   * advertise is skipped. The model picker overrides the same option id.
+   */
+  readonly defaultSessionConfig?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /**
    * The runtime mode a native session mode grants, for flavors whose modes are permission levels.
    * A picked mode this does not place within the thread's runtime mode is not applied.
@@ -9198,11 +9204,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
           };
           const explicitSelections = modelSelection.options ?? [];
+          const parameterDefaults = flavor.defaultSessionConfig ?? [];
           const implicitSelections = unsetOptionDefaults.filter(
-            (implicit) => !explicitSelections.some((selection) => selection.id === implicit.id),
+            (implicit) =>
+              !explicitSelections.some((selection) => selection.id === implicit.id) &&
+              !parameterDefaults.some((parameter) => parameter.id === implicit.id),
           );
-          const optionSelections = [...explicitSelections, ...implicitSelections].flatMap(
-            (selection) => {
+          const optionSelections = withAcpDefaultSessionConfig(
+            [...explicitSelections, ...implicitSelections].flatMap((selection) => {
               if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
               if (!withinCeiling(selection)) return [];
               return [
@@ -9210,7 +9219,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? { ...selection, value: "" }
                   : selection,
               ];
-            },
+            }),
+            parameterDefaults,
           );
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
@@ -9250,7 +9260,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
               if (!advertisedValues.includes(selection.value)) continue;
             }
-            yield* runtime.setConfigOption(selection.id, selection.value).pipe(
+            const configuredValue =
+              option?.type === "boolean" && typeof selection.value === "string"
+                ? selection.value === "true"
+                : selection.value;
+            yield* runtime.setConfigOption(selection.id, configuredValue).pipe(
               Effect.catchTags({
                 AcpRequestError: (error) =>
                   error.code === -32602

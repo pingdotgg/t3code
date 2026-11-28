@@ -57,6 +57,31 @@ function selectChoices(
   return choices;
 }
 
+/** Picker choices win. Blank default names are dropped, and the first default for an id is kept. */
+export function withAcpDefaultSessionConfig<Selection extends { readonly id: string }>(
+  selections: ReadonlyArray<Selection>,
+  defaults: ReadonlyArray<{ readonly id: string; readonly value: string }>,
+): ReadonlyArray<Selection | { readonly id: string; readonly value: string }> {
+  const picked = new Set(selections.map((selection) => selection.id));
+  const leading: Array<{ readonly id: string; readonly value: string }> = [];
+  for (const parameter of defaults) {
+    const id = parameter.id.trim();
+    if (id.length === 0 || picked.has(id)) continue;
+    picked.add(id);
+    leading.push({ id, value: parameter.value });
+  }
+  return leading.length === 0 ? selections : [...leading, ...selections];
+}
+
+export function acpSessionParameterConfig(
+  parameters: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+): ReadonlyArray<{ readonly id: string; readonly value: string }> {
+  return withAcpDefaultSessionConfig(
+    [],
+    parameters.map((parameter) => ({ id: parameter.name, value: parameter.value })),
+  );
+}
+
 export function acpProviderOptionDescriptors(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
   readonly modeState: AcpSessionModeState | undefined;

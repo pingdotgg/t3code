@@ -212,6 +212,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.deepEqual(providers?.lockedInstanceFields?.[ProviderDriverKind.make("acpRegistry")], [
         "config.commandPath",
         "config.commandArgs",
+        "config.sessionParameters",
         "environment",
       ]);
       // The host variable that replaces Codex's launch arguments is ignored too.

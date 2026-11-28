@@ -1,6 +1,44 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "./sessionConfig.ts";
+import {
+  ACP_SESSION_MODE_OPTION_ID,
+  acpProviderOptionDescriptors,
+  acpSessionParameterConfig,
+  withAcpDefaultSessionConfig,
+} from "./sessionConfig.ts";
+
+describe("acp session parameters", () => {
+  it("keeps the first named parameter and drops a blank name", () => {
+    expect(
+      acpSessionParameterConfig([
+        { name: " reasoning_effort ", value: "high" },
+        { name: "reasoning_effort", value: "low" },
+        { name: " ", value: "256k" },
+        { name: "context", value: "256k" },
+        { name: "fast", value: "false" },
+      ]),
+    ).toEqual([
+      { id: "reasoning_effort", value: "high" },
+      { id: "context", value: "256k" },
+      { id: "fast", value: "false" },
+    ]);
+  });
+
+  it("lets a model picker choice override the same parameter", () => {
+    expect(
+      withAcpDefaultSessionConfig(
+        [{ id: "reasoning_effort", value: "low" }],
+        [
+          { id: "reasoning_effort", value: "high" },
+          { id: "fast", value: "false" },
+        ],
+      ),
+    ).toEqual([
+      { id: "fast", value: "false" },
+      { id: "reasoning_effort", value: "low" },
+    ]);
+  });
+});
 
 describe("acpProviderOptionDescriptors", () => {
   it("maps non-model select options and excludes model and collaboration categories", () => {

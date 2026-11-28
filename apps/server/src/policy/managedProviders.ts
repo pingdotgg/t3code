@@ -96,6 +96,7 @@ const LAUNCH_CONFIG_FIELDS = [
   "shadowHomePath",
   "commandPath",
   "commandArgs",
+  "sessionParameters",
   "serverUrl",
 ] as const;
 

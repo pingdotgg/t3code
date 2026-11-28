@@ -368,6 +368,7 @@ export function deriveProviderSettingsFields(
 }
 
 let commandArgumentDraftId = 0;
+let sessionParameterDraftId = 0;
 /**
  * Editable rows seeded from a configured value. `seen` is the value the rows
  * were last reconciled against; `lastPublished` is what the rows last sent to
@@ -442,10 +443,15 @@ function ProviderCommandArguments({
     onChange({ ...config, commandArgs: next });
   };
 
+  const launchesLocalCommand = readProviderConfigString(value, "source") === "local";
   return (
     <SettingsRow
       title={gt("Arguments")}
-      description={gt("One literal argument per row, in launch order.")}
+      description={
+        launchesLocalCommand
+          ? gt("One literal argument per row, in launch order.")
+          : gt("Extra launch arguments, in order, placed before the agent's own arguments.")
+      }
       managed={managedReason}
       control={
         <Button
@@ -490,6 +496,152 @@ function ProviderCommandArguments({
                     updateArguments(rows.filter((current) => current.id !== argument.id))
                   }
                   aria-label={gt("Remove argument {number}", { number: index + 1 })}
+                >
+                  <XIcon />
+                </Button>
+              </div>
+            ),
+          )}
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
+interface SessionParameterRow {
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+}
+
+const makeSessionParameterDraftRow = (name: string, value: string): SessionParameterRow => ({
+  id: `provider-parameter-${sessionParameterDraftId++}`,
+  name,
+  value,
+});
+
+function configuredSessionParameters(value: ProviderSettingsFormProps["value"]) {
+  const configured =
+    value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>).sessionParameters
+      : undefined;
+  if (!Array.isArray(configured)) return [];
+  return configured.flatMap((parameter) => {
+    if (parameter === null || typeof parameter !== "object") return [];
+    const record = parameter as Record<string, unknown>;
+    return typeof record.name === "string" && typeof record.value === "string"
+      ? [{ name: record.name, value: record.value }]
+      : [];
+  });
+}
+
+function sessionParametersEqual(
+  left: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+  right: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (parameter, index) =>
+        parameter.name === right[index]?.name && parameter.value === right[index]?.value,
+    )
+  );
+}
+
+function ProviderSessionParameters({
+  value,
+  onChange,
+  managedReason,
+}: Pick<ProviderSettingsFormProps, "value" | "onChange"> & {
+  readonly managedReason: string | undefined;
+}) {
+  const gt = useGT();
+  const parameters = configuredSessionParameters(value);
+  const [storedDraft, setDraft] = useState(() =>
+    seedRowsDraft(parameters, (entries) =>
+      entries.map((parameter) => makeSessionParameterDraftRow(parameter.name, parameter.value)),
+    ),
+  );
+  const draft = reconcileRowsDraft(storedDraft, parameters, sessionParametersEqual, (entries) =>
+    entries.map((parameter) => makeSessionParameterDraftRow(parameter.name, parameter.value)),
+  );
+  if (draft !== storedDraft) setDraft(draft);
+  const rows = draft.rows;
+
+  const updateParameters = (nextRows: ReadonlyArray<SessionParameterRow>) => {
+    const next = nextRows.map((row) => ({ name: row.name, value: row.value }));
+    setDraft({ rows: nextRows, seen: draft.seen, lastPublished: next });
+    const config =
+      value !== null && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {};
+    onChange({ ...config, sessionParameters: next });
+  };
+
+  return (
+    <SettingsRow
+      title={gt("Parameters")}
+      description={gt(
+        "Optional session options, such as reasoning_effort or context. The agent applies one when it offers that option. A model picker choice overrides the same name.",
+      )}
+      managed={managedReason}
+      control={
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => updateParameters([...rows, makeSessionParameterDraftRow("", "")])}
+        >
+          <PlusIcon />
+          <T>Add parameter</T>
+        </Button>
+      }
+    >
+      {rows.length > 0 ? (
+        <div className="mt-3 min-w-0 space-y-2 pb-2">
+          {rows.map((parameter, index) =>
+            managedReason !== undefined ? (
+              <code key={parameter.id} className="block min-w-0 truncate text-xs">
+                {parameter.name}={parameter.value}
+              </code>
+            ) : (
+              <div key={parameter.id} className="flex min-w-0 items-center gap-1.5">
+                <DraftInput
+                  size="sm"
+                  font="mono"
+                  value={parameter.name}
+                  onCommit={(next) =>
+                    updateParameters(
+                      rows.map((current) =>
+                        current.id === parameter.id ? { ...current, name: next } : current,
+                      ),
+                    )
+                  }
+                  aria-label={gt("Parameter {number} name", { number: index + 1 })}
+                  placeholder="name"
+                  spellCheck={false}
+                />
+                <DraftInput
+                  size="sm"
+                  font="mono"
+                  value={parameter.value}
+                  onCommit={(next) =>
+                    updateParameters(
+                      rows.map((current) =>
+                        current.id === parameter.id ? { ...current, value: next } : current,
+                      ),
+                    )
+                  }
+                  aria-label={gt("Parameter {number} value", { number: index + 1 })}
+                  placeholder="value"
+                  spellCheck={false}
+                />
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant="ghost-destructive"
+                  onClick={() =>
+                    updateParameters(rows.filter((current) => current.id !== parameter.id))
+                  }
+                  aria-label={gt("Remove parameter {number}", { number: index + 1 })}
                 >
                   <XIcon />
                 </Button>
@@ -940,9 +1092,7 @@ export function ProviderSettingsForm({
 }: ProviderSettingsFormProps) {
   const resolve = useMessages();
   const fields = deriveProviderSettingsFields(definition, value ?? {}, resolve);
-  const isLocalAcp =
-    definition.driverKind === "acpRegistry" &&
-    readProviderConfigString(value, "source") === "local";
+  const isAcpRegistry = definition.driverKind === "acpRegistry";
 
   if (fields.length === 0) {
     return null;
@@ -962,11 +1112,18 @@ export function ProviderSettingsForm({
           environmentId={environmentId}
         />
       ))}
-      {isLocalAcp ? (
+      {isAcpRegistry ? (
         <ProviderCommandArguments
           value={value}
           onChange={onChange}
           managedReason={managed?.keys.has("commandArgs") ? managed.reason : undefined}
+        />
+      ) : null}
+      {isAcpRegistry ? (
+        <ProviderSessionParameters
+          value={value}
+          onChange={onChange}
+          managedReason={managed?.keys.has("sessionParameters") ? managed.reason : undefined}
         />
       ) : null}
     </>

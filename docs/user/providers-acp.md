@@ -25,7 +25,7 @@ Credentials stay in the agent's own store; changing a shared login stops running
 
 ## Models, commands, and native sessions
 
-- **Models & options**: Reported automatically by the agent in the model picker. Add unlisted model IDs under **Custom models**.
+- **Models & options**: Reported automatically by the agent in the model picker. Add unlisted model IDs under **Custom models**. **Parameters** in Runtime settings sends extra session options, such as `reasoning_effort` or `context`, before a session reports them. The agent applies a parameter when it offers that option, and a model picker choice overrides the same name.
 - **Commands & skills**: Agent slash commands appear under **Provider** in `/`; `$`-prefixed commands appear in the `$` skill menu.
 - **Native sessions**: When supported by the agent, expand its provider card, choose a project, and select **List sessions** to import existing sessions into T3 Code threads.
 - **Text generation**: Select an ACP model in **Settings → Threads → Text generation model** to generate titles, commit messages, and PR descriptions.
