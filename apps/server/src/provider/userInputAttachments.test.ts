@@ -1492,6 +1492,20 @@ describe("question answer paths", () => {
             "Current route\t\tStatus\n\t\tOpen\n\t\tConfirmed\nNext route\nOrphan route\n\t\tAfter blank rows\nWidth changes",
         },
         {
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:ext="urn:example:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="ext"><w:body><w:tbl>' +
+              '<w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Route</w:t></w:r></w:p></w:tc>' +
+              '<w:tc><ext:tcPr/><w:tcPr><w:hMerge w:val="continue"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old route</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge ext:val="restart"/></w:tcPr><w:p><w:r><w:t>Old spare</w:t></w:r></w:p></w:tc>' +
+              "<w:tc><ext:tcPr><w:hMerge/></ext:tcPr><w:tcPr><ext:hMerge/></w:tcPr><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>After gap</w:t></w:r></w:p></w:tc>" +
+              '<w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>New merge</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Old merge</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>New row</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Orphan vertical</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>",
+          },
+          expected: [],
+          exact: "Route\t\t\tStatus\tAfter gap\tNew merge\nNew row\tOrphan vertical",
+        },
+        {
           ext: "pptx",
           parts: {
             "ppt/presentation.xml":
@@ -1675,7 +1689,7 @@ describe("question answer paths", () => {
               '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
               '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
               '<w:footnote w:id="1"><w:p><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Inspect the seals.</w:t></w:r></w:p>',
-              "<w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:footnote>",
+              '<w:tbl><w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Old instruction</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:footnote>',
               "</w:footnotes>",
             ].join(""),
             "word/endnotes.xml": [
