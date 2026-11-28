@@ -130,6 +130,25 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
+  it("offers one-click updates for a managed runtime that has no update command", () => {
+    const candidate = updateCandidate({
+      driver: driver("antigravity"),
+      latestVersion: "1.5.18",
+      updateCommand: null,
+    });
+    const manual = updateCandidate({
+      driver: driver("antigravity"),
+      latestVersion: "1.5.18",
+      canUpdate: false,
+      updateCommand: null,
+    });
+
+    expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(true);
+    expect(canOneClickUpdateProviderCandidate(manual, [manual])).toBe(false);
+    expect(isProviderSettingsUpdateCandidate(candidate)).toBe(true);
+    expect(isProviderSettingsUpdateCandidate(manual)).toBe(false);
+  });
+
   it("keeps the inline update action available while a provider update is already running", () => {
     const candidate = updateCandidate({
       driver: driver("codex"),

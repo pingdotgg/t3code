@@ -221,6 +221,18 @@ export function toProgressLine(line: string): string | null {
     : `${text.slice(0, UPDATE_PROGRESS_MAX_LENGTH - 1)}…`;
 }
 
+function updateLockKey(capabilities: ProviderMaintenanceCapabilities): string | null {
+  return capabilities.update?.lockKey ?? capabilities.managedUpdate?.lockKey ?? null;
+}
+
+const MANAGED_UPDATE_SUCCEEDED: ProviderMaintenanceCommandResult = {
+  stdout: "",
+  stderr: "",
+  exitCode: 0,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+};
+
 function describeCommand(command: ProviderMaintenanceCommandAction): string {
   const executable = command.executable.split(/[\\/]/).pop() || command.executable;
   return [executable, ...command.args].join(" ");
@@ -411,8 +423,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       instanceId,
       provider,
     );
-    const update = capabilities.update;
-    if (!update) {
+    const lockKey = updateLockKey(capabilities);
+    if (lockKey === null) {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
@@ -468,7 +480,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+            if (updateLockKey(fresh) !== lockKey) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -500,13 +512,14 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
                 : resolveLatestProviderUpdateAction(fresh, candidateVersion);
+            const managedUpdate = targetVersion === undefined ? fresh.managedUpdate : undefined;
             const rejected =
               targetVersion !== undefined
                 ? !command ||
                   advisory?.recommendedVersion !== targetVersion ||
                   advisory.status !== "supported"
                 : advisory?.status === "broken" || advisory?.status === "unsupported";
-            if (rejected || !command) {
+            if (rejected || (!command && !managedUpdate)) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -556,23 +569,28 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
-            const sharingInstances = yield* instancesSharingInstallation(
-              instanceId,
-              provider,
-              update.lockKey,
-            );
-            yield* setRunningMessage("Waiting for running provider work to finish.");
-            const result = yield* installationGate.update(
-              sharingInstances,
-              setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
-              ),
-            );
+            const result = yield* command
+              ? setRunningMessage("Waiting for running provider work to finish.").pipe(
+                  Effect.andThen(instancesSharingInstallation(instanceId, provider, lockKey)),
+                  Effect.flatMap((sharingInstances) =>
+                    installationGate.update(
+                      sharingInstances,
+                      setRunningMessage(`Running ${describeCommand(command)}`).pipe(
+                        Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+                      ),
+                    ),
+                  ),
+                )
+              : // A managed install lands beside the runtime that open sessions hold, so nothing drains.
+                setRunningMessage("Installing the latest version").pipe(
+                  Effect.andThen(managedUpdate!.run(setRunningMessage)),
+                  Effect.as(MANAGED_UPDATE_SUCCEEDED),
+                );
             const finishedAt = yield* nowIso;
             if (result.exitCode !== 0) {
               yield* Effect.logWarning("Provider update command failed", {
                 provider,
-                command: describeCommand(command),
+                command: command && describeCommand(command),
                 exitCode: result.exitCode,
                 output: commandOutput(result),
               });
@@ -671,7 +689,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     const updateFiber = yield* commandCoordinator
       .withCommandLock({
         targetKey,
-        lockKey: update.lockKey,
+        lockKey,
         onQueued: setQueuedState,
         run: runProviderUpdate(),
       })

@@ -39,10 +39,18 @@ import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
+class ManagedInstallError extends Schema.TaggedError<ManagedInstallError>()("ManagedInstallError", {
+  detail: Schema.String,
+}) {
+  override get message() {
+    return this.detail;
+  }
+}
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const NATIVE_CLI_DRIVER = ProviderDriverKind.make("nativeCli");
@@ -325,6 +333,66 @@ describe("providerMaintenanceRunner", () => {
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { name: "succeeds", failure: undefined, status: "succeeded", message: "Provider updated." },
+    { name: "fails", failure: "Download failed.", status: "failed", message: "Download failed." },
+  ] as const)("runs a managed runtime update without a command: $name", (testCase) => {
+    const spawned: Array<string> = [];
+    let managedRuns = 0;
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(
+        { ...baseProvider, version: "1.0.0" },
+        { installedVersionAfterUpdate: "1.1.0" },
+      );
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+            latestVersion: "1.1.0",
+            managedUpdate: {
+              lockKey: "codex-managed",
+              run: (onProgress) =>
+                onProgress("Downloading the runtime.").pipe(
+                  Effect.andThen(() => {
+                    managedRuns += 1;
+                    return testCase.failure === undefined
+                      ? Effect.void
+                      : Effect.fail(new ManagedInstallError({ detail: testCase.failure }));
+                  }),
+                ),
+            },
+          }),
+      });
+      // Open sessions keep the runtime they started on, so a managed update must not wait for them.
+      const gate = yield* ProviderInstallationGate.ProviderInstallationGate;
+      yield* gate.execute(CODEX_INSTANCE_ID, Effect.never).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(managedRuns, 1);
+      assert.deepStrictEqual(spawned, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, testCase.status);
+      assert.strictEqual(result.providers[0]?.updateState?.message, testCase.message);
+      assert.include(
+        (yield* Ref.get(updateStatesRef)).map((state) => state.message),
+        "Downloading the runtime.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProviderInstallationGate.layer,
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("9.9.9"),
+          layerMockSpawner((command) => {
+            spawned.push(command);
+            return {};
           }),
         ),
       ),

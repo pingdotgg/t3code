@@ -10,7 +10,7 @@ T3 Code runs Google's official Antigravity ACP agent on your selected environmen
 
 - **Remote sign-in**: Paste the temporary code (or full URL) from Google's completion page into T3 Code's code field.
 - **Manual binary**: Install [Antigravity CLI](https://antigravity.google/docs/getting-started) and set **Binary path** to `agy`. Leave blank to use the managed runtime (or `PATH`).
-- **Updates**: Click **Update Antigravity** in provider settings. T3 Code requires Antigravity **1.5.1+** (1.5.12+ recommended); running threads finish on their original runtime.
+- **Updates**: An outdated managed runtime updates with your other providers from the sidebar **Update** button (see [Updating](updating.md)), or from **Update Antigravity** in provider settings. T3 Code requires Antigravity **1.5.1+** (1.5.12+ recommended); running threads finish on their original runtime.
 
 ### Sign-in methods
 
