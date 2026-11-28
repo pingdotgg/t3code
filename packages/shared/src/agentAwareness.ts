@@ -64,6 +64,7 @@ export function subagentAwaitsUser(
 export interface AgentAwarenessState {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly runId?: string;
   readonly projectTitle: string;
   readonly threadTitle: string;
   readonly phase: AgentAwarenessPhase;
@@ -90,6 +91,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
+    | "latestRunId"
     | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
@@ -134,6 +136,7 @@ export function projectThreadAwarenessV2(
   return {
     environmentId,
     threadId: thread.id,
+    ...(thread.latestRunId ? { runId: thread.latestRunId } : {}),
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
