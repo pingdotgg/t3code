@@ -543,7 +543,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         continue;
       }
       if (next === "*") {
-        state.skip = true;
+        // Shape instructions are an optional destination, but a text box keeps its text there.
+        if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
         i++;
         continue;
       }
@@ -614,6 +615,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           "pict",
           "object",
           "fldinst",
+          // Shape properties, and the drawing that repeats a shape for older readers.
+          "sp",
+          "shprslt",
           "header",
           "headerl",
           "headerr",

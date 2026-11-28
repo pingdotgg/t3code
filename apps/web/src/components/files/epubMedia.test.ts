@@ -82,6 +82,30 @@ it.each([
     "00:02:00",
     "00:01:59.953 --> 00:01:59.987",
   ],
+  [
+    "tick offsets at an explicit tick rate",
+    ttml,
+    'p:tickRate="10000000"',
+    "10010000t",
+    "30030000t",
+    "00:00:01.001 --> 00:00:03.003",
+  ],
+  [
+    "tick offsets defaulting to one tick per second",
+    ttml,
+    "",
+    "2t",
+    "4t",
+    "00:00:02.000 --> 00:00:04.000",
+  ],
+  [
+    "tick offsets derived from frame and subframe rates",
+    ttml,
+    'p:frameRate="25" p:subFrameRate="2"',
+    "50t",
+    "125t",
+    "00:00:01.000 --> 00:00:02.500",
+  ],
 ])("keeps captions using %s", (_label, namespace, parameters, begin, end, timing) => {
   const captions = parseXml(`
     <tt xmlns="${namespace}" xmlns:p="${namespace}#parameter" ${parameters}>
